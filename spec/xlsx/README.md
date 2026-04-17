@@ -1,19 +1,49 @@
-# XLSX Spec — Deferred
+# XLSX Spec
 
-Reserved per [`prompt.md`](../../prompt.md). Will be authored in the
-follow-up XLSX session and will mirror the structure of `spec/docx/`:
+The contract for the XLSX (Microsoft Excel) editor in [`packages/xlsx`](../../packages/xlsx).
 
-- `analysis.md`
-- `feature-scope.md`
-- `document-model.md`
-- `ooxml-mapping.md`
-- `parser.md`
-- `serializer.md`
-- `renderer.md`
-- `formula-engine.md` (XLSX-only; ~150-function priority list)
-- `agent-commands.md`
-- `edge-cases.md`
-- `acceptance-criteria.md`
+## Reading order
 
-The shared specs in [`../shared/`](../shared) already cover XLSX-applicable
-infrastructure (command bus, OOXML utils, agent API, plugin system).
+1. [`analysis.md`](analysis.md) — clean-room synthesis of the Univer +
+   SheetJS reference repos. Decides what we keep, what we differ on, what
+   we improve. Drawn from the four `analysis-*.md` companion notes.
+2. [`feature-scope.md`](feature-scope.md) — what is **in** the 80% and
+   what is **explicitly out**. No ambiguity.
+3. [`document-model.md`](document-model.md) — `XlsxWorkbook`, `Sheet`,
+   `Cell`, `RangeRef`, `CellFormat`, `Comment`, `DefinedName`, etc.
+4. [`ooxml-mapping.md`](ooxml-mapping.md) — for every in-scope feature:
+   which OOXML element / attribute maps to which model field.
+5. [`parser.md`](parser.md) — OOXML → `XlsxWorkbook`, including
+   opaque-blob preservation for parts we don't model.
+6. [`serializer.md`](serializer.md) — `XlsxWorkbook` → OOXML, with
+   byte-preservation of untouched parts driven by `partHashes`.
+7. [`renderer.md`](renderer.md) — virtualized DOM grid, sheet tabs,
+   formula bar, frozen panes; everything is a command.
+8. [`formula-engine.md`](formula-engine.md) — lexer, AST, dependency
+   graph, evaluator, error model, the ~150-function priority list.
+9. [`agent-commands.md`](agent-commands.md) — every `xlsx:*` command:
+   payload, behaviour, OOXML impact, examples.
+10. [`edge-cases.md`](edge-cases.md) — known hard cases and how we
+    degrade gracefully.
+11. [`acceptance-criteria.md`](acceptance-criteria.md) — measurable done
+    criteria the build must hit before XLSX is declared shipped.
+
+The shared specs in [`../shared/`](../shared) cover infrastructure
+(command bus, OOXML utils, agent API, plugin system) which is reused
+unchanged from the DOCX phase.
+
+## Status
+
+| Doc                      | Status  |
+| ------------------------ | ------- |
+| `analysis.md`            | Phase 1 |
+| `feature-scope.md`       | Phase 2 |
+| `document-model.md`      | Phase 2 |
+| `ooxml-mapping.md`       | Phase 2 |
+| `parser.md`              | Phase 2 |
+| `serializer.md`          | Phase 2 |
+| `renderer.md`            | Phase 2 |
+| `formula-engine.md`      | Phase 2 |
+| `agent-commands.md`      | Phase 2 |
+| `edge-cases.md`          | Phase 2 |
+| `acceptance-criteria.md` | Phase 2 |
