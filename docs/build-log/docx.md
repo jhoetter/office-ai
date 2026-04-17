@@ -395,3 +395,159 @@ validation summary).
   paste path. Re-introducing per-segment `set-paragraph-style`
   commands lands with C3 (toolbar parity) in P1.2.
 
+## P1.1 — W3: Agent surface (CLI + MCP + comment lifecycle)
+
+Scope: bring `office-agent` and the headless agent up to the surface
+described in `prompt.md` lines 451–493 + ship the three previously
+stubbed comment-lifecycle commands end-to-end.
+
+### Selector
+
+`packages/agent/src/selector.ts` learned the `section:S/...` prefix.
+Only `section:0` is accepted in P1 (the document model is one body
+section); other indices throw `SelectorError` so callers fail loudly
+instead of silently dropping the prefix. Range form unchanged.
+
+### CLI
+
+`packages/agent/src/cli.ts` is restructured around a `docx`
+subcommand group while keeping the old top-level commands as
+backward-compatible shims:
+
+```
+office-agent docx inspect        --file <path>
+office-agent docx read           --file <path> --format markdown|json|text [--range <selector>]
+office-agent docx search         --file <path> --query <text>
+office-agent docx write          --file <path> --at <selector> --text <s> [--out <p>]
+office-agent docx style          --file <path> --at <selector> --style <id> [--out <p>]
+office-agent docx comment        --file <path> --range <selector> --text <s> [--out <p>]
+office-agent docx resolve-comment --file <path> --id <commentId> [--reopen] [--out <p>]
+office-agent docx reply-comment   --file <path> --parent <id> --text <s> --author <name> [--out <p>]
+office-agent docx delete-comment  --file <path> --id <commentId> [--out <p>]
+office-agent docx apply           --file <path> -c <commands.json> [--out <p>]
+office-agent docx diff            --before <p> --after <p>
+office-agent mcp                 (start the MCP stdio server)
+```
+
+Conventions:
+
+- `--file` is the input path; `--out` defaults to `--file` (in-place).
+  This matches `spec/agent/cli.md` §`--out semantics`.
+- Structured output is one JSON document per invocation. `--pretty`
+  enables indenting.
+- Old commands (`read`, `search`, `insert-text`, `comment`, `apply`)
+  remain as `[legacy]` aliases at the top level so existing scripts
+  don't break.
+
+### MCP server
+
+`packages/agent/src/mcp.ts` implements an `officeai` MCP server
+(stdio transport) that exposes the `DocxAgent` as seven tools:
+
+- `docx_load(path) → { handle, summary }` — opens a file, mints an
+  in-process handle.
+- `docx_save(handle, out_path?)` — serializes back to disk.
+- `docx_inspect(handle)` — same shape as `docx inspect`.
+- `docx_get_text(handle, format = "markdown" | "json" | "text")`.
+- `docx_search(handle, query, case_sensitive?, regex?)`.
+- `docx_apply_command(handle, type, payload, source?, agent_id?, auto_approve?)`
+  — covers every registered docx handler, including the comment
+  lifecycle commands. `auto_approve` defaults to true so a single
+  agent-source command lands as `approved` in one round-trip.
+- `docx_diff({before, after}` for handle-vs-handle, or
+  `{handle, against: "disk"}` to diff against the on-disk file the
+  handle was loaded from).
+
+Sessions are in-process (`Map<handle, DocxAgent>`); handles are
+opaque UUIDs. `__resetMcpSessionsForTests` is exported for tests
+only. Input schemas use `zod` (added as a direct dep on
+`@officeai/agent`).
+
+### Comment lifecycle (model + parser + serializer + handlers)
+
+The three previously stubbed comment commands are now implemented.
+This required end-to-end support for `word/commentsExtended.xml`
+(W15 metadata for `done` + `parentPaIdRef`).
+
+Model (`packages/docx/src/model/types.ts`):
+
+- `DocxDirtyFlags.commentsExtended` joins the existing flags. It is
+  independent of `comments`: resolving a comment dirties only the
+  extended part, while adding a comment dirties both.
+- `DocxComment` gains `resolved?: boolean`, `parentId?: string`, and
+  `paraId?: string`. `paraId` is the W14 paragraph id of the
+  comment's first body paragraph — `commentsExtended.xml` keys
+  threading and resolved-state by it (NOT by the comment id).
+
+Parser (`packages/docx/src/parser/parse.ts`):
+
+- `parseComments` captures the existing `w14:paraId` on a comment's
+  first paragraph if present.
+- `parseCommentsExtended` reads `word/commentsExtended.xml` (when
+  present) into a paraId-keyed map; `applyCommentsExtended` projects
+  that map onto the parsed comments. Missing parts are silently
+  skipped — old documents stay parseable.
+
+Serializer (`packages/docx/src/serializer/serialize.ts`):
+
+- `serializeComment` injects `w14:paraId` on the first paragraph of
+  every comment body. If the comment has no `paraId` yet, one is
+  derived deterministically from the comment id (so the same
+  document round-trips byte-stably).
+- When `dirty.comments` or `dirty.commentsExtended` is set, the
+  serializer rewrites `word/commentsExtended.xml` from the projected
+  comment list, emitting one `w15:commentEx` per comment that is
+  resolved or has a parent. When no comments need extended metadata
+  the part (and its relationship + content-type entry) is dropped.
+
+Handlers
+(`packages/docx/src/commands/{resolve,reply,delete}-comment.ts`):
+
+- `docx:resolve-comment` toggles `resolved` and dirties only
+  `commentsExtended`. Idempotent (no-op + revision bump when the
+  state is already as requested), rejects `unknown-comment`.
+- `docx:reply-comment` mints a fresh comment with `parentId` set
+  to the target. **Replies do not add new range markers in the
+  body** — they share the parent's `commentRangeStart`/`End`/
+  `Reference`, which is what makes Word render them indented under
+  the same anchor. Rejects `unknown-comment` and `empty-reply`.
+- `docx:delete-comment` removes the comment and its inline range
+  markers, plus every reply whose `parentId` chains back to it
+  (transitive). When `comments` becomes empty, `comments.xml`,
+  `commentsExtended.xml`, the relationships, and the content-type
+  entries are all dropped on save.
+
+Registry (`packages/docx/src/commands/registry.ts`) wires the three
+handlers in alongside the existing six P0 handlers. The
+`docx:resolve-comment` stub line was removed — the others
+(`insert-table`, `set-cell-content`, `insert-image`,
+`accept-change`, `reject-change`) remain stubs.
+
+### Tests
+
+- `packages/docx/src/commands/comments-lifecycle.test.ts` (new) —
+  15 tests covering successful operations, error paths, and
+  round-trip serialize/parse with `commentsExtended.xml`.
+- `packages/agent/src/cli.test.ts` extended with the
+  `office-agent docx …` subcommand surface (inspect, read formats,
+  write with `section:0/...` selectors, style, full comment
+  lifecycle, diff). Legacy top-level commands still pass.
+- `packages/agent/src/mcp.test.ts` (new) — 9 tests over an
+  in-memory MCP transport pair: tool discovery, load/inspect,
+  text projection in all three formats, search, apply +
+  save round-trip, end-to-end comment lifecycle through
+  `docx_apply_command`, handle-vs-handle diff, and unknown-handle
+  error path.
+
+### Known follow-ups (out of W3 scope)
+
+- Section selectors past `section:0` need a real section model
+  (split body, per-section properties). Tracked alongside the
+  remaining `feature-scope.md` items.
+- `docx_apply_command` validates payload shape only via the
+  underlying handlers — adding per-command zod schemas in
+  `mcp.ts` would let MCP clients receive richer input errors.
+  Deferred until we have a real LLM driving the surface.
+- The stdio entry point relies on `process.stdin` close to terminate;
+  `office-agent mcp` does not yet support a `--port` flag for the
+  HTTP/SSE transport. `prompt.md` only requires stdio for now.

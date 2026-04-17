@@ -11,6 +11,8 @@ export const DOCX_COMMAND_TYPES = [
   "docx:set-cell-content",
   "docx:insert-image",
   "docx:resolve-comment",
+  "docx:reply-comment",
+  "docx:delete-comment",
   "docx:accept-change",
   "docx:reject-change",
 ] as const;
@@ -81,6 +83,19 @@ export interface InsertImagePayload {
 }
 
 export interface ResolveCommentPayload {
+  commentId: string;
+  /** Defaults to true. Pass `false` to re-open a previously resolved comment. */
+  resolved?: boolean;
+}
+
+export interface ReplyCommentPayload {
+  parentId: string;
+  text: string;
+  author: string;
+  initials?: string;
+}
+
+export interface DeleteCommentPayload {
   commentId: string;
 }
 

@@ -18,13 +18,25 @@ import { DocxSerializeError } from "./errors.js";
 
 const MAIN_PART = "word/document.xml";
 const COMMENTS_PART = "word/comments.xml";
+const COMMENTS_EXTENDED_PART = "word/commentsExtended.xml";
 const COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const COMMENTS_EXTENDED_REL_TYPE = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
 const COMMENTS_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const COMMENTS_EXTENDED_CONTENT_TYPE = "application/vnd.ms-word.commentsExtended+xml";
+
+const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml";
+const W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml";
 
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 
 const COMMENTS_ROOT_ATTRS: Record<string, string> = {
-  "@_xmlns:w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "@_xmlns:w": W_NS,
+  "@_xmlns:w14": W14_NS,
+};
+
+const COMMENTS_EXTENDED_ROOT_ATTRS: Record<string, string> = {
+  "@_xmlns:w15": W15_NS,
 };
 
 export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer> {
@@ -46,6 +58,21 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
       container.writeText(COMMENTS_PART, xml);
     } else if (container.has(COMMENTS_PART)) {
       removeCommentsPart(container);
+    }
+  }
+
+  // commentsExtended.xml. We re-emit it whenever EITHER the comments part or
+  // the extended part is dirty, because the two are tightly coupled (e.g.
+  // resolving a comment dirties only `commentsExtended`, but adding a comment
+  // dirties `comments` and may also need a fresh extended record).
+  if (snapshot.dirty.commentsExtended || snapshot.dirty.comments) {
+    const records = collectCommentsExtended(snapshot.root.comments);
+    if (records.length > 0) {
+      ensureCommentsExtendedPart(container);
+      const xml = serializeCommentsExtendedXml(records);
+      container.writeText(COMMENTS_EXTENDED_PART, xml);
+    } else if (container.has(COMMENTS_EXTENDED_PART)) {
+      removeCommentsExtendedPart(container);
     }
   }
 
@@ -274,7 +301,12 @@ function serializeCommentsXml(comments: ReadonlyArray<DocxComment>): string {
 }
 
 function serializeComment(c: DocxComment): unknown {
-  const body: unknown[] = c.body.map((b) => serializeBlock(b));
+  const paraId = effectiveParaId(c);
+  const body: unknown[] = c.body.map((b, i) => {
+    const entry = serializeBlock(b);
+    if (i === 0 && b.kind === "paragraph") return injectParaId(entry, paraId);
+    return entry;
+  });
   const attrs: Record<string, string> = {
     "w:id": c.id,
     "w:author": c.author,
@@ -282,6 +314,105 @@ function serializeComment(c: DocxComment): unknown {
   };
   if (c.initials) attrs["w:initials"] = c.initials;
   return makeEntry("w:comment", body, attrs);
+}
+
+/**
+ * Inject (or override) `w14:paraId` on a `w:p` entry so that
+ * `commentsExtended.xml` can reference it. The attribute lives on the `:@`
+ * sibling object; we mutate a shallow copy of the entry to keep the input
+ * immutable.
+ */
+function injectParaId(entry: unknown, paraId: string): unknown {
+  if (!entry || typeof entry !== "object") return entry;
+  const e = entry as Record<string, unknown>;
+  const tag = Object.keys(e).find((k) => k !== ":@");
+  if (tag !== "w:p") return entry;
+  const next: Record<string, unknown> = { ...e };
+  const existingAttrs = (e[":@"] as Record<string, string> | undefined) ?? {};
+  next[":@"] = { ...existingAttrs, "@_w14:paraId": paraId };
+  return next;
+}
+
+interface CommentExtendedRecord {
+  paraId: string;
+  done: boolean;
+  parentParaId?: string;
+}
+
+/**
+ * Materialize the records that `commentsExtended.xml` needs. Only comments
+ * that are resolved or that belong to a thread (parent or child) get a
+ * record — top-level, open comments don't need one and Word omits them too.
+ */
+function collectCommentsExtended(comments: ReadonlyArray<DocxComment>): CommentExtendedRecord[] {
+  const idToParaId = new Map<string, string>();
+  for (const c of comments) idToParaId.set(c.id, effectiveParaId(c));
+
+  const childIds = new Set<string>();
+  for (const c of comments) {
+    if (c.parentId) childIds.add(c.parentId);
+  }
+
+  const out: CommentExtendedRecord[] = [];
+  for (const c of comments) {
+    const isResolved = c.resolved === true;
+    const isReply = c.parentId !== undefined;
+    const isThreadParent = childIds.has(c.id);
+    if (!isResolved && !isReply && !isThreadParent) continue;
+    const rec: CommentExtendedRecord = {
+      paraId: effectiveParaId(c),
+      done: isResolved,
+    };
+    if (c.parentId) {
+      const parent = idToParaId.get(c.parentId);
+      if (parent) rec.parentParaId = parent;
+    }
+    out.push(rec);
+  }
+  return out;
+}
+
+function serializeCommentsExtendedXml(records: ReadonlyArray<CommentExtendedRecord>): string {
+  const children: unknown[] = records.map((r) => {
+    const attrs: Record<string, string> = {
+      "w15:paraId": r.paraId,
+      "w15:done": r.done ? "1" : "0",
+    };
+    if (r.parentParaId) attrs["w15:parentPaIdRef"] = r.parentParaId;
+    return makeEntry("w15:commentEx", [], attrs);
+  });
+  const tree = [{ "w15:commentsEx": children, ":@": COMMENTS_EXTENDED_ROOT_ATTRS }];
+  return ooxml.serializeXml(tree, { xmlDeclaration: XML_DECL });
+}
+
+/**
+ * Return the comment's persisted `paraId` if it has one, otherwise mint a
+ * deterministic 8-hex-char id from the comment id. Determinism matters so
+ * that round-tripping the same in-memory snapshot twice produces identical
+ * bytes — which is the whole point of byte-preservation in this codebase.
+ */
+function effectiveParaId(c: DocxComment): string {
+  if (c.paraId) return c.paraId;
+  return deriveParaIdFromCommentId(c.id);
+}
+
+function deriveParaIdFromCommentId(commentId: string): string {
+  const h = hashString(`officeai/comment-paraid/${commentId}`);
+  return h.slice(0, 8).toUpperCase();
+}
+
+function hashString(s: string): string {
+  // Tiny FNV-1a 32-bit, then expand to 8 hex chars. Good enough as a
+  // deterministic non-colliding-in-practice id for the sizes we're dealing
+  // with (Word documents have at most thousands of comments, FNV-1a 32-bit
+  // is fine; we're not using this for security).
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  const u = h >>> 0;
+  return u.toString(16).padStart(8, "0");
 }
 
 function ensureCommentsPart(container: ooxml.OoxmlContainer): void {
@@ -317,6 +448,38 @@ function removeCommentsPart(container: ooxml.OoxmlContainer): void {
   rels.writeBack(container);
   const ct = ooxml.ContentTypes.load(container);
   ct.removeOverride("/word/comments.xml");
+  ct.writeBack(container);
+}
+
+function ensureCommentsExtendedPart(container: ooxml.OoxmlContainer): void {
+  if (!container.has(COMMENTS_EXTENDED_PART)) {
+    const empty = ooxml.serializeXml([{ "w15:commentsEx": [], ":@": COMMENTS_EXTENDED_ROOT_ATTRS }], {
+      xmlDeclaration: XML_DECL,
+    });
+    container.addPart(COMMENTS_EXTENDED_PART, new TextEncoder().encode(empty));
+  }
+  const rels = ooxml.RelationshipGraph.loadFor(container, MAIN_PART);
+  if (rels.byType(COMMENTS_EXTENDED_REL_TYPE).length === 0) {
+    rels.add({ type: COMMENTS_EXTENDED_REL_TYPE, target: "commentsExtended.xml" });
+    rels.writeBack(container);
+  }
+  const ct = ooxml.ContentTypes.load(container);
+  if (!ct.hasOverride("/word/commentsExtended.xml")) {
+    ct.addOverride("/word/commentsExtended.xml", COMMENTS_EXTENDED_CONTENT_TYPE);
+    ct.writeBack(container);
+  }
+}
+
+function removeCommentsExtendedPart(container: ooxml.OoxmlContainer): void {
+  if (!container.has(COMMENTS_EXTENDED_PART)) return;
+  container.removePart(COMMENTS_EXTENDED_PART);
+  const rels = ooxml.RelationshipGraph.loadFor(container, MAIN_PART);
+  for (const r of rels.byType(COMMENTS_EXTENDED_REL_TYPE)) {
+    rels.remove(r.id);
+  }
+  rels.writeBack(container);
+  const ct = ooxml.ContentTypes.load(container);
+  ct.removeOverride("/word/commentsExtended.xml");
   ct.writeBack(container);
 }
 

@@ -1,7 +1,8 @@
 # DOCX — Agent Commands
 
-> Complete typed list. Six commands land this session ("**P0**"). The other
-> six are stubbed and throw `NotImplementedError` until a follow-up session.
+> Complete typed list. Nine commands are implemented today ("**P0**" + the
+> three comment-lifecycle commands). The remaining five are stubbed and throw
+> `NotImplementedError` until a follow-up session.
 
 ## Common types
 
@@ -112,13 +113,61 @@ append a new `<w:comment>` to `word/comments.xml` with body `[Paragraph
 If `word/comments.xml` does not exist, create it (see
 [`serializer.md`](serializer.md) §ensureCommentsPart).
 
+### `docx:resolve-comment`
+
+```typescript
+type ResolveCommentPayload = {
+  commentId: string;
+  /** Defaults to true. Pass false to reopen a previously resolved comment. */
+  resolved?: boolean;
+};
+```
+
+Toggle `comment.resolved`. Drives the `w15:done` attribute in
+`word/commentsExtended.xml`. Idempotent: setting the current state again is a
+no-op but still bumps the revision so the bus history records the
+attempt. Rejected with `unknown-comment` when the id is missing.
+
+### `docx:reply-comment`
+
+```typescript
+type ReplyCommentPayload = {
+  parentId: string;
+  text: string;
+  author: string;
+  initials?: string;
+};
+```
+
+Append a new `w:comment` whose `parentId` points at `parentId`. Replies do
+**not** add new range markers in the body: by OOXML convention every reply
+in a thread shares the parent's `commentRangeStart`/`commentRangeEnd`
+anchors, which is what makes Word render them indented under the same
+inline range. The serializer emits a `w15:parentPaIdRef` entry in
+`word/commentsExtended.xml`. Rejected with `unknown-comment` for a missing
+parent and `empty-reply` for blank text.
+
+### `docx:delete-comment`
+
+```typescript
+type DeleteCommentPayload = { commentId: string };
+```
+
+Remove the comment and its inline range markers (`commentRangeStart`,
+`commentRangeEnd`, `commentReference`). When the target is a thread head,
+every reply whose `parentId` chains back to it is removed transitively.
+This matches Word's behavior when the user deletes the head of a thread
+and keeps the command idempotent (re-running on a now-empty subtree is a
+no-op). The serializer also drops `word/commentsExtended.xml` (and its
+relationship + content-type entries) when no comment in the document
+needs extended metadata anymore.
+
 ## Commands (P1 — stubbed; throw `NotImplementedError`)
 
 ```typescript
 "docx:insert-table"        { at: DocxPosition; rows: number; cols: number }
 "docx:set-cell-content"    { tableId: NodeId; row: number; col: number; content: BlockNode[] }
 "docx:insert-image"        { at: DocxPosition; data: ArrayBuffer; mimeType: string; width: number; height: number }
-"docx:resolve-comment"     { commentId: string }
 "docx:accept-change"       { revisionId: string }
 "docx:reject-change"       { revisionId: string }
 ```

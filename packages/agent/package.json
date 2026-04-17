@@ -23,9 +23,11 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@officeai/core": "workspace:*",
     "@officeai/docx": "workspace:*",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22",

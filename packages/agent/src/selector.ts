@@ -7,6 +7,14 @@
  *   paragraph:N/text:A..B
  *   paragraph:N..paragraph:M
  *
+ * Optional section prefix (P1: only `section:0` is recognized; the document
+ * model has not yet split body into per-section subtrees). The prefix is
+ * accepted and stripped so callers can stop hand-mangling selectors when
+ * downstream tools start emitting them:
+ *
+ *   section:S/paragraph:N
+ *   section:S/paragraph:N/run:M
+ *
  * See spec/agent/cli.md.
  */
 
@@ -31,12 +39,33 @@ export class SelectorError extends Error {
 export function parseSelector(input: string): Selector {
   const trimmed = input.trim();
   if (!trimmed) throw new SelectorError("Empty selector");
+  const stripped = stripSectionPrefix(trimmed);
 
-  if (trimmed.includes("..")) {
-    return parseRangeSelector(trimmed);
+  if (stripped.includes("..")) {
+    return parseRangeSelector(stripped);
   }
 
-  return { kind: "paragraph", position: parsePosition(trimmed) };
+  return { kind: "paragraph", position: parsePosition(stripped) };
+}
+
+/**
+ * Allow an optional `section:S/` prefix. P1 only supports `section:0`
+ * since `DocxDocument.body` is a single block list; richer section models
+ * are tracked in spec/docx/document-model.md.
+ */
+function stripSectionPrefix(input: string): string {
+  const m = /^section:(\d+)\/(.+)$/.exec(input);
+  if (!m) return input;
+  const n = Number(m[1]);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new SelectorError(`Invalid section index: ${m[1]}`);
+  }
+  if (n !== 0) {
+    throw new SelectorError(
+      `Only section:0 is supported in P1 (the body is a single section); got section:${n}`
+    );
+  }
+  return m[2];
 }
 
 function parsePosition(input: string): DocxPosition {

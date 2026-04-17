@@ -36,6 +36,7 @@ export interface ParseOptions {
 
 const MAIN_PART = "word/document.xml";
 const COMMENTS_PART = "word/comments.xml";
+const COMMENTS_EXTENDED_PART = "word/commentsExtended.xml";
 
 const DOC_ROOT_ATTR_KEYS = [
   "xmlns:w",
@@ -115,7 +116,9 @@ export async function parseDocx(
   }
 
   const body = parseBody(bodyEntry, mintNodeId);
-  const comments = parseComments(container, mintNodeId);
+  const baseComments = parseComments(container, mintNodeId);
+  const extended = parseCommentsExtended(container);
+  const comments = applyCommentsExtended(baseComments, extended);
 
   const root: DocxDocument = {
     id: mintNodeId(),
@@ -134,6 +137,7 @@ export async function parseDocx(
     comments: false,
     rels: false,
     contentTypes: false,
+    commentsExtended: false,
   };
 
   return {
@@ -480,8 +484,14 @@ function parseComments(container: ooxml.OoxmlContainer, mintNodeId: IdMinter): D
     const initials = attrOf(c, "w:initials");
     const date = attrOf(c, "w:date") ?? "";
     const body: BlockNode[] = [];
+    let paraId: string | undefined;
     for (const p of elementEntries((c["w:comment"] as unknown[] | undefined) ?? [])) {
-      if (ooxml.getTag(p) === "w:p") body.push(parseParagraph(p, mintNodeId));
+      if (ooxml.getTag(p) !== "w:p") continue;
+      if (paraId === undefined) {
+        const pid = attrOf(p, "w14:paraId");
+        if (pid) paraId = pid;
+      }
+      body.push(parseParagraph(p, mintNodeId));
     }
     out.push({
       id,
@@ -489,9 +499,76 @@ function parseComments(container: ooxml.OoxmlContainer, mintNodeId: IdMinter): D
       ...(initials ? { initials } : {}),
       date,
       body,
+      ...(paraId ? { paraId } : {}),
     });
   }
   return out;
+}
+
+interface ExtendedRecord {
+  paraId: string;
+  done?: boolean;
+  parentParaId?: string;
+}
+
+/**
+ * Parse `word/commentsExtended.xml` if present. Returns a map keyed by
+ * `w15:paraId` of the comment's first body paragraph. Missing part →
+ * empty map; unparseable part → empty map (treated as "no extended
+ * metadata", not a hard error, since older Word docs and many third-party
+ * tools omit it).
+ */
+function parseCommentsExtended(container: ooxml.OoxmlContainer): Map<string, ExtendedRecord> {
+  const out = new Map<string, ExtendedRecord>();
+  if (!container.has(COMMENTS_EXTENDED_PART)) return out;
+  let tree: unknown;
+  try {
+    tree = ooxml.parseXml(container.readText(COMMENTS_EXTENDED_PART));
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(tree)) return out;
+  const root = findElementEntry(tree as unknown[], "w15:commentsEx");
+  if (!root) return out;
+  for (const c of elementEntries((root["w15:commentsEx"] as unknown[] | undefined) ?? [])) {
+    if (ooxml.getTag(c) !== "w15:commentEx") continue;
+    const paraId = attrOf(c, "w15:paraId");
+    if (!paraId) continue;
+    const doneStr = attrOf(c, "w15:done");
+    const parent = attrOf(c, "w15:parentPaIdRef");
+    const rec: ExtendedRecord = { paraId };
+    if (doneStr === "1" || doneStr === "true") rec.done = true;
+    if (parent) rec.parentParaId = parent;
+    out.set(paraId, rec);
+  }
+  return out;
+}
+
+/**
+ * Project `commentsExtended` records onto the parsed comment list. Comments
+ * with no matching paraId pass through unchanged.
+ */
+function applyCommentsExtended(
+  comments: DocxComment[],
+  extended: Map<string, ExtendedRecord>
+): DocxComment[] {
+  if (extended.size === 0) return comments;
+  const paraIdToCommentId = new Map<string, string>();
+  for (const c of comments) {
+    if (c.paraId) paraIdToCommentId.set(c.paraId, c.id);
+  }
+  return comments.map((c) => {
+    if (!c.paraId) return c;
+    const ext = extended.get(c.paraId);
+    if (!ext) return c;
+    const next: DocxComment = { ...c };
+    if (ext.done === true) (next as { resolved?: boolean }).resolved = true;
+    if (ext.parentParaId) {
+      const parentCommentId = paraIdToCommentId.get(ext.parentParaId);
+      if (parentCommentId) (next as { parentId?: string }).parentId = parentCommentId;
+    }
+    return next;
+  });
 }
 
 export type { NodeId };

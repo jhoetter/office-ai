@@ -6,3 +6,7 @@ export { formatRangeHandler } from "./format-range.js";
 export { insertParagraphHandler } from "./insert-paragraph.js";
 export { setParagraphStyleHandler } from "./set-paragraph-style.js";
 export { addCommentHandler } from "./add-comment.js";
+export { paragraphPlainText } from "./helpers.js";
+export { resolveCommentHandler } from "./resolve-comment.js";
+export { replyCommentHandler } from "./reply-comment.js";
+export { deleteCommentHandler } from "./delete-comment.js";

@@ -164,3 +164,193 @@ describe("office-agent CLI", () => {
     expect(stderr.text()).toMatch(/selector error/i);
   });
 });
+
+describe("office-agent docx subcommand group", () => {
+  it("docx inspect prints structural counts as JSON", async () => {
+    const input = await makeFixture();
+    const { io, stdout } = makeIO();
+    const code = await runCli(["docx", "inspect", "--file", input], io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout.text());
+    expect(parsed.format).toBe("docx");
+    expect(parsed.paragraphs).toBe(3);
+    expect(parsed.comments).toBe(0);
+    expect(Array.isArray(parsed.parts)).toBe(true);
+  });
+
+  it("docx read --format markdown emits markdown by default", async () => {
+    const input = await makeFixture();
+    const { io, stdout } = makeIO();
+    const code = await runCli(["docx", "read", "--file", input, "--format", "markdown"], io);
+    expect(code).toBe(0);
+    expect(stdout.text()).toContain("# Hello");
+  });
+
+  it("docx read --format json emits a paragraph projection", async () => {
+    const input = await makeFixture();
+    const { io, stdout } = makeIO();
+    const code = await runCli(["docx", "read", "--file", input, "--format", "json"], io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout.text());
+    expect(parsed.format).toBe("docx");
+    expect(parsed.paragraphs).toHaveLength(3);
+    expect(parsed.paragraphs[1].text).toBe("first paragraph body");
+  });
+
+  it("docx read --format text emits plain text", async () => {
+    const input = await makeFixture();
+    const { io, stdout } = makeIO();
+    const code = await runCli(["docx", "read", "--file", input, "--format", "text"], io);
+    expect(code).toBe(0);
+    const text = stdout.text();
+    expect(text).toContain("Hello");
+    expect(text).toContain("first paragraph body");
+    expect(text).not.toContain("#");
+  });
+
+  it("docx write accepts a section:N/paragraph:M selector", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-docx-write-"));
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(
+      [
+        "docx",
+        "write",
+        "--file",
+        input,
+        "--out",
+        output,
+        "--at",
+        "section:0/paragraph:1/run:0/text:0",
+        "--text",
+        "EDIT — ",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    expect(agent.toMarkdown()).toContain("EDIT — first paragraph body");
+  });
+
+  it("docx style applies a paragraph style", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-docx-style-"));
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(
+      ["docx", "style", "--file", input, "--out", output, "--at", "paragraph:2", "--style", "Heading2"],
+      io
+    );
+    expect(code).toBe(0);
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    const p2 = agent.getSnapshot().root.body[2];
+    if (p2.kind !== "paragraph") throw new Error("expected paragraph at index 2");
+    expect(p2.properties.styleId).toBe("Heading2");
+  });
+
+  it("docx comment + resolve-comment + reply-comment + delete-comment lifecycle", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-docx-cl-"));
+    const step1 = join(dir, "step1.docx");
+    const step2 = join(dir, "step2.docx");
+    const step3 = join(dir, "step3.docx");
+    const step4 = join(dir, "step4.docx");
+    const { io, stdout } = makeIO();
+
+    let code = await runCli(
+      [
+        "docx",
+        "comment",
+        "--file",
+        input,
+        "--out",
+        step1,
+        "--range",
+        "paragraph:1/text:0..5",
+        "--text",
+        "rephrase?",
+        "--author",
+        "Tester",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+
+    let agent = await DocxAgent.fromBuffer(readFileSync(step1));
+    expect(agent.getSnapshot().root.comments).toHaveLength(1);
+    const commentId = agent.getSnapshot().root.comments[0].id;
+
+    const r1 = makeIO();
+    code = await runCli(
+      ["docx", "resolve-comment", "--file", step1, "--out", step2, "--id", commentId],
+      r1.io
+    );
+    expect(code).toBe(0);
+    agent = await DocxAgent.fromBuffer(readFileSync(step2));
+    expect(agent.getSnapshot().root.comments[0].resolved).toBe(true);
+
+    const r2 = makeIO();
+    code = await runCli(
+      [
+        "docx",
+        "reply-comment",
+        "--file",
+        step2,
+        "--out",
+        step3,
+        "--parent",
+        commentId,
+        "--text",
+        "ack",
+        "--author",
+        "Bob",
+      ],
+      r2.io
+    );
+    expect(code).toBe(0);
+    agent = await DocxAgent.fromBuffer(readFileSync(step3));
+    expect(agent.getSnapshot().root.comments).toHaveLength(2);
+    expect(agent.getSnapshot().root.comments[1].parentId).toBe(commentId);
+
+    const r3 = makeIO();
+    code = await runCli(
+      ["docx", "delete-comment", "--file", step3, "--out", step4, "--id", commentId],
+      r3.io
+    );
+    expect(code).toBe(0);
+    agent = await DocxAgent.fromBuffer(readFileSync(step4));
+    expect(agent.getSnapshot().root.comments).toHaveLength(0);
+
+    void stdout;
+  });
+
+  it("docx diff reports paragraph modifications", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-docx-diff-"));
+    const after = join(dir, "after.docx");
+    const writeIo = makeIO();
+    let code = await runCli(
+      [
+        "docx",
+        "write",
+        "--file",
+        input,
+        "--out",
+        after,
+        "--at",
+        "paragraph:1/run:0/text:0",
+        "--text",
+        "DIFF ",
+      ],
+      writeIo.io
+    );
+    expect(code).toBe(0);
+
+    const diffIo = makeIO();
+    code = await runCli(["docx", "diff", "--before", input, "--after", after], diffIo.io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(diffIo.stdout.text());
+    expect(parsed.paragraphs.modified).toBe(1);
+  });
+});

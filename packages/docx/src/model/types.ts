@@ -19,6 +19,13 @@ export interface DocxDirtyFlags {
   comments: boolean;
   rels: boolean;
   contentTypes: boolean;
+  /**
+   * Whether `word/commentsExtended.xml` (W15 thread + resolved metadata)
+   * has been touched and must be re-emitted on save. Independent of
+   * `comments`: resolving a comment changes only the extended part, while
+   * adding a new comment dirties both `comments` and `commentsExtended`.
+   */
+  commentsExtended: boolean;
 }
 
 export interface DocxDocument {
@@ -189,6 +196,25 @@ export interface DocxComment {
   readonly initials?: string;
   readonly date: string;
   readonly body: ReadonlyArray<BlockNode>;
+  /**
+   * Whether the comment thread has been resolved. Driven by
+   * `word/commentsExtended.xml` (`w15:commentEx[@w15:done='1']`). When the
+   * field is absent in OOXML it is treated as `false` (open).
+   */
+  readonly resolved?: boolean;
+  /**
+   * Parent comment id when this is a reply. Drives the `w15:parentPaIdRef`
+   * cross-reference in `word/commentsExtended.xml`. Top-level comments leave
+   * this undefined.
+   */
+  readonly parentId?: string;
+  /**
+   * Stable W14 paragraph id of the comment's first body paragraph. OOXML's
+   * `commentsExtended.xml` keys threading and resolved-state by this paraId,
+   * not by the comment id. Captured on parse if present; minted on demand
+   * by the serializer when a comment needs an extended-metadata entry.
+   */
+  readonly paraId?: string;
 }
 
 /* ── Opaque carrier ──────────────────────────────────────────────────────── */
