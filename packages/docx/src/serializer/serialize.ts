@@ -16,6 +16,7 @@ import type {
 import { opaqueToEntry } from "../parser/xml-helpers.js";
 import { DocxSerializeError } from "./errors.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
+import { serializeTable, serializeTableFromRaw } from "./tables.js";
 
 const MAIN_PART = "word/document.xml";
 const COMMENTS_PART = "word/comments.xml";
@@ -118,6 +119,14 @@ function serializeBlock(block: BlockNode): unknown {
     case "paragraph":
       return serializeParagraph(block);
     case "table":
+      // Per-table dirty marker: when `raw` is set, the table has not been
+      // touched since parse and we re-emit the cached subtree byte-for-byte
+      // (this is what preserves SHA-256 identity of `word/document.xml` when
+      // a sibling table is mutated). When `raw` is absent, the table was
+      // produced by a mutating command and must be regenerated from typed
+      // fields.
+      if (block.raw) return serializeTableFromRaw(block.raw);
+      return serializeTable(block, serializeBlock);
     case "section-break":
     case "opaque-block":
       return opaqueToEntry(block.raw);

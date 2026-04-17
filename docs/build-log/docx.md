@@ -1032,3 +1032,125 @@ provider.
   for those edge cases, so we never produce a wrong-looking
   pipe table — we just produce a placeholder. Richer extraction
   lands with the W7 typed-table model.
+
+## P1.3 — W7: Typed tables
+
+Turning tables from "opaque preserved" into a first-class, mutation-aware
+part of the model. Backend only; no UI yet.
+
+### What shipped
+
+- **Typed model** — `Table` now carries a typed `properties: TableProperties`,
+  `grid: ReadonlyArray<TableGridCol>`, and `rows: ReadonlyArray<TableRow>`
+  triple instead of a single opaque `<w:tbl>` blob. `TableRow` and
+  `TableCell` get matching typed shapes (`TableRowProperties`,
+  `TableCellProperties`); cells contain a recursive `body: BlockNode[]`
+  so paragraphs _and_ nested tables round-trip correctly. Every
+  `properties` interface keeps an `opaqueProps?: ReadonlyArray<OpaqueXml>`
+  carrier for unknown XML — same pattern `ParagraphProperties` already
+  uses — so the round-trip stays lossless even for tables Word fills
+  with shading / borders / look flags we don't model yet.
+- **Parser** — new `parser/tables.ts` (`parseTable` / `parseTableRow` /
+  `parseTableCell`), wired into `parse.ts`. The injected
+  `parseParagraph` argument breaks an otherwise circular import.
+  Unknown block-level children inside a `<w:tc>` (drawings nested in a
+  cell, mc:AlternateContent blocks, etc.) become `OpaqueBlock` so the
+  cell still type-checks and round-trips.
+- **Serializer** — new `serializer/tables.ts`. The body serializer now
+  forks per table: if `table.raw` is set (untouched since parse) it
+  re-emits the cached subtree via `serializeTableFromRaw`; otherwise it
+  regenerates from the typed model.
+- **Four commands** — `docx:insert-table`, `docx:set-cell-content`,
+  `docx:insert-row`, `docx:insert-column`. All four go through
+  `CommandBus`, mint ids via `IdMinter`, and produce typed `Diff`s
+  (`node-inserted` / `node-updated` with `path: ["body", N, "rows", R,
+"cells", C, ...]`).
+
+### Decision: byte-preservation marker = `Table.raw` itself
+
+The brief allowed a separate per-table dirty bit on the snapshot, but
+folding the marker into the table proved cleaner:
+
+- `parseTable` always sets `raw` from `captureOpaque(entry)`.
+- Every mutating command runs its result through `withoutRaw(...)`,
+  which strips `raw` and returns a new object.
+- `findTable(...)` rebuilds every ancestor table on the way up, dropping
+  _their_ `raw` too — so a `set-cell-content` against a nested table
+  invalidates exactly the chain of containing tables, never their
+  siblings.
+- The body serializer's "fast path vs regenerate" decision is then a
+  single property check (`if (block.raw) ...`) instead of a side-table
+  lookup — keeps the serializer free of dirty-tracking logic and makes
+  the invariant trivially observable in tests.
+
+This is what lets `04-table-grid.docx` round-trip with
+`word/document.xml` byte-identical even when other commands (or no
+commands at all) have been dispatched.
+
+### Constraint: merged-cell mutations
+
+The brief explicitly defers reflow of `gridSpan` / `vMerge` regions to a
+later session. The handlers therefore reject mutations that would
+_corrupt_ a merge, with `merged-cell-not-supported`:
+
+- `set-cell-content` rejects writes into a `vMerge="continue"` cell.
+- `insert-row` rejects insertions immediately above a row that begins
+  with `vMerge="continue"` cells (which would orphan their `restart`
+  ancestor).
+- `insert-column` rejects insertions whose target column index is
+  straddled by a `gridSpan > 1` cell in any row. Boundary insertions
+  (`at === 0` or `at === grid.length`) are always accepted.
+
+`gridSpan` and `vMerge` parse + round-trip correctly in all cases —
+only the four mutating commands gate against them.
+
+### Constraint: nested-table cycles
+
+`tableId` resolves recursively (a nested table inside a cell can be the
+target). To keep `set-cell-content` from accepting a payload that would
+rewrite the document into an infinite tree, the handler walks the
+incoming `content` looking for any `Table` whose `id` matches the target
+or one of its ancestors and rejects with `unknown-target`.
+
+### Markdown projection compatibility shim
+
+`agent/markdown.ts` is in the W7 read-only list, but its previous code
+unconditionally read `table.raw.subtree` to extract cell text. With
+`raw` now optional that line stops type-checking. The minimal-impact
+fix is a fork:
+
+```ts
+const projected =
+  block.rows.length > 0 ? tableToMarkdownTyped(block) : block.raw ? tableToMarkdown(block.raw.subtree) : null;
+```
+
+`tableToMarkdownTyped` walks the typed model directly, which is
+strictly better than the old subtree scrape (it picks up nested
+paragraphs, list items, etc.) and eliminates the future need for the
+legacy path entirely.
+
+### Test re-point in `handlers.test.ts`
+
+The pre-existing `"stub commands return a rejected mutation with
+not-implemented"` case asserted on `docx:insert-table`. Shipping the
+real handler obviously breaks that single line. The minimal possible
+edit — re-pointing it at `docx:insert-image`, the only remaining stub
+— keeps the existing suite green while preserving the test's intent
+(verify the bus surfaces `not-implemented` errors as rejected
+mutations). Flagged in the W7 deviations report.
+
+### Test counts
+
+| Suite                     | Before | After |
+| ------------------------- | -----: | ----: |
+| `@officeai/docx` (Vitest) |     83 |    98 |
+
+15 new cases in `commands/tables.test.ts` cover: synthetic 2×3 parse,
+real-world fixture parse, byte-preservation on fixture round-trip,
+`insert-table` + payload validation, `set-cell-content` happy path +
+unknown-target + OOB + cycle, `insert-row` append + at-zero header
+semantics, `insert-column` middle + edge insertion, nested-table parse
+
+- mutation, and `gridSpan`/`vMerge` preservation + continuation-write
+  rejection.
+

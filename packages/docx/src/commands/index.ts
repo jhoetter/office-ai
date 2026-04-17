@@ -14,3 +14,7 @@ export { setHeaderTextHandler } from "./set-header-text.js";
 export { setFooterTextHandler } from "./set-footer-text.js";
 export { acceptChangeHandler } from "./accept-change.js";
 export { rejectChangeHandler } from "./reject-change.js";
+export { insertTableHandler } from "./insert-table.js";
+export { setCellContentHandler } from "./set-cell-content.js";
+export { insertRowHandler } from "./insert-row.js";
+export { insertColumnHandler } from "./insert-column.js";

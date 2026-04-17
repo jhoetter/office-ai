@@ -19,10 +19,10 @@ import type {
   RunChild,
   RunProperties,
   SectionBreak,
-  Table,
 } from "../model/types.js";
 import { DocxParseError } from "./errors.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
+import { parseTable as parseTableTyped } from "./tables.js";
 import {
   attrOf,
   captureOpaque,
@@ -187,7 +187,7 @@ function parseBody(bodyEntry: Record<string, unknown>, mintNodeId: IdMinter): Bl
         out.push(parseParagraph(entry, mintNodeId));
         break;
       case "w:tbl":
-        out.push(parseTable(entry, mintNodeId));
+        out.push(parseTableTyped(entry, mintNodeId, parseParagraph));
         break;
       case "w:sectPr":
         out.push(parseSectionBreak(entry, mintNodeId));
@@ -198,10 +198,6 @@ function parseBody(bodyEntry: Record<string, unknown>, mintNodeId: IdMinter): Bl
     }
   }
   return out;
-}
-
-function parseTable(entry: Record<string, unknown>, mintNodeId: IdMinter): Table {
-  return { kind: "table", id: mintNodeId(), raw: captureOpaque(entry) };
 }
 
 function parseSectionBreak(entry: Record<string, unknown>, mintNodeId: IdMinter): SectionBreak {

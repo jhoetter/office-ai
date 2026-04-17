@@ -5,11 +5,15 @@ import { addCommentHandler } from "./add-comment.js";
 import { deleteCommentHandler } from "./delete-comment.js";
 import { deleteRangeHandler } from "./delete-range.js";
 import { formatRangeHandler } from "./format-range.js";
+import { insertColumnHandler } from "./insert-column.js";
 import { insertParagraphHandler } from "./insert-paragraph.js";
+import { insertRowHandler } from "./insert-row.js";
+import { insertTableHandler } from "./insert-table.js";
 import { insertTextHandler } from "./insert-text.js";
 import { rejectChangeHandler } from "./reject-change.js";
 import { replyCommentHandler } from "./reply-comment.js";
 import { resolveCommentHandler } from "./resolve-comment.js";
+import { setCellContentHandler } from "./set-cell-content.js";
 import { setFooterTextHandler } from "./set-footer-text.js";
 import { setHeaderTextHandler } from "./set-header-text.js";
 import { setParagraphStyleHandler } from "./set-paragraph-style.js";
@@ -26,8 +30,6 @@ function makeStub<TPayload>(type: string, reason: string): CommandHandler<TPaylo
 void CommandError;
 
 const stubs: ReadonlyArray<CommandHandler<unknown, DocxSnapshot>> = [
-  makeStub("docx:insert-table", "Tables are P1; preserved on roundtrip but not yet editable."),
-  makeStub("docx:set-cell-content", "Tables are P1; cell content editing not yet implemented."),
   makeStub("docx:insert-image", "Image insertion is P1; existing images are preserved."),
 ];
 
@@ -45,6 +47,10 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setFooterTextHandler as CommandHandler<unknown, DocxSnapshot>,
   acceptChangeHandler as CommandHandler<unknown, DocxSnapshot>,
   rejectChangeHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertTableHandler as CommandHandler<unknown, DocxSnapshot>,
+  setCellContentHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertRowHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertColumnHandler as CommandHandler<unknown, DocxSnapshot>,
   ...stubs,
 ];
 

@@ -1,11 +1,11 @@
 # DOCX — Agent Commands
 
-> Complete typed list. Thirteen commands are implemented today
+> Complete typed list. Seventeen commands are implemented today
 > ("**P0**" + the three comment-lifecycle commands + the two
 > header/footer-text commands + the two tracked-change resolution
-> commands). The remaining three (`insert-table`, `set-cell-content`,
-> `insert-image`) are stubbed and throw `NotImplementedError` until a
-> follow-up session.
+> commands + the four typed-table commands shipped in P1.3 / W7).
+> Only `docx:insert-image` remains stubbed; it throws
+> `NotImplementedError` until a follow-up session.
 
 ## Common types
 
@@ -248,18 +248,121 @@ Inverse of `docx:accept-change`:
 
 Same error contract, same dirty-flag discipline as `accept-change`.
 
-## Commands (P1 — stubbed; throw `NotImplementedError`)
+## Commands (P1 — typed tables, shipped in P1.3 / W7)
+
+### `docx:insert-table`
 
 ```typescript
-"docx:insert-table"        { at: DocxPosition; rows: number; cols: number }
-"docx:set-cell-content"    { tableId: NodeId; row: number; col: number; content: BlockNode[] }
+type InsertTablePayload = {
+  at: DocxPosition;
+  rows: number;
+  cols: number;
+  /** Optional explicit column widths in twips. Length MUST equal `cols`. */
+  columnWidths?: number[];
+  /** Optional table-level properties applied verbatim. */
+  properties?: Partial<TableProperties>;
+};
+```
+
+Insert a fresh `rows × cols` table at `at.paragraph` (or append when
+`at.paragraph === body.length`). Every cell is initialised with one empty
+paragraph. The new `Table` is returned WITHOUT a `raw` blob so the
+serializer regenerates the `<w:tbl>` from its typed model — this is what
+lets the byte-preservation invariant continue to hold for _other_,
+untouched tables in the same document.
+
+Errors:
+
+- `invalid-payload` — `rows < 1`, `cols < 1`, or `columnWidths.length !== cols`.
+- `invalid-position` — `at.paragraph` outside `[0, body.length]`.
+
+### `docx:set-cell-content`
+
+```typescript
+type SetCellContentPayload = {
+  tableId: NodeId;
+  row: number;
+  col: number;
+  content: BlockNode[];
+};
+```
+
+Replace the body of one cell wholesale. `tableId` resolves recursively, so
+nested tables can be addressed directly. `content` may include further
+nested tables, but their ids must NOT collide with the target table or any
+of its ancestors (cycle protection). When `content` is empty the handler
+synthesises a single empty paragraph because OOXML requires every `<w:tc>`
+to contain at least one paragraph.
+
+Errors:
+
+- `unknown-target` — missing `tableId`, no table with that id, OOB
+  `row`/`col`, or `content` contains a `Table` whose `id` matches the
+  target / an ancestor table.
+- `merged-cell-not-supported` — the targeted cell is a `vMerge="continue"`
+  continuation cell. Reflowing merge regions is deferred; callers must
+  rewrite the `vMerge` chain themselves first.
+
+### `docx:insert-row`
+
+```typescript
+type InsertRowPayload = {
+  tableId: NodeId;
+  /** 0-based row index. `at === rows.length` appends. */
+  at: number;
+};
+```
+
+Insert a fresh row matching the table's grid. Each new cell carries one
+empty paragraph and a `<w:tcW>` width inherited from the corresponding
+`<w:gridCol>`. The row's `header` flag is intentionally left unset so the
+originally-declared header row keeps its semantics regardless of where the
+new row lands.
+
+Errors:
+
+- `unknown-target` — missing or unknown `tableId`.
+- `invalid-position` — `at` outside `[0, rows.length]`.
+- `merged-cell-not-supported` — the row at `at` (the row about to be
+  pushed down) starts with one or more `vMerge="continue"` cells, which
+  would orphan their `restart` ancestor.
+
+### `docx:insert-column`
+
+```typescript
+type InsertColumnPayload = {
+  tableId: NodeId;
+  /** 0-based column index. `at === grid.length` appends. */
+  at: number;
+  /** Column width in twips; defaults to an equal split. */
+  width?: number;
+};
+```
+
+Insert a `<w:gridCol>` at column `at` and a fresh `<w:tc>` (single empty
+paragraph) at the same horizontal index in every row. When `width` is
+omitted the handler equal-splits the existing declared widths; if the grid
+declares no widths at all it falls back to 1000 twips.
+
+Errors:
+
+- `unknown-target` — missing or unknown `tableId`.
+- `invalid-position` — `at` outside `[0, grid.length]`.
+- `merged-cell-not-supported` — at least one row has a cell whose
+  `gridSpan` straddles the requested column index. Boundary insertions
+  (`at === 0` or `at === grid.length`) are always accepted because they
+  sit at the table's own edges.
+
+## Commands (P1 — still stubbed; throw `NotImplementedError`)
+
+```typescript
 "docx:insert-image"        { at: DocxPosition; data: ArrayBuffer; mimeType: string; width: number; height: number }
 ```
 
-Each P1 stub:
+The remaining stub:
 
 1. Validates payload shape (with Zod-style guards in code).
-2. Throws `new NotImplementedError("docx:insert-table", { reason: "Tables are P1; see docs/build-log/docx.md" })`.
+2. Throws `new NotImplementedError("docx:insert-image", { reason: "..." })`.
 3. The error is caught by the bus and surfaced as a `Mutation` with
    `status: "rejected"` so callers (CLI, UI) can react gracefully.
 

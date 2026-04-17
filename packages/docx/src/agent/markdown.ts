@@ -1,4 +1,4 @@
-import type { BlockNode, DocxComment, DocxSnapshot, Paragraph } from "../model/types.js";
+import type { BlockNode, DocxComment, DocxSnapshot, Paragraph, Table } from "../model/types.js";
 import { paragraphPlainText } from "../commands/helpers.js";
 
 const HEADING_STYLES: Record<string, number> = {
@@ -39,7 +39,16 @@ export function snapshotToMarkdown(snapshot: DocxSnapshot): string {
         lines.push("");
         break;
       case "table": {
-        const projected = tableToMarkdown(block.raw.subtree);
+        // Prefer the typed model (introduced in P1.3 / W7). Fall back to the
+        // legacy raw-subtree walker only if the typed shape is empty AND a
+        // raw blob is still attached (back-compat for any code path that
+        // somehow constructs a Table without rows but with bytes).
+        const projected =
+          block.rows.length > 0
+            ? tableToMarkdownTyped(block)
+            : block.raw
+              ? tableToMarkdown(block.raw.subtree)
+              : null;
         if (projected) {
           lines.push(...projected);
         } else {
@@ -138,6 +147,41 @@ function tableToMarkdown(subtree: ReadonlyArray<unknown>): string[] | null {
 function escapeCellText(s: string): string {
   // Pipe characters break the table column boundary; collapse newlines.
   return s.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+}
+
+/**
+ * Project a typed `Table` into a GFM pipe-table. Mirrors `tableToMarkdown`
+ * (which still serves the legacy raw-subtree path) but reads cell text via
+ * `paragraphPlainText` so it's resilient to mutations.
+ */
+function tableToMarkdownTyped(table: Table): string[] | null {
+  const rows: string[][] = [];
+  for (const row of table.rows) {
+    const cells: string[] = [];
+    for (const cell of row.cells) {
+      const parts: string[] = [];
+      for (const block of cell.body) {
+        if (block.kind === "paragraph") parts.push(paragraphPlainText(block));
+      }
+      cells.push(escapeCellText(parts.join(" ")));
+    }
+    if (cells.length > 0) rows.push(cells);
+  }
+  if (rows.length === 0) return null;
+
+  const colCount = rows.reduce((m, r) => Math.max(m, r.length), 0);
+  for (const r of rows) {
+    while (r.length < colCount) r.push("");
+  }
+
+  const out: string[] = [];
+  const header = rows[0];
+  out.push(`| ${header.join(" | ")} |`);
+  out.push(`| ${header.map(() => "---").join(" | ")} |`);
+  for (let i = 1; i < rows.length; i++) {
+    out.push(`| ${rows[i].join(" | ")} |`);
+  }
+  return out;
 }
 
 /* ── Comment projection ──────────────────────────────────────────────────── */

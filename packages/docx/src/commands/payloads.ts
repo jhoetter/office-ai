@@ -1,4 +1,4 @@
-import type { BlockNode, DocxPosition, DocxSelection } from "../model/types.js";
+import type { BlockNode, DocxPosition, DocxSelection, TableProperties } from "../model/types.js";
 
 export const DOCX_COMMAND_TYPES = [
   "docx:insert-text",
@@ -9,6 +9,8 @@ export const DOCX_COMMAND_TYPES = [
   "docx:add-comment",
   "docx:insert-table",
   "docx:set-cell-content",
+  "docx:insert-row",
+  "docx:insert-column",
   "docx:insert-image",
   "docx:resolve-comment",
   "docx:reply-comment",
@@ -67,6 +69,10 @@ export interface InsertTablePayload {
   at: DocxPosition;
   rows: number;
   cols: number;
+  /** Optional explicit column widths in twips. Length must equal `cols`. */
+  columnWidths?: number[];
+  /** Optional table-level properties applied verbatim. */
+  properties?: Partial<TableProperties>;
 }
 
 export interface SetCellContentPayload {
@@ -74,6 +80,20 @@ export interface SetCellContentPayload {
   row: number;
   col: number;
   content: BlockNode[];
+}
+
+export interface InsertRowPayload {
+  tableId: string;
+  /** 0-based row index. `at === rows.length` appends. */
+  at: number;
+}
+
+export interface InsertColumnPayload {
+  tableId: string;
+  /** 0-based column index. `at === grid.length` appends. */
+  at: number;
+  /** Optional column width in twips. Defaults to an equal-split. */
+  width?: number;
 }
 
 export interface InsertImagePayload {

@@ -82,10 +82,90 @@ export interface ParagraphProperties {
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
+/**
+ * Typed `<w:tbl>` carrier (P1.3 / W7).
+ *
+ * Byte-preservation contract: when a table has not been mutated since load it
+ * carries the original `<w:tbl>` subtree in `raw`, and the serializer emits
+ * those bytes verbatim. Any mutation that produces a new `Table` MUST drop
+ * `raw` (set it to `undefined`); the serializer treats the absence of `raw`
+ * as "regenerate from typed fields". This per-table marker is what lets a
+ * `set-cell-content` against table A leave table B byte-identical even
+ * though `dirty.body` is set on the snapshot.
+ */
 export interface Table {
   readonly kind: "table";
   readonly id: NodeId;
-  readonly raw: OpaqueXml;
+  readonly properties: TableProperties;
+  readonly grid: ReadonlyArray<TableGridCol>;
+  readonly rows: ReadonlyArray<TableRow>;
+  /**
+   * Original `<w:tbl>` subtree captured at parse time. Present on freshly
+   * parsed tables and on tables that have not been touched by a mutating
+   * command. MUST be omitted (or `undefined`) on any `Table` produced by a
+   * mutating command — the serializer uses its presence as the per-table
+   * "clean / re-emit cached bytes" signal.
+   */
+  readonly raw?: OpaqueXml;
+}
+
+export interface TableRow {
+  readonly kind: "table-row";
+  readonly id: NodeId;
+  readonly properties: TableRowProperties;
+  readonly cells: ReadonlyArray<TableCell>;
+}
+
+export interface TableCell {
+  readonly kind: "table-cell";
+  readonly id: NodeId;
+  readonly properties: TableCellProperties;
+  /** Block-level cell body: paragraphs and (recursively) nested tables. */
+  readonly body: ReadonlyArray<BlockNode>;
+}
+
+/** A `<w:gridCol>` entry in `<w:tblGrid>`. */
+export interface TableGridCol {
+  /** Column width in twips (`w:w`). Optional — some tables omit it. */
+  readonly w?: number;
+}
+
+export interface TableWidth {
+  readonly value: number;
+  readonly type: "auto" | "dxa" | "pct" | "nil";
+}
+
+/**
+ * Modeled subset of `<w:tblPr>`. The fields we don't model (borders, shading,
+ * styles, look flags, …) are preserved verbatim in `opaqueProps[]` so the
+ * round-trip stays lossless. Order is the OOXML canonical order on emit
+ * (`tblPr` is order-sensitive in the schema; we keep typed fields first then
+ * append opaque children in their original document order).
+ */
+export interface TableProperties {
+  readonly width?: TableWidth;
+  readonly jc?: "left" | "center" | "right" | "start" | "end";
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+/** Modeled subset of `<w:trPr>`. */
+export interface TableRowProperties {
+  /** `<w:trHeight w:val="…" w:hRule="…"/>`. */
+  readonly trHeight?: { readonly value: number; readonly rule?: "auto" | "exact" | "atLeast" };
+  /** `<w:tblHeader/>` — when true, the row repeats as a header on each page. */
+  readonly header?: boolean;
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+/** Modeled subset of `<w:tcPr>`. */
+export interface TableCellProperties {
+  /** `<w:gridSpan w:val="N"/>` — horizontal merge. Defaults to 1. */
+  readonly gridSpan?: number;
+  /** `<w:vMerge>` — vertical merge marker. `"restart"` opens a region; `"continue"` continues it. */
+  readonly vMerge?: "restart" | "continue";
+  /** `<w:tcW>` cell width. */
+  readonly tcW?: TableWidth;
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
 export interface SectionBreak {
