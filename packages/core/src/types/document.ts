@@ -41,6 +41,22 @@ export type DiffChange =
       from: DiffPath;
       to: DiffPath;
       summary: string;
+    }
+  | {
+      /**
+       * A new OPC part was added to the package (e.g. a media binary
+       * inserted alongside its rel + content-type registration). `path`
+       * carries the part path as a single-segment array — e.g.
+       * `["word/media/image3.png"]` — so consumers that already key off
+       * `change.path[0]` get the part path without a special case.
+       *
+       * Added in P1.3 / W8 (image insertion). Older changes do not emit
+       * this kind; downstream readers that rely on the union should
+       * handle it via an exhaustive switch.
+       */
+      kind: "part-added";
+      path: DiffPath;
+      summary: string;
     };
 
 export interface DocumentDiff {

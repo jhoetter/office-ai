@@ -18,3 +18,4 @@ export { insertTableHandler } from "./insert-table.js";
 export { setCellContentHandler } from "./set-cell-content.js";
 export { insertRowHandler } from "./insert-row.js";
 export { insertColumnHandler } from "./insert-column.js";
+export { insertImageHandler } from "./insert-image.js";

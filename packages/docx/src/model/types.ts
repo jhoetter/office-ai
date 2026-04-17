@@ -34,6 +34,20 @@ export interface DocxDirtyFlags {
    * the byte-equality invariant on round-trip.
    */
   headersAndFooters: ReadonlySet<string>;
+  /**
+   * Set of media part paths (e.g. `"word/media/image1.png"`) that have
+   * been added or changed since load. Untouched media parts are
+   * preserved verbatim by the cloned container — the serializer only
+   * writes back parts in this set. Added in P1.3 / W8 (image insertion).
+   */
+  media: ReadonlySet<string>;
+  /**
+   * Set of relationships-part paths (e.g.
+   * `"word/_rels/document.xml.rels"`) that have been modified since load.
+   * Untouched rels parts are left alone in the cloned container so they
+   * round-trip byte-identical. Added in P1.3 / W8.
+   */
+  relationships: ReadonlySet<string>;
 }
 
 export interface DocxDocument {
@@ -48,7 +62,57 @@ export interface DocxDocument {
    * and `serializer/headers-footers.ts`.
    */
   readonly headersAndFooters: ReadonlyArray<HeaderFooterPart>;
+  /**
+   * Binary media parts (`word/media/*.{png,jpg,...}`) keyed by part path.
+   * Populated on load by `parseMediaParts`. New entries added by
+   * `docx:insert-image`. Untouched parts round-trip byte-identical via
+   * the container's part cache; only entries in `dirty.media` are
+   * re-written by the serializer. Added in P1.3 / W8.
+   */
+  readonly media: ReadonlyMap<string, MediaPart>;
+  /**
+   * Relationships parts (`*.rels`) parsed into a typed map keyed by the
+   * **owning part path** (NOT the rels part path itself). For example,
+   * the rels for `word/document.xml` live at
+   * `word/_rels/document.xml.rels` but are keyed here by
+   * `"word/document.xml"`. The package-level rels (`_rels/.rels`) are
+   * keyed by the empty string `""`. Added in P1.3 / W8.
+   *
+   * Mutating commands that touch rels (currently only
+   * `docx:insert-image`) replace the relevant array and add the owning
+   * part path to `dirty.relationships`. Untouched parts are not
+   * re-emitted, so their bytes (and attribute order) survive the
+   * round-trip exactly.
+   */
+  readonly relationships: ReadonlyMap<string, ReadonlyArray<Relationship>>;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+}
+
+/**
+ * A binary media part stored under `word/media/`. The bytes are kept as a
+ * `Uint8Array` (no `Buffer` — packages/docx must work in browser bundles
+ * too). `digest` is the hex-encoded SHA-256 of `bytes`, computed once on
+ * load, and used for de-duplication: two `docx:insert-image` calls with
+ * identical bytes share the same media part.
+ */
+export interface MediaPart {
+  readonly partPath: string;
+  readonly mimeType: string;
+  readonly bytes: Uint8Array;
+  readonly digest: string;
+}
+
+/**
+ * Typed `*.rels` entry. Mirrors `@officeai/core` `Relationship`. We
+ * re-export the shape here so consumers of the docx model don't have to
+ * reach across to the OPC package layer for a simple type. Added in
+ * P1.3 / W8.
+ */
+export interface Relationship {
+  readonly id: string;
+  readonly type: string;
+  readonly target: string;
+  readonly targetMode?: "Internal" | "External";
 }
 
 /* ── Block-level ─────────────────────────────────────────────────────────── */
@@ -232,8 +296,67 @@ export interface TabLeaf {
   readonly id: NodeId;
 }
 
-export interface DrawingLeaf {
+/**
+ * A `<w:drawing>` leaf inside a run. Discriminated union over `subkind`:
+ *
+ * - `"inline-image"` — a fully typed `<wp:inline>` containing
+ *   `<a:graphic><a:graphicData uri=".../picture"><pic:pic>`. Captures the
+ *   relationship id, EMU dimensions, and `<wp:docPr>` metadata so
+ *   mutation commands (and the AI's projection layer) can reason about
+ *   them without parsing the subtree. The original subtree is cached in
+ *   `raw` so the serializer can re-emit byte-identical bytes when no
+ *   field has changed.
+ * - `"opaque"` — every other drawing (charts, shapes, SmartArt, anchored
+ *   floats with text-wrap, embedded objects, …). Stored as opaque XML
+ *   and round-tripped verbatim. The typed promotion lands one drawing
+ *   class at a time; this is the catch-all bucket.
+ */
+export type DrawingLeaf = InlineImageDrawing | OpaqueDrawing;
+
+export interface InlineImageDrawing {
   readonly kind: "drawing";
+  readonly subkind: "inline-image";
+  readonly id: NodeId;
+  /** `r:embed` relationship id resolving to a `word/media/*` part. */
+  readonly relId: string;
+  /** Display width in OOXML EMUs (`<wp:extent cx>`). 9525 EMU = 1px @ 96 DPI. */
+  readonly cx: number;
+  /** Display height in OOXML EMUs (`<wp:extent cy>`). */
+  readonly cy: number;
+  /** `<wp:docPr id>` — must be unique across the document. */
+  readonly docPrId: number;
+  /** `<wp:docPr name>` — Word displays this in the alt-text dialog. */
+  readonly name: string;
+  /** Optional `<wp:docPr descr>` ("alt text"). */
+  readonly descr?: string;
+  /** Extra `<wp:inline>` / `<a:blip>` / `<pic:nvPicPr>` bits we model. */
+  readonly properties?: InlineImageProperties;
+  /**
+   * Original `<w:drawing>` subtree captured at parse time. When present
+   * AND no typed field has changed, the serializer re-emits these bytes
+   * verbatim (byte-preservation fast path, mirrors `Table.raw`). Mutating
+   * commands MUST drop `raw` on the new leaf they produce.
+   */
+  readonly raw?: OpaqueXml;
+}
+
+export interface InlineImageProperties {
+  /** Optional `<wp:effectExtent>` carried verbatim. */
+  readonly effectExtent?: { readonly t: number; readonly r: number; readonly b: number; readonly l: number };
+  /** `<wp:inline distT/distB/distL/distR>` margins around the image. */
+  readonly distT?: number;
+  readonly distB?: number;
+  readonly distL?: number;
+  readonly distR?: number;
+  /** `<wp:docPr title>` (some Word builds carry both `name` and `title`). */
+  readonly title?: string;
+  /** Catch-all for unmodelled wp:inline / pic:pic subtree fragments. */
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+export interface OpaqueDrawing {
+  readonly kind: "drawing";
+  readonly subkind: "opaque";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
 }

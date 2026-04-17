@@ -16,6 +16,9 @@ import type {
 import { opaqueToEntry } from "../parser/xml-helpers.js";
 import { DocxSerializeError } from "./errors.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
+import { serializeInlineImageDrawing } from "./images.js";
+import { serializeMediaParts } from "./media.js";
+import { serializeRelationshipsParts } from "./relationships.js";
 import { serializeTable, serializeTableFromRaw } from "./tables.js";
 
 const MAIN_PART = "word/document.xml";
@@ -90,7 +93,66 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
     });
   }
 
+  // Media bytes. Same dirty-set-only contract as headers/footers — only
+  // parts the snapshot reports as dirty are re-written.
+  try {
+    serializeMediaParts(container, snapshot);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("media-failed", "Failed to write media parts", { cause: err });
+  }
+
+  // Relationships parts. Rewritten from the typed model when dirty.
+  try {
+    serializeRelationshipsParts(container, snapshot);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("rels-failed", "Failed to write relationships parts", { cause: err });
+  }
+
+  // [Content_Types].xml. We update this when the caller has set the
+  // contentTypes dirty flag (currently driven by `docx:insert-image` when
+  // it adds a new image MIME type or registers a new override). The typed
+  // model for content types is the union of every media MIME we know
+  // about plus the existing defaults/overrides.
+  if (snapshot.dirty.contentTypes) {
+    try {
+      ensureMediaContentTypes(container, snapshot);
+    } catch (err) {
+      if (err instanceof DocxSerializeError) throw err;
+      throw new DocxSerializeError("content-types-failed", "Failed to update [Content_Types].xml", {
+        cause: err,
+      });
+    }
+  }
+
   return container.serialize();
+}
+
+/**
+ * Ensure `[Content_Types].xml` has a `<Default Extension="…">` entry for
+ * every media part currently in the snapshot. We only add — never remove
+ * — defaults, because removing one could break parts owned by other
+ * workstreams that we don't model. Idempotent (no-op on second call).
+ */
+function ensureMediaContentTypes(container: ooxml.OoxmlContainer, snapshot: DocxSnapshot): void {
+  const ct = ooxml.ContentTypes.load(container);
+  let changed = false;
+  for (const part of snapshot.root.media.values()) {
+    const ext = extensionOf(part.partPath).toLowerCase();
+    if (!ext) continue;
+    if (!ct.hasDefault(ext)) {
+      ct.addDefault(ext, part.mimeType);
+      changed = true;
+    }
+  }
+  if (changed) ct.writeBack(container);
+}
+
+function extensionOf(partPath: string): string {
+  const dot = partPath.lastIndexOf(".");
+  if (dot < 0) return "";
+  return partPath.slice(dot + 1);
 }
 
 function serializeDocumentXml(doc: DocxDocument): string {
@@ -284,7 +346,24 @@ function serializeRunChild(c: RunChild): unknown {
       return c.breakType ? makeEl("w:br", { "w:type": c.breakType }) : { "w:br": [] };
     case "tab":
       return { "w:tab": [] };
-    case "drawing":
+    case "drawing": {
+      switch (c.subkind) {
+        case "inline-image":
+          // Byte-preservation fast path: re-emit cached subtree when the
+          // typed model has not been touched since parse.
+          if (c.raw) return opaqueToEntry(c.raw);
+          return serializeInlineImageDrawing(c);
+        case "opaque":
+          return opaqueToEntry(c.raw);
+        default: {
+          const _exhaustive: never = c;
+          throw new DocxSerializeError(
+            "unknown-drawing-subkind",
+            `Unknown drawing subkind: ${JSON.stringify(_exhaustive)}`
+          );
+        }
+      }
+    }
     case "opaque":
       return opaqueToEntry(c.raw);
     default: {

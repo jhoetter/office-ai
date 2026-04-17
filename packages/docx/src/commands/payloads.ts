@@ -97,11 +97,26 @@ export interface InsertColumnPayload {
 }
 
 export interface InsertImagePayload {
+  /**
+   * Position of the new image leaf. The image is inserted as a fresh run
+   * inside the targeted paragraph: with `run` + `offset` set, the
+   * existing run is split at `offset` and the image run is spliced
+   * between the two halves; without them, the image becomes the first
+   * run of the paragraph (matching `docx:insert-text` semantics).
+   */
   at: DocxPosition;
-  data: ArrayBuffer;
+  /** Raw bytes of the image. Encoded as `Uint8Array` or `ArrayBuffer`. */
+  data: Uint8Array | ArrayBuffer;
+  /** MIME type, e.g. `image/png`, `image/jpeg`, `image/gif`. */
   mimeType: string;
+  /** Display width in **pixels** (96 DPI). Converted to EMUs internally. */
   width: number;
+  /** Display height in pixels. */
   height: number;
+  /** Optional alt text — populates `<wp:docPr descr>`. */
+  altText?: string;
+  /** Optional `<wp:docPr name>`. Defaults to `"Picture {docPrId}"`. */
+  name?: string;
 }
 
 export interface ResolveCommentPayload {

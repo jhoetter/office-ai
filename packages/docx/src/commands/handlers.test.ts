@@ -261,25 +261,6 @@ describe("docx command handlers", () => {
     expect(kinds).toContain("comment-reference");
   });
 
-  it("stub commands return a rejected mutation with not-implemented", async () => {
-    const agent = await loadAgent([{ text: "x" }]);
-    // `docx:insert-image` is the last remaining stub after P1.3 / W7 shipped
-    // the four typed-table commands. Repointed by W7.
-    const m = await agent.applyCommand({
-      type: "docx:insert-image",
-      payload: {
-        at: { paragraph: 0 },
-        data: new ArrayBuffer(0),
-        mimeType: "image/png",
-        width: 1,
-        height: 1,
-      },
-      source: "human",
-    });
-    expect(m.status).toBe("rejected");
-    expect(m.rejection?.code).toBe("not-implemented");
-  });
-
   it("agent command source produces pending mutation", async () => {
     const agent = await loadAgent([{ text: "draft" }]);
     const m = await agent.applyCommand({

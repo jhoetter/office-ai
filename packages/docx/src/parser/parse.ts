@@ -22,6 +22,9 @@ import type {
 } from "../model/types.js";
 import { DocxParseError } from "./errors.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
+import { parseDrawing } from "./images.js";
+import { parseMediaParts } from "./media.js";
+import { parseRelationshipsParts } from "./relationships.js";
 import { parseTable as parseTableTyped } from "./tables.js";
 import {
   attrOf,
@@ -129,11 +132,16 @@ export async function parseDocx(
     parseParagraph
   );
 
+  const media = parseMediaParts(container);
+  const relationships = parseRelationshipsParts(container);
+
   const root: DocxDocument = {
     id: mintNodeId(),
     body,
     comments,
     headersAndFooters,
+    media,
+    relationships,
     documentRootAttrs,
   };
 
@@ -149,6 +157,8 @@ export async function parseDocx(
     contentTypes: false,
     commentsExtended: false,
     headersAndFooters: new Set<string>(),
+    media: new Set<string>(),
+    relationships: new Set<string>(),
   };
 
   return {
@@ -422,7 +432,7 @@ function parseRunChild(entry: Record<string, unknown>, mintNodeId: IdMinter): Ru
     case "w:tab":
       return { kind: "tab", id: mintNodeId() };
     case "w:drawing":
-      return { kind: "drawing", id: mintNodeId(), raw: captureOpaque(entry) };
+      return parseDrawing(entry, mintNodeId);
     default:
       return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };
   }

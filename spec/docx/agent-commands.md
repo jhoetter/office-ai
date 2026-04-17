@@ -1,11 +1,11 @@
 # DOCX — Agent Commands
 
-> Complete typed list. Seventeen commands are implemented today
+> Complete typed list. Eighteen commands are implemented today
 > ("**P0**" + the three comment-lifecycle commands + the two
 > header/footer-text commands + the two tracked-change resolution
-> commands + the four typed-table commands shipped in P1.3 / W7).
-> Only `docx:insert-image` remains stubbed; it throws
-> `NotImplementedError` until a follow-up session.
+> commands + the four typed-table commands shipped in P1.3 / W7 + the
+> typed inline-image command shipped in P1.3 / W8). No commands remain
+> stubbed at the close of P1.3.
 
 ## Common types
 
@@ -353,18 +353,65 @@ Errors:
   (`at === 0` or `at === grid.length`) are always accepted because they
   sit at the table's own edges.
 
-## Commands (P1 — still stubbed; throw `NotImplementedError`)
+### `docx:insert-image`
 
 ```typescript
-"docx:insert-image"        { at: DocxPosition; data: ArrayBuffer; mimeType: string; width: number; height: number }
+type InsertImagePayload = {
+  at: DocxPosition;
+  data: Uint8Array | ArrayBuffer;
+  mimeType: string; // "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff", "image/webp", "image/svg+xml"
+  width: number; // pixels @ 96 DPI; converted to EMUs internally
+  height: number;
+  altText?: string; // populates <wp:docPr descr>
+  name?: string; // <wp:docPr name>; defaults to "Picture {docPrId}"
+};
 ```
 
-The remaining stub:
+Insert an inline image at `at`:
 
-1. Validates payload shape (with Zod-style guards in code).
-2. Throws `new NotImplementedError("docx:insert-image", { reason: "..." })`.
-3. The error is caught by the bus and surfaced as a `Mutation` with
-   `status: "rejected"` so callers (CLI, UI) can react gracefully.
+1. Validates the payload (positive dimensions, supported MIME, non-empty
+   bytes).
+2. Computes `SHA-256(data)` and de-duplicates against
+   `snapshot.root.media`: if a media part with the same digest exists,
+   reuses it (and its existing `image` relationship in
+   `word/document.xml.rels`).
+3. Otherwise mints a fresh `word/media/image{N}.{ext}` part path, a
+   fresh `rId{N}` relationship pointing to it, and adds the new
+   `MediaPart` to the typed model. The new media part is also recorded
+   in `snapshot.dirty.media` so the serializer writes its bytes.
+4. Mints a unique `<wp:docPr id>` (`max(existing) + 1` across the whole
+   body — including images inside tables, hyperlinks, and revision
+   wrappers).
+5. Converts `width` / `height` from pixels to EMUs (`9525 EMU = 1 px @
+96 DPI`).
+6. Builds a typed `InlineImageDrawing` (no `raw`, so the serializer
+   regenerates the subtree from the typed model) and splices it into
+   the targeted paragraph as a fresh run. With `at.run` set, the
+   targeted run is split at `at.offset` and the image run is spliced
+   between the two halves; without it, the image becomes the first
+   inline of the paragraph.
+7. Sets `dirty.body`, plus `dirty.media`, `dirty.relationships`, and
+   `dirty.contentTypes` only when the insertion actually added new
+   package parts.
+
+OOXML impact: emits a `<w:r><w:drawing><wp:inline>…<pic:pic>…</wp:inline></w:drawing></w:r>`
+inside the targeted paragraph; adds a `word/media/imageN.ext` part, an
+`image`-typed relationship in `word/_rels/document.xml.rels`, and a
+`<Default Extension>` in `[Content_Types].xml` when one isn't already
+registered for that extension.
+
+Diff: emits a `node-inserted` change for the drawing leaf. When a brand
+new media part is added, also emits a second `part-added` change whose
+`path` is `[mediaPartPath]`. De-duplicated insertions emit only the
+`node-inserted` change.
+
+Errors:
+
+- `invalid-payload` — empty bytes, non-positive width / height,
+  unsupported MIME type.
+- `invalid-position` — `at.paragraph` outside `[0, body.length)`.
+- `not-paragraph` — `at.paragraph` resolves to a non-paragraph block
+  (table, section break, opaque block, …).
 
 ## Diff format per command
 

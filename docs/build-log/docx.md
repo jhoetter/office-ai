@@ -33,7 +33,7 @@
 | ---------------------------------------------------------- | ------------------- | --------------------------------------------- |
 | `docx:insert-table`                                        | `agent-commands.md` | Stub — throws NotImplementedError             |
 | `docx:set-cell-content`                                    | `agent-commands.md` | Stub                                          |
-| `docx:insert-image`                                        | `agent-commands.md` | Stub                                          |
+| `docx:insert-image`                                        | `agent-commands.md` | ✅ Shipped in P1.3 / W8                       |
 | `docx:accept-change`                                       | `agent-commands.md` | Stub                                          |
 | `docx:reject-change`                                       | `agent-commands.md` | Stub                                          |
 | Real-world DOCX fixtures (Word/Google/LibreOffice exports) | `feature-scope.md`  | Slots reserved in `fixtures/docx/MANIFEST.md` |
@@ -1153,6 +1153,127 @@ semantics, `insert-column` middle + edge insertion, nested-table parse
 
 - mutation, and `gridSpan`/`vMerge` preservation + continuation-write
   rejection.
+
+## P1.3 — W8: Image insertion + media parts
+
+Promote inline image drawings from "opaque preserved" to a first-class,
+mutation-aware part of the DOCX model and ship `docx:insert-image`
+end-to-end. Round-trip continues to be byte-identical for files that we
+don't touch (untouched images keep the cached `raw` subtree; untouched
+media bytes ride the container's part cache).
+
+### Files added / modified
+
+- Added `packages/docx/src/parser/images.ts` — recogniser for
+  `wp:inline > … > pic:pic` drawings; produces `InlineImageDrawing`
+  with the `r:embed` rel id, EMU dimensions, `<wp:docPr>` metadata,
+  and a cached `raw` blob.
+- Added `packages/docx/src/parser/media.ts` — walks `word/media/*`,
+  computes SHA-256, resolves MIME via `[Content_Types].xml`
+  (Override → Default → built-in fallback table for the common image
+  types).
+- Added `packages/docx/src/parser/relationships.ts` — bulk-loads every
+  `*.rels` part into a typed map keyed by the **owning** part path
+  (so `_rels/.rels` is keyed by `""`, the package itself).
+- Wired `packages/docx/src/parser/parse.ts` to call all three new
+  parsers and to dispatch `<w:drawing>` through `parseDrawing`.
+- Added `packages/docx/src/serializer/images.ts` — typed image emit
+  (used only when `raw` was dropped by a mutation; the cached subtree
+  fast path stays intact for untouched images).
+- Added `packages/docx/src/serializer/media.ts` — writes back media
+  bytes that appear in `dirty.media`.
+- Added `packages/docx/src/serializer/relationships.ts` — rewrites
+  rels parts that appear in `dirty.relationships` from the typed map.
+- Wired `packages/docx/src/serializer/serialize.ts` to call the new
+  serializers, to switch on `subkind` for run-child drawings, and to
+  ensure `[Content_Types].xml` carries a `<Default>` for every media
+  extension when `dirty.contentTypes` is set.
+- Added `packages/docx/src/commands/insert-image.ts` — full handler:
+  payload validation, SHA-256 de-dup, rel/media path minting,
+  document-wide `<wp:docPr id>` minting, run splitting at `at.run /
+at.offset`, two-change diff (`node-inserted` + `part-added`).
+- Updated `packages/docx/src/commands/registry.ts` and
+  `packages/docx/src/commands/index.ts` — registered
+  `insertImageHandler`, removed the stub plumbing (no commands are
+  stubbed at the close of P1.3).
+- Updated `packages/docx/src/commands/payloads.ts` — fleshed-out
+  `InsertImagePayload` with `altText` and `name`.
+- Extended `packages/docx/src/model/types.ts` with the discriminated
+  `DrawingLeaf = InlineImageDrawing | OpaqueDrawing`,
+  `InlineImageProperties`, `MediaPart`, `Relationship`, plus
+  `DocxDocument.media`, `DocxDocument.relationships`, and the new
+  `dirty.media` / `dirty.relationships` flags.
+- Extended `packages/core/src/types/document.ts` with a new
+  `part-added` `DiffChange` kind.
+- Updated `packages/docx/src/renderer/doc-to-pm.ts` to handle the new
+  union (synthesises a metadata stub when an inserted image has no
+  cached `raw`).
+- Removed the `"stub commands return a rejected mutation with
+not-implemented"` test case from
+  `packages/docx/src/commands/handlers.test.ts` (no commands are
+  stubbed any more).
+- Added `packages/docx/src/commands/images.test.ts` — 14 test cases
+  covering parse, round-trip, insert + dedup, docPrId uniqueness,
+  payload + position rejection, mid-paragraph splitting,
+  content-type registration, and sibling-mutation byte-identity for
+  the parsed image part.
+- Updated `spec/docx/agent-commands.md` — replaced the
+  `docx:insert-image` stub section with the full payload + behaviour
+  contract.
+
+### Decisions (W8-specific)
+
+| Date (UTC) | Decision                                                                                             | Rationale                                                                                                                                                                                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-17 | Discriminated `DrawingLeaf = InlineImageDrawing \| OpaqueDrawing` (with `subkind`)                   | Lets us promote one drawing class at a time. The catch-all `OpaqueDrawing` keeps every other drawing (charts, shapes, SmartArt, anchored floats, embedded objects) round-tripping verbatim through the existing `raw` cache.                                           |
+| 2026-04-17 | Cached `raw` survives on `InlineImageDrawing` for untouched leaves; mutations MUST drop it           | Same byte-preservation contract we already use for `Table.raw`. Deterministic and obvious to reason about: presence of `raw` is the per-leaf "clean / re-emit cached bytes" signal for the serializer.                                                                 |
+| 2026-04-17 | `DocxDocument.relationships` is the single source of truth for any rels part listed in `dirty.rels…` | Keeps mutation-aware writes (image insertion) and untouched-part preservation in the same model. Untouched parts are not in `dirty.relationships` so they ride the container's bytes; the typed map exists so a future workstream can flip the same dirty bit cheaply. |
+| 2026-04-17 | `relationships` map is keyed by the **owning** part path (not the rels part path)                    | Reads better at call sites (`relationships.get("word/document.xml")`) and inverts cleanly via `RelationshipGraph.relsPathFor`. Package-level rels (`_rels/.rels`) live under `""`.                                                                                     |
+| 2026-04-17 | De-duplicate media parts by SHA-256 of the bytes                                                     | Inserting the same logo twice across a document should produce one media part and one relationship, not two. Mirrors what Word itself does on copy-paste of identical images.                                                                                          |
+| 2026-04-17 | `docPrId` is minted as `max(existing) + 1` across the entire body                                    | OOXML requires document-wide uniqueness. Min-search would race with existing legacy ids; max-plus-one is deterministic and lets a future undo / redo replay produce the same ids.                                                                                      |
+| 2026-04-17 | Pixel → EMU conversion uses 9525 EMU/px (96 DPI implicit)                                            | Standard OOXML convention; matches what Word writes for a screenshot-pasted image at default zoom. Callers that already think in EMUs can pass `Math.round(emu / 9525)` and accept the ~0.01% rounding.                                                                |
+| 2026-04-17 | A new `part-added` `DiffChange` kind                                                                 | The existing `node-inserted` change refers to a node _inside_ the document tree; image insertion ALSO adds a binary part to the OPC package. Surfacing that via a dedicated change makes downstream tooling (history, audit, sync) able to reason about it explicitly. |
+
+### Deviations
+
+| Date (UTC) | Spec section                             | Deviation                                                                               | Reason                                                                                                                                                                                                                                                               |
+| ---------- | ---------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-17 | `commands/handlers.test.ts` (P0 fixture) | Removed the `"stub commands return a rejected mutation with not-implemented"` test case | The test specifically asserted that `docx:insert-image` rejects with `not-implemented`. With the typed handler shipped, no command in the registry is stubbed any more, so the assertion no longer has a target. Functionally replaced by `commands/images.test.ts`. |
+
+### Known issues / follow-ups
+
+- The `image` content-type defaults are added to `[Content_Types].xml`
+  on first insertion but never removed — even if a later command
+  deletes every image of that extension. We don't surface a
+  `delete-image` command yet, so this hasn't bitten us; it should be
+  addressed when one lands.
+- We currently model only inline images. Floating drawings
+  (`<wp:anchor>`) stay opaque. Mutating commands that need to flip an
+  inline ↔ floating image will require typing the anchor variant in a
+  follow-up workstream.
+- `<wp:docPr id>` minting is body-scoped and ignores ids inside header
+  / footer parts. Word generally ranges those independently, but a
+  paranoid follow-up could consult headers/footers too.
+
+### Test counts
+
+| Suite                     | Before | After |
+| ------------------------- | -----: | ----: |
+| `@officeai/docx` (Vitest) |     97 |   111 |
+
+14 new cases in `commands/images.test.ts` cover: parsing the
+real-world inline-image fixture into a typed leaf; populating
+`media` and `relationships` on parse; byte-identical no-touch
+round-trip on the same fixture; basic insertion + dirty-flag
+plumbing; media part-path minting collision avoidance; SHA-256
+de-duplication; document-wide `docPrId` uniqueness; payload
+rejection (empty bytes, zero-dim, unsupported MIME); position
+rejection (out-of-range paragraph); mid-paragraph splitting at
+`at.run / at.offset`; `<Default Extension>` registration in
+`[Content_Types].xml` on save; a parseable `<w:drawing>` after a
+fresh insertion + reparse; no spurious dirty bits on a de-dup
+hit; and byte-identity of the parsed image media part when a
+sibling paragraph is mutated.
 
 ## P1.3 — W9: OOXML schema validation
 

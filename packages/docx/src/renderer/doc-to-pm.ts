@@ -4,12 +4,25 @@ import type {
   BlockNode,
   DocxSnapshot,
   Hyperlink,
+  InlineImageDrawing,
   InlineNode,
   Paragraph,
   Run,
   RunChild,
   RunProperties,
 } from "../model/types.js";
+
+function imageStub(leaf: InlineImageDrawing): unknown {
+  return {
+    kind: "inline-image",
+    relId: leaf.relId,
+    cx: leaf.cx,
+    cy: leaf.cy,
+    docPrId: leaf.docPrId,
+    name: leaf.name,
+    ...(leaf.descr !== undefined ? { descr: leaf.descr } : {}),
+  };
+}
 
 /**
  * Project a `DocxSnapshot` into a ProseMirror document. Reverse direction
@@ -147,11 +160,19 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
     case "tab":
       out.push(docxSchema.nodes.tab.create(null, null, marks));
       return;
-    case "drawing":
+    case "drawing": {
+      // The renderer just needs *something* JSON-serializable to round-trip
+      // through the editor's image node attribute. For drawings parsed from
+      // a real file we always have the cached `raw` subtree; for typed
+      // inline-images produced by `docx:insert-image` we synthesize a
+      // metadata stub so the editor still gets the relationship id and
+      // dimensions.
+      const drawingMeta = child.subkind === "inline-image" ? (child.raw ?? imageStub(child)) : child.raw;
       out.push(
-        docxSchema.nodes.image.create({ runId: child.id, drawingJson: encode(child.raw) }, null, marks)
+        docxSchema.nodes.image.create({ runId: child.id, drawingJson: encode(drawingMeta) }, null, marks)
       );
       return;
+    }
     case "opaque":
       out.push(
         docxSchema.nodes.opaque_inline.create({ inlineId: child.id, rawJson: encode(child.raw) }, null, marks)
