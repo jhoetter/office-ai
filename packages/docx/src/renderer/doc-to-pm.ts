@@ -1,11 +1,13 @@
 import { type Mark, type Node as PMNode } from "prosemirror-model";
 import { docxSchema } from "./schema.js";
+import { classifyOpaqueTag, extractOpaqueText } from "../model/opaque-classification.js";
 import type {
   BlockNode,
   DocxSnapshot,
   Hyperlink,
   InlineImageDrawing,
   InlineNode,
+  OpaqueXml,
   Paragraph,
   Run,
   RunChild,
@@ -46,17 +48,54 @@ function blockToPM(block: BlockNode): PMNode | null {
     case "section-break":
       return docxSchema.nodes.section_break.create({ blockId: block.id, rawJson: encode(block.raw) });
     case "opaque-block":
-      return docxSchema.nodes.opaque_block.create({
-        blockId: block.id,
-        rawJson: encode(block.raw),
-        tag: block.raw.tag,
-      });
+      return opaqueBlockToPM(block.id, block.raw);
     default: {
       const _exhaustive: never = block;
       void _exhaustive;
       return null;
     }
   }
+}
+
+/**
+ * Project an `OpaqueBlock` into a PM node. We classify the carrier's tag
+ * via `classifyOpaqueTag` so structural metadata becomes invisible and
+ * content-wrappers (SDT, simple fields, MC fallback) surface their inner
+ * text instead of an opaque chip.
+ *
+ * The model still carries the full subtree byte-for-byte; only the *display*
+ * is smartened, so round-trip integrity is unaffected.
+ */
+function opaqueBlockToPM(blockId: string, raw: OpaqueXml): PMNode | null {
+  const display = classifyOpaqueTag(raw.tag);
+  if (display === "metadata") {
+    // A metadata-only block (extremely rare at the body level, but possible
+    // for things like an isolated `<w:permStart>`) cannot be dropped because
+    // PM's `doc` schema requires `block+` and an empty doc is invalid. Fall
+    // back to the placeholder so the user at least sees that something
+    // structural lives here.
+    return docxSchema.nodes.opaque_block.create({
+      blockId,
+      rawJson: encode(raw),
+      tag: raw.tag,
+      previewText: null,
+    });
+  }
+  if (display === "content-wrapper") {
+    const text = extractOpaqueText(raw);
+    return docxSchema.nodes.opaque_block.create({
+      blockId,
+      rawJson: encode(raw),
+      tag: raw.tag,
+      previewText: text.length > 0 ? text : null,
+    });
+  }
+  return docxSchema.nodes.opaque_block.create({
+    blockId,
+    rawJson: encode(raw),
+    tag: raw.tag,
+    previewText: null,
+  });
 }
 
 function paragraphToPM(p: Paragraph): PMNode {
@@ -113,14 +152,11 @@ function inlinesForChild(node: InlineNode, out: PMNode[], activeCommentIds: stri
         for (const t of tmp) out.push(wrap(t));
       }
       return;
-    case "opaque-inline":
-      out.push(
-        docxSchema.nodes.opaque_inline.create({
-          inlineId: node.id,
-          rawJson: encode(node.raw),
-        })
-      );
+    case "opaque-inline": {
+      const pmNode = opaqueInlineToPM(node.id, node.raw, []);
+      if (pmNode) out.push(pmNode);
       return;
+    }
     default: {
       const _exhaustive: never = node;
       void _exhaustive;
@@ -173,16 +209,38 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       );
       return;
     }
-    case "opaque":
-      out.push(
-        docxSchema.nodes.opaque_inline.create({ inlineId: child.id, rawJson: encode(child.raw) }, null, marks)
-      );
+    case "opaque": {
+      const pmNode = opaqueInlineToPM(child.id, child.raw, marks);
+      if (pmNode) out.push(pmNode);
       return;
+    }
     default: {
       const _exhaustive: never = child;
       void _exhaustive;
     }
   }
+}
+
+/**
+ * Project an opaque inline (carried at the paragraph level OR as a run child)
+ * into a PM node, applying the same display classification as the block-level
+ * variant. Metadata-only carriers (bookmarks, field characters,
+ * `lastRenderedPageBreak`, …) return `null` so the caller emits nothing.
+ */
+function opaqueInlineToPM(inlineId: string, raw: OpaqueXml, marks: Mark[]): PMNode | null {
+  const display = classifyOpaqueTag(raw.tag);
+  if (display === "metadata") return null;
+  const previewText = display === "content-wrapper" ? extractOpaqueText(raw) : "";
+  return docxSchema.nodes.opaque_inline.create(
+    {
+      inlineId,
+      rawJson: encode(raw),
+      tag: raw.tag,
+      previewText: previewText.length > 0 ? previewText : null,
+    },
+    null,
+    marks
+  );
 }
 
 function runMarks(props: RunProperties): Mark[] {

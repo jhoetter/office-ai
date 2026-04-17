@@ -33,8 +33,25 @@ const nodes: Record<string, NodeSpec> = {
   opaque_block: {
     group: "block",
     atom: true,
-    attrs: { blockId: { default: null }, rawJson: { default: null }, tag: { default: null } },
+    attrs: {
+      blockId: { default: null },
+      rawJson: { default: null },
+      tag: { default: null },
+      previewText: { default: null },
+    },
     toDOM(node) {
+      const preview = typeof node.attrs.previewText === "string" ? (node.attrs.previewText as string) : "";
+      if (preview.length > 0) {
+        return [
+          "div",
+          {
+            class: "pm-opaque-block pm-opaque-block-preview",
+            contenteditable: "false",
+            "data-tag": node.attrs.tag ?? "",
+          },
+          preview,
+        ];
+      }
       return [
         "div",
         { class: "pm-opaque-block", contenteditable: "false", "data-tag": node.attrs.tag ?? "" },
@@ -81,9 +98,25 @@ const nodes: Record<string, NodeSpec> = {
     group: "inline",
     inline: true,
     atom: true,
-    attrs: { inlineId: { default: null }, rawJson: { default: null } },
-    toDOM() {
-      return ["span", { class: "pm-opaque-inline" }, "[opaque]"];
+    attrs: {
+      inlineId: { default: null },
+      rawJson: { default: null },
+      tag: { default: null },
+      previewText: { default: null },
+    },
+    toDOM(node) {
+      const preview = typeof node.attrs.previewText === "string" ? (node.attrs.previewText as string) : "";
+      if (preview.length > 0) {
+        return [
+          "span",
+          {
+            class: "pm-opaque-inline pm-opaque-inline-preview",
+            "data-tag": node.attrs.tag ?? "",
+          },
+          preview,
+        ];
+      }
+      return ["span", { class: "pm-opaque-inline", "data-tag": node.attrs.tag ?? "" }, "[opaque]"];
     },
   },
 };

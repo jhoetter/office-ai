@@ -1690,3 +1690,91 @@ in `word/_rels/document.xml.rels`.
 | `@officeai/docx`                |    111 |   137 |
 | ↳ `commands/lists.test.ts`      |      0 |    12 |
 | ↳ `commands/hyperlinks.test.ts` |      0 |    14 |
+
+## P1.5 — opaque carrier display classification (real-world UX fix)
+
+### Why
+
+A user-supplied real Word document (a 369-block masters thesis with TOC,
+bookmarks, page-number fields and SDT content controls) rendered with **127
+visible `[opaque]` / `[w:sdt]` chips** scattered through the editor
+surface. Every `<w:bookmarkStart>`, `<w:bookmarkEnd>`, `<w:fldChar>`,
+`<w:instrText>`, `<w:lastRenderedPageBreak>` etc. was being projected as
+an `opaque_inline` PM atom whose `toDOM` emitted `[opaque]`; the entire
+table of contents collapsed into a single `[w:sdt]` block chip.
+
+The byte-preservation invariant works perfectly — every one of those
+elements round-trips through `OpaqueXml` carriers — but the renderer was
+treating "I don't have a typed model for this" as "the user wants to see
+this raw". For any non-trivial document that produced un-usable visual
+clutter and made the TOC content inaccessible.
+
+### What
+
+Renderer-only change. The model and serializer are untouched, so all
+existing round-trip and byte-equivalence guarantees still hold.
+
+- New `model/opaque-classification.ts` exports
+  `classifyOpaqueTag(tag) → "metadata" | "content-wrapper" | "placeholder"`.
+  - `metadata`: zero-width structural markup (bookmarks, field
+    characters, paragraph proof markers, perm/move range markers,
+    `lastRenderedPageBreak`, …). The renderer emits **nothing** for
+    these.
+  - `content-wrapper`: lossless wrapper around editable content (`w:sdt`,
+    `w:sdtContent`, `w:fldSimple`, `mc:AlternateContent`,
+    `mc:Choice`/`mc:Fallback`, `w:smartTag`, `w:customXml`). The
+    renderer surfaces the carrier's flattened inner text instead of the
+    `[<tag>]` chip.
+  - `placeholder`: existing fallback (`[<tag>]` chip) for unknown /
+    unclassified tags.
+- `extractOpaqueText` recursively flattens `OpaqueXml.subtree` to its
+  user-visible text. Crucially it **skips text inside nested
+  metadata-classified children**, so a `<w:sdt>` wrapping a `TOC` field
+  surfaces just `"Inhaltsverzeichnis 1 Einleitung … 4"` and not the
+  field instruction `"TOC \h \o \"1-3\" "`.
+- `renderer/schema.ts`: `opaque_block` and `opaque_inline` now accept a
+  `previewText` attr. `toDOM` renders `previewText` (read-only,
+  italicised via the `pm-opaque-*-preview` class) when present and
+  falls back to the legacy chip otherwise.
+- `renderer/doc-to-pm.ts`: every opaque carrier (block, paragraph-level
+  inline, run child) is funneled through `classifyOpaqueTag` and the
+  matching display branch.
+- `apps/web/app/globals.css`: new `.pm-opaque-block-preview` and
+  `.pm-opaque-inline-preview` styles. The block variant gets a soft
+  dashed border + italic text; the inline variant is fully invisible
+  (`border: none; padding: 0`) so it disappears into the surrounding
+  paragraph text.
+
+### Effect on the original failing fixture
+
+| Metric                                         | Before |  After |
+| ---------------------------------------------- | -----: | -----: |
+| Body blocks                                    |    369 |    369 |
+| `OpaqueXml` carriers in the model              |    127 |    127 |
+| Visible `[opaque]` / `[<tag>]` chips in PM doc |    127 |  **0** |
+| Bytes of TOC text surfaced as readable preview |      0 | ~2.1 k |
+| Re-emit byte-stable across two passes (sha256) |    yes |    yes |
+
+### Test counts
+
+| Suite                                   | Before | After |
+| --------------------------------------- | -----: | ----: |
+| `@officeai/docx`                        |    137 |   151 |
+| ↳ `model/opaque-classification.test.ts` |      0 |     8 |
+| ↳ `renderer/opaque-display.test.ts`     |      0 |     6 |
+
+### Caveats
+
+- SDT block content is **read-only** in this iteration. The user sees
+  the TOC text instead of `[w:sdt]`, but cannot edit inside the
+  wrapper. Promoting SDT to a structurally editable PM block (with
+  paragraph indexing aware of the wrapper) is a future workstream.
+- `[table]` placeholders are unchanged in this commit. The typed-table
+  model from W7 round-trips correctly but the renderer still atoms a
+  table to the `[table]` chip; full nested table rendering will be
+  addressed separately.
+- Opaque carriers whose tag is not in the classification table fall
+  back to the existing `[<tag>]` chip — that is intentional: it keeps
+  unknown-but-significant elements visible during development so we
+  can spot them and either type them or add them to the wrapper /
+  metadata sets.

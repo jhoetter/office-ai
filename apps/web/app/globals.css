@@ -338,6 +338,35 @@ textarea::placeholder {
   display: block;
 }
 
+/*
+ * "Preview" variants for opaque carriers whose tag is classified as a
+ * content-wrapper (SDT, fldSimple, MC fallback, ...). The wrapper is
+ * read-only (round-tripped via the OpaqueXml carrier on the model side),
+ * but we surface its inner text instead of an "[opaque]" chip so the user
+ * sees readable content (e.g. a Table-of-Contents listing).
+ */
+.prose-pm .ProseMirror .pm-opaque-block-preview,
+.prose-pm .ProseMirror .pm-opaque-inline-preview {
+  border: 1px dashed var(--divider);
+  background: transparent;
+  color: var(--primary);
+  font-family: inherit;
+  font-size: inherit;
+  font-style: italic;
+  padding: 0.25rem 0.5rem;
+  white-space: pre-wrap;
+}
+
+.prose-pm .ProseMirror .pm-opaque-block-preview {
+  margin: 0.5rem 0;
+}
+
+.prose-pm .ProseMirror .pm-opaque-inline-preview {
+  display: inline;
+  padding: 0;
+  border: none;
+}
+
 /* ── P1.2 / W5: highlight / color marks in the editor surface ── */
 /*
  * The schema's font_color and highlight marks ship inline `style`
