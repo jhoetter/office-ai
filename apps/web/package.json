@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@officeai/core": "workspace:^",
@@ -25,6 +27,7 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
     "@types/react": "^19",

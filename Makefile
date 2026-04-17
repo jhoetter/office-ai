@@ -6,7 +6,8 @@
 # ============================================
 
 .PHONY: help install dev build lint lint-root format format-check architecture \
-        typecheck test verify ci clean cli fixtures
+        typecheck test verify ci clean cli fixtures fixtures-real \
+        roundtrip-libre e2e-web
 
 help:
 	@echo "officeAI — available targets:"
@@ -28,7 +29,12 @@ help:
 	@echo "  Misc:"
 	@echo "  clean          Remove build artifacts and dependencies"
 	@echo "  cli            Build and link the office-agent CLI"
-	@echo "  fixtures       Regenerate DOCX fixtures"
+	@echo "  fixtures       Regenerate synthetic DOCX fixtures"
+	@echo "  fixtures-real  Regenerate real-shape DOCX fixtures (Word-grade)"
+	@echo ""
+	@echo "  Heavy / opt-in checks (NOT part of make verify):"
+	@echo "  roundtrip-libre  Headless LibreOffice roundtrip on real-world fixtures"
+	@echo "  e2e-web          Playwright smoke tests against the web app"
 
 install:
 	pnpm install
@@ -84,3 +90,26 @@ cli:
 
 fixtures:
 	pnpm fixtures:docx
+
+fixtures-real:
+	node scripts/generate-real-fixtures.mjs
+
+# ── Heavy / opt-in checks ────────────────────────────────────────────
+# These are intentionally NOT wired into `make verify` because they
+# require system-level dependencies (LibreOffice, Playwright browsers)
+# that not every dev machine has installed. CI runs them in dedicated
+# jobs (.github/workflows/ci.yml: docx-libreoffice-roundtrip, web-e2e).
+#
+# `roundtrip-libre` skips gracefully if `soffice` is not on PATH, so it
+# is safe to invoke from any wrapper script without first probing for
+# the binary.
+roundtrip-libre:
+	node scripts/run-libreoffice-roundtrip.mjs
+
+# `e2e-web` builds the workspace first so apps/web's Next.js compile and
+# the @officeai/docx dist outputs are ready, then runs Playwright against
+# `next start`. Run `pnpm --filter @officeai/web e2e:install` once to
+# fetch the browser binaries.
+e2e-web:
+	pnpm build
+	pnpm --filter @officeai/web e2e
