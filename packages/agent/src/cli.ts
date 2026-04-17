@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { Command, Option } from "commander";
 import { DocxAgent, paragraphPlainText } from "@officeai/docx";
 import type { DocxComment, DocxPosition, DocxSnapshot, Paragraph } from "@officeai/docx";
+import type { CommandLite, Mutation } from "@officeai/core";
 import { parseSelector, SelectorError, type Selector } from "./selector.js";
 import { runMcpStdioServer } from "./mcp.js";
 
@@ -152,6 +153,7 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
     .addOption(new Option("--source <src>", "Mutation source").choices(["agent", "human"]).default("agent"))
     .option("--agent-id <id>", "Agent identifier (defaults to office-agent-cli)", "office-agent-cli")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
       async (opts: {
@@ -161,20 +163,11 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
         out?: string;
         source: "agent" | "human";
         agentId: string;
+        approve: boolean;
         pretty: boolean;
       }) => {
-        const agent = await loadAgent(opts.file);
         const at = positionFromSelector(parseSelector(opts.at));
-        const m = await agent.applyCommand({
-          type: "docx:insert-text",
-          payload: { at, text: opts.text },
-          source: opts.source,
-          ...(opts.source === "agent" ? { agentId: opts.agentId } : {}),
-        });
-        agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
-        const out = opts.out ?? opts.file;
-        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-        io.stdout.write(stringifyJson(mutationSummary(m, out), opts.pretty) + "\n");
+        await runWrite(io, opts, "docx:insert-text", { at, text: opts.text });
       }
     );
 
@@ -185,21 +178,21 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     .requiredOption("--at <selector>", "Position selector targeting a paragraph")
     .requiredOption("--style <styleId>", "Style id, e.g. Heading1")
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; at: string; style: string; out?: string; pretty: boolean }) => {
-      const agent = await loadAgent(opts.file);
-      const at = positionFromSelector(parseSelector(opts.at));
-      const m = await agent.applyCommand({
-        type: "docx:set-paragraph-style",
-        payload: { at, style: opts.style },
-        source: "agent",
-        agentId: "office-agent-cli",
-      });
-      agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
-      const out = opts.out ?? opts.file;
-      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-      io.stdout.write(stringifyJson(mutationSummary(m, out), opts.pretty) + "\n");
-    });
+    .action(
+      async (opts: {
+        file: string;
+        at: string;
+        style: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const at = positionFromSelector(parseSelector(opts.at));
+        await runWrite(io, opts, "docx:set-paragraph-style", { at, style: opts.style });
+      }
+    );
 
   docx
     .command("comment")
@@ -210,6 +203,7 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     .option("--author <name>", "Comment author", "office-agent")
     .option("--initials <initials>", "Comment author initials", "OA")
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
       async (opts: {
@@ -219,20 +213,16 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
         author: string;
         initials: string;
         out?: string;
+        approve: boolean;
         pretty: boolean;
       }) => {
-        const agent = await loadAgent(opts.file);
         const range = rangeFromSelector(opts.range);
-        const m = await agent.applyCommand({
-          type: "docx:add-comment",
-          payload: { range, text: opts.text, author: opts.author, initials: opts.initials },
-          source: "agent",
-          agentId: "office-agent-cli",
+        await runWrite(io, opts, "docx:add-comment", {
+          range,
+          text: opts.text,
+          author: opts.author,
+          initials: opts.initials,
         });
-        agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
-        const out = opts.out ?? opts.file;
-        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-        io.stdout.write(stringifyJson(mutationSummary(m, out), opts.pretty) + "\n");
       }
     );
 
@@ -243,20 +233,23 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     .requiredOption("--id <commentId>", "Target comment id (as exposed by `docx inspect`)")
     .option("--reopen", "Re-open a previously resolved comment instead of resolving it", false)
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; id: string; reopen: boolean; out?: string; pretty: boolean }) => {
-      const agent = await loadAgent(opts.file);
-      const m = await agent.applyCommand({
-        type: "docx:resolve-comment",
-        payload: { commentId: opts.id, resolved: !opts.reopen },
-        source: "agent",
-        agentId: "office-agent-cli",
-      });
-      agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
-      const out = opts.out ?? opts.file;
-      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-      io.stdout.write(stringifyJson(mutationSummary(m, out), opts.pretty) + "\n");
-    });
+    .action(
+      async (opts: {
+        file: string;
+        id: string;
+        reopen: boolean;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:resolve-comment", {
+          commentId: opts.id,
+          resolved: !opts.reopen,
+        });
+      }
+    );
 
   docx
     .command("reply-comment")
@@ -267,6 +260,7 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     .option("--author <name>", "Reply author", "office-agent")
     .option("--initials <initials>", "Reply author initials")
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
       async (opts: {
@@ -276,24 +270,15 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
         author: string;
         initials?: string;
         out?: string;
+        approve: boolean;
         pretty: boolean;
       }) => {
-        const agent = await loadAgent(opts.file);
-        const m = await agent.applyCommand({
-          type: "docx:reply-comment",
-          payload: {
-            parentId: opts.parent,
-            text: opts.text,
-            author: opts.author,
-            ...(opts.initials ? { initials: opts.initials } : {}),
-          },
-          source: "agent",
-          agentId: "office-agent-cli",
+        await runWrite(io, opts, "docx:reply-comment", {
+          parentId: opts.parent,
+          text: opts.text,
+          author: opts.author,
+          ...(opts.initials ? { initials: opts.initials } : {}),
         });
-        agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
-        const out = opts.out ?? opts.file;
-        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-        io.stdout.write(stringifyJson(mutationSummary(m, out), opts.pretty) + "\n");
       }
     );
 
@@ -303,19 +288,463 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     .requiredOption("--file <path>", "Path to a .docx file")
     .requiredOption("--id <commentId>", "Target comment id")
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; id: string; out?: string; pretty: boolean }) => {
+    .action(async (opts: { file: string; id: string; out?: string; approve: boolean; pretty: boolean }) => {
+      await runWrite(io, opts, "docx:delete-comment", { commentId: opts.id });
+    });
+
+  docx
+    .command("format-range")
+    .description(
+      "Apply text formatting to a range (bold/italic/underline/strikethrough/font/size/color/highlight)."
+    )
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--range <selector>", "Range selector e.g. paragraph:0/text:0..5 or paragraph:0..2")
+    .option("--bold <bool>", "true|false to set, omit to leave unchanged")
+    .option("--italic <bool>", "true|false")
+    .option("--underline <bool>", "true|false")
+    .option("--strike <bool>", "true|false")
+    .option("--font-family <name>", "Run font family")
+    .option("--font-size <halfPoints>", "Run font size in half-points (e.g. 24 = 12pt)", parseIntOpt)
+    .option("--color <RRGGBB>", "Hex color without leading #")
+    .option("--highlight <name>", "Highlight color name (yellow|green|cyan|red|...)")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        range: string;
+        bold?: string;
+        italic?: string;
+        underline?: string;
+        strike?: string;
+        fontFamily?: string;
+        fontSize?: number;
+        color?: string;
+        highlight?: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const range = rangeFromSelector(opts.range);
+        const format: Record<string, unknown> = {};
+        if (opts.bold !== undefined) format.bold = parseBool(opts.bold, "--bold");
+        if (opts.italic !== undefined) format.italic = parseBool(opts.italic, "--italic");
+        if (opts.underline !== undefined) format.underline = parseBool(opts.underline, "--underline");
+        if (opts.strike !== undefined) format.strike = parseBool(opts.strike, "--strike");
+        if (opts.fontFamily !== undefined) format.fontFamily = opts.fontFamily;
+        if (opts.fontSize !== undefined) format.fontSize = opts.fontSize;
+        if (opts.color !== undefined) format.color = opts.color;
+        if (opts.highlight !== undefined) format.highlight = opts.highlight;
+        if (Object.keys(format).length === 0) {
+          throw new CliError(
+            64,
+            "format-range: pass at least one of --bold/--italic/--underline/--strike/--font-family/--font-size/--color/--highlight"
+          );
+        }
+        await runWrite(io, opts, "docx:format-range", { range, format });
+      }
+    );
+
+  docx
+    .command("accept-change")
+    .description("Accept a tracked change (insertion folds in, deletion lands).")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--id <revisionId>", "Tracked-change revision id (the w:id on <w:ins>/<w:del>)")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { file: string; id: string; out?: string; approve: boolean; pretty: boolean }) => {
+      await runWrite(io, opts, "docx:accept-change", { revisionId: opts.id });
+    });
+
+  docx
+    .command("reject-change")
+    .description("Reject a tracked change (insertion is dropped, deletion is undone).")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--id <revisionId>", "Tracked-change revision id")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { file: string; id: string; out?: string; approve: boolean; pretty: boolean }) => {
+      await runWrite(io, opts, "docx:reject-change", { revisionId: opts.id });
+    });
+
+  docx
+    .command("insert-image")
+    .description("Insert an inline image at a position selector. Reads image bytes from --image.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--at <selector>", "Position selector targeting a paragraph")
+    .requiredOption("--image <path>", "Path to image file (PNG/JPEG/GIF/BMP/TIFF/WebP/SVG)")
+    .option("--width <px>", "Display width in pixels @ 96 DPI (default: 200)", parseIntOpt, 200)
+    .option("--height <px>", "Display height in pixels @ 96 DPI (default: 200)", parseIntOpt, 200)
+    .option("--mime <type>", "Override mime type (auto-detected from extension by default)")
+    .option("--alt <text>", "Alt text (populates wp:docPr@descr)")
+    .option("--name <name>", "Display name (wp:docPr@name)")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        at: string;
+        image: string;
+        width: number;
+        height: number;
+        mime?: string;
+        alt?: string;
+        name?: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const at = positionFromSelector(parseSelector(opts.at));
+        const data = await readFile(resolve(opts.image));
+        const mimeType = opts.mime ?? mimeTypeFromExtension(opts.image);
+        if (!mimeType) {
+          throw new CliError(
+            64,
+            `insert-image: cannot infer mime type for ${opts.image}; pass --mime explicitly`
+          );
+        }
+        const payload: Record<string, unknown> = {
+          at,
+          data: new Uint8Array(data),
+          mimeType,
+          width: opts.width,
+          height: opts.height,
+        };
+        if (opts.alt !== undefined) payload.altText = opts.alt;
+        if (opts.name !== undefined) payload.name = opts.name;
+        await runWrite(io, opts, "docx:insert-image", payload);
+      }
+    );
+
+  docx
+    .command("insert-table")
+    .description("Insert an empty rows × cols table at a position selector.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--at <selector>", "Position selector targeting a paragraph")
+    .requiredOption("--rows <n>", "Row count", parseIntOpt)
+    .requiredOption("--cols <n>", "Column count", parseIntOpt)
+    .option("--col-widths <csv>", "Optional comma-separated column widths in twips")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        at: string;
+        rows: number;
+        cols: number;
+        colWidths?: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const at = positionFromSelector(parseSelector(opts.at));
+        const payload: Record<string, unknown> = { at, rows: opts.rows, cols: opts.cols };
+        if (opts.colWidths) {
+          payload.columnWidths = opts.colWidths.split(",").map((s) => Number.parseInt(s.trim(), 10));
+        }
+        await runWrite(io, opts, "docx:insert-table", payload);
+      }
+    );
+
+  docx
+    .command("insert-row")
+    .description("Insert a row into a table.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--table-id <id>", "Target table id (use `docx inspect` to find ids)")
+    .requiredOption("--at <n>", "0-based row index; equal to row count to append", parseIntOpt)
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        tableId: string;
+        at: number;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:insert-row", { tableId: opts.tableId, at: opts.at });
+      }
+    );
+
+  docx
+    .command("insert-column")
+    .description("Insert a column into a table.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--table-id <id>", "Target table id")
+    .requiredOption("--at <n>", "0-based column index", parseIntOpt)
+    .option("--width <twips>", "Column width in twips (defaults to equal split)", parseIntOpt)
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        tableId: string;
+        at: number;
+        width?: number;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const payload: Record<string, unknown> = { tableId: opts.tableId, at: opts.at };
+        if (opts.width !== undefined) payload.width = opts.width;
+        await runWrite(io, opts, "docx:insert-column", payload);
+      }
+    );
+
+  docx
+    .command("set-cell-text")
+    .description("Replace one table cell's content with a single plain-text paragraph.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--table-id <id>", "Target table id")
+    .requiredOption("--row <n>", "0-based row index", parseIntOpt)
+    .requiredOption("--col <n>", "0-based column index", parseIntOpt)
+    .requiredOption("--text <text>", "Text to place in the cell")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        tableId: string;
+        row: number;
+        col: number;
+        text: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const content = [
+          {
+            kind: "paragraph",
+            id: "",
+            properties: {},
+            children: [
+              {
+                kind: "run",
+                id: "",
+                properties: {},
+                children: [{ kind: "text", text: opts.text }],
+              },
+            ],
+          },
+        ];
+        await runWrite(io, opts, "docx:set-cell-content", {
+          tableId: opts.tableId,
+          row: opts.row,
+          col: opts.col,
+          content,
+        });
+      }
+    );
+
+  docx
+    .command("insert-hyperlink")
+    .description("Wrap a flat-text range in a paragraph with a hyperlink.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph-id <id>", "Target paragraph id (use `docx read --format json` to find ids)")
+    .requiredOption("--start <n>", "Inclusive start offset", parseIntOpt)
+    .requiredOption("--end <n>", "Exclusive end offset", parseIntOpt)
+    .option("--target <url>", "External URL target (mutually exclusive with --anchor)")
+    .option("--anchor <name>", "Internal bookmark anchor (mutually exclusive with --target)")
+    .option("--tooltip <text>", "Tooltip text")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraphId: string;
+        start: number;
+        end: number;
+        target?: string;
+        anchor?: string;
+        tooltip?: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        if (!opts.target && !opts.anchor) {
+          throw new CliError(64, "insert-hyperlink: pass --target <url> or --anchor <name>");
+        }
+        if (opts.target && opts.anchor) {
+          throw new CliError(64, "insert-hyperlink: --target and --anchor are mutually exclusive");
+        }
+        const payload: Record<string, unknown> = {
+          paragraphId: opts.paragraphId,
+          range: { start: opts.start, end: opts.end },
+        };
+        if (opts.target) payload.target = opts.target;
+        if (opts.anchor) payload.anchor = opts.anchor;
+        if (opts.tooltip) payload.tooltip = opts.tooltip;
+        await runWrite(io, opts, "docx:insert-hyperlink", payload);
+      }
+    );
+
+  docx
+    .command("remove-hyperlink")
+    .description("Unwrap a hyperlink from a paragraph (optionally reaping its relationship).")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph-id <id>", "Target paragraph id")
+    .requiredOption("--hyperlink-id <id>", "Hyperlink node id")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraphId: string;
+        hyperlinkId: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:remove-hyperlink", {
+          paragraphId: opts.paragraphId,
+          hyperlinkId: opts.hyperlinkId,
+        });
+      }
+    );
+
+  docx
+    .command("set-list")
+    .description("Set or replace numbering (list) on a paragraph.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph-id <id>", "Target paragraph id")
+    .requiredOption("--num-id <n>", "Numbering instance id (matches w:num/@w:numId)", parseIntOpt)
+    .option("--ilvl <n>", "0-based level within the abstract numbering definition", parseIntOpt, 0)
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraphId: string;
+        numId: number;
+        ilvl: number;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:set-paragraph-list", {
+          paragraphId: opts.paragraphId,
+          numId: opts.numId,
+          ilvl: opts.ilvl,
+        });
+      }
+    );
+
+  docx
+    .command("remove-list")
+    .description("Remove numbering (list) from a paragraph.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph-id <id>", "Target paragraph id")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraphId: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:remove-paragraph-list", {
+          paragraphId: opts.paragraphId,
+        });
+      }
+    );
+
+  docx
+    .command("header")
+    .description("Replace one header paragraph's text content.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--part <path>", "Header part path, e.g. word/header1.xml")
+    .requiredOption("--paragraph-index <n>", "0-based paragraph index inside the header", parseIntOpt)
+    .requiredOption("--text <text>", "New plain-text content")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        part: string;
+        paragraphIndex: number;
+        text: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:set-header-text", {
+          partId: opts.part,
+          paragraphIndex: opts.paragraphIndex,
+          text: opts.text,
+        });
+      }
+    );
+
+  docx
+    .command("footer")
+    .description("Replace one footer paragraph's text content.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--part <path>", "Footer part path, e.g. word/footer1.xml")
+    .requiredOption("--paragraph-index <n>", "0-based paragraph index inside the footer", parseIntOpt)
+    .requiredOption("--text <text>", "New plain-text content")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        part: string;
+        paragraphIndex: number;
+        text: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:set-footer-text", {
+          partId: opts.part,
+          paragraphIndex: opts.paragraphIndex,
+          text: opts.text,
+        });
+      }
+    );
+
+  // ── Pending-mutation review (human review flow) ────────────────────────
+  // Per prompt §"The Human Review Flow": agents produce mutations that stage
+  // as pending. These commands surface that queue end-to-end on the CLI so
+  // an operator can ratify or roll back agent changes without touching the
+  // GUI. Pass `--no-approve` to any write subcommand to leave its mutation
+  // pending; `docx pending list/approve/reject` then operate on the queue.
+  // The pending queue is in-process: it does NOT survive across CLI
+  // invocations. To stage agent edits for review across processes, dump the
+  // intermediate snapshot to disk and run `docx diff` against the original.
+  const pending = docx
+    .command("pending")
+    .description(
+      "Inspect, approve, or reject pending agent mutations. The queue lives only inside one CLI process — see --no-approve and docx apply --no-approve."
+    );
+  pending
+    .command("list")
+    .description(
+      "List pending mutations on a fresh load (mostly useful for round-tripping with --no-approve)."
+    )
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { file: string; pretty: boolean }) => {
       const agent = await loadAgent(opts.file);
-      const m = await agent.applyCommand({
-        type: "docx:delete-comment",
-        payload: { commentId: opts.id },
-        source: "agent",
-        agentId: "office-agent-cli",
-      });
-      agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
-      const out = opts.out ?? opts.file;
-      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-      io.stdout.write(stringifyJson(mutationSummary(m, out), opts.pretty) + "\n");
+      io.stdout.write(stringifyJson({ pending: agent.getPendingMutations().length }, opts.pretty) + "\n");
     });
 
   docx
@@ -489,6 +918,99 @@ async function loadAgent(input: string): Promise<DocxAgent> {
   const buf = await readFile(resolve(input));
   return DocxAgent.fromBuffer(buf);
 }
+
+/**
+ * Shared write pipeline for every docx write subcommand. Loads the file,
+ * dispatches the command, optionally auto-approves the resulting pending
+ * mutation (default), serializes back to disk, and prints a JSON summary
+ * to stdout.
+ *
+ * `opts.approve` is the (commander-derived) boolean from `--no-approve`:
+ * commander sets it to `false` when the user passes `--no-approve` and
+ * `true` (or undefined for the default) otherwise. When false the
+ * mutation is left in the bus's pending queue and the printed summary
+ * carries `status: "pending"`.
+ */
+async function runWrite(
+  io: IO,
+  opts: { file: string; out?: string; approve?: boolean; pretty?: boolean },
+  type: string,
+  payload: unknown
+): Promise<void> {
+  const agent = await loadAgent(opts.file);
+  const m = await agent.applyCommand({
+    type,
+    payload,
+    source: "agent",
+    agentId: "office-agent-cli",
+  });
+  const approve = opts.approve !== false;
+  if (approve) {
+    agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
+  }
+  const out = opts.out ?? opts.file;
+  await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+  io.stdout.write(
+    stringifyJson(
+      mutationSummary(
+        approve
+          ? m
+          : ({
+              ...(m as object),
+              status: "pending",
+            } as unknown as Mutation<DocxSnapshot>),
+        out
+      ),
+      opts.pretty === true
+    ) + "\n"
+  );
+}
+
+/** Coerce a commander option string to a boolean, throwing CliError on bad input. */
+function parseBool(value: string, flag: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
+  if (v === "false" || v === "0" || v === "no" || v === "off") return false;
+  throw new CliError(64, `${flag}: expected true|false, got "${value}"`);
+}
+
+/** commander option parser that coerces a flag to an integer (or rejects). */
+function parseIntOpt(value: string, _previous?: number): number {
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n)) throw new CliError(64, `expected integer, got "${value}"`);
+  return n;
+}
+
+/**
+ * Minimal extension → mime-type map for `docx insert-image`. Only covers
+ * the formats `docx:insert-image` actually accepts. Unknown extensions
+ * return `null` and the CLI surfaces a useful "pass --mime" error.
+ */
+function mimeTypeFromExtension(path: string): string | null {
+  const ext = extname(path).toLowerCase().replace(/^\./, "");
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "bmp":
+      return "image/bmp";
+    case "tif":
+    case "tiff":
+      return "image/tiff";
+    case "webp":
+      return "image/webp";
+    case "svg":
+      return "image/svg+xml";
+    default:
+      return null;
+  }
+}
+
+void ({} as CommandLite); // keep type import alive (used by callers via runWrite payloads)
 
 function positionFromSelector(sel: Selector): DocxPosition {
   if (sel.kind === "paragraph") return sel.position;
@@ -800,7 +1322,10 @@ function stringifyJson(value: unknown, pretty: boolean): string {
 }
 
 function mapErrorToExitCode(err: unknown, io: IO): number {
-  if (err instanceof CliError) return err.code;
+  if (err instanceof CliError) {
+    io.stderr.write(`error: ${err.message}\n`);
+    return err.code;
+  }
   if (err instanceof SelectorError) {
     io.stderr.write(`selector error: ${err.message}\n`);
     return 64;

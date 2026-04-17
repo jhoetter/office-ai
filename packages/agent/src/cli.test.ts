@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { runCli } from "./cli.js";
@@ -50,6 +51,73 @@ async function makeFixture(): Promise<string> {
   writeFileSync(inputPath, buf);
   return inputPath;
 }
+
+/**
+ * Hand-rolled tracked-changes fixture: paragraph 0 starts with the literal
+ * "Original " followed by a `<w:ins w:id="42">INSERTED</w:ins>` wrapper.
+ * Hand-rolling the OOXML keeps the test independent of whatever the `docx`
+ * library happens to emit for tracked changes today.
+ */
+async function makeTrackedChangesFixture(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "office-agent-tc-"));
+  const z = new JSZip();
+  z.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`
+  );
+  z.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`
+  );
+  z.file(
+    "word/_rels/document.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`
+  );
+  z.file(
+    "word/document.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Original </w:t></w:r>
+      <w:ins w:id="42" w:author="A" w:date="2024-01-01T00:00:00Z">
+        <w:r><w:t>INSERTED</w:t></w:r>
+      </w:ins>
+    </w:p>
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+  </w:body>
+</w:document>`
+  );
+  const buf = (await z.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  })) as Buffer;
+  const inputPath = join(dir, "tc.docx");
+  writeFileSync(inputPath, buf);
+  return inputPath;
+}
+
+/**
+ * 1×1 transparent PNG (the smallest valid PNG by byte count). Good enough
+ * for `docx insert-image` round-trip tests — the handler validates magic
+ * bytes for PNG via the mime type hint, not by re-decoding the raster.
+ */
+const TINY_PNG_BYTES = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00,
+  0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+  0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d,
+  0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]);
 
 describe("office-agent CLI", () => {
   it("read prints markdown", async () => {
@@ -323,6 +391,184 @@ describe("office-agent docx subcommand group", () => {
     expect(agent.getSnapshot().root.comments).toHaveLength(0);
 
     void stdout;
+  });
+
+  it("docx format-range applies bold to a text range", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-format-"));
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(
+      [
+        "docx",
+        "format-range",
+        "--file",
+        input,
+        "--out",
+        output,
+        "--range",
+        "paragraph:1/text:0..5",
+        "--bold",
+        "true",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    const p1 = agent.getSnapshot().root.body[1];
+    if (p1.kind !== "paragraph") throw new Error("expected paragraph at index 1");
+    const firstRun = p1.children.find((c) => c.kind === "run");
+    if (!firstRun || firstRun.kind !== "run") throw new Error("expected a run");
+    expect(firstRun.properties.bold).toBe(true);
+  });
+
+  it("docx format-range without any flag exits with usage error", async () => {
+    const input = await makeFixture();
+    const { io, stderr } = makeIO();
+    const code = await runCli(
+      ["docx", "format-range", "--file", input, "--range", "paragraph:1/text:0..5"],
+      io
+    );
+    expect(code).toBe(64);
+    expect(stderr.text()).toMatch(/at least one of/i);
+  });
+
+  it("docx insert-image inserts an inline image and adds a media part", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-image-"));
+    const output = join(dir, "out.docx");
+    const imagePath = join(dir, "tiny.png");
+    writeFileSync(imagePath, TINY_PNG_BYTES);
+    const { io } = makeIO();
+    const code = await runCli(
+      [
+        "docx",
+        "insert-image",
+        "--file",
+        input,
+        "--out",
+        output,
+        "--at",
+        "paragraph:1",
+        "--image",
+        imagePath,
+        "--width",
+        "64",
+        "--height",
+        "64",
+        "--alt",
+        "tiny",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const reloaded = readFileSync(output);
+    const z = await JSZip.loadAsync(reloaded);
+    const mediaParts = Object.keys(z.files).filter((p) => p.startsWith("word/media/"));
+    expect(mediaParts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("docx insert-table inserts a 2×2 table at the position selector", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-table-"));
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(
+      [
+        "docx",
+        "insert-table",
+        "--file",
+        input,
+        "--out",
+        output,
+        "--at",
+        "paragraph:0",
+        "--rows",
+        "2",
+        "--cols",
+        "3",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    const tables = agent.getSnapshot().root.body.filter((b) => b.kind === "table");
+    expect(tables).toHaveLength(1);
+    if (tables[0].kind !== "table") throw new Error("expected table");
+    expect(tables[0].rows).toHaveLength(2);
+    expect(tables[0].rows[0].cells).toHaveLength(3);
+  });
+
+  // `docx set-cell-text` is exercised at the handler level in
+  // packages/docx/src/commands/tables.test.ts. The CLI shim cannot be
+  // covered with a multi-step round-trip here because the parser mints
+  // fresh `tableId`s on every load — there's no stable way to thread the
+  // id between two CLI invocations until we either expose `docx inspect
+  // --tables` or wire a deterministic id minter into the CLI.
+
+  it("docx write --no-approve emits a pending mutation summary", async () => {
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-pending-"));
+    const output = join(dir, "out.docx");
+    const { io, stdout } = makeIO();
+    const code = await runCli(
+      [
+        "docx",
+        "write",
+        "--file",
+        input,
+        "--out",
+        output,
+        "--at",
+        "paragraph:1/run:0/text:0",
+        "--text",
+        "PENDING ",
+        "--no-approve",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const summary = JSON.parse(stdout.text());
+    expect(summary.mutation.status).toBe("pending");
+    // The on-disk file is still written from the working snapshot, so the
+    // edit lands in bytes — `--no-approve` only changes the bus state and
+    // the printed summary status.
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    expect(agent.toMarkdown()).toContain("PENDING first paragraph body");
+  });
+
+  it("docx accept-change folds an inserted run into its parent paragraph", async () => {
+    const input = await makeTrackedChangesFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-accept-"));
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(["docx", "accept-change", "--file", input, "--out", output, "--id", "42"], io);
+    expect(code).toBe(0);
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    const p0 = agent.getSnapshot().root.body[0];
+    if (p0.kind !== "paragraph") throw new Error("expected paragraph");
+    // After accept, no revision wrapper remains
+    const wrappers = p0.children.filter((c) => c.kind === "revision");
+    expect(wrappers).toHaveLength(0);
+  });
+
+  it("docx reject-change drops an inserted run entirely", async () => {
+    const input = await makeTrackedChangesFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-reject-"));
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(["docx", "reject-change", "--file", input, "--out", output, "--id", "42"], io);
+    expect(code).toBe(0);
+    const agent = await DocxAgent.fromBuffer(readFileSync(output));
+    const p0 = agent.getSnapshot().root.body[0];
+    if (p0.kind !== "paragraph") throw new Error("expected paragraph");
+    const text = p0.children
+      .filter((c) => c.kind === "run")
+      .flatMap((c) => (c.kind === "run" ? c.children : []))
+      .map((c) => (c.kind === "text" ? c.text : ""))
+      .join("");
+    expect(text).toBe("Original ");
+    expect(text).not.toContain("INSERTED");
   });
 
   it("docx diff reports paragraph modifications", async () => {

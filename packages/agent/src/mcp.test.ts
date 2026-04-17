@@ -62,10 +62,13 @@ describe("OfficeAI MCP server", () => {
     const names = list.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "docx_apply_command",
+      "docx_approve",
       "docx_diff",
       "docx_get_text",
       "docx_inspect",
+      "docx_list_pending",
       "docx_load",
+      "docx_reject",
       "docx_save",
       "docx_search",
     ]);
@@ -262,6 +265,66 @@ describe("OfficeAI MCP server", () => {
     );
     const paragraphs = diff.paragraphs as { added: number; removed: number; modified: number };
     expect(paragraphs.modified).toBe(1);
+  });
+
+  it("pending review flow: apply auto_approve=false, list, then approve & reject", async () => {
+    const client = await makeClient();
+    const path = await makeFixture();
+    const loaded = structured(await client.callTool({ name: "docx_load", arguments: { path } }));
+    const handle = loaded.handle as string;
+
+    const apply = structured(
+      await client.callTool({
+        name: "docx_apply_command",
+        arguments: {
+          handle,
+          type: "docx:insert-text",
+          payload: { at: { paragraph: 1, run: 0, offset: 0 }, text: "PENDING " },
+          auto_approve: false,
+        },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("pending");
+    const mutationId = (apply.mutation as { id: string }).id;
+
+    const list1 = structured(await client.callTool({ name: "docx_list_pending", arguments: { handle } }));
+    expect(list1.pending as Array<{ id: string }>).toHaveLength(1);
+    expect((list1.pending as Array<{ id: string }>)[0].id).toBe(mutationId);
+
+    const approve = structured(
+      await client.callTool({
+        name: "docx_approve",
+        arguments: { handle, mutation_id: mutationId },
+      })
+    );
+    expect(approve.approved).toBe(mutationId);
+
+    const list2 = structured(await client.callTool({ name: "docx_list_pending", arguments: { handle } }));
+    expect(list2.pending as unknown[]).toHaveLength(0);
+
+    const apply2 = structured(
+      await client.callTool({
+        name: "docx_apply_command",
+        arguments: {
+          handle,
+          type: "docx:insert-text",
+          payload: { at: { paragraph: 1, run: 0, offset: 0 }, text: "REJECTME " },
+          auto_approve: false,
+        },
+      })
+    );
+    const id2 = (apply2.mutation as { id: string }).id;
+    const reject = structured(
+      await client.callTool({
+        name: "docx_reject",
+        arguments: { handle, mutation_id: id2, reason: "no thanks" },
+      })
+    );
+    expect(reject.rejected).toBe(id2);
+    expect(reject.reason).toBe("no thanks");
+
+    const list3 = structured(await client.callTool({ name: "docx_list_pending", arguments: { handle } }));
+    expect(list3.pending as unknown[]).toHaveLength(0);
   });
 
   it("returns an error for unknown handles", async () => {

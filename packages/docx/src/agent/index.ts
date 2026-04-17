@@ -7,3 +7,4 @@ export {
   type DocxSearchResult,
 } from "./agent.js";
 export { snapshotToMarkdown } from "./markdown.js";
+export { diffDocxSnapshots } from "./diff.js";

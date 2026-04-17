@@ -5,6 +5,7 @@ import { paragraphPlainText } from "../commands/helpers.js";
 import { parseDocx, type ParseOptions } from "../parser/parse.js";
 import { serializeDocx } from "../serializer/serialize.js";
 import { snapshotToMarkdown } from "./markdown.js";
+import { diffDocxSnapshots } from "./diff.js";
 
 export interface DocxAgentOptions extends ParseOptions {
   readonly sessionId?: string;
@@ -44,9 +45,11 @@ export interface DocxSearchResult {
  * described in spec/shared/agent-api.md.
  */
 export class DocxAgent {
-  private readonly bus: CommandBus<DocxSnapshot>;
+  private bus: CommandBus<DocxSnapshot>;
+  private readonly opts: DocxAgentOptions;
 
   private constructor(initial: DocxSnapshot, opts: DocxAgentOptions) {
+    this.opts = opts;
     this.bus = new CommandBus<DocxSnapshot>(initial, {
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.idMinter ? { mintNodeId: opts.idMinter } : {}),
@@ -57,6 +60,20 @@ export class DocxAgent {
   static async fromBuffer(buffer: ArrayBuffer | Uint8Array, opts: DocxAgentOptions = {}): Promise<DocxAgent> {
     const snap = await parseDocx(buffer, opts);
     return new DocxAgent(snap, opts);
+  }
+
+  /**
+   * Replace the in-memory document with one parsed from a buffer. Drops all
+   * pending mutations and resets the bus history. Spec: `DocumentAgent.importFile`
+   * in `spec/shared/agent-api.md`.
+   */
+  async importFile(buffer: ArrayBuffer | Uint8Array): Promise<void> {
+    const snap = await parseDocx(buffer, this.opts);
+    this.bus = new CommandBus<DocxSnapshot>(snap, {
+      ...(this.opts.sessionId ? { sessionId: this.opts.sessionId } : {}),
+      ...(this.opts.idMinter ? { mintNodeId: this.opts.idMinter } : {}),
+    });
+    this.bus.registerAll(allDocxHandlers);
   }
 
   // ── Read ───────────────────────────────────────────────────────────────
@@ -126,21 +143,14 @@ export class DocxAgent {
   }
 
   // ── Diff & Review ──────────────────────────────────────────────────────
+  /**
+   * Structural diff between two snapshots. Covers paragraph
+   * insert/delete/update/move (matched by stable id), comment add /
+   * delete / resolve / reopen / text edit, and OPC part add / drop.
+   * See `agent/diff.ts` for the algorithm.
+   */
   getDiff(from: DocxSnapshot, to: DocxSnapshot): DocumentDiff {
-    return {
-      format: "docx",
-      fromRevision: from.revision,
-      toRevision: to.revision,
-      changes: [
-        {
-          kind: "node-updated",
-          nodeId: from.root.id,
-          path: ["root"],
-          field: "snapshot",
-          summary: `revision ${from.revision} → ${to.revision}`,
-        },
-      ],
-    };
+    return diffDocxSnapshots(from, to);
   }
 
   getPendingMutations(): ReadonlyArray<Mutation<DocxSnapshot>> {

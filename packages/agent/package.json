@@ -32,6 +32,7 @@
   "devDependencies": {
     "@types/node": "^22",
     "docx": "^9.1.0",
+    "jszip": "^3.10.1",
     "typescript": "^5",
     "vitest": "^2.1.9"
   }

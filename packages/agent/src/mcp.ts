@@ -268,6 +268,76 @@ export function createMcpServer(): McpServer {
     }
   );
 
+  // ── docx_list_pending ─────────────────────────────────────────────────
+  server.registerTool(
+    "docx_list_pending",
+    {
+      description:
+        "List mutations that are still in `pending` state on the bus (typically agent-authored writes invoked with auto_approve=false). Each entry includes the mutation id, command type, source, and the agent id that submitted it.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        const agent = lookupAgent(handle);
+        const pending = agent.getPendingMutations().map((m) => ({
+          id: m.id,
+          command: { type: m.command.type, source: m.command.source },
+          ...(m.command.source === "agent" && "agentId" in m.command ? { agentId: m.command.agentId } : {}),
+          revision: m.after.revision,
+          status: m.status,
+        }));
+        return ok({ pending });
+      } catch (err) {
+        return fail(`docx_list_pending failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── docx_approve ──────────────────────────────────────────────────────
+  server.registerTool(
+    "docx_approve",
+    {
+      description:
+        "Approve a pending mutation. After approval the mutation is committed and shows up in the snapshot's history.",
+      inputSchema: {
+        handle: z.string(),
+        mutation_id: z.string().describe("Mutation id from docx_list_pending."),
+      },
+    },
+    async ({ handle, mutation_id }) => {
+      try {
+        const agent = lookupAgent(handle);
+        agent.approveMutation(mutation_id);
+        return ok({ approved: mutation_id, revision: agent.getSnapshot().revision });
+      } catch (err) {
+        return fail(`docx_approve failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── docx_reject ───────────────────────────────────────────────────────
+  server.registerTool(
+    "docx_reject",
+    {
+      description:
+        "Reject a pending mutation with an optional human-readable reason. The snapshot is unaffected; the mutation is dropped from the pending queue.",
+      inputSchema: {
+        handle: z.string(),
+        mutation_id: z.string().describe("Mutation id from docx_list_pending."),
+        reason: z.string().optional(),
+      },
+    },
+    async ({ handle, mutation_id, reason }) => {
+      try {
+        const agent = lookupAgent(handle);
+        agent.rejectMutation(mutation_id);
+        return ok({ rejected: mutation_id, ...(reason ? { reason } : {}) });
+      } catch (err) {
+        return fail(`docx_reject failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
   // ── docx_diff ─────────────────────────────────────────────────────────
   server.registerTool(
     "docx_diff",
