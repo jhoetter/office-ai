@@ -44,7 +44,7 @@ export function transactionToCommands(
   let docCursor = before.doc;
 
   for (const step of tx.steps) {
-    const handled = handleStep(step, docCursor, out, source, agentId);
+    const handled = handleStep(step, docCursor, before, out, source, agentId);
     if (!handled) {
       out.unsupported.push({ reason: "unsupported step", step });
     }
@@ -60,12 +60,13 @@ export function transactionToCommands(
 function handleStep(
   step: Step,
   doc: PMNode,
+  before: EditorState,
   out: TranslationResult,
   source: "human" | "agent" | "system",
   agentId: string | undefined
 ): boolean {
   if (step instanceof ReplaceStep) {
-    return handleReplaceStep(step, doc, out, source, agentId);
+    return handleReplaceStep(step, doc, before, out, source, agentId);
   }
   if (step instanceof AddMarkStep || step instanceof RemoveMarkStep) {
     return handleMarkStep(step, doc, out, source, agentId);
@@ -80,14 +81,13 @@ function handleStep(
 function handleReplaceStep(
   step: ReplaceStep,
   doc: PMNode,
+  before: EditorState,
   out: TranslationResult,
   source: "human" | "agent" | "system",
   agentId: string | undefined
 ): boolean {
   const { from, to } = step;
   const sliceContent = step.slice.content;
-  const insertedText = extractPlainText(sliceContent);
-  const insertedHasBlocks = sliceHasBlocks(sliceContent);
   const startPos = positionFromPM(doc, from);
   const endPos = positionFromPM(doc, to);
 
@@ -96,20 +96,28 @@ function handleReplaceStep(
     return false;
   }
 
+  if (sliceHasUnsupportedBlock(sliceContent)) {
+    out.unsupported.push({ reason: "slice contains a non-paragraph block (table / opaque)", step });
+    return false;
+  }
+
+  const blockSegments = sliceBlockSegments(sliceContent);
+  const insertedHasBlocks = blockSegments.length > 1;
+  const insertedText = blockSegments.length > 0 ? blockSegments[0] : "";
+
+  // Insertion at a cursor (no range to delete).
   if (from === to) {
     if (insertedHasBlocks) {
-      // Treat any block-bearing slice insertion at a cursor as a paragraph split (Enter key).
-      out.commands.push(wrap({ type: "docx:insert-paragraph", payload: { at: startPos } }, source, agentId));
+      emitMultiBlockPaste(blockSegments, startPos, out, source, agentId);
       return true;
     }
     if (insertedText.length === 0) return true;
-    out.commands.push(
-      wrap({ type: "docx:insert-text", payload: { at: startPos, text: insertedText } }, source, agentId)
-    );
+    emitInsertWithMarkReassertion(insertedText, startPos, step, doc, before, from, out, source, agentId);
     return true;
   }
 
-  if (insertedText.length === 0 && !insertedHasBlocks) {
+  // Range deletion + nothing to insert.
+  if (blockSegments.length === 0 || (blockSegments.length === 1 && insertedText.length === 0)) {
     out.commands.push(
       wrap({ type: "docx:delete-range", payload: { range: makeRange(startPos, endPos) } }, source, agentId)
     );
@@ -120,15 +128,130 @@ function handleReplaceStep(
   out.commands.push(
     wrap({ type: "docx:delete-range", payload: { range: makeRange(startPos, endPos) } }, source, agentId)
   );
-  if (insertedText.length > 0) {
-    out.commands.push(
-      wrap({ type: "docx:insert-text", payload: { at: startPos, text: insertedText } }, source, agentId)
-    );
-  }
   if (insertedHasBlocks) {
-    out.commands.push(wrap({ type: "docx:insert-paragraph", payload: { at: startPos } }, source, agentId));
+    emitMultiBlockPaste(blockSegments, startPos, out, source, agentId);
+  } else {
+    emitInsertWithMarkReassertion(insertedText, startPos, step, doc, before, from, out, source, agentId);
   }
   return true;
+}
+
+/**
+ * Emit `insert-text` and, when warranted, a follow-up `format-range` so
+ * the inserted text inherits the ambient marks. PM's `tr.insertText`
+ * automatically applies `storedMarks` to the slice's text node, so
+ * reading marks off the slice is the most reliable signal; we fall back
+ * to "marks at the insertion point" for programmatic insertions that
+ * arrive without slice-level marks.
+ */
+function emitInsertWithMarkReassertion(
+  text: string,
+  startPos: DocxPosition,
+  step: ReplaceStep,
+  doc: PMNode,
+  before: EditorState,
+  from: number,
+  out: TranslationResult,
+  source: "human" | "agent" | "system",
+  agentId: string | undefined
+): void {
+  out.commands.push(wrap({ type: "docx:insert-text", payload: { at: startPos, text } }, source, agentId));
+  const format = ambientFormatAtInsert(step, doc, before, from);
+  if (format && !isEmptyFormat(format)) {
+    const endParagraphOffset = (startPos.offset ?? 0) + text.length;
+    const range: DocxSelection = {
+      start: { paragraph: startPos.paragraph, offset: startPos.offset ?? 0 },
+      end: { paragraph: startPos.paragraph, offset: endParagraphOffset },
+    };
+    out.commands.push(wrap({ type: "docx:format-range", payload: { range, format } }, source, agentId));
+  }
+}
+
+/**
+ * Translate a multi-block paste slice into a sequence of `insert-text`
+ * + `insert-paragraph` commands. The slice is laid out as N paragraph
+ * segments; we emit:
+ *   1. insert-text for segment[0] at the cursor,
+ *   2. insert-paragraph at (cursor + segment[0].length) — splits the paragraph,
+ *   3. for every middle segment: insert-text at the start of the new
+ *      paragraph, then insert-paragraph at end of that text,
+ *   4. insert-text for the last segment at the start of the final paragraph.
+ *
+ * We compute positions in the model coordinate space, not PM offsets,
+ * so the result is independent of PM's `+2 per paragraph` accounting.
+ */
+function emitMultiBlockPaste(
+  segments: string[],
+  startPos: DocxPosition,
+  out: TranslationResult,
+  source: "human" | "agent" | "system",
+  agentId: string | undefined
+): void {
+  if (segments.length < 2) return;
+  let paragraphIndex = startPos.paragraph;
+  let offset = startPos.offset ?? 0;
+
+  // First segment goes into the existing paragraph at the cursor.
+  const first = segments[0];
+  if (first.length > 0) {
+    out.commands.push(
+      wrap(
+        { type: "docx:insert-text", payload: { at: { paragraph: paragraphIndex, offset }, text: first } },
+        source,
+        agentId
+      )
+    );
+    offset += first.length;
+  }
+  // Split the current paragraph at the boundary, creating paragraph N+1.
+  out.commands.push(
+    wrap(
+      { type: "docx:insert-paragraph", payload: { at: { paragraph: paragraphIndex, offset } } },
+      source,
+      agentId
+    )
+  );
+  paragraphIndex++;
+  offset = 0;
+
+  // Middle segments: insert text into the freshly-created paragraph,
+  // then split again to start the next.
+  for (let i = 1; i < segments.length - 1; i++) {
+    const seg = segments[i];
+    if (seg.length > 0) {
+      out.commands.push(
+        wrap(
+          { type: "docx:insert-text", payload: { at: { paragraph: paragraphIndex, offset }, text: seg } },
+          source,
+          agentId
+        )
+      );
+    }
+    out.commands.push(
+      wrap(
+        {
+          type: "docx:insert-paragraph",
+          payload: { at: { paragraph: paragraphIndex, offset: seg.length } },
+        },
+        source,
+        agentId
+      )
+    );
+    paragraphIndex++;
+    offset = 0;
+  }
+
+  // Last segment slots into the final new paragraph.
+  const last = segments[segments.length - 1];
+  if (last.length > 0) {
+    out.commands.push(
+      wrap(
+        { type: "docx:insert-text", payload: { at: { paragraph: paragraphIndex, offset }, text: last } },
+        source,
+        agentId
+      )
+    );
+  }
 }
 
 function handleMarkStep(
@@ -199,6 +322,122 @@ function formatFromMark(mark: Mark, value: boolean): TextFormat | null {
 }
 
 /**
+ * Compute a `TextFormat` representing the marks the inserted text
+ * should carry. Order of preference:
+ *   1. marks on the inserted slice's first text node — PM applies
+ *      `storedMarks` here, so this captures continued-typing inside a
+ *      formatted span.
+ *   2. `EditorState.storedMarks` on the previous state.
+ *   3. marks at the insertion point (`$pos.marks()`).
+ */
+function ambientFormatAtInsert(
+  step: ReplaceStep,
+  doc: PMNode,
+  before: EditorState,
+  from: number
+): TextFormat | null {
+  const sliceMarks = firstTextMarks(step.slice.content);
+  if (sliceMarks && sliceMarks.length > 0) {
+    return formatFromMarks(sliceMarks);
+  }
+  const stored = before.storedMarks ?? null;
+  if (stored && stored.length > 0) {
+    return formatFromMarks(stored);
+  }
+  const ambient = marksAtPos(doc, from);
+  if (ambient.length > 0) return formatFromMarks(ambient);
+  return null;
+}
+
+function firstTextMarks(content: import("prosemirror-model").Fragment): readonly Mark[] | null {
+  let marks: readonly Mark[] | null = null;
+  content.descendants((node) => {
+    if (marks !== null) return false;
+    if (node.isText) {
+      marks = node.marks;
+      return false;
+    }
+    return true;
+  });
+  return marks;
+}
+
+function marksAtPos(doc: PMNode, pos: number): readonly Mark[] {
+  try {
+    return doc.resolve(pos).marks();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Reduce a list of PM marks into a single `TextFormat`. Structural
+ * marks (hyperlink, comment, revision) are paragraph / wrapper concepts
+ * in our model, not run properties — they're filtered out so the
+ * follow-up `format-range` only carries actual typographic toggles.
+ */
+function formatFromMarks(marks: readonly Mark[]): TextFormat {
+  const out: TextFormat = {};
+  for (const m of marks) {
+    const f = formatFromMark(m, true);
+    if (!f) continue;
+    Object.assign(out, f);
+  }
+  return out;
+}
+
+function isEmptyFormat(f: TextFormat): boolean {
+  return (
+    f.bold === undefined &&
+    f.italic === undefined &&
+    f.underline === undefined &&
+    f.strike === undefined &&
+    f.fontFamily === undefined &&
+    f.fontSize === undefined &&
+    f.color === undefined &&
+    f.highlight === undefined
+  );
+}
+
+/**
+ * Walk a slice and return the plain text of every top-level paragraph
+ * block, in order. A slice with one paragraph collapses to a one-element
+ * array; a slice that bare-text would otherwise be inline-only collapses
+ * to `[text]` so callers see a single segment.
+ */
+function sliceBlockSegments(content: import("prosemirror-model").Fragment): string[] {
+  const segments: string[] = [];
+  let inlineText = "";
+  let sawBlock = false;
+  for (let i = 0; i < content.childCount; i++) {
+    const child = content.child(i);
+    if (child.isBlock && child.type.name === "paragraph") {
+      sawBlock = true;
+      segments.push(extractPlainText(child.content));
+      continue;
+    }
+    if (child.isInline || child.isText) {
+      inlineText += extractInlineText(child);
+    }
+  }
+  if (!sawBlock) {
+    return inlineText.length > 0 ? [inlineText] : [];
+  }
+  return segments;
+}
+
+function sliceHasUnsupportedBlock(content: import("prosemirror-model").Fragment): boolean {
+  let bad = false;
+  content.forEach((child) => {
+    if (bad) return;
+    if (child.isBlock && child.type.name !== "paragraph") {
+      bad = true;
+    }
+  });
+  return bad;
+}
+
+/**
  * Translate a global PM offset to a DocxPosition. The PM doc is a
  * sequence of top-level paragraph (or atom) blocks; for paragraphs we
  * compute a 0-based character offset into the paragraph's plain text.
@@ -211,7 +450,7 @@ function positionFromPM(doc: PMNode, pos: number): DocxPosition | null {
     if (result) return false;
     if (node.isBlock && node.type.name === "paragraph") {
       paragraphIndex++;
-      const start = nodePos + 1; // inside the paragraph
+      const start = nodePos + 1;
       const end = nodePos + node.nodeSize - 1;
       if (pos >= nodePos && pos <= nodePos + node.nodeSize) {
         const offset = Math.max(0, Math.min(end, pos) - start);
@@ -231,7 +470,6 @@ function positionFromPM(doc: PMNode, pos: number): DocxPosition | null {
     return true;
   });
   if (result) return result;
-  // Position past the last block.
   return { paragraph: Math.max(0, paragraphIndex), run: 0, offset: 0 };
 }
 
@@ -247,7 +485,6 @@ function extractPlainText(content: import("prosemirror-model").Fragment): string
       return false;
     }
     if (node.type.name === "hard_break") {
-      // hard_break inside a paragraph is not the same as "Enter"; skip for now.
       return false;
     }
     return true;
@@ -255,14 +492,8 @@ function extractPlainText(content: import("prosemirror-model").Fragment): string
   return s;
 }
 
-function sliceHasBlocks(content: import("prosemirror-model").Fragment): boolean {
-  let found = false;
-  content.descendants((node) => {
-    if (node.isBlock && node.type.name === "paragraph") {
-      found = true;
-      return false;
-    }
-    return !found;
-  });
-  return found;
+function extractInlineText(node: PMNode): string {
+  if (node.isText) return node.text ?? "";
+  if (node.type.name === "tab") return "\t";
+  return "";
 }

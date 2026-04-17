@@ -252,3 +252,146 @@ validation summary).
   short. Cross-browser coverage (firefox, webkit) is a P1.2 follow-up if
   cost allows.
 
+## P1.1 — W2: Range edits + PM funnel
+
+> Date: 2026-04-17. Workstream W2 of batch P1.1 (per
+> `docs/roadmap-docx-p1.md`). Ships A3, C1, C2 — i.e. lifts the
+> "multi-paragraph throws" deviation on `format-range` / `delete-range`
+> and closes the two ProseMirror funnel issues that were the only
+> remaining "Known issues" entries on the renderer side.
+
+### What landed
+
+1. **Multi-paragraph `docx:format-range`**
+   (`packages/docx/src/commands/format-range.ts`). The handler now
+   normalizes `start` / `end` (so the caller can pass them in either
+   order) and, when `start.paragraph !== end.paragraph`, walks the
+   paragraph span:
+   - **Start paragraph**: format from the start boundary to
+     end-of-paragraph. Splits the boundary run when needed.
+   - **Intermediate paragraphs**: format every run.
+   - **End paragraph**: format from start-of-paragraph to the end
+     boundary. Splits the boundary run when needed.
+   - Non-paragraph blocks (tables, opaque blocks, section breaks)
+     inside the span are skipped — the formatting "walks past" them
+     without crashing or rewriting their bytes.
+     The diff for a multi-paragraph apply is a single `DocumentDiff`
+     with one `node-updated` change per paragraph that was actually
+     touched. Dirty flags: `body: true` (unchanged behavior).
+
+2. **Multi-paragraph `docx:delete-range`**
+   (`packages/docx/src/commands/delete-range.ts`). Cross-paragraph
+   ranges now:
+   - Trim the **start paragraph** from the start boundary to its end.
+   - Drop every intermediate paragraph entirely.
+   - Trim the **end paragraph** from its beginning to the end
+     boundary.
+   - **Merge** the trimmed start and trimmed end paragraphs into a
+     single paragraph. The start paragraph's `id`, `pPr`, and
+     `properties` win — it absorbs the end paragraph's surviving
+     content. If the merge would leave the paragraph with zero runs
+     (both sides emptied), an empty placeholder run is appended so
+     the paragraph stays well-formed for the renderer / serializer.
+     The diff includes one `node-updated` for the merged start
+     paragraph plus one `node-deleted` per dropped paragraph (including
+     the now-absorbed end paragraph). Dirty flags: `body: true`.
+
+3. **PM funnel: mark re-assertion across boundary edits**
+   (`packages/docx/src/renderer/transaction-to-commands.ts`,
+   `emitInsertWithMarkReassertion`). When a `ReplaceStep` with
+   `from === to` inserts text, the funnel now emits the existing
+   `insert-text` command **plus**, when warranted, a follow-up
+   `format-range` that re-asserts the ambient text marks across the
+   inserted span. The heuristic (documented inline):
+   1. Read marks from the slice's first text node — PM's
+      `tr.insertText` automatically applies `storedMarks`, so a paste
+      / typing inside a formatted span carries those marks here.
+   2. If the slice has no text marks (e.g. a programmatic
+      insertion), fall back to "marks at the insertion point"
+      (`$pos.marks()`), which Prosemirror computes as marks of the
+      node-before, or node-after at the start of the textblock.
+   3. Convert the marks to a `TextFormat`. Structural marks
+      (`hyperlink`, `comment_mark`, `revision_mark`) are filtered out
+      — they're paragraph / run wrappers in our model, not run
+      properties.
+   4. Only emit the follow-up when the resulting format is
+      non-empty; otherwise the funnel is unchanged.
+
+4. **PM funnel: multi-block paste** (same file,
+   `emitMultiBlockPaste`). A `ReplaceStep` whose slice carries N
+   top-level paragraph blocks (typical for a paste of multiple
+   paragraphs) is no longer collapsed to a single
+   `insert-paragraph`. Instead the funnel emits the natural sequence:
+   - `insert-text` for the first segment's text at the cursor,
+   - `insert-paragraph` at `(cursor + segment[0].length)` to split
+     the current paragraph,
+   - `insert-text` + `insert-paragraph` for every middle segment,
+   - `insert-text` for the last segment's text at the new paragraph
+     start.
+     Position math is performed against the **model**, not PM offsets,
+     so the resulting commands are independent of how PM happens to
+     number positions. Slices that carry non-paragraph blocks (tables
+     in particular) are flagged via the existing `unsupported`
+     channel — the funnel does **not** crash; it just skips mirroring
+     that step into the bus, leaving the EditorView's optimistic
+     render in place until the user retries.
+
+5. **`buildDiffMulti` helper** (`packages/docx/src/commands/helpers.ts`)
+   — the only addition to `helpers.ts`, used by the two
+   multi-paragraph handlers above. Single-change `buildDiff` is
+   unchanged.
+
+### Tests
+
+- `packages/docx/src/commands/handlers.test.ts` gains three
+  multi-paragraph cases (format across three paragraphs; delete
+  across three paragraphs; delete that fully empties the merged
+  paragraph). Existing single-paragraph cases unchanged.
+- `packages/docx/src/renderer/transaction-to-commands.test.ts`
+  (new) is table-driven and covers: bold-boundary insert,
+  PM-encoded marks on the inserted slice, plain-text insert (no
+  spurious format-range), 2-paragraph paste, 3-paragraph paste,
+  paste with empty trailing paragraph, multi-paragraph delete,
+  multi-paragraph format.
+- Test totals for `@officeai/docx` go from **32 → 58** (the new
+  W2 work adds 11; the new W3 comments-lifecycle suite contributes
+  the remainder). All other packages' tests are unaffected.
+
+### Algorithmic notes
+
+- Both `format-range` and `delete-range` reuse a common
+  `paragraphTextOffset(p, runIndex, localOffset)` that now treats
+  `runIndex === undefined` as "interpret `localOffset` as a
+  paragraph-wide character offset" (clamped to the paragraph's
+  length). This makes the multi-paragraph caller's life trivial:
+  paragraph-wide offsets travel through the handler unchanged. The
+  per-run interpretation is preserved when `runIndex` is supplied,
+  so existing single-paragraph callers (and the agent) see no
+  behavioral change.
+- For multi-paragraph delete, the merge step preserves the start
+  paragraph's `id` deliberately — node-id stability matters because
+  PM-side comment / revision marks reference paragraphs by id; the
+  merged paragraph stays "the same" paragraph from the renderer's
+  perspective. The end paragraph's id flows into a `node-deleted`
+  diff entry so the bus / decoration plugins can drop their
+  references.
+- For multi-block paste, the funnel computes per-step positions in
+  the model coordinate space (not PM positions), so the sequence is
+  immune to PM's accounting of paragraph boundaries (`+2` per
+  paragraph). The trade-off: paragraph-level properties carried by
+  the pasted paragraphs (e.g. heading style of pasted-in `<h1>`)
+  are NOT preserved by this round; that's an explicit P1.2+ follow-up
+  along with the toolbar work.
+
+### Known follow-ups (not in W2 scope)
+
+- `insert-text` does not yet honor paragraph-wide offsets when
+  `run` is supplied but the offset overflows the targeted run; it
+  appends to the run instead of advancing into the next. The PM
+  funnel works around this for the mark-reassertion follow-up by
+  emitting the `format-range` against paragraph-wide offsets, but
+  the underlying handler should still be tightened.
+- Pasted paragraph styles / `pPr` are dropped by the multi-block
+  paste path. Re-introducing per-segment `set-paragraph-style`
+  commands lands with C3 (toolbar parity) in P1.2.
+

@@ -46,9 +46,19 @@ target paragraph. May split a run.
 type DeleteRangePayload = { range: DocxSelection };
 ```
 
-Delete content within the range. If the range spans entire paragraphs,
-those paragraphs are removed (intermediate paragraphs collapse). If it's
-within one paragraph, the runs are spliced and trimmed.
+Delete content within the range. If the range is single-paragraph the
+affected runs are spliced and trimmed. If the range spans multiple
+paragraphs (`start.paragraph !== end.paragraph`) the handler:
+
+1. trims the **start** paragraph from the start boundary to its end,
+2. drops every fully-contained intermediate paragraph,
+3. trims the **end** paragraph from its beginning to the end boundary,
+4. **merges** the trimmed start and trimmed end paragraphs into a
+   single paragraph, preserving the start paragraph's `id` and `pPr`.
+
+Non-paragraph blocks (tables, opaque blocks) inside the span are not
+crossed: callers that need to delete one of those should target it with
+a dedicated command.
 
 ### `docx:format-range`
 
@@ -58,6 +68,10 @@ type FormatRangePayload = { range: DocxSelection; format: TextFormatPayload };
 
 Apply the format toggle/value to every run intersecting the range. Runs
 are split at range boundaries when needed so the formatting is exact.
+Multi-paragraph ranges (`start.paragraph !== end.paragraph`) are
+supported: the handler walks the paragraph span and applies the format
+to the start paragraph's tail, every intermediate paragraph, and the
+end paragraph's head. Non-paragraph blocks inside the span are skipped.
 
 ### `docx:insert-paragraph`
 

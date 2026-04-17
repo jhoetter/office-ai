@@ -136,3 +136,17 @@ export function buildDiff(
     changes: [change],
   };
 }
+
+/** Build a multi-change diff. */
+export function buildDiffMulti(
+  prevRevision: number,
+  nextRevision: number,
+  changes: ReadonlyArray<DocumentDiff["changes"][number]>
+): DocumentDiff {
+  return {
+    format: "docx",
+    fromRevision: prevRevision,
+    toRevision: nextRevision,
+    changes: [...changes],
+  };
+}

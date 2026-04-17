@@ -52,6 +52,98 @@ describe("docx command handlers", () => {
     expect(paragraphPlainText(p0)).toBe("abghij");
   });
 
+  it("format-range across three paragraphs leaves untouched runs untouched and dirty-flags the body", async () => {
+    const agent = await loadAgent([{ text: "alpha" }, { text: "beta" }, { text: "gamma" }]);
+    const m = await agent.applyCommand({
+      type: "docx:format-range",
+      payload: {
+        range: {
+          start: { paragraph: 0, offset: 2 },
+          end: { paragraph: 2, offset: 3 },
+        },
+        format: { bold: true },
+      },
+      source: "human",
+    });
+    expect(m.status).toBe("approved");
+    const snap = agent.getSnapshot();
+    expect(snap.dirty.body).toBe(true);
+
+    const collectBoldText = (idx: number): string => {
+      const p = snap.root.body[idx];
+      if (p.kind !== "paragraph") throw new Error();
+      let out = "";
+      for (const c of p.children) {
+        if (c.kind !== "run") continue;
+        if (c.properties.bold !== true) continue;
+        for (const child of c.children) {
+          if (child.kind === "text") out += child.text;
+        }
+      }
+      return out;
+    };
+    expect(collectBoldText(0)).toBe("pha"); // tail of "alpha" from offset 2
+    expect(collectBoldText(1)).toBe("beta"); // entire intermediate paragraph
+    expect(collectBoldText(2)).toBe("gam"); // head of "gamma" up to offset 3
+
+    // Untouched plain text still exists.
+    const p0 = snap.root.body[0];
+    if (p0.kind !== "paragraph") throw new Error();
+    expect(paragraphPlainText(p0)).toBe("alpha");
+  });
+
+  it("delete-range across three paragraphs merges start+end and drops intermediates", async () => {
+    const agent = await loadAgent([{ text: "alpha" }, { text: "middle" }, { text: "omega tail" }]);
+    const before = agent.getSnapshot().root.body.length;
+    const startId = (() => {
+      const b = agent.getSnapshot().root.body[0];
+      if (b.kind !== "paragraph") throw new Error();
+      return b.id;
+    })();
+    await agent.applyCommand({
+      type: "docx:delete-range",
+      payload: {
+        range: {
+          start: { paragraph: 0, offset: 3 },
+          end: { paragraph: 2, offset: 6 },
+        },
+      },
+      source: "human",
+    });
+    const body = agent.getSnapshot().root.body;
+    expect(body.length).toBe(before - 2);
+    const merged = body[0];
+    if (merged.kind !== "paragraph") throw new Error();
+    expect(merged.id).toBe(startId);
+    // "alpha" trimmed at offset 3 → "alp"; "omega tail" trimmed before
+    // offset 6 → "tail"; merged = "alp" + "tail" = "alptail".
+    expect(paragraphPlainText(merged)).toBe("alptail");
+  });
+
+  it("delete-range that empties the merged paragraph still leaves a well-formed paragraph", async () => {
+    const agent = await loadAgent([{ text: "alpha" }, { text: "beta" }]);
+    await agent.applyCommand({
+      type: "docx:delete-range",
+      payload: {
+        range: {
+          start: { paragraph: 0, offset: 0 },
+          end: { paragraph: 1, offset: 4 },
+        },
+      },
+      source: "human",
+    });
+    const body = agent.getSnapshot().root.body;
+    const paragraphs = body.filter((b) => b.kind === "paragraph");
+    expect(paragraphs.length).toBe(1);
+    const merged = paragraphs[0];
+    if (merged.kind !== "paragraph") throw new Error();
+    expect(paragraphPlainText(merged)).toBe("");
+    // Must still contain at least one (empty) run so the renderer/serializer
+    // produce a well-formed <w:p>.
+    const runs = merged.children.filter((c) => c.kind === "run");
+    expect(runs.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("format-range applies bold across a run subrange", async () => {
     const agent = await loadAgent([{ text: "alpha beta gamma" }]);
     await agent.applyCommand({
