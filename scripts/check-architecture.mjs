@@ -35,7 +35,8 @@ const LEAF_DIRS = ["tests"];
  *  - design-tokens     → leaf; depends on nothing internal.
  *  - ui                → presentation only; design-tokens.
  *  - docx              → headless model layer; core only.
- *  - agent             → orchestration / CLI; core + docx.
+ *  - xlsx              → headless model layer; core only (mirrors docx).
+ *  - agent             → orchestration / CLI; core + docx + xlsx.
  *  - integration-tests → can depend on anything (it's the consumer).
  *  - web               → top of stack; can depend on anything.
  */
@@ -44,11 +45,18 @@ const ALLOWED_INTERNAL_DEPS = {
   "@officeai/design-tokens": [],
   "@officeai/ui": ["@officeai/design-tokens"],
   "@officeai/docx": ["@officeai/core"],
-  "@officeai/agent": ["@officeai/core", "@officeai/docx"],
-  "@officeai/integration-tests": ["@officeai/core", "@officeai/docx", "@officeai/agent"],
+  "@officeai/xlsx": ["@officeai/core"],
+  "@officeai/agent": ["@officeai/core", "@officeai/docx", "@officeai/xlsx"],
+  "@officeai/integration-tests": [
+    "@officeai/core",
+    "@officeai/docx",
+    "@officeai/xlsx",
+    "@officeai/agent",
+  ],
   "@officeai/web": [
     "@officeai/core",
     "@officeai/docx",
+    "@officeai/xlsx",
     "@officeai/agent",
     "@officeai/ui",
     "@officeai/design-tokens",
@@ -62,6 +70,7 @@ const ALLOWED_INTERNAL_DEPS = {
 const FORBIDDEN_EXTERNAL_DEPS = {
   "@officeai/core": ["react", "react-dom", "next"],
   "@officeai/docx": ["react", "react-dom", "next"],
+  "@officeai/xlsx": ["react", "react-dom", "next"],
   "@officeai/agent": ["react", "react-dom", "next"],
   "@officeai/design-tokens": ["react", "react-dom", "next"],
 };
