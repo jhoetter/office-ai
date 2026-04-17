@@ -1,17 +1,34 @@
 /**
  * @officeai/xlsx — XLSX editor entry point.
  *
- * Surfaces are filled in over the XLSX phases (see `spec/xlsx/` and
- * `docs/build-log/xlsx.md`):
+ * Phase 4 surface (this commit):
+ *   - parseXlsx / serializeXlsx (byte-preserving round-trip)
+ *   - thin model: XlsxSnapshot, XlsxWorkbook, Sheet, OpaquePart
  *
- * - Phase 4 — `parseXlsx`, `serializeXlsx` (OOXML I/O with opaque-part preservation)
- * - Phase 5 — model types + command handlers
- * - Phase 6 — `XlsxAgent`
- * - Phase 7 — formula engine
- * - Phase 9 — virtualized renderer
- *
- * Until those land, the package exports types only so it can be referenced
- * from the architecture graph and the workspace dep map without breaking
- * downstream typechecks.
+ * Surfaces still to ship:
+ *   - Phase 5 — typed cell layer + 13 P0 command handlers
+ *   - Phase 6 — XlsxAgent (DocumentAgent contract)
+ *   - Phase 7 — formula engine
+ *   - Phase 9 — virtualized renderer
  */
+
 export const XLSX_PACKAGE_VERSION = "0.1.0";
+
+export {
+  parseXlsx,
+  resolveTargetPath,
+  XlsxParseError,
+  type ParseOptions,
+  type XlsxParseErrorCode,
+} from "./parser/index.js";
+
+export { serializeXlsx, XlsxSerializeError, type XlsxSerializeErrorCode } from "./serializer/index.js";
+
+export {
+  emptyDirty,
+  type OpaquePart,
+  type Sheet,
+  type XlsxDirtyFlags,
+  type XlsxSnapshot,
+  type XlsxWorkbook,
+} from "./model/index.js";

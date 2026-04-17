@@ -293,6 +293,9 @@ importers:
       '@officeai/docx':
         specifier: workspace:*
         version: link:../packages/docx
+      '@officeai/xlsx':
+        specifier: workspace:*
+        version: link:../packages/xlsx
     devDependencies:
       '@types/node':
         specifier: ^22

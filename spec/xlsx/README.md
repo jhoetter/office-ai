@@ -35,16 +35,16 @@ unchanged from the DOCX phase.
 
 ## Status
 
-| Doc                      | Status      |
-| ------------------------ | ----------- |
-| `analysis.md`            | landed (P1) |
-| `feature-scope.md`       | landed (P2) |
-| `document-model.md`      | landed (P2) |
-| `ooxml-mapping.md`       | landed (P2) |
-| `parser.md`              | landed (P2) |
-| `serializer.md`          | landed (P2) |
-| `renderer.md`            | landed (P2) |
-| `formula-engine.md`      | landed (P2) |
-| `agent-commands.md`      | landed (P2) |
-| `edge-cases.md`          | landed (P2) |
-| `acceptance-criteria.md` | landed (P2) |
+| Doc                      | Status                       |
+| ------------------------ | ---------------------------- |
+| `analysis.md`            | landed (P1)                  |
+| `feature-scope.md`       | landed (P2)                  |
+| `document-model.md`      | landed (P2)                  |
+| `ooxml-mapping.md`       | landed (P2)                  |
+| `parser.md`              | implemented (P4 thin)        |
+| `serializer.md`          | implemented (P4 byte-oracle) |
+| `renderer.md`            | landed (P2)                  |
+| `formula-engine.md`      | landed (P2)                  |
+| `agent-commands.md`      | landed (P2)                  |
+| `edge-cases.md`          | landed (P2)                  |
+| `acceptance-criteria.md` | landed (P2)                  |
