@@ -1,0 +1,47 @@
+{
+  "name": "@officeai/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Format-agnostic core: command bus, plugin registry, OOXML utilities, document model abstractions.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./ooxml": {
+      "types": "./dist/ooxml/index.d.ts",
+      "import": "./dist/ooxml/index.js"
+    },
+    "./commands": {
+      "types": "./dist/commands/index.d.ts",
+      "import": "./dist/commands/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "echo 'no lint configured for core' && true",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.1",
+    "js-sha256": "^0.11.1",
+    "jszip": "^3.10.1",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
+}

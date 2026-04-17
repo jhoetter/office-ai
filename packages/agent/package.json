@@ -1,0 +1,36 @@
+{
+  "name": "@officeai/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "office-agent CLI + programmatic API. DOCX wired in this session; XLSX/PPTX deferred.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "office-agent": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "echo 'no lint configured for agent' && true",
+    "clean": "rm -rf dist",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@officeai/core": "workspace:*",
+    "@officeai/docx": "workspace:*",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "docx": "^9.1.0",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
+}

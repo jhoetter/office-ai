@@ -219,3 +219,85 @@ textarea::placeholder {
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
+
+/* ── ProseMirror DOCX editor surface ── */
+.prose-pm .ProseMirror {
+  outline: none;
+  min-height: 60vh;
+  color: var(--foreground);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.prose-pm .ProseMirror p {
+  margin: 0 0 0.75rem 0;
+}
+
+.prose-pm .ProseMirror p[data-style="Heading1"],
+.prose-pm .ProseMirror p[data-style="Title"] {
+  font-size: 1.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-pm .ProseMirror p[data-style="Heading2"] {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 1rem;
+}
+
+.prose-pm .ProseMirror p[data-style="Heading3"] {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.prose-pm .ProseMirror .pm-comment-mark {
+  background-color: rgba(247, 215, 86, 0.35);
+  border-bottom: 1px dotted rgba(180, 130, 0, 0.6);
+  cursor: pointer;
+}
+
+.prose-pm .ProseMirror .pm-revision-ins {
+  background-color: rgba(76, 175, 80, 0.18);
+  text-decoration: underline;
+  text-decoration-color: rgba(76, 175, 80, 0.6);
+}
+
+.prose-pm .ProseMirror .pm-revision-del {
+  background-color: rgba(216, 75, 62, 0.18);
+  text-decoration: line-through;
+}
+
+.prose-pm .ProseMirror .pm-hyperlink {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.prose-pm .ProseMirror .pm-section-break {
+  border: none;
+  border-top: 1px dashed var(--divider);
+  margin: 1.5rem 0;
+}
+
+.prose-pm .ProseMirror .pm-table-placeholder,
+.prose-pm .ProseMirror .pm-opaque-block,
+.prose-pm .ProseMirror .pm-opaque-inline,
+.prose-pm .ProseMirror .pm-image-placeholder {
+  display: inline-block;
+  padding: 0.125rem 0.375rem;
+  margin: 0 0.125rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px dashed var(--tertiary);
+  color: var(--secondary);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.prose-pm .ProseMirror .pm-table-placeholder,
+.prose-pm .ProseMirror .pm-opaque-block,
+.prose-pm .ProseMirror .pm-section-break {
+  display: block;
+}

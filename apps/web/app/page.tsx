@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 
 export default function HomePage() {
@@ -13,30 +14,53 @@ export default function HomePage() {
       </header>
 
       <section className="mt-24 flex flex-1 flex-col items-start gap-6">
-        <span className="rounded-full bg-[var(--accent-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--accent)]">
-          scaffold
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ai-violet-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--ai-violet)]">
+          <Sparkles size={12} />
+          AI-native office editors
         </span>
         <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-          A clean starting point.
+          Headless-first DOCX editor with a real command bus.
         </h1>
         <p className="max-w-prose text-base text-secondary">
-          officeAI is a minimal product scaffold sharing the design language and
-          tech stack of our other products. The hello-world below is a tiny
-          in-memory text editor that exercises the design system, theme toggle,
-          and the FastAPI backend.
+          A working Word-compatible editor built around an OOXML-faithful core. Every change —
+          human or AI — flows through the same typed command bus, so agents and humans collaborate
+          without two parallel mutation paths. XLSX and PPTX land in follow-up sessions.
         </p>
         <div className="flex items-center gap-2">
           <Link href="/editor">
             <Button variant="accent" size="lg">
-              Open the editor
+              Open the DOCX editor
+              <ArrowRight size={14} />
             </Button>
           </Link>
-          <Link href="https://localhost:8000/docs" target="_blank">
+          <Link href="https://github.com" target="_blank">
             <Button variant="ghost" size="lg">
-              API docs
+              Read the specs
             </Button>
           </Link>
         </div>
+
+        <ul className="mt-12 grid w-full max-w-3xl grid-cols-1 gap-4 text-sm text-secondary sm:grid-cols-3">
+          <li className="rounded-lg border border-divider bg-surface p-4">
+            <div className="text-foreground">OOXML round-trip</div>
+            <p className="mt-1 text-xs">
+              Untouched parts are preserved byte-for-byte; edited parts re-serialize cleanly.
+            </p>
+          </li>
+          <li className="rounded-lg border border-divider bg-surface p-4">
+            <div className="text-foreground">Command bus</div>
+            <p className="mt-1 text-xs">
+              Every mutation is a typed `Command`. Agents stage `pending` changes for review.
+            </p>
+          </li>
+          <li className="rounded-lg border border-divider bg-surface p-4">
+            <div className="text-foreground">CLI + headless API</div>
+            <p className="mt-1 text-xs">
+              <code className="font-mono">office-agent</code> wraps the same headless agent for
+              server-side AI workflows.
+            </p>
+          </li>
+        </ul>
       </section>
     </main>
   );

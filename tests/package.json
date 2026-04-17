@@ -1,0 +1,22 @@
+{
+  "name": "@officeai/integration-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no lint configured for tests' && true",
+    "build": "echo 'no build for tests' && true",
+    "clean": "rm -rf node_modules"
+  },
+  "dependencies": {
+    "@officeai/core": "workspace:*",
+    "@officeai/docx": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
+}

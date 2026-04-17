@@ -2,20 +2,22 @@
   "name": "office-ai",
   "version": "0.1.0",
   "private": true,
-  "description": "officeAI — minimal product scaffold (FastAPI + Next.js) with shared design system",
+  "description": "officeAI — AI-native, browser-embeddable editors for DOCX (XLSX/PPTX deferred)",
   "scripts": {
-    "predev": "lsof -ti :8000 | xargs kill -9 2>/dev/null; lsof -ti :3000 | xargs kill -9 2>/dev/null; true",
+    "predev": "lsof -ti :3000 | xargs kill -9 2>/dev/null; true",
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "clean": "turbo clean && rm -rf node_modules",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "fixtures:docx": "node scripts/generate-docx-fixtures.mjs"
   },
   "devDependencies": {
-    "turbo": "^2",
+    "docx": "^9.1.0",
     "prettier": "^3",
+    "turbo": "^2",
     "typescript": "^5"
   },
   "packageManager": "pnpm@9.15.4",
