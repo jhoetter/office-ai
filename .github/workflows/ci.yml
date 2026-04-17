@@ -159,6 +159,60 @@ jobs:
       - name: Run DOCX perf budgets
         run: make perf-docx
 
+  docx-schema-validation:
+    name: docx OOXML XSD validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Day-1 soft state: the ECMA-376 Transitional XSDs flag pre-existing
+    # `mc:Ignorable` and `w15:*` extension attributes that the `docx` npm
+    # generator emits (and we round-trip verbatim). The build log captures
+    # the violations and the planned fixes; until those land we keep this
+    # job advisory so a fresh PR isn't blocked on a known issue.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install xmllint (libxml2-utils)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --version
+
+      # The fetch script SHA-256-pins the source archive, so the cache key
+      # only needs to track the script itself. A bump to URL/SHA invalidates
+      # the cache automatically.
+      - name: Cache OOXML XSD bundle
+        uses: actions/cache@v4
+        with:
+          path: vendor/ooxml-xsd
+          key: ooxml-xsd-${{ hashFiles('scripts/fetch-ooxml-xsd.mjs') }}
+
+      - name: Fetch OOXML XSDs (cache miss only)
+        run: make xsd-fetch
+
+      # The validate script imports the built @officeai/docx + @officeai/core
+      # dist. Build once so the dynamic import resolves.
+      - name: Build packages
+        run: pnpm build
+
+      - name: Validate every fixture (input + agent re-emit) against the OOXML XSDs
+        run: make schema-validate
+
   license-scan:
     name: license-graph SPDX scan
     runs-on: ubuntu-latest

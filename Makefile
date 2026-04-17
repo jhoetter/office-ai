@@ -7,7 +7,7 @@
 
 .PHONY: help install dev build lint lint-root format format-check architecture \
         typecheck test verify ci clean cli fixtures fixtures-real \
-        roundtrip-libre e2e-web perf-docx licenses
+        roundtrip-libre e2e-web perf-docx licenses xsd-fetch schema-validate
 
 help:
 	@echo "officeAI — available targets:"
@@ -37,6 +37,8 @@ help:
 	@echo "  e2e-web          Playwright smoke tests against the web app"
 	@echo "  perf-docx        DOCX perf budgets (parse / 1k commands / serialize)"
 	@echo "  licenses         SPDX license-graph scan against the resolved deps"
+	@echo "  xsd-fetch        Download the ECMA-376 OOXML XSDs into vendor/ooxml-xsd/"
+	@echo "  schema-validate  Validate every fixture (input + agent re-emit) against the OOXML XSDs"
 
 install:
 	pnpm install
@@ -129,3 +131,20 @@ perf-docx:
 # package.json's `license` field — no network calls.
 licenses:
 	node scripts/license-scan.mjs
+
+# `xsd-fetch` downloads the ECMA-376 5th-edition Transitional OOXML XSDs into
+# `vendor/ooxml-xsd/`. The script is idempotent (skips when wml.xsd is already
+# present) and SHA-256-pins the source archive. CI caches the directory across
+# runs keyed on the script hash. See `scripts/fetch-ooxml-xsd.mjs` for the
+# pinned URL + SHA + license note.
+xsd-fetch:
+	node scripts/fetch-ooxml-xsd.mjs
+
+# `schema-validate` opens every fixture in `fixtures/docx/real-world/`,
+# enumerates its XML parts, runs the same fixture through the agent
+# (`DocxAgent.fromBuffer → trivial edit → exportFile()`), and validates BOTH
+# sides against the ECMA-376 Transitional XSDs via `xmllint --schema`.
+# Skipped from `make verify` (heavy / system-dep), same rationale as
+# `roundtrip-libre`. Skips gracefully if `xmllint` or the XSDs are missing.
+schema-validate:
+	node scripts/validate-ooxml-schemas.mjs

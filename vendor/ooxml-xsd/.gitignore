@@ -1,0 +1,6 @@
+# OOXML XSDs are fetched on demand by `scripts/fetch-ooxml-xsd.mjs`
+# (~1 MB extracted, larger when including the source zip cache). The
+# directory itself is committed so `scripts/validate-ooxml-schemas.mjs`
+# can rely on its presence as a probe target. CI re-fetches on cache miss.
+*
+!.gitignore

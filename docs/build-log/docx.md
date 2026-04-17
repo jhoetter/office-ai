@@ -1154,3 +1154,192 @@ semantics, `insert-column` middle + edge insertion, nested-table parse
 - mutation, and `gridSpan`/`vMerge` preservation + continuation-write
   rejection.
 
+## P1.3 — W9: OOXML schema validation
+
+Stand up an opt-in CI gate that asserts every part the serializer
+emits is **well-formed AND schema-valid** against the ECMA-376
+(5th edition, December 2016) **Transitional** OOXML XSDs. Closes
+roadmap row D4.
+
+### Files added / modified
+
+- `scripts/fetch-ooxml-xsd.mjs` — pinned-URL + SHA-256-checked
+  downloader for the schema bundle. Skips when
+  `vendor/ooxml-xsd/wml.xsd` already exists. Idempotent.
+- `scripts/validate-ooxml-schemas.mjs` — for every fixture in
+  `fixtures/docx/real-world/`: opens the input, runs the agent
+  through it (`DocxAgent.fromBuffer → docx:insert-text → exportFile()`)
+  and validates BOTH sides part-by-part via `xmllint --noout
+--schema`. Prints a `fixture | part | input | re-emit | xsd`
+  table and quoted xmllint stderr on failure. Exits 0 if either
+  `xmllint` or `vendor/ooxml-xsd/` is missing (graceful skip,
+  same pattern as `roundtrip-libre`).
+- `Makefile` — additive `xsd-fetch` and `schema-validate`
+  targets. Both kept out of `make verify` (heavy / system-dep,
+  same rationale as `roundtrip-libre` and `perf-docx`).
+- `.github/workflows/ci.yml` — additive `docx-schema-validation`
+  job. Installs `libxml2-utils` (provides `xmllint`), caches
+  `vendor/ooxml-xsd/` keyed on `scripts/fetch-ooxml-xsd.mjs`
+  hash, runs `make xsd-fetch && pnpm build && make
+schema-validate`. **`continue-on-error: true`** for the day-1
+  soft state — see "Pre-existing violations" below.
+- `vendor/ooxml-xsd/.gitignore` — keeps the directory in git so
+  the validate script can rely on its presence; ignores the
+  fetched XSDs themselves (~1 MB extracted, larger with the cache
+  zip).
+- `tests/scripts/validate-ooxml-schemas.test.ts` — three
+  hermetic vitest cases against `--self-test` mode (no `xmllint`
+  required): asserts (a) all 6 fixtures discovered, (b) every
+  observed part maps to either a known XSD or `skip:<reason>`
+  (no unmapped surprises), (c) `--inject-broken` exercises the
+  failure path and propagates a non-zero exit code.
+
+### XSD source provenance
+
+| Asset                          | URL                                                                                                        | SHA-256                                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| ECMA-376 Part 4 (Transitional) | `https://www.ecma-international.org/wp-content/uploads/ECMA-376-4_5th_edition_december_2016.zip` (~8.4 MB) | `bd25da1109f73762356596918bf5ff8b74a1331642dba5f1c1d1dfc6bed34ecd` |
+| W3C `xml.xsd`                  | `https://www.w3.org/2001/xml.xsd` (~9 KB)                                                                  | `61960fb3131e38022caad5360e2f33a3382578ab3c80cd58bd74320ede61b20c` |
+
+The ECMA bundle yields 26 `.xsd` files (`wml.xsd`, `dml-*.xsd`,
+`shared-*.xsd`, `vml-*.xsd`, `pml.xsd`, `sml.xsd`). The fetch
+script also downloads the W3C `xml.xsd` and rewrites every
+`<xsd:import namespace=".../XML/1998/namespace"/>` to add
+`schemaLocation="xml.xsd"` so `xmllint` can compile the schema
+graph (without the patch, libxml fails with "QName
+'{...}space' does not resolve to an attribute declaration"
+because it has no built-in catalog for the XML 1998 namespace).
+
+**License compatibility:** ECMA-376 5th Edition is published by
+Ecma International and also released under Microsoft's
+**Open Specification Promise / Microsoft Royalty-Free** terms,
+both of which are MIT-codebase compatible for build-time
+validation usage. The W3C `xml.xsd` ships under the **W3C
+Software Notice and Document License**, also MIT-compatible. We
+never redistribute the schemas — they are fetched on demand and
+gitignored.
+
+### Part → XSD mapping
+
+The validator maps each part to its XSD via two lookups, in
+order:
+
+1. `[Content_Types].xml` overrides + defaults (
+   `wordprocessingml.document.main+xml` → `wml.xsd`,
+   `theme+xml` → `dml-main.xsd`, …).
+2. Filename pattern fallback (`word/header*.xml` → `wml.xsd`,
+   `docProps/app.xml` → `shared-documentPropertiesExtended.xsd`,
+   …).
+
+Parts that map to `skip:opc` (`[Content_Types].xml`, `_rels/`,
+`docProps/core.xml`), `skip:w15` (`commentsExtended.xml`,
+`commentsIds.xml`, `people.xml`), or `skip:binary` (`media/`,
+`embeddings/`) are intentionally not validated this round —
+they need ECMA-376 Part 2 (OPC) schemas or Microsoft's `w15`
+extension schemas, neither of which is in our pinned bundle. A
+follow-up can pin those if we want full coverage; the brief
+explicitly scopes us to the Transitional set today.
+
+### Day-1 result on the current corpus
+
+`make schema-validate` against the 6 real-world fixtures produces:
+
+```
+summary: 226 part-checks across 6 fixtures — valid=40, invalid=84, skipped=102, dry-run=0.
+❌ schema-validate: 84 schema violation(s).
+```
+
+40/124 in-scope part-checks (32 %) validate clean. 84 fail. **All
+84 failures are pre-existing** — they appear identically on the
+**input** side (the `.docx` produced by the `docx` MIT npm
+generator we use to build fixtures) AND on the **re-emit** side
+(after our serializer round-trips them). The serializer is not
+introducing new violations; it is faithfully preserving the
+upstream MC / w15 attributes that the Transitional XSD doesn't
+recognise.
+
+#### Pre-existing violations (root-caused)
+
+Three distinct error families account for every failure today:
+
+| Error family                                 | Example part                   | Sample failing element                                                              | Root cause                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mc:Ignorable` not allowed                   | `word/document.xml`            | `<w:document mc:Ignorable="w14 w15 wp14" xmlns:mc="…/markup-compatibility/2006" …>` | The Transitional XSD does not declare the `mc:Ignorable` attribute on the WML root elements. Markup-Compatibility (`mc:`) is normatively defined in **ECMA-376 Part 3** ("Markup Compatibility and Extensibility"), which we have NOT pinned. Real-world Word and `docx`-npm-generated files always carry `mc:Ignorable` on the root, so this is the largest single bucket. The fix is either to (a) also fetch ECMA-376 Part 3 and include `shared-mc.xsd`, or (b) strip `mc:` attributes from the part before validation. (b) loses fidelity; (a) is the right call. Tracked as a follow-up. |
+| `w15:restartNumberingAfterBreak` not allowed | `word/numbering.xml`           | `<w:abstractNum w15:restartNumberingAfterBreak="0">`                                | Microsoft's `w15` extension namespace (`schemas.microsoft.com/office/word/2012/wordml`) is intentionally outside the Transitional XSD. Word and `docx` npm both emit `w15:` attributes when the numbering definition supports them. Same fix as above — pin a Microsoft `w15.xsd` or strip the namespace before validation.                                                                                                                                                                                                                                                                    |
+| `w15:tentative` not allowed                  | `word/numbering.xml` (`w:lvl`) | `<w:lvl w:ilvl="0" w15:tentative="1">`                                              | Same root cause as the previous row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+A representative input failure (line-wrapped for readability):
+
+```
+word/document.xml:1: element document: Schemas validity error :
+  Element '{…/wordprocessingml/2006/main}document',
+  attribute '{…/markup-compatibility/2006}Ignorable':
+  The attribute '{…/markup-compatibility/2006}Ignorable' is not allowed.
+word/document.xml fails to validate
+```
+
+The corresponding XML fragment (truncated):
+
+```xml
+<w:document
+  mc:Ignorable="w14 w15 wp14"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"
+  …>
+  <w:body>…</w:body>
+</w:document>
+```
+
+### Why the CI job is `continue-on-error: true` for now
+
+Hard-failing on day-1 would block every PR on a violation
+class our serializer didn't introduce and that requires a
+**separate XSD bundle** (Microsoft Markup Compatibility +
+`w15`) to fix correctly. The brief explicitly anticipates this
+("If the validator finds real violations, log them in the build
+log and treat the CI job as informational this round"). The job
+still runs on every push so regressions on the **valid → invalid
+delta** (a part that validates today but stops validating
+tomorrow) surface in the workflow log immediately.
+
+### Follow-ups (planned)
+
+1. Pin **ECMA-376 Part 3** (Markup Compatibility and Extensibility)
+   and add its `shared-mc.xsd` so `mc:Ignorable` and friends
+   validate. Expected to clear ~70 of the 84 current violations.
+2. Pin a Microsoft `w15.xsd` (e.g. from `OfficeDev/Open-XML-SDK`'s
+   `Standards/` directory, MIT-licensed) so `w15:*` numbering
+   attributes validate. Expected to clear the remaining 14
+   violations on the current corpus.
+3. After (1) and (2) land and we have a green run, flip
+   `continue-on-error: false` so the gate becomes blocking.
+4. Add `docx:` content-type → XSD mapping for the parts we
+   currently skip behind `skip:opc` once we pin **ECMA-376 Part 2**
+   (Open Packaging Conventions).
+5. Tighten the per-part validation to also assert root-element
+   identity (e.g. `word/styles.xml` MUST root at `w:styles`),
+   not just schema validity.
+
+### Decisions (W9-specific)
+
+| Date (UTC) | Decision                                                                                | Rationale                                                                                                                                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-17 | Pin the ECMA-376 5th-edition **Transitional** XSDs (Part 4), not Strict (Part 1)        | Word, LibreOffice, and Google all emit Transitional. Validating against Strict would surface dozens of false positives on every real-world file (e.g. `vml:*`, `w:lastRenderedPageBreak`).                                                           |
+| 2026-04-17 | Shell out to system `xmllint` rather than adding `libxmljs2` (or similar) as an npm dep | The brief explicitly forbids new npm deps. `libxml2-utils` is one `apt-get install` line in CI and ships with macOS by default. Same posture as our existing `roundtrip-libre` job (system `soffice`).                                               |
+| 2026-04-17 | `vendor/ooxml-xsd/` directory is committed; XSD files inside are gitignored             | Lets the validate script probe for `vendor/ooxml-xsd/wml.xsd` to decide between "validate" and "graceful skip" without an extra "did you forget to fetch?" path. CI re-fetches with cache. Same trick as `node_modules/.gitkeep` style placeholders. |
+| 2026-04-17 | Patch `<xsd:import>` for the W3C XML namespace at fetch time                            | xmllint has no built-in catalog; without the patch the schema graph fails to compile entirely. Cleaner than shipping an `XML_CATALOG_FILES` setup the user / CI runner has to honour.                                                                |
+| 2026-04-17 | CI job stays `continue-on-error: true` until MC / w15 schemas are pinned                | The 84 day-1 violations are 100 % attributable to schemas the bundle doesn't include — blocking PRs on them would punish authors for unrelated work. The job still runs on every push so regression deltas are visible.                              |
+| 2026-04-17 | Mapping is content-type-first, filename-fallback                                        | `[Content_Types].xml` is the OOXML-defined source of truth. Filename heuristics are a friendly fallback for hand-crafted fixtures and for parts that ship without an explicit override (rare, but happens).                                          |
+
+### Test counts
+
+| Suite                                    | Before | After |
+| ---------------------------------------- | -----: | ----: |
+| `@officeai/integration-tests` (`tests/`) |    n/a |    +3 |
+
+Three new cases in `tests/scripts/validate-ooxml-schemas.test.ts`
+cover (a) fixture-discovery, (b) full part-mapping coverage,
+(c) failure-path exit code via `--inject-broken`. No xmllint
+or XSD bundle required to run the suite — so it works on a
+fresh CI runner with only `pnpm install` + `pnpm build`.
