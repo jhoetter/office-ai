@@ -337,3 +337,58 @@ textarea::placeholder {
 .prose-pm .ProseMirror .pm-section-break {
   display: block;
 }
+
+/* ── P1.2 / W5: highlight / color marks in the editor surface ── */
+/*
+ * The schema's font_color and highlight marks ship inline `style`
+ * attributes for the foreground color, but Word's named highlight
+ * palette (yellow, green, …) maps to a curated swatch set, not the
+ * literal CSS color name. This block enumerates the OOXML enum so the
+ * highlight visually matches what Word emits.
+ */
+.prose-pm .ProseMirror .pm-highlight[data-highlight="yellow"] {
+  background-color: #fff59d;
+}
+.prose-pm .ProseMirror .pm-highlight[data-highlight="green"] {
+  background-color: #a5d6a7;
+}
+.prose-pm .ProseMirror .pm-highlight[data-highlight="cyan"] {
+  background-color: #80deea;
+}
+.prose-pm .ProseMirror .pm-highlight[data-highlight="magenta"] {
+  background-color: #f48fb1;
+}
+.prose-pm .ProseMirror .pm-highlight[data-highlight="red"] {
+  background-color: #ef9a9a;
+}
+.prose-pm .ProseMirror .pm-highlight[data-highlight="darkYellow"] {
+  background-color: #c9a227;
+}
+.prose-pm .ProseMirror .pm-highlight[data-highlight="lightGray"] {
+  background-color: #e0e0e0;
+}
+
+/* Comment scroll-to flash — added/removed by DocxEditor.scrollToComment */
+.prose-pm .ProseMirror .pm-comment-mark.pm-comment-flash {
+  background-color: rgba(247, 215, 86, 0.85);
+  transition: background-color 1.4s ease-out;
+}
+
+/* Tracked-change spans: keep underline (already from base rules) plus
+ * a small data-cursor affordance so the hover overlay reads as a hot
+ * region. */
+.prose-pm .ProseMirror .pm-revision-ins,
+.prose-pm .ProseMirror .pm-revision-del {
+  cursor: help;
+}
+
+/* Toolbar / side-panel polish — keep selectors namespaced so they don't
+ * leak into other pages or the @officeai/ui primitives. */
+.editor-toolbar select {
+  appearance: none;
+  background-image: none;
+}
+
+.docx-editor .side-panel {
+  font-size: 0.8125rem;
+}

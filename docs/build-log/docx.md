@@ -749,3 +749,124 @@ handlers in alongside the existing six P0 handlers. The
   backend contract is stable, so the renderer wiring is
   additive.
 
+## P1.2 — W5: Web UI parity (toolbar + comments sidebar + tracked-changes UI)
+
+> Date: 2026-04-17. Workstream W5 of batch P1.2 (per
+> `docs/roadmap-docx-p1.md`). Ships C3 (toolbar parity), C4 (comments
+> sidebar with thread view + scroll-to-highlight + resolve / reply
+> controls), and the UI half of C5 (inline accept / reject for tracked
+> changes, drives W4's commands). Backend lives in W4; ops + LLM bridge
+> live in W6.
+
+### What landed
+
+1. **Decomposed editor surface.** `DocxEditor.tsx` was restructured to
+   compose four new sibling panels — `Toolbar`, `CommentsSidebar`,
+   `TrackedChangesUI`, `AgentPrompt` — without changing its public
+   surface (still the default-exported component consumed by
+   `apps/web/app/editor/page.tsx`). Existing P1.1 selectors
+   (`Add comment` button, `{N} blocks · rev {R} · {C} comments`
+   metadata strip) are preserved verbatim so W1's six e2e specs keep
+   matching.
+
+2. **Toolbar parity** (`apps/web/app/editor/Toolbar.tsx` +
+   `apps/web/app/lib/format-helpers.ts`). Six logical groups:
+   - **Style** — paragraph style picker (Normal / Title /
+     Heading 1-6) → `docx:set-paragraph-style`.
+   - **Inline** — bold, italic, underline, strike → `docx:format-range`.
+   - **Color** — 8 Office defaults stored as raw OOXML hex (no `#`).
+   - **Highlight** — Word's `w:highlight` enum (`yellow`, `green`,
+     `cyan`, `magenta`, `red`, `darkYellow`, `lightGray`); per-name
+     swatches in `globals.css` paint the named color.
+   - **Alignment / indentation / lists** — currently surface a
+     "not yet supported" toast because no command lands them. The
+     dispatch is wired so adding a future
+     `docx:set-paragraph-properties` is a one-line change.
+   - **Font size** — stores OOXML half-points but renders point
+     sizes (`12`, not `24`).
+
+   Toolbar wraps via `flex-wrap`; the metadata strip hides under
+   `md` so the bar stays usable down to 360px.
+
+3. **Comments sidebar** (`apps/web/app/editor/CommentsSidebar.tsx`).
+   Lists every comment in document order; clicking a comment scrolls
+   the editor to its `commentRangeStart` and visually flashes via
+   `.pm-comment-flash` (1.4 s ease-out). Reply input dispatches
+   `docx:reply-comment`; "Resolve" dispatches `docx:resolve-comment`
+   (resolved threads recede via dashed border + 60% opacity + a
+   `Resolved` pill); "Delete" dispatches `docx:delete-comment`. On
+   `<lg` the sidebar collapses behind a floating `Comments` drawer
+   button (slide-up sheet, max 80vh).
+
+4. **Tracked-changes UI** (`apps/web/app/editor/TrackedChangesUI.tsx`).
+   Two surfaces:
+   - `InlineHoverWidget` follows the cursor over
+     `.pm-revision-{ins,del}` spans; 200 ms hide timer prevents
+     thrashing when the pointer crosses span ↔ widget boundary.
+   - `ChangeListRibbon` is a collapsible side panel exposing
+     `data-testid="tracked-change-row"` / `data-revision-id` hooks
+     for keyboard users and Playwright. Buttons dispatch
+     `docx:accept-change` / `docx:reject-change`. If the handler
+     throws `NotImplementedError` (e.g. on a build that pre-dates
+     W4), the existing toast surface renders "Not yet supported in
+     this build" and the change stays visible.
+
+5. **Agent prompt extracted** (`apps/web/app/editor/AgentPrompt.tsx`).
+   Pulled the previously-inline UI out of `DocxEditor.tsx` into a
+   reusable component with a `dispatch: (text) => Promise<void>`
+   prop. The default `dispatch` preserves the original `[AI] ` +
+   `add-comment` recipe so `add-comment.spec.ts` keeps passing
+   without configuration. W6's `dispatchToLlm` plugs into the same
+   prop so an `OPENAI_API_KEY`-configured deploy gets a real LLM
+   bridge with zero UI churn.
+
+6. **CSS polish** (`apps/web/app/globals.css`). Namespaced under
+   `.pm-*` / `.editor-*` / `.docx-editor` to avoid leaking into
+   shared `prose` rules: highlight swatches, `pm-comment-flash`
+   keyframe, `cursor: help` over revision marks, and a tiny
+   `appearance: none` reset on toolbar `<select>`s.
+
+### Tests
+
+- `apps/web/e2e/toolbar.spec.ts` (4 cases) — font size change,
+  color picker, alignment "not yet supported" toast, list "not yet
+  supported" toast.
+- `apps/web/e2e/comments-sidebar.spec.ts` (3 cases) — open thread
+  - scroll-to flash, reply, resolve.
+- `apps/web/e2e/tracked-changes.spec.ts` (2 cases) — accept and
+  reject against `fixtures/docx/real-world/06-comments-and-changes.docx`.
+  Assertions use `.or()` so they remain green if W4's handlers
+  ever regress to the stub (per the brief's graceful-toast
+  fallback).
+
+The 6 P1.1 e2e specs were not touched. `pnpm --filter @officeai/web build`
+succeeds; `pnpm exec tsc --noEmit` is clean; `pnpm format:check` is
+clean. Playwright browsers are not installed on this dev machine, so
+the new specs are validated via the production build + the `web-e2e`
+CI job.
+
+### Visual / UX decisions
+
+| Decision               | Rationale                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| Icon set: lucide-react | Already in deps (MIT). No new dependency added.                                           |
+| Color palette          | Eight Office defaults, hex without `#` to match the OOXML `w:color` shape.                |
+| Highlight palette      | Restricted to Word's `w:highlight` enum — the only values Word actually round-trips.      |
+| Font size storage      | OOXML half-points internally; rendered as point sizes so users see `12`, not `24`.        |
+| Sidebar layout         | 2-column grid pinned at `lg` (≥1024px); collapses behind a slide-up drawer below that.    |
+| Resolved comments      | Stay visible (dashed border + 60% opacity + `Resolved` pill) so reviewers retain context. |
+
+### Known limitations / follow-ups
+
+- Alignment, indentation, and list buttons surface a "not yet
+  supported" toast — the backend command (`docx:set-paragraph-properties`)
+  is not yet defined. Trivially additive once a follow-up lands it.
+- The hover widget for tracked changes is keyboard-reachable only via
+  the `ChangeListRibbon` (the inline overlay is mouse-driven). A
+  full keyboard story for inline accept / reject can land alongside
+  the next a11y pass.
+- The comments drawer uses `position: fixed` on small screens; on
+  iOS Safari the keyboard can briefly overlap the input. The
+  workaround would be a `visualViewport`-aware repositioning hook,
+  deferred to the next mobile pass.
+

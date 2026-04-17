@@ -1,23 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Bold,
-  Italic,
-  Underline,
-  Download,
-  FileUp,
-  MessageSquarePlus,
-  Sparkles,
-  Loader2,
-  Check,
-  X,
-} from "lucide-react";
+import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import { DocxAgent, mountDocxEditor, docxSchema } from "@officeai/docx";
-import type { MountResult, UnsupportedTx } from "@officeai/docx";
-import type { Mutation } from "@officeai/core";
+import type { MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
+import type { EditorView } from "prosemirror-view";
+import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
+import {
+  activeMarks as computeActiveMarks,
+  commentParagraphIndex,
+  currentParagraphIndex,
+  paragraphStyle,
+  pmSelectionToRange,
+} from "@/lib/format-helpers";
+import { Toolbar } from "./Toolbar";
+import { CommentsSidebar } from "./CommentsSidebar";
+import { TrackedChangesUI } from "./TrackedChangesUI";
+import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
 
 interface ToastMessage {
   id: number;
@@ -25,18 +26,57 @@ interface ToastMessage {
   text: string;
 }
 
-export function DocxEditor() {
-  const hostRef = useRef<HTMLDivElement | null>(null);
+export interface DocxEditorProps {
+  /**
+   * Override how the agent prompt translates a free-form prompt into bus
+   * commands. Defaults to the demo "[AI] " + add-comment recipe so the
+   * existing P1.1 e2e flow keeps working. W6 will inject a real LLM
+   * caller here.
+   */
+  agentPromptDispatch?: (agent: DocxAgent) => AgentPromptDispatch;
+}
+
+/**
+ * The editor surface composed from the four P1.2 / W5 panels:
+ *
+ *   ┌────────────────────────────────────────────┬──────────────┐
+ *   │ Toolbar (style/marks/colors/align/lists)   │              │
+ *   ├────────────────────────────────────────────┤   Comments   │
+ *   │                                            │              │
+ *   │           ProseMirror editor surface       │   Tracked    │
+ *   │                                            │   changes    │
+ *   │                                            │              │
+ *   │                                            │   Agent      │
+ *   │                                            │   prompt     │
+ *   └────────────────────────────────────────────┴──────────────┘
+ *
+ * Below 1024px the right column hides behind a "Comments" drawer
+ * button anchored bottom-right.
+ */
+export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
+  // The editor host DOM node is exposed via a callback ref so that
+  // descendants (e.g. TrackedChangesUI's hover delegation) can read it
+  // from React state during render — accessing `hostRef.current`
+  // directly during render trips `react-hooks/refs`.
+  const [hostEl, setHostEl] = useState<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // `agentRef` / `mountRef` are kept in addition to the React state
+  // mirrors below so that long-lived callbacks (file open, accept
+  // change, …) capture a stable reference without re-binding on
+  // every state change.
   const agentRef = useRef<DocxAgent | null>(null);
   const mountRef = useRef<MountResult | null>(null);
+  const [agent, setAgent] = useState<DocxAgent | null>(null);
+  const [view, setView] = useState<EditorView | null>(null);
   const [agentReady, setAgentReady] = useState(false);
   const [pending, setPending] = useState<Mutation[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [agentPrompt, setAgentPrompt] = useState("");
   const [docName, setDocName] = useState("welcome.docx");
   const [docInfo, setDocInfo] = useState<{ blocks: number; revision: number; comments: number } | null>(null);
+  // Bumped to force re-derivation of toolbar state (active marks /
+  // active style) without keeping a redundant copy of the snapshot.
+  const [uiTick, setUiTick] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const toastId = useRef(0);
 
@@ -61,30 +101,31 @@ export function DocxEditor() {
   );
 
   const mountAgent = useCallback(
-    async (buf: ArrayBuffer) => {
+    async (buf: ArrayBuffer, host: HTMLDivElement) => {
       mountRef.current?.destroy();
-      const agent = await DocxAgent.fromBuffer(buf);
-      agentRef.current = agent;
+      const agentInstance = await DocxAgent.fromBuffer(buf);
+      agentRef.current = agentInstance;
+      setAgent(agentInstance);
       const refreshState = () => {
-        setPending([...agent.getPendingMutations()]);
-        const snap = agent.getSnapshot();
+        setPending([...agentInstance.getPendingMutations()]);
+        const snap = agentInstance.getSnapshot();
         setDocInfo({
           blocks: snap.root.body.length,
           revision: snap.revision,
           comments: snap.root.comments.length,
         });
+        setUiTick((t) => t + 1);
       };
-      const off = agent.subscribe(() => refreshState());
-      const host = hostRef.current;
-      if (!host) return () => off();
+      const off = agentInstance.subscribe(() => refreshState());
       host.innerHTML = "";
       const mount = mountDocxEditor(host, {
-        agent,
+        agent: agentInstance,
         source: "human",
         onUnsupported,
         onError,
       });
       mountRef.current = mount;
+      setView(mount.view);
       setAgentReady(true);
       refreshState();
       return () => {
@@ -96,12 +137,13 @@ export function DocxEditor() {
   );
 
   useEffect(() => {
+    if (!hostEl) return;
     let cancelled = false;
     let cleanup: (() => void) | undefined;
     void (async () => {
       const buf = await buildSampleDocx();
       if (cancelled) return;
-      cleanup = await mountAgent(buf);
+      cleanup = await mountAgent(buf, hostEl);
     })();
     return () => {
       cancelled = true;
@@ -109,21 +151,39 @@ export function DocxEditor() {
       mountRef.current?.destroy();
       mountRef.current = null;
       agentRef.current = null;
+      setAgent(null);
+      setView(null);
     };
-  }, [mountAgent]);
+  }, [mountAgent, hostEl]);
+
+  // Re-derive toolbar UI state on every selection change so Bold/Italic
+  // pressed-state and the paragraph style picker stay in sync with the
+  // caret. PM updates the DOM selection synchronously inside its own
+  // dispatchTransaction, so the browser fires `selectionchange` on every
+  // PM transaction including pure caret moves.
+  useEffect(() => {
+    const onSel = () => setUiTick((t) => t + 1);
+    document.addEventListener("selectionchange", onSel);
+    return () => document.removeEventListener("selectionchange", onSel);
+  }, []);
 
   const handleFile = useCallback(
     async (file: File) => {
       const buf = await file.arrayBuffer();
       setDocName(file.name);
+      const host = hostEl;
+      if (!host) {
+        pushToast("error", "Editor not yet mounted.");
+        return;
+      }
       try {
-        await mountAgent(buf);
+        await mountAgent(buf, host);
         pushToast("info", `Opened ${file.name}`);
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [mountAgent, pushToast]
+    [mountAgent, pushToast, hostEl]
   );
 
   const handleExport = useCallback(async () => {
@@ -146,8 +206,8 @@ export function DocxEditor() {
     }
   }, [docName, pushToast]);
 
-  const applyMark = useCallback(
-    (markName: "bold" | "italic" | "underline") => {
+  const toggleMark = useCallback(
+    (markName: "bold" | "italic" | "underline" | "strike") => {
       const mount = mountRef.current;
       if (!mount) return;
       const view = mount.view;
@@ -156,9 +216,61 @@ export function DocxEditor() {
         pushToast("info", "Select some text first.");
         return;
       }
-      const markType = docxSchema.marks[markName];
-      const tx = view.state.tr.addMark(from, to, markType.create());
+      const schemaMarkName = markName === "strike" ? "strikethrough" : markName;
+      const markType = docxSchema.marks[schemaMarkName];
+      if (!markType) return;
+      const has = view.state.doc.rangeHasMark(from, to, markType);
+      const tx = has
+        ? view.state.tr.removeMark(from, to, markType)
+        : view.state.tr.addMark(from, to, markType.create());
       view.dispatch(tx);
+    },
+    [pushToast]
+  );
+
+  const applyFormat = useCallback(
+    async (format: TextFormat) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const view = mount.view;
+      if (view.state.selection.empty) {
+        pushToast("info", "Select some text first.");
+        return;
+      }
+      const range = pmSelectionToRange(view.state);
+      try {
+        await agent.applyCommand({
+          type: "docx:format-range",
+          payload: { range, format },
+          source: "human",
+        });
+      } catch (err) {
+        if (err instanceof NotImplementedError) {
+          pushToast("warn", "Not yet supported in this build.");
+          return;
+        }
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const setParagraphStyle = useCallback(
+    async (style: string) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const idx = currentParagraphIndex(mount.view.state);
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-style",
+          payload: { at: { paragraph: idx, run: 0, offset: 0 }, style },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
     },
     [pushToast]
   );
@@ -167,38 +279,17 @@ export function DocxEditor() {
     const agent = agentRef.current;
     const mount = mountRef.current;
     if (!agent || !mount) return;
-    const { from, to, empty } = mount.view.state.selection;
-    if (empty) {
+    const view = mount.view;
+    if (view.state.selection.empty) {
       pushToast("info", "Select some text to comment on.");
       return;
     }
-    const docTextBefore = (pos: number): { paragraph: number; offset: number } => {
-      let paragraphIndex = -1;
-      let result: { paragraph: number; offset: number } | null = null;
-      mount.view.state.doc.descendants((node, nodePos) => {
-        if (result) return false;
-        if (node.type.name === "paragraph") {
-          paragraphIndex++;
-          if (pos >= nodePos && pos <= nodePos + node.nodeSize) {
-            const start = nodePos + 1;
-            result = { paragraph: paragraphIndex, offset: Math.max(0, pos - start) };
-            return false;
-          }
-        }
-        return true;
-      });
-      return result ?? { paragraph: 0, offset: 0 };
-    };
-    const start = docTextBefore(from);
-    const end = docTextBefore(to);
+    const range = pmSelectionToRange(view.state);
     try {
       await agent.applyCommand({
         type: "docx:add-comment",
         payload: {
-          range: {
-            start: { paragraph: start.paragraph, run: 0, offset: start.offset },
-            end: { paragraph: end.paragraph, run: 0, offset: end.offset },
-          },
+          range,
           text: "Looks good?",
           author: "You",
           initials: "Y",
@@ -211,42 +302,128 @@ export function DocxEditor() {
     }
   }, [pushToast]);
 
-  const runAgentPrompt = useCallback(async () => {
-    const agent = agentRef.current;
-    if (!agent || !agentPrompt.trim()) return;
-    setAgentBusy(true);
-    try {
-      // Demo agent: prepends "[AI] " to the first paragraph and adds a comment.
-      // Real agent integrations build the same Command list — they just
-      // do it with an LLM, not a hard-coded recipe.
-      await agent.applyCommands([
-        {
-          type: "docx:insert-text",
-          payload: { at: { paragraph: 0, run: 0, offset: 0 }, text: "[AI] " },
-          source: "agent",
-          agentId: "demo-agent",
-        },
-        {
-          type: "docx:add-comment",
-          payload: {
-            range: {
-              start: { paragraph: 0, run: 0, offset: 0 },
-              end: { paragraph: 0, run: 0, offset: 5 },
-            },
-            text: agentPrompt.trim(),
-            author: "demo-agent",
-            initials: "AI",
-          },
-          source: "agent",
-          agentId: "demo-agent",
-        },
-      ]);
-      setAgentPrompt("");
-      pushToast("info", "Agent proposed 2 changes — review below.");
-    } finally {
-      setAgentBusy(false);
-    }
-  }, [agentPrompt, pushToast]);
+  const surfaceUnsupported = useCallback(
+    (label: string) => {
+      pushToast("warn", `${label} is not yet supported in this build.`);
+    },
+    [pushToast]
+  );
+
+  const scrollToComment = useCallback(
+    (commentId: string) => {
+      const host = hostEl;
+      if (!host) return;
+      const target = host.querySelector<HTMLElement>(
+        `.pm-comment-mark[data-comment-id="${cssEscape(commentId)}"]`
+      );
+      if (!target) {
+        pushToast("info", "Comment anchor is no longer in the document.");
+        return;
+      }
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.add("pm-comment-flash");
+      window.setTimeout(() => target.classList.remove("pm-comment-flash"), 1600);
+    },
+    [pushToast, hostEl]
+  );
+
+  const replyComment = useCallback(
+    async (parentId: string, text: string) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:reply-comment",
+          payload: { parentId, text, author: "You", initials: "Y" },
+          source: "human",
+        });
+        pushToast("info", "Reply added.");
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const resolveComment = useCallback(
+    async (commentId: string, resolved: boolean) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:resolve-comment",
+          payload: { commentId, resolved },
+          source: "human",
+        });
+        pushToast("info", resolved ? "Comment resolved." : "Comment reopened.");
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const deleteComment = useCallback(
+    async (commentId: string) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:delete-comment",
+          payload: { commentId },
+          source: "human",
+        });
+        pushToast("info", "Comment deleted.");
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const acceptChange = useCallback(
+    async (revisionId: string) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:accept-change",
+          payload: { revisionId },
+          source: "human",
+        });
+        pushToast("info", "Change accepted.");
+      } catch (err) {
+        if (err instanceof NotImplementedError) {
+          pushToast("warn", "Not yet supported in this build.");
+          return;
+        }
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const rejectChange = useCallback(
+    async (revisionId: string) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:reject-change",
+          payload: { revisionId },
+          source: "human",
+        });
+        pushToast("info", "Change rejected.");
+      } catch (err) {
+        if (err instanceof NotImplementedError) {
+          pushToast("warn", "Not yet supported in this build.");
+          return;
+        }
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
 
   const approveAll = useCallback(() => {
     const agent = agentRef.current;
@@ -260,60 +437,53 @@ export function DocxEditor() {
     pending.forEach((m) => agent.rejectMutation(m.id));
   }, [pending]);
 
-  const pendingCount = pending.length;
+  // Derive toolbar UI state from the current PM view (re-runs on uiTick).
+  void uiTick;
+  const snapshot = agent?.getSnapshot() ?? null;
+  const activeMarks = view ? computeActiveMarks(view.state) : new Set<string>();
+  const currentParaIndex = view ? currentParagraphIndex(view.state) : 0;
+  const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
+  void commentParagraphIndex;
+
+  // The default `AgentPrompt` dispatch is the demo `[AI] ` +
+  // add-comment recipe preserved from P1.1 (lives inside `AgentPrompt`
+  // as `defaultAgentDispatch`). Callers wire a real LLM bridge by
+  // passing `agentPromptDispatch`; W6 ships exactly that.
+  const { agentPromptDispatch: agentPromptDispatchProp } = props;
+  const promptDispatch: AgentPromptDispatch | undefined = agent && agentPromptDispatchProp
+    ? agentPromptDispatchProp(agent)
+    : undefined;
 
   return (
-    <div className="grid h-full min-h-0 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="docx-editor flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:grid-rows-1 lg:gap-6">
       <section className="flex min-h-0 flex-col">
-        <div className="flex flex-wrap items-center gap-1 border-b border-divider pb-3">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-md border border-divider bg-surface px-2.5 py-1 text-xs text-foreground hover:bg-hover"
-          >
-            <FileUp size={14} />
-            Open .docx
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void handleFile(f);
-              e.target.value = "";
-            }}
-          />
-          <div className="mx-1 h-4 w-px bg-divider" />
-          <ToolbarBtn label="Bold" onClick={() => applyMark("bold")}>
-            <Bold size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="Italic" onClick={() => applyMark("italic")}>
-            <Italic size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="Underline" onClick={() => applyMark("underline")}>
-            <Underline size={14} />
-          </ToolbarBtn>
-          <div className="mx-1 h-4 w-px bg-divider" />
-          <ToolbarBtn label="Add comment" onClick={() => void insertCommentDemo()}>
-            <MessageSquarePlus size={14} />
-          </ToolbarBtn>
-          <div className="ml-auto flex items-center gap-3 text-xs text-secondary">
-            {docInfo && (
-              <span className="hidden whitespace-nowrap md:inline">
-                {docInfo.blocks} blocks · rev {docInfo.revision} · {docInfo.comments} comments
-              </span>
-            )}
-            <Button variant="accent" size="sm" onClick={() => void handleExport()}>
-              <Download size={14} />
-              Export
-            </Button>
-          </div>
-        </div>
+        <Toolbar
+          agentReady={agentReady}
+          docInfo={docInfo}
+          activeStyle={activeStyle}
+          activeMarks={activeMarks}
+          onOpenFile={() => fileInputRef.current?.click()}
+          onExport={() => void handleExport()}
+          onSetParagraphStyle={(s) => void setParagraphStyle(s)}
+          onApplyFormat={(f) => void applyFormat(f)}
+          onToggleMark={toggleMark}
+          onAddComment={() => void insertCommentDemo()}
+          onUnsupported={surfaceUnsupported}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void handleFile(f);
+            e.target.value = "";
+          }}
+        />
         <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
           <div
-            ref={hostRef}
+            ref={setHostEl}
             className="prose-pm mx-auto min-h-[60vh] w-full max-w-[720px] px-8 py-12 outline-none"
           />
           {!agentReady && (
@@ -327,6 +497,7 @@ export function DocxEditor() {
           {toasts.map((t) => (
             <div
               key={t.id}
+              role="status"
               className={cn(
                 "pointer-events-auto rounded-md border px-3 py-1.5 text-xs shadow-sm",
                 t.kind === "info" && "border-divider bg-surface text-foreground",
@@ -341,106 +512,76 @@ export function DocxEditor() {
         </div>
       </section>
 
-      <aside className="flex min-h-0 flex-col gap-4 border-divider pt-2 lg:border-l lg:pl-6 lg:pt-0">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-secondary">
-            <Sparkles size={12} className="text-[var(--ai-violet)]" />
-            Agent
-          </div>
-          <p className="mt-1 text-xs text-secondary">
-            Ask the demo agent to propose changes. Each change goes into the pending queue for human review
-            before it lands.
-          </p>
-          <div className="mt-3 flex flex-col gap-2">
-            <textarea
-              value={agentPrompt}
-              onChange={(e) => setAgentPrompt(e.target.value)}
-              placeholder="e.g. Make the intro more concise."
-              rows={3}
-              className="w-full resize-none rounded-md border border-divider bg-background px-2.5 py-2 text-xs text-foreground placeholder:text-tertiary focus:border-[var(--ai-violet)] focus:outline-none"
-            />
-            <Button
-              variant="accent"
-              size="sm"
-              onClick={() => void runAgentPrompt()}
-              disabled={!agentReady || agentBusy || agentPrompt.trim().length === 0}
-              className="bg-[var(--ai-violet)] hover:bg-[var(--ai-violet)]/90"
-            >
-              {agentBusy ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-              Propose changes
-            </Button>
-          </div>
+      {/* Drawer toggle — mobile / tablet only */}
+      <button
+        type="button"
+        onClick={() => setDrawerOpen((v) => !v)}
+        aria-label="Toggle comments and agent panel"
+        aria-expanded={drawerOpen}
+        className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-1.5 rounded-full border border-divider bg-surface px-3 py-2 text-xs font-medium text-foreground shadow-md hover:bg-hover lg:hidden"
+      >
+        <MessageCircle size={14} />
+        Comments
+      </button>
+
+      <aside
+        data-testid="editor-side-panel"
+        className={cn(
+          "side-panel flex min-h-0 flex-col gap-4 border-divider pt-2 lg:border-l lg:pl-6 lg:pt-0",
+          // Below lg, the panel is a slide-up drawer triggered by the
+          // floating button. Above lg, it sits in the grid column.
+          drawerOpen
+            ? "fixed inset-x-0 bottom-0 z-40 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t bg-background p-4 shadow-2xl lg:static lg:max-h-none lg:border-t-0 lg:p-0 lg:shadow-none"
+            : "hidden lg:flex"
+        )}
+      >
+        <div className="flex items-center justify-between lg:hidden">
+          <span className="text-sm font-medium text-foreground">Side panel</span>
+          <button
+            type="button"
+            aria-label="Close side panel"
+            onClick={() => setDrawerOpen(false)}
+            className="rounded p-1 text-secondary hover:bg-hover"
+          >
+            <X size={14} />
+          </button>
         </div>
 
-        <div>
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-medium uppercase tracking-wide text-secondary">
-              Pending mutations
-            </div>
-            <span className="rounded-full bg-[var(--ai-violet-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--ai-violet)]">
-              {pendingCount}
-            </span>
-          </div>
-          {pendingCount === 0 ? (
-            <p className="mt-2 text-xs text-secondary">No pending agent edits.</p>
-          ) : (
-            <>
-              <ul className="mt-2 flex flex-col gap-1.5">
-                {pending.map((m) => (
-                  <li
-                    key={m.id}
-                    className="flex items-center justify-between gap-2 rounded-md border border-[var(--ai-violet-muted)] bg-[var(--ai-violet-light)] px-2.5 py-1.5 text-xs"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-medium text-foreground">{m.command.type}</div>
-                      <div className="truncate text-[10px] text-secondary">{m.id}</div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        title="Approve"
-                        onClick={() => agentRef.current?.approveMutation(m.id)}
-                        className="rounded p-1 text-[var(--success)] hover:bg-[var(--success)]/10"
-                      >
-                        <Check size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        title="Reject"
-                        onClick={() => agentRef.current?.rejectMutation(m.id)}
-                        className="rounded p-1 text-[var(--error)] hover:bg-[var(--error)]/10"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-2 flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={rejectAll}>
-                  Reject all
-                </Button>
-                <Button variant="accent" size="sm" onClick={approveAll}>
-                  Approve all
-                </Button>
-              </div>
-            </>
-          )}
-        </div>
+        <CommentsSidebar
+          snapshot={snapshot}
+          onScrollTo={scrollToComment}
+          onReply={replyComment}
+          onResolve={resolveComment}
+          onDelete={deleteComment}
+        />
+
+        <TrackedChangesUI
+          snapshot={snapshot}
+          editorHost={hostEl}
+          onAccept={acceptChange}
+          onReject={rejectChange}
+        />
+
+        <AgentPrompt
+          agent={agent}
+          agentReady={agentReady}
+          pending={pending}
+          onApprove={(id) => agent?.approveMutation(id)}
+          onReject={(id) => agent?.rejectMutation(id)}
+          onApproveAll={approveAll}
+          onRejectAll={rejectAll}
+          onError={onError}
+          dispatch={promptDispatch}
+        />
       </aside>
     </div>
   );
 }
 
-function ToolbarBtn(props: { label: string; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      title={props.label}
-      onClick={props.onClick}
-      className="rounded-md p-1.5 text-secondary hover:bg-hover hover:text-foreground"
-    >
-      {props.children}
-    </button>
-  );
+void Button;
+
+/** CSS.escape polyfill that is safe to call from older Safari. */
+function cssEscape(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+  return value.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
