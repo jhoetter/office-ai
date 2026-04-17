@@ -1,8 +1,11 @@
 # DOCX — Agent Commands
 
-> Complete typed list. Nine commands are implemented today ("**P0**" + the
-> three comment-lifecycle commands). The remaining five are stubbed and throw
-> `NotImplementedError` until a follow-up session.
+> Complete typed list. Thirteen commands are implemented today
+> ("**P0**" + the three comment-lifecycle commands + the two
+> header/footer-text commands + the two tracked-change resolution
+> commands). The remaining three (`insert-table`, `set-cell-content`,
+> `insert-image`) are stubbed and throw `NotImplementedError` until a
+> follow-up session.
 
 ## Common types
 
@@ -162,14 +165,95 @@ no-op). The serializer also drops `word/commentsExtended.xml` (and its
 relationship + content-type entries) when no comment in the document
 needs extended metadata anymore.
 
+### `docx:set-header-text`
+
+```typescript
+type SetHeaderTextPayload = {
+  partId: string; // OOXML part path of the header, e.g. "word/header1.xml"
+  paragraphIndex: number; // 0-based index into the header part's body
+  text: string; // new plain-text content of the targeted paragraph
+};
+```
+
+Replace the text content of one paragraph inside a header part. The targeted
+part is discovered via the part path exposed by
+`snapshot.root.headersAndFooters[i].id`. The paragraph's `pPr` and the first
+run's `rPr` (italics, font family, etc.) are preserved — only the text leaves
+are rewritten — so heading-style headers retain their look. Idempotent:
+re-applying the same text bumps the revision but produces an equivalent
+snapshot.
+
+Errors:
+
+- `unknown-target` — the `partId` does not match any header part, OR the
+  `paragraphIndex` is out of range, OR the targeted block is not a paragraph.
+
+Dirty flags: only `headersAndFooters` (the matching part path is added to the
+set). The body and other parts stay byte-identical on serialize.
+
+### `docx:set-footer-text`
+
+```typescript
+type SetFooterTextPayload = {
+  partId: string; // OOXML part path of the footer, e.g. "word/footer1.xml"
+  paragraphIndex: number;
+  text: string;
+};
+```
+
+Mirror of `docx:set-header-text` for footer parts. Same error contract,
+same dirty-flag discipline. The handler shares its implementation with
+`set-header-text` (the only difference is the `kind: "header" | "footer"`
+discriminator the model uses).
+
+### `docx:accept-change`
+
+```typescript
+type AcceptChangePayload = { revisionId: string };
+```
+
+Resolve a tracked change (`<w:ins>` or `<w:del>` wrapper) by accepting it:
+
+- `<w:ins>` accept: fold the inserted runs into the parent paragraph; drop
+  the wrapper.
+- `<w:del>` accept: drop the wrapper AND its children (the deletion lands).
+
+The handler walks both the body and every header/footer body looking for
+matching wrappers. The resulting snapshot, when serialized and re-parsed,
+contains no `RevisionWrapper` whose `revisionId === payload.revisionId` —
+this round-trip property is asserted in `tracked-changes.test.ts`.
+
+Errors:
+
+- `unknown-revision` — no wrapper in the document (body or any header/footer)
+  has the requested `revisionId`. Empty / missing `revisionId` also throws
+  `unknown-revision`.
+
+Dirty flags: `body` if any body wrapper matched; the corresponding entries
+in `headersAndFooters` if any header/footer wrapper matched. Both can be set
+in the same dispatch.
+
+### `docx:reject-change`
+
+```typescript
+type RejectChangePayload = { revisionId: string };
+```
+
+Inverse of `docx:accept-change`:
+
+- `<w:ins>` reject: drop the wrapper AND its children (the insertion never
+  lands).
+- `<w:del>` reject: drop the wrapper, keep its children (the deletion is
+  undone).
+
+Same error contract, same dirty-flag discipline as `accept-change`.
+
 ## Commands (P1 — stubbed; throw `NotImplementedError`)
 
 ```typescript
 "docx:insert-table"        { at: DocxPosition; rows: number; cols: number }
 "docx:set-cell-content"    { tableId: NodeId; row: number; col: number; content: BlockNode[] }
 "docx:insert-image"        { at: DocxPosition; data: ArrayBuffer; mimeType: string; width: number; height: number }
-"docx:accept-change"       { revisionId: string }
-"docx:reject-change"       { revisionId: string }
 ```
 
 Each P1 stub:

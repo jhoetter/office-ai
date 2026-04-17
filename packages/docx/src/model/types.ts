@@ -26,12 +26,28 @@ export interface DocxDirtyFlags {
    * adding a new comment dirties both `comments` and `commentsExtended`.
    */
   commentsExtended: boolean;
+  /**
+   * Set of header/footer part paths (e.g. `"word/header1.xml"`) that have
+   * been mutated since load. Untouched parts are re-emitted from cached
+   * bytes; touched parts are re-serialized from `headersAndFooters`. The
+   * set is the empty `Set` for a freshly-parsed snapshot, which preserves
+   * the byte-equality invariant on round-trip.
+   */
+  headersAndFooters: ReadonlySet<string>;
 }
 
 export interface DocxDocument {
   readonly id: NodeId;
   readonly body: ReadonlyArray<BlockNode>;
   readonly comments: ReadonlyArray<DocxComment>;
+  /**
+   * Header / footer parts discovered via `word/_rels/document.xml.rels`. The
+   * order matches load order (relationship order). Untouched parts may be
+   * re-emitted from the original `Uint8Array` cache; touched parts are
+   * re-serialized from this typed model. See `parser/headers-footers.ts`
+   * and `serializer/headers-footers.ts`.
+   */
+  readonly headersAndFooters: ReadonlyArray<HeaderFooterPart>;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
 }
 
@@ -186,6 +202,34 @@ export interface OpaqueInline {
   readonly kind: "opaque-inline";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+}
+
+/* ── Header / footer parts ───────────────────────────────────────────────── */
+
+/**
+ * A typed `word/header*.xml` or `word/footer*.xml` part. Both kinds have the
+ * same body shape (paragraph-level OOXML), so they share a single carrier
+ * differentiated by `kind`. Tables inside header / footer parts are kept as
+ * `OpaqueBlock` this round (typed table mutation lands in P1.3 / W7).
+ */
+export interface HeaderFooterPart {
+  readonly kind: "header" | "footer";
+  /** Stable id used by handlers to address this part (the part path itself). */
+  readonly id: string;
+  /** OOXML part path, e.g. `"word/header1.xml"`. Doubles as the handler id. */
+  readonly partPath: string;
+  /**
+   * Which section variant this part services. Drawn from the
+   * `<w:headerReference w:type>` / `<w:footerReference w:type>` element in
+   * `<w:sectPr>`. When the same part is referenced from multiple sections
+   * with conflicting types, we record the first one we see; this is purely
+   * informational metadata and does not change which bytes Word reads.
+   */
+  readonly target: "default" | "first" | "even";
+  /** Original namespace declarations from the part root (`w:hdr` / `w:ftr`). */
+  readonly rootAttrs: Readonly<Record<string, string>>;
+  /** Block-level body of the part. Tables stay opaque this round. */
+  readonly body: ReadonlyArray<BlockNode>;
 }
 
 /* ── Comments part ───────────────────────────────────────────────────────── */

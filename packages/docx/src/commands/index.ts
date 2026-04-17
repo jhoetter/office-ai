@@ -10,3 +10,7 @@ export { paragraphPlainText } from "./helpers.js";
 export { resolveCommentHandler } from "./resolve-comment.js";
 export { replyCommentHandler } from "./reply-comment.js";
 export { deleteCommentHandler } from "./delete-comment.js";
+export { setHeaderTextHandler } from "./set-header-text.js";
+export { setFooterTextHandler } from "./set-footer-text.js";
+export { acceptChangeHandler } from "./accept-change.js";
+export { rejectChangeHandler } from "./reject-change.js";

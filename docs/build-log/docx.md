@@ -551,3 +551,201 @@ handlers in alongside the existing six P0 handlers. The
 - The stdio entry point relies on `process.stdin` close to terminate;
   `office-agent mcp` does not yet support a `--port` flag for the
   HTTP/SSE transport. `prompt.md` only requires stdio for now.
+
+## P1.2 — W4: Headers/footers + tracked changes
+
+> Date: 2026-04-17. Workstream W4 of batch P1.2 (per
+> `docs/roadmap-docx-p1.md`). Ships A4 (typed headers/footers + the two
+> `docx:set-*-text` commands) and B2 (the `docx:accept-change` /
+> `docx:reject-change` resolution commands). C5 (tracked-change UI)
+> lives in W5.
+
+### What landed
+
+1. **Header / footer model + parser**
+   (`packages/docx/src/parser/headers-footers.ts`,
+   `packages/docx/src/model/types.ts`). New `HeaderFooterPart` carrier:
+
+   ```typescript
+   interface HeaderFooterPart {
+     kind: "header" | "footer";
+     id: string; // equals `partPath`; doubles as the handler id
+     partPath: string; // e.g. "word/header1.xml"
+     target: "default" | "first" | "even";
+     rootAttrs: Readonly<Record<string, string>>;
+     body: ReadonlyArray<BlockNode>;
+   }
+   ```
+
+   The discoverer walks `word/_rels/document.xml.rels` for the two
+   header / footer relationship types, then recursively scans every
+   `<w:sectPr>` (top-level AND nested inside `<w:p><w:pPr>`) to recover
+   each rId's `w:type` (defaulting to `"default"` when absent —
+   matches Word's behavior). The parser shares `parseParagraph` from
+   the main parser via injection rather than re-export to avoid an
+   import cycle. Tables / SDT / unknown blocks inside a header part
+   stay as `OpaqueBlock` carriers this round; typed table mutation is
+   W7 / P1.3.
+
+   The discovered parts hang off
+   `snapshot.root.headersAndFooters: ReadonlyArray<HeaderFooterPart>`
+   (clean name; matches `body` / `comments` shape).
+
+2. **Header / footer serializer**
+   (`packages/docx/src/serializer/headers-footers.ts`). A new
+   `serializeHeaderFooterParts(container, snapshot, serializeBlock)`
+   step at the end of `serializeDocx`:
+   - Skips parts whose path is NOT in
+     `snapshot.dirty.headersAndFooters` — this is what guarantees
+     SHA-256-level byte-identity for untouched parts on round-trip.
+   - For touched parts, re-serializes the typed model wrapped in the
+     original namespace declarations (`rootAttrs`).
+   - Reuses the main `serializeBlock` so paragraph emission stays
+     identical to the body's (same `w:pPr` ordering, same
+     `xml:space="preserve"` discipline, same opaque-block passthrough).
+   - Loud failure if a part is dirty but missing from the model or
+     container — `DocxSerializeError("header-footer-missing")`.
+
+3. **Dirty flags**: `DocxDirtyFlags` gained
+   `headersAndFooters: ReadonlySet<string>`. Independent of `body`,
+   `comments`, etc. The set is treated as immutable across snapshots
+   so older snapshots in the bus's mutation history keep their own
+   dirty view (helpers.ts is owned by W2; we merge by building a new
+   `Set` in the W4-owned `mergeHeaderFooterDirty` helper inside
+   `set-header-text.ts`).
+
+4. **`docx:set-header-text` / `docx:set-footer-text`**
+   (`packages/docx/src/commands/set-header-text.ts`,
+   `set-footer-text.ts`). Payload:
+
+   ```typescript
+   {
+     partId: string;
+     paragraphIndex: number;
+     text: string;
+   }
+   ```
+
+   Replaces the targeted paragraph's text with a single run that
+   carries the existing first run's `rPr` (italics, font family,
+   etc. survive). Errors: `unknown-target` for missing part / OOB
+   index / non-paragraph block. Idempotent. Both handlers share
+   `applySetTextToHeaderFooter()` keyed on `kind: "header" | "footer"`.
+
+5. **`docx:accept-change` / `docx:reject-change`**
+   (`packages/docx/src/commands/accept-change.ts`,
+   `reject-change.ts`). Payload `{ revisionId: string }`. Walks
+   the body AND every header/footer body, rewriting `RevisionWrapper`
+   nodes whose `revisionId` matches:
+
+   | wrapper kind | accept             | reject             |
+   | ------------ | ------------------ | ------------------ |
+   | `<w:ins>`    | unwrap (keep runs) | drop (lose runs)   |
+   | `<w:del>`    | drop (lose runs)   | unwrap (keep runs) |
+
+   The dispatch sets `body: true` if any body wrapper matched and
+   adds the matching part path to `headersAndFooters` if a wrapper
+   matched there. Both can flip in one dispatch. Errors:
+   `unknown-revision` for empty / missing id (the loud-idempotent
+   policy: a second accept on a now-resolved id throws
+   `unknown-revision`, mirroring how the bus surfaces the same code
+   for stale references — see `tracked-changes.test.ts`).
+
+   Round-trip property asserted directly:
+   `parse(serialize(snapshot))` carries no `RevisionWrapper` whose
+   `revisionId` equals the resolved id.
+
+6. **Registry / index** (`packages/docx/src/commands/registry.ts`,
+   `index.ts`). Removed the four stub rows for
+   `docx:accept-change`, `docx:reject-change`, plus added the two
+   `docx:set-*-text` commands. Stubs that remain:
+   `docx:insert-table`, `docx:set-cell-content`, `docx:insert-image`.
+
+### Tests
+
+- `packages/docx/src/commands/headers-footers.test.ts` (new) —
+  9 tests:
+  1. parser produces a typed header + footer from a synthetic
+     fixture
+  2. parser reads the real-world
+     `fixtures/docx/real-world/02-report-headers-footers.docx`
+     and recovers the known header / footer paragraph text
+  3. `set-header-text` replaces text and dirties only the targeted
+     part path
+  4. `set-footer-text` survives `DocxAgent.exportFile()` →
+     `parseDocx`
+  5. `set-header-text` is idempotent
+  6. `set-header-text` rejects an unknown `partId` with code
+     `unknown-target`
+  7. `set-header-text` rejects an out-of-range `paragraphIndex`
+     with code `unknown-target`
+  8. byte-preservation: untouched header AND footer SHA-256 match
+     after a no-touch round-trip of `02-report-headers-footers.docx`
+  9. byte-preservation: footer SHA-256 stays identical when only
+     the header is mutated; header bytes do change; mutation
+     survives a re-parse
+
+- `packages/docx/src/commands/tracked-changes.test.ts` (new) —
+  8 tests covering accept-ins, accept-del, reject-ins, reject-del,
+  unknown-revision (both missing-id and empty-id), idempotence
+  (accept on a now-resolved id surfaces `unknown-revision`),
+  serialize → re-parse leaves no matching wrapper, and a
+  text-equality round-trip for reject-del.
+
+- `pnpm --filter @officeai/docx test` — **83 tests pass** (was 66;
+  +17 from W4: 9 headers/footers + 8 tracked-changes). The
+  comments-lifecycle, handlers, renderer, agent, parser,
+  serializer, and markdown suites are unchanged.
+
+### Algorithmic notes
+
+- The header/footer parser re-discovers parts each load; it does
+  not assume a 1:1 between sections and parts. A single part may
+  be referenced from N sections with possibly conflicting
+  `w:type` values; we record the first one we see. This is
+  informational metadata only — Word reads the part bytes by
+  rId, not by the model's `target` field — so the choice does not
+  affect output.
+- `applySetTextToHeaderFooter` flattens the targeted paragraph to
+  a single run on purpose: header / footer paragraphs in the wild
+  almost always carry one run (a date, a company name, a page
+  number field), and preserving the multi-run layout would force
+  the handler to either pick a "primary" run (arbitrary) or
+  abandon the rest. Header / footer text rewrites are a coarse-
+  grained operation; finer-grained mutations should go through
+  `insert-text` / `delete-range` against a future
+  `position.headerFooter` selector (deferred — see follow-ups).
+- For the resolution commands we keep `RevisionWrapper` rewrites
+  pure on the input subtree; the recursion supports nested
+  wrappers (rare but legal in OOXML) and strips the matching id
+  even when wrapped inside a non-matching outer wrapper.
+- `delText` flag handling: when reject-change unwraps a `<w:del>`,
+  the surviving runs may still carry `isDelText: true` on their
+  text leaves (because they came from `<w:delText>` in the
+  source). We deliberately leave that flag intact — Word and
+  LibreOffice both accept `<w:delText>` outside a wrapper as
+  legal text content, and re-flattening it to `<w:t>` would
+  require an extra pass that buys us nothing observable. If a
+  follow-up needs strict `<w:t>`-only output we can add a
+  normalize step, but it's not required for the round-trip
+  property the brief asks for.
+
+### Known limitations / follow-ups
+
+- Header / footer parsing covers paragraph-level content only;
+  tables inside a header (e.g. a multi-cell layout header) become
+  `OpaqueBlock` and pass through unchanged on serialize.
+  Mutation-aware tables in headers / footers land with W7 / P1.3
+  alongside the typed table model.
+- We do not yet support adding a brand-new header / footer part to
+  a document that has none. The two `set-*-text` commands operate
+  on parts the parser already discovered; minting a fresh part +
+  relationship + content-type override is a separate command
+  (`docx:add-header` / `docx:add-footer`) tracked for a follow-up
+  session.
+- `accept/reject-change` operates on the raw `RevisionWrapper`
+  carrier; it does not yet update `revisionsView` style
+  decorations in the renderer (that work lives in W5 / C5). The
+  backend contract is stable, so the renderer wiring is
+  additive.
+

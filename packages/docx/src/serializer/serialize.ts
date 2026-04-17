@@ -15,6 +15,7 @@ import type {
 } from "../model/types.js";
 import { opaqueToEntry } from "../parser/xml-helpers.js";
 import { DocxSerializeError } from "./errors.js";
+import { serializeHeaderFooterParts } from "./headers-footers.js";
 
 const MAIN_PART = "word/document.xml";
 const COMMENTS_PART = "word/comments.xml";
@@ -74,6 +75,18 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
     } else if (container.has(COMMENTS_EXTENDED_PART)) {
       removeCommentsExtendedPart(container);
     }
+  }
+
+  // Headers / footers. The headers-footers serializer skips parts whose
+  // path is not in the dirty set, which is what guarantees byte-identity for
+  // untouched parts on a no-touch round-trip.
+  try {
+    serializeHeaderFooterParts(container, snapshot, serializeBlock);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("header-footer-failed", "Failed to serialize a header/footer part", {
+      cause: err,
+    });
   }
 
   return container.serialize();

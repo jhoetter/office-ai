@@ -7,6 +7,7 @@ import type {
   DocxDirtyFlags,
   DocxDocument,
   DocxSnapshot,
+  HeaderFooterPart,
   Hyperlink,
   InlineNode,
   OpaqueBlock,
@@ -21,6 +22,7 @@ import type {
   Table,
 } from "../model/types.js";
 import { DocxParseError } from "./errors.js";
+import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
 import {
   attrOf,
   captureOpaque,
@@ -119,11 +121,19 @@ export async function parseDocx(
   const baseComments = parseComments(container, mintNodeId);
   const extended = parseCommentsExtended(container);
   const comments = applyCommentsExtended(baseComments, extended);
+  const headerFooterRefs = discoverHeaderFooterRefs(container, documentTree);
+  const headersAndFooters: HeaderFooterPart[] = parseHeaderFooterParts(
+    container,
+    headerFooterRefs,
+    mintNodeId,
+    parseParagraph
+  );
 
   const root: DocxDocument = {
     id: mintNodeId(),
     body,
     comments,
+    headersAndFooters,
     documentRootAttrs,
   };
 
@@ -138,6 +148,7 @@ export async function parseDocx(
     rels: false,
     contentTypes: false,
     commentsExtended: false,
+    headersAndFooters: new Set<string>(),
   };
 
   return {

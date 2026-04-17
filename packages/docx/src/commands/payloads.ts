@@ -15,6 +15,8 @@ export const DOCX_COMMAND_TYPES = [
   "docx:delete-comment",
   "docx:accept-change",
   "docx:reject-change",
+  "docx:set-header-text",
+  "docx:set-footer-text",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -105,4 +107,23 @@ export interface AcceptChangePayload {
 
 export interface RejectChangePayload {
   revisionId: string;
+}
+
+export interface SetHeaderTextPayload {
+  /**
+   * Stable id of the header part to mutate. Equals the OOXML part path,
+   * e.g. `"word/header1.xml"`. Discoverable via
+   * `snapshot.root.headersAndFooters[i].id`.
+   */
+  partId: string;
+  /** 0-based index into the header part's `body` array. */
+  paragraphIndex: number;
+  /** New plain-text content for the targeted paragraph. */
+  text: string;
+}
+
+export interface SetFooterTextPayload {
+  partId: string;
+  paragraphIndex: number;
+  text: string;
 }
