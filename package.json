@@ -17,7 +17,8 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "architecture": "node scripts/check-architecture.mjs",
     "verify": "pnpm format:check && pnpm lint:root && pnpm --filter @officeai/web lint && pnpm architecture && pnpm typecheck && pnpm test && pnpm build",
-    "fixtures:docx": "node scripts/generate-docx-fixtures.mjs"
+    "fixtures:docx": "node scripts/generate-docx-fixtures.mjs",
+    "fixtures:xlsx": "node scripts/generate-xlsx-fixtures.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -28,7 +29,8 @@
     "eslint-plugin-import": "^2.32.0",
     "prettier": "^3",
     "turbo": "^2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

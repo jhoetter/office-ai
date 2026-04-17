@@ -6,7 +6,7 @@
 # ============================================
 
 .PHONY: help install dev build lint lint-root format format-check architecture \
-        typecheck test verify ci clean cli fixtures fixtures-real \
+        typecheck test verify ci clean cli fixtures fixtures-real fixtures-xlsx \
         roundtrip-libre e2e-web perf-docx licenses xsd-fetch schema-validate
 
 help:
@@ -29,8 +29,9 @@ help:
 	@echo "  Misc:"
 	@echo "  clean          Remove build artifacts and dependencies"
 	@echo "  cli            Build and link the office-agent CLI"
-	@echo "  fixtures       Regenerate synthetic DOCX fixtures"
+	@echo "  fixtures       Regenerate synthetic DOCX + XLSX fixtures"
 	@echo "  fixtures-real  Regenerate real-shape DOCX fixtures (Word-grade)"
+	@echo "  fixtures-xlsx  Regenerate synthetic XLSX fixtures only"
 	@echo ""
 	@echo "  Heavy / opt-in checks (NOT part of make verify):"
 	@echo "  roundtrip-libre  Headless LibreOffice roundtrip on real-world fixtures"
@@ -94,9 +95,13 @@ cli:
 
 fixtures:
 	pnpm fixtures:docx
+	pnpm fixtures:xlsx
 
 fixtures-real:
 	node scripts/generate-real-fixtures.mjs
+
+fixtures-xlsx:
+	pnpm fixtures:xlsx
 
 # ── Heavy / opt-in checks ────────────────────────────────────────────
 # These are intentionally NOT wired into `make verify` because they

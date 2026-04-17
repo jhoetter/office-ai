@@ -35,6 +35,9 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.3
+      xlsx:
+        specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+        version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
 
   apps/web:
     dependencies:
