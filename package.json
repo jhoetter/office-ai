@@ -1,0 +1,25 @@
+{
+  "name": "office-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "officeAI — minimal product scaffold (FastAPI + Next.js) with shared design system",
+  "scripts": {
+    "predev": "lsof -ti :8000 | xargs kill -9 2>/dev/null; lsof -ti :3000 | xargs kill -9 2>/dev/null; true",
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "clean": "turbo clean && rm -rf node_modules",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
+  },
+  "devDependencies": {
+    "turbo": "^2",
+    "prettier": "^3",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  }
+}
