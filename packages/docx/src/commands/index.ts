@@ -19,3 +19,7 @@ export { setCellContentHandler } from "./set-cell-content.js";
 export { insertRowHandler } from "./insert-row.js";
 export { insertColumnHandler } from "./insert-column.js";
 export { insertImageHandler } from "./insert-image.js";
+export { setParagraphListHandler } from "./set-paragraph-list.js";
+export { removeParagraphListHandler } from "./remove-paragraph-list.js";
+export { insertHyperlinkHandler } from "./insert-hyperlink.js";
+export { removeHyperlinkHandler } from "./remove-hyperlink.js";

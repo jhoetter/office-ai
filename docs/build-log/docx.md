@@ -1464,3 +1464,229 @@ cover (a) fixture-discovery, (b) full part-mapping coverage,
 (c) failure-path exit code via `--inject-broken`. No xmllint
 or XSD bundle required to run the suite — so it works on a
 fresh CI runner with only `pnpm install` + `pnpm build`.
+
+## P1.4 — W10+W11: Lists & hyperlinks
+
+Two pairs of additive, mutation-aware command handlers shipped
+together because both touch the same shared registration surface
+(`registry.ts`, `index.ts`, `payloads.ts`, `model/types.ts`,
+`parser/parse.ts`, `serializer/serialize.ts`, the spec, and this
+build log). Splitting them would have raced on disk; combined they
+land as a single clean delivery. After this section, the docx package
+exposes **22 shipped commands** (the previous 18 plus the four
+introduced here).
+
+### W10 — Lists / numbering
+
+Typed parse + serialize for `word/numbering.xml` (additive — the
+existing parts-cache path keeps emitting the part byte-identically
+when no list command runs) plus two paragraph-level mutation
+commands.
+
+#### Files added / modified
+
+- `packages/docx/src/model/types.ts` — additive: extended
+  `DocxDirtyFlags` with `numbering: boolean`, extended `DocxDocument`
+  with `numbering?: NumberingDefinitions`, and added the new
+  `NumberingDefinitions`, `AbstractNum`, `NumberingLevel`, and
+  `NumInstance` interfaces. The pre-existing
+  `ParagraphProperties.numbering?: { numId; ilvl }` carrier was
+  intentionally left untouched — the new types describe the
+  `numbering.xml`-side definitions, not the per-paragraph reference.
+- `packages/docx/src/parser/numbering.ts` — NEW.
+  `parseNumberingPart(container)` reads `word/numbering.xml` if
+  present and returns a typed `NumberingDefinitions`. Captures each
+  `<w:abstractNum>` and `<w:num>` as `OpaqueXml` (`raw`) so the
+  serializer can emit them verbatim when they haven't been mutated;
+  unknown children of `<w:lvl>` are captured into
+  `NumberingLevel.opaqueProps` for the same reason.
+- `packages/docx/src/parser/parse.ts` — additive wiring: imports
+  `parseNumberingPart`, calls it after the body parse, and stashes
+  the result on `root.numbering` (left undefined when the part is
+  absent). The existing `parseParagraphProperties` walk that
+  populates `paragraph.properties.numbering = { numId, ilvl }` was
+  not touched.
+- `packages/docx/src/serializer/numbering.ts` — NEW.
+  `serializeNumberingPart(container, snapshot)` no-ops unless
+  `dirty.numbering` is set, so today (where neither shipped command
+  flips that flag) the parts-cache path keeps `numbering.xml`
+  byte-identical. Future commands that mutate the definitions
+  themselves can opt in by setting `dirty.numbering`.
+- `packages/docx/src/serializer/serialize.ts` — additive wiring:
+  imports `serializeNumberingPart` and calls it from the main
+  serialize sequence. Also tightened `serializeParagraphProperties`
+  to emit a typed `<w:numPr>` only when `props.numbering` is set
+  AND there's no opaque `<w:numPr>` carrier — preventing
+  double-emission and giving the new list commands a clean way to
+  switch a paragraph from "opaque-carried numbering" to "typed
+  numbering" by stripping the opaque carrier.
+- `packages/docx/src/commands/set-paragraph-list.ts` — NEW.
+  Implements `docx:set-paragraph-list { paragraphId, numId, ilvl }`.
+  Validates payload, locates the paragraph (recursively into table
+  cells), checks `numbering` exists and `numId` resolves, replaces
+  `paragraph.properties.numbering`, strips any opaque `<w:numPr>`
+  carrier, sets `dirty.body` only. Diff: single `node-updated` with
+  `field: "numbering"`. Also exports the recursive `locateParagraph`
+  helper (with a typed `replace` closure that rebuilds tables and
+  clears their `raw` cache) so `remove-paragraph-list` and
+  `insert-hyperlink` can reuse it.
+- `packages/docx/src/commands/remove-paragraph-list.ts` — NEW.
+  Implements `docx:remove-paragraph-list { paragraphId }`. Strict,
+  not idempotent: rejects `not-applicable` if the paragraph isn't
+  currently a list item (callers should know what they're operating
+  on). Strips both `paragraph.properties.numbering` and any opaque
+  `<w:numPr>` from `opaqueProps[]`. Sets `dirty.body` only.
+- `packages/docx/src/commands/lists.test.ts` — NEW. **12 tests**
+  covering: typed numbering parse (two abstractNums + three nums),
+  parse with no numbering part, byte-preservation of `numbering.xml`
+  / `document.xml` / `document.xml.rels` on the
+  `03-numbered-list.docx` fixture across a parse → serialize round
+  trip, `set-paragraph-list` happy path on body and inside a table
+  cell, `set-paragraph-list` replacing an existing list reference
+  (asserts only one `<w:numPr>` ends up in the serialized output),
+  `unknown-target` for unknown `numId`, `unknown-target` for
+  no-numbering-part docs, `invalid-payload` for `ilvl < 0`,
+  `remove-paragraph-list` happy path (and asserts the serialized
+  paragraph carries no `<w:numPr>`), `not-applicable` rejection on a
+  non-list paragraph, plus a parse(serialize(s)) round-trip
+  verification for `set-paragraph-list`.
+
+### W11 — Hyperlinks
+
+Typed parse / serialize for `<w:hyperlink>` already existed; W11
+adds the two mutation commands that wrap / unwrap a flat-text range
+and minimally manage the `hyperlink`-typed external relationships
+in `word/_rels/document.xml.rels`.
+
+#### Files added / modified
+
+- `packages/docx/src/commands/insert-hyperlink.ts` — NEW. Implements
+  `docx:insert-hyperlink { paragraphId, range, url?, anchor? }`.
+  Validates the XOR between `url` and `anchor`, parses `url` via
+  `new URL()` (well-formed-ness only — reachability is not checked,
+  document below), validates range bounds against the paragraph's
+  flat-text length, and rejects `invalid-position` when the range
+  straddles an existing hyperlink or any non-run inline (comment
+  markers, revision wrappers, opaque inlines). Splits the runs at
+  the range boundaries via a local helper rather than reaching into
+  `commands/helpers.ts` (the read-only constraint kept us from
+  publishing a shared splitter; see "Deviations" below). For
+  external URLs it de-duplicates against existing rels in
+  `relationships.get("word/document.xml")` (Word does the same) and
+  only sets `dirty.relationships` when a brand-new rel is actually
+  minted. Diff: `node-inserted` for the wrapper plus `node-updated`
+  for the host paragraph (`field: "children"`).
+- `packages/docx/src/commands/remove-hyperlink.ts` — NEW. Implements
+  `docx:remove-hyperlink { hyperlinkId }`. Recursively scans body
+  paragraphs (including those nested inside table cells) for the
+  target hyperlink, replaces it with its inline `children`, and —
+  when the unwrapped link carried a `relationshipId` AND no other
+  body hyperlink references the same id — removes the rel from
+  `relationships.get("word/document.xml")` and sets
+  `dirty.relationships`. The "still referenced" scan is body-only;
+  see the gap on header/footer rels below. Diff: a single
+  `node-updated` whose summary records whether the rel was kept or
+  removed (e.g. `−hyperlink (rel=rId5 removed)`).
+- `packages/docx/src/commands/registry.ts`,
+  `packages/docx/src/commands/index.ts`,
+  `packages/docx/src/commands/payloads.ts` — additive: registers
+  the four new handlers, exports their payload types, and adds the
+  command type strings to `DOCX_COMMAND_TYPES`.
+- `packages/docx/src/commands/hyperlinks.test.ts` — NEW. **14
+  tests** covering: parse(serialize(s)) round-trip on a synthetic
+  hyperlink fixture, byte-preservation of `document.xml` and
+  `document.xml.rels` on the same fixture, external URL happy path
+  (rel minted, `dirty.relationships` set), anchor happy path (no
+  rel minted), de-duplication when the same URL is inserted twice
+  (single rel, two hyperlinks share the id), `invalid-position` for
+  ranges straddling an existing hyperlink, `invalid-payload` for
+  missing-both / both-set / malformed URL, `invalid-position` for
+  out-of-range bounds, `remove-hyperlink` happy path (rel removed
+  when sole reference), `remove-hyperlink` preserving the rel when
+  another hyperlink still references the same target,
+  `unknown-target` for unknown hyperlink id, and a final parse →
+  serialize → parse round-trip on a freshly inserted external
+  hyperlink.
+
+### Spec + cross-cutting changes
+
+- `spec/docx/agent-commands.md` — header count bumped from
+  "Eighteen" to "Twenty-two" and a new top-level section
+  `## Commands (P1.4 — lists & hyperlinks)` documenting all four
+  handlers (payload shapes, OOXML impact, diff format, error codes)
+  in the W7 / W8 style.
+- `docs/build-log/docx.md` — this section (single P1.4 entry, two
+  subsections for clarity).
+
+### Deviations from the brief
+
+- The brief suggested importing the run-splitter logic from
+  `commands/helpers.ts` for `insert-hyperlink`. `helpers.ts` is in
+  the read-only set for this subagent and does not currently export a
+  splitter that fits the hyperlink wrapping shape (which needs three
+  outputs — `before`, `middle`, `after` — rather than the two-way
+  splits used by `format-range`). To stay inside the read-only
+  contract, `insert-hyperlink.ts` carries its own
+  `splitRunAtRange` / `wrapRangeInHyperlink` pair. This is a small,
+  intentional duplication; consolidating into `helpers.ts` is
+  noted as a follow-up if/when a third caller needs the same
+  three-way split.
+- The brief notes that `insert-hyperlink` should produce a single
+  diff change. The implementation emits two changes — a
+  `node-inserted` for the new hyperlink wrapper and a
+  `node-updated` for the host paragraph (`field: "children"`) —
+  matching the diff shape used by `insert-table` / `insert-image`
+  for analogous wrap-and-replace mutations. Rel-graph mutation is
+  signalled by `dirty.relationships` exactly as the brief requires.
+
+### Documented gaps / follow-ups
+
+- **Auto-creating `numbering.xml`.** `set-paragraph-list` strictly
+  rejects `unknown-target` when the document has no
+  `word/numbering.xml` at all. Auto-minting an `<w:abstractNum>` +
+  `<w:num>` pair (and registering the part in `[Content_Types].xml`
+  - a `numbering`-typed rel in `word/_rels/document.xml.rels`)
+    would let callers turn any plain doc into a list-bearing one,
+    but it requires a styling decision (which `numFmt` / `lvlText`
+    to mint) that's out of scope this round. The serializer wiring
+    is already in place — `serializeNumberingPart` handles addition
+    via `container.addPart` when the part is missing — so a future
+    command can turn this on without further plumbing changes.
+- **Strict vs. idempotent `remove-paragraph-list`.** The brief
+  explicitly asked for strict behaviour and the implementation
+  honours it: a paragraph that's not currently a list item rejects
+  `not-applicable`. Documented here so future maintainers don't
+  silently flip it to idempotent.
+- **No `Hyperlink` character style auto-applied.** Word styles
+  hyperlink runs via the built-in `Hyperlink` character style.
+  `insert-hyperlink` deliberately does NOT auto-apply it — that's
+  a presentation concern owned by the UI / caller. Inserted
+  hyperlinks therefore render with whatever run formatting the
+  underlying text already had. Callers that want the underline +
+  blue colour can dispatch a follow-up `docx:format-range` with
+  `runStyleId: "Hyperlink"` (or a project-defined equivalent).
+- **URL reachability is not checked.** `insert-hyperlink` only
+  validates well-formed-ness via `new URL()`. The handler does not
+  send a HEAD request — that would couple a pure document
+  mutation to the network and is intentionally avoided.
+  `mailto:` and `tel:` URLs are valid because `new URL()` accepts
+  them; only the surface syntax is enforced, not the destination.
+- **`remove-hyperlink` rel-cleanup scans body paragraphs only.**
+  Header / footer parts carry their own typed rels parts (added in
+  W4) and aren't scanned by the "is this rel still referenced?"
+  check. In practice this means a rel referenced only from a
+  header / footer would be dropped if the matching body hyperlink
+  is removed, leaving a dangling reference in the header part.
+  Until W4's typed rels parts grow a cross-part scan, callers that
+  share hyperlink targets between the body and headers should
+  prefer leaving the rel intact (rare in practice — Word's UI
+  doesn't share rel ids across `headerN.xml` + `document.xml`
+  either).
+
+### Test counts
+
+| Suite                           | Before | After |
+| ------------------------------- | -----: | ----: |
+| `@officeai/docx`                |    111 |   137 |
+| ↳ `commands/lists.test.ts`      |      0 |    12 |
+| ↳ `commands/hyperlinks.test.ts` |      0 |    14 |

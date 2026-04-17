@@ -48,6 +48,14 @@ export interface DocxDirtyFlags {
    * round-trip byte-identical. Added in P1.3 / W8.
    */
   relationships: ReadonlySet<string>;
+  /**
+   * Whether `word/numbering.xml` itself has been mutated and must be
+   * re-emitted on save. Added in P1.4 / W10. The flag is intentionally
+   * scoped to changes in the typed `NumberingDefinitions` carrier
+   * (`DocxDocument.numbering`); a paragraph swapping its `numId` /
+   * `ilvl` lives in `word/document.xml` and only dirties `body`.
+   */
+  numbering: boolean;
 }
 
 export interface DocxDocument {
@@ -85,7 +93,56 @@ export interface DocxDocument {
    * round-trip exactly.
    */
   readonly relationships: ReadonlyMap<string, ReadonlyArray<Relationship>>;
+  /**
+   * Typed numbering definitions parsed from `word/numbering.xml`.
+   * `undefined` when the part is absent (which is the common case — a
+   * doc that contains no list paragraphs has no `numbering.xml` at
+   * all). Added in P1.4 / W10.
+   */
+  readonly numbering?: NumberingDefinitions;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+}
+
+/**
+ * Typed projection of `word/numbering.xml`. Mirrors the OOXML
+ * `<w:numbering>` shape: a flat collection of abstract numbering
+ * definitions (the templates, keyed by string id) plus a flat
+ * collection of concrete `<w:num>` instances (keyed by integer numId)
+ * pointing at one of those abstracts.
+ *
+ * Untouched documents ride the container's part cache; we only emit
+ * `numbering.xml` from this typed carrier when `dirty.numbering` is
+ * set. Unknown children of `<w:abstractNum>` and `<w:num>` are
+ * captured as `OpaqueXml` so the round-trip stays lossless when (a
+ * future workstream) does mutate the part. Added in P1.4 / W10.
+ */
+export interface NumberingDefinitions {
+  readonly abstractNums: ReadonlyMap<string, AbstractNum>;
+  readonly nums: ReadonlyMap<number, NumInstance>;
+}
+
+export interface AbstractNum {
+  readonly id: string;
+  readonly multiLevelType?: "singleLevel" | "multilevel" | "hybridMultilevel";
+  readonly levels: ReadonlyArray<NumberingLevel>;
+  readonly raw?: OpaqueXml;
+}
+
+export interface NumberingLevel {
+  readonly ilvl: number;
+  readonly numFmt?: string;
+  readonly lvlText?: string;
+  readonly start?: number;
+  readonly pPr?: ParagraphProperties;
+  readonly rPr?: RunProperties;
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+export interface NumInstance {
+  readonly numId: number;
+  readonly abstractNumId: string;
+  readonly lvlOverrides?: ReadonlyArray<{ readonly ilvl: number; readonly startOverride?: number }>;
+  readonly raw?: OpaqueXml;
 }
 
 /**

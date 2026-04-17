@@ -24,6 +24,7 @@ import { DocxParseError } from "./errors.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
 import { parseDrawing } from "./images.js";
 import { parseMediaParts } from "./media.js";
+import { parseNumberingPart } from "./numbering.js";
 import { parseRelationshipsParts } from "./relationships.js";
 import { parseTable as parseTableTyped } from "./tables.js";
 import {
@@ -134,6 +135,7 @@ export async function parseDocx(
 
   const media = parseMediaParts(container);
   const relationships = parseRelationshipsParts(container);
+  const numbering = parseNumberingPart(container);
 
   const root: DocxDocument = {
     id: mintNodeId(),
@@ -142,6 +144,7 @@ export async function parseDocx(
     headersAndFooters,
     media,
     relationships,
+    ...(numbering ? { numbering } : {}),
     documentRootAttrs,
   };
 
@@ -159,6 +162,7 @@ export async function parseDocx(
     headersAndFooters: new Set<string>(),
     media: new Set<string>(),
     relationships: new Set<string>(),
+    numbering: false,
   };
 
   return {

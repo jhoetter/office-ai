@@ -18,6 +18,7 @@ import { DocxSerializeError } from "./errors.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
 import { serializeInlineImageDrawing } from "./images.js";
 import { serializeMediaParts } from "./media.js";
+import { serializeNumberingPart } from "./numbering.js";
 import { serializeRelationshipsParts } from "./relationships.js";
 import { serializeTable, serializeTableFromRaw } from "./tables.js";
 
@@ -108,6 +109,20 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
   } catch (err) {
     if (err instanceof DocxSerializeError) throw err;
     throw new DocxSerializeError("rels-failed", "Failed to write relationships parts", { cause: err });
+  }
+
+  // Numbering definitions (`word/numbering.xml`). Skipped unless
+  // `dirty.numbering` is set, so the part round-trips byte-identical
+  // when no command has touched its definitions. P1.4 / W10 only
+  // emits this when a future workstream mutates the typed
+  // `NumberingDefinitions`; today's `set-paragraph-list` /
+  // `remove-paragraph-list` only touch `<w:numPr>` pointers in
+  // `word/document.xml` and never set this flag.
+  try {
+    serializeNumberingPart(container, snapshot);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("numbering-failed", "Failed to write numbering.xml", { cause: err });
   }
 
   // [Content_Types].xml. We update this when the caller has set the
@@ -215,8 +230,20 @@ function serializeParagraphProperties(props: ParagraphProperties): unknown | nul
     out.push(makeEl("w:pStyle", { "w:val": props.styleId }));
   }
   if (props.numbering) {
-    // Numbering is also represented in opaqueProps to preserve full attrs;
-    // we do NOT emit a typed numPr here to avoid duplication.
+    // The typed `<w:numPr>` is only emitted when no opaque carrier
+    // exists for it (see check below). Untouched paragraphs round-trip
+    // through the opaqueProps blob byte-equivalent; paragraphs touched
+    // by `docx:set-paragraph-list` / `docx:remove-paragraph-list`
+    // strip that blob so this typed branch kicks in.
+    const carryOpaqueNumPr = props.opaqueProps?.some((o) => o.tag === "w:numPr") === true;
+    if (!carryOpaqueNumPr) {
+      out.push({
+        "w:numPr": [
+          { "w:ilvl": [], ":@": { "@_w:val": String(props.numbering.ilvl) } },
+          { "w:numId": [], ":@": { "@_w:val": String(props.numbering.numId) } },
+        ],
+      });
+    }
   }
   if (props.indentation) {
     const ind: Record<string, string> = {};

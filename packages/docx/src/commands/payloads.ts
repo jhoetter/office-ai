@@ -1,4 +1,5 @@
 import type { BlockNode, DocxPosition, DocxSelection, TableProperties } from "../model/types.js";
+import type { NodeId } from "@officeai/core";
 
 export const DOCX_COMMAND_TYPES = [
   "docx:insert-text",
@@ -19,6 +20,10 @@ export const DOCX_COMMAND_TYPES = [
   "docx:reject-change",
   "docx:set-header-text",
   "docx:set-footer-text",
+  "docx:set-paragraph-list",
+  "docx:remove-paragraph-list",
+  "docx:insert-hyperlink",
+  "docx:remove-hyperlink",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -161,4 +166,31 @@ export interface SetFooterTextPayload {
   partId: string;
   paragraphIndex: number;
   text: string;
+}
+
+export interface SetParagraphListPayload {
+  /** Stable id of the target paragraph (body or table cell). */
+  paragraphId: NodeId;
+  /** Concrete `<w:num>` instance id from `word/numbering.xml`. */
+  numId: number;
+  /** 0-based level inside the abstract definition. */
+  ilvl: number;
+}
+
+export interface RemoveParagraphListPayload {
+  paragraphId: NodeId;
+}
+
+export interface InsertHyperlinkPayload {
+  paragraphId: NodeId;
+  /** Flat-text byte range inside the paragraph (`start < end`, both inclusive of the paragraph length). */
+  range: { start: number; end: number };
+  /** External URL; mints a fresh `external` rel. Mutually exclusive with `anchor`. */
+  url?: string;
+  /** Internal bookmark name. Mutually exclusive with `url`. */
+  anchor?: string;
+}
+
+export interface RemoveHyperlinkPayload {
+  hyperlinkId: NodeId;
 }
