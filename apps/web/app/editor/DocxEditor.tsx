@@ -263,9 +263,9 @@ export function DocxEditor() {
   const pendingCount = pending.length;
 
   return (
-    <div className="grid h-full grid-cols-[minmax(0,1fr)_320px] gap-6">
+    <div className="grid h-full min-h-0 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
       <section className="flex min-h-0 flex-col">
-        <div className="flex items-center gap-2 border-b border-divider pb-3">
+        <div className="flex flex-wrap items-center gap-1 border-b border-divider pb-3">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -299,15 +299,11 @@ export function DocxEditor() {
           <ToolbarBtn label="Add comment" onClick={() => void insertCommentDemo()}>
             <MessageSquarePlus size={14} />
           </ToolbarBtn>
-          <div className="ml-auto flex items-center gap-2 text-xs text-secondary">
+          <div className="ml-auto flex items-center gap-3 text-xs text-secondary">
             {docInfo && (
-              <>
-                <span>{docInfo.blocks} blocks</span>
-                <span>·</span>
-                <span>rev {docInfo.revision}</span>
-                <span>·</span>
-                <span>{docInfo.comments} comments</span>
-              </>
+              <span className="hidden whitespace-nowrap md:inline">
+                {docInfo.blocks} blocks · rev {docInfo.revision} · {docInfo.comments} comments
+              </span>
             )}
             <Button variant="accent" size="sm" onClick={() => void handleExport()}>
               <Download size={14} />
@@ -315,10 +311,10 @@ export function DocxEditor() {
             </Button>
           </div>
         </div>
-        <div className="relative flex-1 overflow-auto rounded-md border border-divider bg-background">
+        <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
           <div
             ref={hostRef}
-            className="prose-pm mx-auto min-h-[60vh] max-w-prose px-6 py-10 outline-none"
+            className="prose-pm mx-auto min-h-[60vh] w-full max-w-[720px] px-8 py-12 outline-none"
           />
           {!agentReady && (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
@@ -344,7 +340,7 @@ export function DocxEditor() {
         </div>
       </section>
 
-      <aside className="flex min-h-0 flex-col gap-4 border-l border-divider pl-6">
+      <aside className="flex min-h-0 flex-col gap-4 border-divider pt-2 lg:border-l lg:pl-6 lg:pt-0">
         <div>
           <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-secondary">
             <Sparkles size={12} className="text-[var(--ai-violet)]" />

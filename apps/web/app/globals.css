@@ -222,11 +222,47 @@ textarea::placeholder {
 
 /* ── ProseMirror DOCX editor surface ── */
 .prose-pm .ProseMirror {
+  /*
+   * white-space: pre-wrap is REQUIRED by prosemirror-view; without it,
+   * spaces collapse and DOM ↔ position mapping breaks (typing/Enter
+   * starts inserting in the wrong place). See prosemirror-view's
+   * style/prosemirror.css.
+   */
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
   outline: none;
   min-height: 60vh;
   color: var(--foreground);
   font-size: 16px;
   line-height: 1.7;
+  caret-color: var(--accent);
+}
+
+/* prosemirror-view's required base rules (mirrored from its stylesheet) */
+.prose-pm .ProseMirror pre {
+  white-space: pre-wrap;
+}
+.prose-pm .ProseMirror li {
+  position: relative;
+}
+.prose-pm .ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+.prose-pm .ProseMirror-hideselection *::-moz-selection {
+  background: transparent;
+}
+.prose-pm .ProseMirror-hideselection {
+  caret-color: transparent;
+}
+.prose-pm .ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+/* Empty paragraphs get a visible line height so the cursor has something to sit in */
+.prose-pm .ProseMirror p:empty::before {
+  content: "";
+  display: inline-block;
 }
 
 .prose-pm .ProseMirror p {

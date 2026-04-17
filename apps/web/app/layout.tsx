@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, IBM_Plex_Mono } from "next/font/google";
 import { ThemeProvider } from "@/lib/theme-provider";
+import "prosemirror-view/style/prosemirror.css";
 import "./globals.css";
 
 const inter = Inter({

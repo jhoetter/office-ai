@@ -76,19 +76,59 @@ describe("docx command handlers", () => {
     }
   });
 
-  it("insert-paragraph adds a new paragraph at index", async () => {
+  it("insert-paragraph (offset 0) adds an empty paragraph BEFORE the index", async () => {
     const agent = await loadAgent([{ text: "first" }, { text: "second" }]);
     const before = agent.getSnapshot().root.body.length;
     await agent.applyCommand({
       type: "docx:insert-paragraph",
-      payload: { at: { paragraph: 1 }, style: "Heading2" },
+      payload: { at: { paragraph: 1, run: 0, offset: 0 }, style: "Heading2" },
       source: "human",
     });
-    const after = agent.getSnapshot().root.body.length;
-    expect(after).toBe(before + 1);
-    const p1 = agent.getSnapshot().root.body[1];
+    const body = agent.getSnapshot().root.body;
+    expect(body.length).toBe(before + 1);
+    const p1 = body[1];
     if (p1.kind !== "paragraph") throw new Error();
     expect(p1.properties.styleId).toBe("Heading2");
+    expect(paragraphPlainText(p1)).toBe("");
+    const p2 = body[2];
+    if (p2.kind !== "paragraph") throw new Error();
+    expect(paragraphPlainText(p2)).toBe("second");
+  });
+
+  it("insert-paragraph (mid-paragraph) splits the paragraph at offset (Enter semantics)", async () => {
+    const agent = await loadAgent([{ text: "Hello world", styleId: "Heading1" }]);
+    await agent.applyCommand({
+      type: "docx:insert-paragraph",
+      payload: { at: { paragraph: 0, run: 0, offset: 5 } },
+      source: "human",
+    });
+    const paragraphs = agent
+      .getSnapshot()
+      .root.body.filter((b) => b.kind === "paragraph");
+    expect(paragraphs.length).toBe(2);
+    const [p0, p1] = paragraphs;
+    if (p0.kind !== "paragraph" || p1.kind !== "paragraph") throw new Error();
+    expect(paragraphPlainText(p0)).toBe("Hello");
+    expect(paragraphPlainText(p1)).toBe(" world");
+    expect(p0.properties.styleId).toBe("Heading1");
+    expect(p1.properties.styleId).toBe("Heading1");
+  });
+
+  it("insert-paragraph (offset >= text length) appends an empty paragraph after", async () => {
+    const agent = await loadAgent([{ text: "tail" }]);
+    await agent.applyCommand({
+      type: "docx:insert-paragraph",
+      payload: { at: { paragraph: 0, run: 0, offset: 99 } },
+      source: "human",
+    });
+    const paragraphs = agent
+      .getSnapshot()
+      .root.body.filter((b) => b.kind === "paragraph");
+    expect(paragraphs.length).toBe(2);
+    const [p0, p1] = paragraphs;
+    if (p0.kind !== "paragraph" || p1.kind !== "paragraph") throw new Error();
+    expect(paragraphPlainText(p0)).toBe("tail");
+    expect(paragraphPlainText(p1)).toBe("");
   });
 
   it("set-paragraph-style updates styleId", async () => {
