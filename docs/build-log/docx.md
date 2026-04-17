@@ -870,3 +870,165 @@ CI job.
   workaround would be a `visualViewport`-aware repositioning hook,
   deferred to the next mobile pass.
 
+## P1.2 — W6: Ops gates + agent surface polish
+
+### What landed
+
+This work item ties off P1.2 with two operational quality gates
+(perf budgets + license scan), an extension to the Markdown
+projection so an LLM can reason about lists / tables / comments,
+and a thin in-process bridge between the editor and an actual LLM
+provider.
+
+1. **Performance budget script (`scripts/perf-docx.mjs`).** Builds
+   a synthetic 100-page DOCX (3000 paragraphs, ~21 KB) using the
+   `docx` library, then exercises the agent end-to-end through
+   `DocxAgent.fromBuffer` → 1000 `docx:insert-text` commands →
+   `agent.exportFile()`. The script prints a Markdown table of
+   elapsed-vs-budget milliseconds and exits non-zero on any over-
+   budget phase. Budgets:
+
+   | Phase         | Budget  | Local M-class result |
+   | ------------- | ------- | -------------------- |
+   | parse         | 500 ms  | ~34 ms               |
+   | 1000 commands | 1000 ms | ~6 ms                |
+   | serialize     | 750 ms  | ~22 ms               |
+
+   The budgets are deliberately loose (≥ 30 % headroom over the
+   local numbers) so noisy GitHub-hosted runners don't false-
+   positive on transient slow-downs. We will tighten them once
+   we have a few weeks of CI history to size variance.
+
+2. **SPDX license scanner (`scripts/license-scan.mjs`).** Walks
+   every package directory under `node_modules/.pnpm/<spec>/node_modules/<name>`,
+   reads the `license` field from each `package.json`, and
+   classifies it without any network round-trip. It hard-fails
+   (exit 1) on `AGPL-1.0+`, `AGPL-3.0+`, `GPL-2.0-only`,
+   `GPL-3.0-only`, `SSPL-1.0`, `BUSL-1.1`, and warns on
+   `LGPL-*`/`GPL-*-with-exception` so we have a paper trail
+   without blocking the build. `--inject-agpl` synthesizes an
+   AGPL-licensed entry to exercise the failure path in the
+   integration test (`tests/scripts/license-scan.test.ts`).
+   Current dep tree: 497 unique packages, 425 MIT, 26 Apache-2.0,
+   23 ISC, no banned licenses, one LGPL-or-later warning from
+   `@img/sharp-libvips-darwin-arm64` (transitive — shipped as a
+   prebuilt binary, not linked).
+
+3. **Make + CI wiring.** Both scripts are intentionally **opt-in**
+   from the local `Makefile` (`make perf-docx`, `make licenses`)
+   and **mandatory in CI** as their own jobs (`docx-perf`,
+   `license-scan` in `.github/workflows/ci.yml`). Keeping them
+   out of `make verify` matches the existing `docx-libreoffice-roundtrip`
+   pattern: heavy / environment-sensitive checks live in CI so a
+   `make verify` on a developer laptop stays under ~15 s.
+
+4. **Extended Markdown projection (`packages/docx/src/agent/markdown.ts`).**
+   `snapshotToMarkdown` now emits a much richer projection so the
+   LLM can reason about structure rather than a flat run of
+   paragraphs:
+   - **Section breaks** → `---` thematic break.
+   - **Headings** (`Title`, `Heading1`..`Heading6` style ids) →
+     ATX `#`..`######`.
+   - **Numbered lists** — driven by `paragraph.properties.numbering`
+     (presence of `numId`) → `1.`, `2.`, … with two-space-per-
+     level indentation from `ilvl`. Numbering is per-`numId`,
+     so two interleaved lists keep separate counters.
+   - **Bullet lists** — paragraphs styled `ListParagraph` with
+     no numbering → `-` items, also indented by `ilvl`.
+   - **Tables** — best-effort GFM pipe-table conversion straight
+     from the opaque `Table.raw.subtree` (we walk `w:tr` →
+     `w:tc` and concatenate inner `w:t` text). Newlines in cells
+     become `<br>`, pipes are escaped as `\|`. If the parser
+     can't recover ≥ 1 row × 1 col we fall back to the prior
+     `> [table preserved]` placeholder and `console.warn`.
+   - **Comments** — appended as a trailing `## Comments` section
+     listing thread heads only (replies indent under their
+     parent). Each entry shows the comment text (truncated to
+     200 chars) and a "> on:" snippet of the parent paragraph
+     text so the LLM has anchor context. Skipped silently when
+     the document has no comments.
+
+   The renderer is purely a projection — it never mutates the
+   snapshot — so it's safe to call from the LLM bridge on every
+   request. Coverage: 8 new tests in `markdown.test.ts` exercising
+   each branch (headings, both list flavours, pipe-table happy
+   path, malformed-table fallback, section break, comments
+   present, comments absent).
+
+5. **LLM bridge (`apps/web/app/api/llm/route.ts`).** A small
+   Next.js App Router POST endpoint:
+   - Body: `{ prompt: string; snapshotMarkdown: string }`.
+   - Returns: `{ commands: Array<{ type, payload }>; rationale }`.
+   - Gated on `process.env.OPENAI_API_KEY`. When unset → `501
+{ error: "LLM bridge not configured" }`. Other HTTP methods
+     get the App Router default `405`.
+   - When configured, calls `https://api.openai.com/v1/chat/completions`
+     directly (no SDK) with `response_format: { type: "json_object" }`
+     and `temperature: 0.2`, model `gpt-4.1` (overridable via
+     `OPENAI_MODEL`). The system prompt enumerates the public
+     `docx:*` command surface and forbids prose.
+   - Returned commands are **filtered against an allow-list** of
+     known command types before reaching the client, so a
+     hallucinated type (`docx:nuke-document`) is silently
+     dropped rather than queued.
+   - The route never executes commands. It hands the parsed
+     command list back to the browser so the existing pending /
+     approve UI in `AgentPrompt` stays the single funnel for
+     human review — same "AI proposes, human approves"
+     contract as the demo dispatch.
+
+6. **Isomorphic client helper (`apps/web/app/lib/llm-client.ts`).**
+   `dispatchToLlm(prompt, agent)` POSTs to `/api/llm` with the
+   current snapshot's Markdown projection. On success it returns
+   the agent-tagged command list ready for `agent.applyCommands`.
+   On `501` (no API key), network failure, non-OK status, or
+   non-JSON payload, it transparently falls back to the original
+   `[AI] ` + `add-comment` recipe so the existing
+   `add-comment.spec.ts` e2e still passes with no env vars set.
+   Failure paths surface a `note` string the editor renders as a
+   warn toast, so a misconfigured production deploy is visible
+   without breaking the demo.
+
+7. **Editor wiring (`DocxEditor.tsx`).** The default
+   `AgentPrompt` dispatch now routes through `dispatchToLlm` (the
+   old `defaultAgentDispatch` stays around in `AgentPrompt.tsx`
+   as the absolute pre-agent fallback). With no `OPENAI_API_KEY`
+   the user-visible behaviour is byte-identical to W5 (because
+   the bridge falls back to the same recipe). With a key set, the
+   prompt becomes a real LLM call whose output lands in the same
+   pending-mutations queue.
+
+### Decisions (W6-specific)
+
+| Date (UTC) | Decision                                                                 | Rationale                                                                                                                                                          |
+| ---------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-04-17 | Perf + license jobs run in CI but are opt-in from `make verify`          | `make verify` is the developer inner loop; we want it sub-15 s. Heavy gates already live in dedicated CI jobs (LibreOffice round-trip, etc.).                      |
+| 2026-04-17 | Walk `node_modules/.pnpm` instead of parsing `pnpm-lock.yaml` directly   | `node_modules/.pnpm/<spec>/node_modules/<pkg>/package.json` is the source of truth post-install; avoids a YAML parse and re-implementing pnpm spec resolution.     |
+| 2026-04-17 | License scanner has no network calls                                     | Brief explicitly forbids fetching SPDX data; offline-deterministic also makes the CI job fast and air-gap-friendly.                                                |
+| 2026-04-17 | Tables → GFM pipe tables (best-effort) rather than HTML tables           | LLMs reason about pipe tables far better than nested `<table>` HTML; falling back to `> [table preserved]` keeps the projection stable when our parser can't cope. |
+| 2026-04-17 | LLM bridge calls `fetch` directly (no `openai` SDK dependency)           | Adds zero deps; we only need chat/completions and the JSON-mode flag. Easy to swap for another provider behind the same `/api/llm` contract.                       |
+| 2026-04-17 | Bridge filters returned commands against an allow-list of `docx:*` types | Defense in depth — model can't queue an undocumented command even if it hallucinates one. The renderer would reject it later, but failing here is friendlier.      |
+| 2026-04-17 | Client helper falls back to demo recipe on any bridge failure            | Keeps `add-comment.spec.ts` (and the no-key local dev experience) working with zero configuration; mismatches surface as toasts, not exceptions.                   |
+
+### Known limitations / follow-ups
+
+- The perf budgets are sized for CI variance, not a tight
+  regression gate. Once we have ~2 weeks of green CI numbers we
+  should ratchet them down to ~2× the observed median.
+- The license scanner reads `package.json` `license` (string) and
+  `licenses` (legacy array) only. A handful of older packages use
+  free-form `license` like `"AND expression all permissive"`
+  (visible in the current scan) — those land in an "unknown /
+  free-form" bucket and emit a warning rather than failing, since
+  hand-classifying them is out of scope for an SPDX-only check.
+- The LLM bridge does not currently stream — it returns the full
+  command list once OpenAI finishes. Streaming the rationale and
+  partial commands would be a nice UX upgrade but adds a lot of
+  client-side state for marginal gain at the current per-prompt
+  size (~tens of commands).
+- Table extraction concatenates raw `w:t` runs cell-by-cell; it
+  does not yet preserve cell-level formatting (bold, hyperlinks,
+  nested paragraphs). The `> [table preserved]` fallback fires
+  for those edge cases, so we never produce a wrong-looking
+  pipe table — we just produce a placeholder. Richer extraction
+  lands with the W7 typed-table model.

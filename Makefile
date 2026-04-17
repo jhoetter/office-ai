@@ -7,7 +7,7 @@
 
 .PHONY: help install dev build lint lint-root format format-check architecture \
         typecheck test verify ci clean cli fixtures fixtures-real \
-        roundtrip-libre e2e-web
+        roundtrip-libre e2e-web perf-docx licenses
 
 help:
 	@echo "officeAI — available targets:"
@@ -35,6 +35,8 @@ help:
 	@echo "  Heavy / opt-in checks (NOT part of make verify):"
 	@echo "  roundtrip-libre  Headless LibreOffice roundtrip on real-world fixtures"
 	@echo "  e2e-web          Playwright smoke tests against the web app"
+	@echo "  perf-docx        DOCX perf budgets (parse / 1k commands / serialize)"
+	@echo "  licenses         SPDX license-graph scan against the resolved deps"
 
 install:
 	pnpm install
@@ -113,3 +115,17 @@ roundtrip-libre:
 e2e-web:
 	pnpm build
 	pnpm --filter @officeai/web e2e
+
+# `perf-docx` builds and serializes a synthetic 100-page DOCX, asserting
+# the parse / dispatch / serialize budgets documented inline in the script.
+# Skipped from `make verify` because perf is best run on the actual dev
+# machine (Apple Silicon target); CI runs it in a dedicated job.
+perf-docx:
+	node scripts/perf-docx.mjs
+
+# `licenses` walks the resolved pnpm dependency graph and hard-fails on any
+# AGPL / GPL-only / SSPL / BUSL entry. Permissive SPDX entries are summarized;
+# LGPL / GPL-with-exception is surfaced as a warning. Reads each
+# package.json's `license` field — no network calls.
+licenses:
+	node scripts/license-scan.mjs

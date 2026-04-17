@@ -19,6 +19,7 @@ import { Toolbar } from "./Toolbar";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
+import { dispatchToLlm } from "@/lib/llm-client";
 
 interface ToastMessage {
   id: number;
@@ -445,14 +446,20 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
   void commentParagraphIndex;
 
-  // The default `AgentPrompt` dispatch is the demo `[AI] ` +
-  // add-comment recipe preserved from P1.1 (lives inside `AgentPrompt`
-  // as `defaultAgentDispatch`). Callers wire a real LLM bridge by
-  // passing `agentPromptDispatch`; W6 ships exactly that.
+  // Default dispatch routes through the LLM bridge (`/api/llm`). When the
+  // server has no `OPENAI_API_KEY` configured, the helper transparently
+  // falls back to the same `[AI] ` + `add-comment` recipe the editor used
+  // before W6, so the existing e2e flow keeps working with no env vars.
   const { agentPromptDispatch: agentPromptDispatchProp } = props;
-  const promptDispatch: AgentPromptDispatch | undefined = agent && agentPromptDispatchProp
-    ? agentPromptDispatchProp(agent)
-    : undefined;
+  const promptDispatch: AgentPromptDispatch = (() => {
+    if (!agent) return async () => undefined;
+    if (agentPromptDispatchProp) return agentPromptDispatchProp(agent);
+    return async (text: string) => {
+      const result = await dispatchToLlm(text, agent);
+      if (result.note) pushToast("warn", result.note);
+      if (result.commands.length > 0) await agent.applyCommands(result.commands);
+    };
+  })();
 
   return (
     <div className="docx-editor flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:grid-rows-1 lg:gap-6">

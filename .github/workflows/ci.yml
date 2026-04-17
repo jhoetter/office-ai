@@ -127,3 +127,59 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           if-no-files-found: ignore
+
+  docx-perf:
+    name: docx perf budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The perf script imports the built @officeai/docx dist; build the
+      # workspace once so the dynamic import resolves without an extra
+      # in-script build step on cold cache.
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run DOCX perf budgets
+        run: make perf-docx
+
+  license-scan:
+    name: license-graph SPDX scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Scan licenses
+        run: make licenses
