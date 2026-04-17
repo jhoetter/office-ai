@@ -12,7 +12,11 @@ import type {
   Run,
   RunChild,
   RunProperties,
+  Table,
+  TableCell,
+  TableRow,
 } from "../model/types.js";
+import type { RenderableTable, RenderableTableCell, RenderableTableRow } from "./schema.js";
 
 function imageStub(leaf: InlineImageDrawing): unknown {
   return {
@@ -44,7 +48,11 @@ function blockToPM(block: BlockNode): PMNode | null {
     case "paragraph":
       return paragraphToPM(block);
     case "table":
-      return docxSchema.nodes.table.create({ tableId: block.id, rawJson: encode(block.raw) });
+      return docxSchema.nodes.table.create({
+        tableId: block.id,
+        rawJson: encode(block.raw),
+        tableJson: encode(tableToRenderable(block)),
+      });
     case "section-break":
       return docxSchema.nodes.section_break.create({ blockId: block.id, rawJson: encode(block.raw) });
     case "opaque-block":
@@ -255,6 +263,109 @@ function runMarks(props: RunProperties): Mark[] {
   if (props.color) marks.push(docxSchema.marks.color.create({ rgb: props.color }));
   if (props.highlight) marks.push(docxSchema.marks.highlight.create({ name: props.highlight }));
   return marks;
+}
+
+/**
+ * Project a typed `Table` into the `RenderableTable` shape consumed by
+ * the `table` node's `toDOM`. The renderer flattens cell paragraphs to
+ * plain text on purpose: cells are read-only in this iteration, so the
+ * extra fidelity (marks, runs, nested tables) would be wasted and would
+ * complicate paragraph indexing in `transactionToCommands`.
+ *
+ * Nested tables are surfaced by joining their cell text with " | " to
+ * preserve some structural cue while keeping the projection flat.
+ */
+function tableToRenderable(table: Table): RenderableTable {
+  return { rows: table.rows.map(rowToRenderable) };
+}
+
+function rowToRenderable(row: TableRow): RenderableTableRow {
+  return {
+    header: row.properties.header === true,
+    cells: row.cells.map(cellToRenderable),
+  };
+}
+
+function cellToRenderable(cell: TableCell): RenderableTableCell {
+  return {
+    gridSpan: cell.properties.gridSpan ?? 1,
+    vMerge: cell.properties.vMerge ?? null,
+    blocks: cell.body.flatMap((block) => {
+      if (block.kind === "paragraph") return [paragraphToRenderable(block)];
+      if (block.kind === "table") {
+        // Flatten nested tables to a single paragraph showing the joined
+        // cell text. Rare in the wild and a deliberate compromise.
+        return [
+          {
+            kind: "paragraph" as const,
+            text: block.rows
+              .map((r) =>
+                r.cells.map((c) => c.body.map(extractBlockText).filter(Boolean).join(" ")).join(" | ")
+              )
+              .join("\n"),
+          },
+        ];
+      }
+      return [];
+    }),
+  };
+}
+
+function paragraphToRenderable(
+  p: Paragraph
+): RenderableTable["rows"][number]["cells"][number]["blocks"][number] {
+  const out: { kind: "paragraph"; text: string; styleId?: string; alignment?: string } = {
+    kind: "paragraph",
+    text: paragraphPlainText(p),
+  };
+  if (p.properties.styleId) out.styleId = p.properties.styleId;
+  if (p.properties.alignment) out.alignment = p.properties.alignment;
+  return out;
+}
+
+function paragraphPlainText(p: Paragraph): string {
+  let s = "";
+  for (const child of p.children) {
+    s += inlinePlainText(child);
+  }
+  return s;
+}
+
+function inlinePlainText(node: InlineNode): string {
+  switch (node.kind) {
+    case "run":
+      return runPlainText(node);
+    case "hyperlink":
+      return node.children.map(runPlainText).join("");
+    case "revision":
+      return node.children.map(inlinePlainText).join("");
+    case "comment-range-start":
+    case "comment-range-end":
+    case "comment-reference":
+      return "";
+    case "opaque-inline":
+      return "";
+    default: {
+      const _exhaustive: never = node;
+      void _exhaustive;
+      return "";
+    }
+  }
+}
+
+function runPlainText(run: Run): string {
+  let s = "";
+  for (const c of run.children) {
+    if (c.kind === "text") s += c.text;
+    else if (c.kind === "tab") s += "\t";
+    else if (c.kind === "break") s += "\n";
+  }
+  return s;
+}
+
+function extractBlockText(b: BlockNode): string {
+  if (b.kind === "paragraph") return paragraphPlainText(b);
+  return "";
 }
 
 function encode(value: unknown): string {

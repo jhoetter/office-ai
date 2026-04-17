@@ -367,6 +367,43 @@ textarea::placeholder {
   border: none;
 }
 
+/*
+ * Typed-table read-only rendering. The model is fully typed (rows /
+ * cells / cell-body) but the PM atom embeds a baked HTML table built
+ * from a flattened plain-text projection of every cell, so the user
+ * sees the actual table content instead of a `[table]` chip. Editing
+ * inside cells is intentionally not enabled — that requires teaching
+ * `transactionToCommands` about cell-scoped positions and is a future
+ * workstream.
+ */
+.prose-pm .ProseMirror .pm-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+  background: var(--background);
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-cell {
+  border: 1px solid var(--divider);
+  padding: 0.375rem 0.625rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-header-row .pm-table-cell {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-cell-p {
+  margin: 0;
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-cell-p + .pm-table-cell-p {
+  margin-top: 0.25rem;
+}
+
 /* ── P1.2 / W5: highlight / color marks in the editor surface ── */
 /*
  * The schema's font_color and highlight marks ship inline `style`

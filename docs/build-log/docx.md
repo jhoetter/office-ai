@@ -1778,3 +1778,74 @@ existing round-trip and byte-equivalence guarantees still hold.
   unknown-but-significant elements visible during development so we
   can spot them and either type them or add them to the wrapper /
   metadata sets.
+
+## P1.6 — typed table rendering (read-only nested view)
+
+### Why
+
+After P1.5 cleared the `[opaque]` / `[w:sdt]` clutter, the next visible
+regression on real-world `.docx` files was the `[table]` chip: every
+typed `Table` block (introduced in P1.3 / W7) was being projected as a
+single PM atom whose `toDOM` rendered the literal string `"[table]"`.
+The Masterthesis fixture had 4 tables (13 rows, 38 cells) all collapsed
+to 4 chips.
+
+### What
+
+Renderer-only change. Same scope discipline as P1.5: the model and
+serializer are untouched.
+
+- `renderer/schema.ts`: the existing atomic `table` node keeps its
+  atom-ness (so cell editing stays disabled and `transactionToCommands`
+  paragraph indexing is unaffected) but `toDOM` now materialises a real
+  `<table>` DOM subtree from a new `tableJson` attr instead of emitting
+  a placeholder. `tableJson` carries a flat projection
+  (`rows[].cells[].blocks[]`) sufficient for read-only display.
+  `RenderableTable` / `RenderableTableRow` / `RenderableTableCell` /
+  `RenderableTableBlock` interfaces document the shape.
+- `renderer/doc-to-pm.ts`: every `Table` block is converted to the
+  renderable shape via `tableToRenderable`. Cell paragraphs flatten to
+  plain text via the same walker used by `extractInlineText`; tabs and
+  hard breaks become `\t` / `\n` so cell layout is preserved
+  ergonomically. Nested tables flatten one level deeper (cells joined
+  with `" | "`).
+- Header rows (`<w:tblHeader/>`) emit `<th>` instead of `<td>`.
+  `<w:gridSpan w:val="N"/>` becomes `colspan="N"`. `<w:vMerge/>`
+  continuation cells are skipped so the merged cell renders once.
+- `apps/web/app/globals.css`: `.pm-table` / `.pm-table-cell` /
+  `.pm-table-header-row` / `.pm-table-cell-p` styles for the new
+  read-only table visual.
+
+### Effect on the original failing fixture
+
+| Metric                       | Before | After |
+| ---------------------------- | -----: | ----: |
+| Typed `Table` blocks         |      4 |     4 |
+| `[table]` chips visible      |      4 | **0** |
+| Cells rendered with content  |      0 |    38 |
+| Top-level PM blocks          |    369 |   369 |
+| Re-emit byte-stable two-pass |    yes |   yes |
+
+### Test counts
+
+| Suite                              | Before | After |
+| ---------------------------------- | -----: | ----: |
+| `@officeai/docx`                   |    151 |   157 |
+| ↳ `renderer/table-display.test.ts` |      0 |     6 |
+
+### Caveats
+
+- **Cells are read-only in this iteration.** Promoting cells to
+  PM-editable nested content requires teaching `transactionToCommands`
+  about cell-scoped positions (the typed `set-cell-content` /
+  `insert-row` / `insert-column` commands from W7 already exist, but
+  the bus dispatch from PM keystrokes inside cells is not wired). That
+  is the natural next step.
+- **Cell content flattens to plain text.** Run-level marks (bold,
+  italic, color, …), inline images, hyperlinks and comments inside
+  cells render as plain text only. The model preserves them; the
+  display does not yet surface them. Adding rich cell rendering is
+  cheap once cell editing is wired.
+- **Nested tables render shallowly.** Inner tables flatten to a
+  single line of `" | "`-joined cell text. Rare in practice; deeper
+  nesting can be added later without changing the outer schema.

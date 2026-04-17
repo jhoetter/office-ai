@@ -25,9 +25,49 @@ const nodes: Record<string, NodeSpec> = {
   table: {
     group: "block",
     atom: true,
-    attrs: { tableId: { default: null }, rawJson: { default: null } },
-    toDOM() {
-      return ["div", { class: "pm-table-placeholder", contenteditable: "false" }, "[table]"];
+    attrs: {
+      tableId: { default: null },
+      rawJson: { default: null },
+      /**
+       * Structured projection of the typed `Table` model:
+       *   { rows: Array<{ header: boolean, cells: Array<{
+       *       gridSpan: number, vMerge: "restart"|"continue"|null,
+       *       blocks: Array<{ kind: "paragraph", text: string,
+       *                       styleId?: string, alignment?: string }>
+       *   }>}> }
+       * The renderer materialises this into a `<table>` DOM subtree so the
+       * user sees the actual cell content instead of a `[table]` chip.
+       * Atom-ness is intentional — cells are read-only in this iteration to
+       * keep top-level paragraph indexing in `transactionToCommands` stable.
+       */
+      tableJson: { default: null },
+    },
+    toDOM(node) {
+      const data = parseTableJson(node.attrs.tableJson);
+      if (!data || data.rows.length === 0) {
+        return ["div", { class: "pm-table-placeholder", contenteditable: "false" }, "[table]"];
+      }
+      const tbody: unknown[] = ["tbody"];
+      for (const row of data.rows) {
+        const tr: unknown[] = [
+          "tr",
+          { class: row.header ? "pm-table-row pm-table-header-row" : "pm-table-row" },
+        ];
+        for (const cell of row.cells) {
+          if (cell.vMerge === "continue") continue;
+          const cellAttrs: Record<string, string> = { class: "pm-table-cell" };
+          if (cell.gridSpan > 1) cellAttrs.colspan = String(cell.gridSpan);
+          const cellChildren: unknown[] = [];
+          for (const block of cell.blocks) {
+            const pAttrs: Record<string, string> = { class: "pm-table-cell-p" };
+            if (block.alignment) pAttrs.style = `text-align:${block.alignment}`;
+            cellChildren.push(["p", pAttrs, block.text]);
+          }
+          tr.push([row.header ? "th" : "td", cellAttrs, ...cellChildren]);
+        }
+        tbody.push(tr);
+      }
+      return ["table", { class: "pm-table", contenteditable: "false" }, tbody];
     },
   },
   opaque_block: {
@@ -191,5 +231,40 @@ const marks: Record<string, MarkSpec> = {
     ],
   },
 };
+
+export interface RenderableTableBlock {
+  readonly kind: "paragraph";
+  readonly text: string;
+  readonly styleId?: string;
+  readonly alignment?: string;
+}
+
+export interface RenderableTableCell {
+  readonly gridSpan: number;
+  readonly vMerge: "restart" | "continue" | null;
+  readonly blocks: ReadonlyArray<RenderableTableBlock>;
+}
+
+export interface RenderableTableRow {
+  readonly header: boolean;
+  readonly cells: ReadonlyArray<RenderableTableCell>;
+}
+
+export interface RenderableTable {
+  readonly rows: ReadonlyArray<RenderableTableRow>;
+}
+
+function parseTableJson(value: unknown): RenderableTable | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const rows = (parsed as { rows?: unknown }).rows;
+    if (!Array.isArray(rows)) return null;
+    return parsed as RenderableTable;
+  } catch {
+    return null;
+  }
+}
 
 export const docxSchema = new Schema({ nodes, marks });
