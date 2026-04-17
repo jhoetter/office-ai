@@ -28,7 +28,12 @@ export function snapshotToMarkdown(snapshot: DocxSnapshot): string {
       lines.push("");
     }
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+  return (
+    lines
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trimEnd() + "\n"
+  );
 }
 
 function paragraphToMarkdown(p: Paragraph): string {

@@ -143,7 +143,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
 
 function clampSelection(doc: import("prosemirror-model").Node, pos: number): number {
   const max = doc.content.size;
-  let p = Math.max(0, Math.min(max, pos));
+  const p = Math.max(0, Math.min(max, pos));
   // Walk to a valid text-cursor position (PM rejects positions that
   // aren't inside a textblock).
   const $pos = doc.resolve(p);

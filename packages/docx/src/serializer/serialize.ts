@@ -18,10 +18,8 @@ import { DocxSerializeError } from "./errors.js";
 
 const MAIN_PART = "word/document.xml";
 const COMMENTS_PART = "word/comments.xml";
-const COMMENTS_REL_TYPE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-const COMMENTS_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const COMMENTS_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
 
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 
@@ -242,7 +240,10 @@ function serializeRunChild(c: RunChild): unknown {
       return opaqueToEntry(c.raw);
     default: {
       const _exhaustive: never = c;
-      throw new DocxSerializeError("unknown-run-child", `Unknown run child kind: ${JSON.stringify(_exhaustive)}`);
+      throw new DocxSerializeError(
+        "unknown-run-child",
+        `Unknown run child kind: ${JSON.stringify(_exhaustive)}`
+      );
     }
   }
 }
@@ -268,9 +269,7 @@ function serializeRevisionWrapper(rev: RevisionWrapper): unknown {
 
 function serializeCommentsXml(comments: ReadonlyArray<DocxComment>): string {
   const children: unknown[] = comments.map((c) => serializeComment(c));
-  const tree = [
-    { "w:comments": children, ":@": COMMENTS_ROOT_ATTRS },
-  ];
+  const tree = [{ "w:comments": children, ":@": COMMENTS_ROOT_ATTRS }];
   return ooxml.serializeXml(tree, { xmlDeclaration: XML_DECL });
 }
 
@@ -287,10 +286,9 @@ function serializeComment(c: DocxComment): unknown {
 
 function ensureCommentsPart(container: ooxml.OoxmlContainer): void {
   if (!container.has(COMMENTS_PART)) {
-    const empty = ooxml.serializeXml(
-      [{ "w:comments": [], ":@": COMMENTS_ROOT_ATTRS }],
-      { xmlDeclaration: XML_DECL },
-    );
+    const empty = ooxml.serializeXml([{ "w:comments": [], ":@": COMMENTS_ROOT_ATTRS }], {
+      xmlDeclaration: XML_DECL,
+    });
     container.addPart(COMMENTS_PART, new TextEncoder().encode(empty));
   }
 

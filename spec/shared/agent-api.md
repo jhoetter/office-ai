@@ -50,8 +50,15 @@ export type RangeSpec =
 
 export type RangeSnapshot = unknown;
 
-export interface SearchSpec { query: string; caseSensitive?: boolean; regex?: boolean; }
-export interface SearchResult { path: ReadonlyArray<string | number>; preview: string; }
+export interface SearchSpec {
+  query: string;
+  caseSensitive?: boolean;
+  regex?: boolean;
+}
+export interface SearchResult {
+  path: ReadonlyArray<string | number>;
+  preview: string;
+}
 ```
 
 ## Construction

@@ -148,7 +148,9 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       out.push(docxSchema.nodes.tab.create(null, null, marks));
       return;
     case "drawing":
-      out.push(docxSchema.nodes.image.create({ runId: child.id, drawingJson: encode(child.raw) }, null, marks));
+      out.push(
+        docxSchema.nodes.image.create({ runId: child.id, drawingJson: encode(child.raw) }, null, marks)
+      );
       return;
     case "opaque":
       out.push(
@@ -169,7 +171,8 @@ function runMarks(props: RunProperties): Mark[] {
   if (props.underline) marks.push(docxSchema.marks.underline.create({ value: props.underline }));
   if (props.strike) marks.push(docxSchema.marks.strikethrough.create());
   if (props.fontFamily) marks.push(docxSchema.marks.font_family.create({ family: props.fontFamily }));
-  if (typeof props.fontSize === "number") marks.push(docxSchema.marks.font_size.create({ halfPoints: props.fontSize }));
+  if (typeof props.fontSize === "number")
+    marks.push(docxSchema.marks.font_size.create({ halfPoints: props.fontSize }));
   if (props.color) marks.push(docxSchema.marks.color.create({ rgb: props.color }));
   if (props.highlight) marks.push(docxSchema.marks.highlight.create({ name: props.highlight }));
   return marks;

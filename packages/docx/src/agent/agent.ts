@@ -1,10 +1,4 @@
-import {
-  CommandBus,
-  type Command,
-  type CommandLite,
-  type DocumentDiff,
-  type Mutation,
-} from "@officeai/core";
+import { CommandBus, type Command, type CommandLite, type DocumentDiff, type Mutation } from "@officeai/core";
 import { allDocxHandlers } from "../commands/index.js";
 import type { DocxSnapshot, DocxPosition } from "../model/types.js";
 import { paragraphPlainText } from "../commands/helpers.js";
@@ -100,9 +94,7 @@ export class DocxAgent {
     const body = this.getSnapshot().root.body;
     const out: DocxSearchResult[] = [];
     const flags = spec.caseSensitive ? "g" : "gi";
-    const pattern = spec.regex
-      ? new RegExp(spec.query, flags)
-      : new RegExp(escapeRegex(spec.query), flags);
+    const pattern = spec.regex ? new RegExp(spec.query, flags) : new RegExp(escapeRegex(spec.query), flags);
     for (let i = 0; i < body.length; i++) {
       const block = body[i];
       if (block.kind !== "paragraph") continue;
@@ -127,7 +119,9 @@ export class DocxAgent {
     return this.bus.dispatch(command);
   }
 
-  async applyCommands(commands: ReadonlyArray<Command | CommandLite>): Promise<ReadonlyArray<Mutation<DocxSnapshot>>> {
+  async applyCommands(
+    commands: ReadonlyArray<Command | CommandLite>
+  ): Promise<ReadonlyArray<Mutation<DocxSnapshot>>> {
     return this.bus.dispatchAll(commands);
   }
 

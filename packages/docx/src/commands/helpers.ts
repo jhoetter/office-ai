@@ -17,7 +17,7 @@ import type { DocumentDiff } from "@officeai/core";
 export function evolveSnapshot(
   prev: DocxSnapshot,
   next: DocxDocument,
-  dirty: Partial<DocxDirtyFlags>,
+  dirty: Partial<DocxDirtyFlags>
 ): DocxSnapshot {
   return {
     format: "docx",
@@ -54,7 +54,7 @@ export function removeBlocks(doc: DocxDocument, start: number, end: number): Doc
 export function withParagraph(
   doc: DocxDocument,
   index: number,
-  fn: (p: Paragraph) => Paragraph,
+  fn: (p: Paragraph) => Paragraph
 ): DocxDocument {
   const block = doc.body[index];
   if (!block || block.kind !== "paragraph") {
@@ -127,7 +127,7 @@ export function paragraphPlainText(p: Paragraph): string {
 export function buildDiff(
   prevRevision: number,
   nextRevision: number,
-  change: DocumentDiff["changes"][number],
+  change: DocumentDiff["changes"][number]
 ): DocumentDiff {
   return {
     format: "docx",

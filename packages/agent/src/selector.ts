@@ -88,8 +88,16 @@ function parseRangeSelector(input: string): ParagraphRangeSelector {
     return {
       kind: "range",
       range: {
-        start: { paragraph: head1.paragraph, ...(head1.run !== undefined ? { run: head1.run } : { run: 0 }), offset: a },
-        end: { paragraph: head1.paragraph, ...(head1.run !== undefined ? { run: head1.run } : { run: 0 }), offset: b },
+        start: {
+          paragraph: head1.paragraph,
+          ...(head1.run !== undefined ? { run: head1.run } : { run: 0 }),
+          offset: a,
+        },
+        end: {
+          paragraph: head1.paragraph,
+          ...(head1.run !== undefined ? { run: head1.run } : { run: 0 }),
+          offset: b,
+        },
       },
     };
   }

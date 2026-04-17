@@ -37,7 +37,7 @@ export function ThemeToggle({ className, compact }: ThemeToggleProps) {
         onClick={() => setTheme(next.value)}
         className={cn(
           "flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-hover hover:text-foreground transition-colors duration-150",
-          className,
+          className
         )}
         title={`Theme: ${current.label}. Click for ${next.label}`}
       >
@@ -47,9 +47,7 @@ export function ThemeToggle({ className, compact }: ThemeToggleProps) {
   }
 
   return (
-    <div
-      className={cn("inline-flex items-center rounded-md bg-hover p-0.5 gap-0.5", className)}
-    >
+    <div className={cn("inline-flex items-center rounded-md bg-hover p-0.5 gap-0.5", className)}>
       {options.map(({ value, icon: Icon, label }) => (
         <button
           key={value}
@@ -58,7 +56,7 @@ export function ThemeToggle({ className, compact }: ThemeToggleProps) {
             "flex h-6 items-center justify-center rounded px-2 transition-colors duration-150",
             theme === value
               ? "bg-background text-foreground shadow-sm"
-              : "text-secondary hover:text-foreground",
+              : "text-secondary hover:text-foreground"
           )}
           title={label}
         >

@@ -19,7 +19,7 @@ export const addCommentHandler: CommandHandler<AddCommentPayload, DocxSnapshot> 
     if (range.start.paragraph !== range.end.paragraph) {
       throw new CommandError(
         "multi-paragraph-comment",
-        "Multi-paragraph add-comment is P1 (this session: single-paragraph ranges only).",
+        "Multi-paragraph add-comment is P1 (this session: single-paragraph ranges only)."
       );
     }
     const idx = range.start.paragraph;
@@ -61,7 +61,12 @@ export const addCommentHandler: CommandHandler<AddCommentPayload, DocxSnapshot> 
       ...replaceBlock(snapshot.root, idx, paragraphWithMarkers),
       comments: [...snapshot.root.comments, newComment],
     };
-    const next = evolveSnapshot(snapshot, nextDoc, { body: true, comments: true, rels: true, contentTypes: true });
+    const next = evolveSnapshot(snapshot, nextDoc, {
+      body: true,
+      comments: true,
+      rels: true,
+      contentTypes: true,
+    });
 
     return {
       next,
@@ -88,7 +93,7 @@ function wrapParagraphWithCommentMarkers(
   p: Paragraph,
   start: CommentRangeStart,
   end: CommentRangeEnd,
-  ref: CommentReference,
+  ref: CommentReference
 ): Paragraph {
   // Single-paragraph case: prepend start marker, append end marker + reference
   // run. The reference must be inside a `<w:r>` per OOXML; the model emits a

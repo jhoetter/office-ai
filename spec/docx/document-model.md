@@ -53,7 +53,12 @@ export interface ParagraphProperties {
   readonly styleId?: string;
   readonly alignment?: "left" | "center" | "right" | "justify";
   readonly indentation?: { left?: number; right?: number; firstLine?: number; hanging?: number };
-  readonly spacing?: { before?: number; after?: number; line?: number; lineRule?: "auto" | "exact" | "atLeast" };
+  readonly spacing?: {
+    before?: number;
+    after?: number;
+    line?: number;
+    lineRule?: "auto" | "exact" | "atLeast";
+  };
   /** Numbering reference: numId + ilvl. Preserved verbatim; not introspected. */
   readonly numbering?: { numId: number; ilvl: number };
   /**
@@ -106,12 +111,12 @@ export interface Run {
 export interface RunProperties {
   readonly bold?: boolean;
   readonly italic?: boolean;
-  readonly underline?: boolean | string;     // string = underline pattern
+  readonly underline?: boolean | string; // string = underline pattern
   readonly strike?: boolean;
   readonly fontFamily?: string;
-  readonly fontSize?: number;                // half-points; OOXML stores them this way
-  readonly color?: string;                   // RRGGBB hex (no '#')
-  readonly highlight?: string;               // named color per OOXML
+  readonly fontSize?: number; // half-points; OOXML stores them this way
+  readonly color?: string; // RRGGBB hex (no '#')
+  readonly highlight?: string; // named color per OOXML
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
@@ -119,7 +124,7 @@ export type RunChild =
   | { kind: "text"; id: NodeId; text: string; xmlSpacePreserve: boolean }
   | { kind: "break"; id: NodeId; breakType?: "page" | "column" | "textWrapping" }
   | { kind: "tab"; id: NodeId }
-  | { kind: "drawing"; id: NodeId; raw: OpaqueXml }   // images live here
+  | { kind: "drawing"; id: NodeId; raw: OpaqueXml } // images live here
   | { kind: "opaque"; id: NodeId; raw: OpaqueXml };
 
 export interface Hyperlink {
@@ -131,9 +136,21 @@ export interface Hyperlink {
   readonly children: ReadonlyArray<Run>;
 }
 
-export interface CommentRangeStart { readonly kind: "comment-range-start"; readonly id: NodeId; readonly commentId: string; }
-export interface CommentRangeEnd   { readonly kind: "comment-range-end";   readonly id: NodeId; readonly commentId: string; }
-export interface CommentReference  { readonly kind: "comment-reference";   readonly id: NodeId; readonly commentId: string; }
+export interface CommentRangeStart {
+  readonly kind: "comment-range-start";
+  readonly id: NodeId;
+  readonly commentId: string;
+}
+export interface CommentRangeEnd {
+  readonly kind: "comment-range-end";
+  readonly id: NodeId;
+  readonly commentId: string;
+}
+export interface CommentReference {
+  readonly kind: "comment-reference";
+  readonly id: NodeId;
+  readonly commentId: string;
+}
 
 export interface RevisionWrapper {
   readonly kind: "revision";
@@ -156,10 +173,10 @@ export interface OpaqueInline {
 
 ```typescript
 export interface DocxComment {
-  readonly id: string;           // OOXML comment id (string)
+  readonly id: string; // OOXML comment id (string)
   readonly author: string;
   readonly initials?: string;
-  readonly date: string;         // ISO 8601
+  readonly date: string; // ISO 8601
   /**
    * Comment body as block nodes (paragraphs of runs).
    */

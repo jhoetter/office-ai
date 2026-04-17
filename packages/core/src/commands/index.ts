@@ -1,8 +1,4 @@
-export {
-  CommandBus,
-  type CommandBusOptions,
-  type Listener,
-} from "./bus.js";
+export { CommandBus, type CommandBusOptions, type Listener } from "./bus.js";
 export {
   CommandError,
   NotImplementedError,

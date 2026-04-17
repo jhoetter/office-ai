@@ -22,9 +22,9 @@ export default function HomePage() {
           Headless-first DOCX editor with a real command bus.
         </h1>
         <p className="max-w-prose text-base text-secondary">
-          A working Word-compatible editor built around an OOXML-faithful core. Every change —
-          human or AI — flows through the same typed command bus, so agents and humans collaborate
-          without two parallel mutation paths. XLSX and PPTX land in follow-up sessions.
+          A working Word-compatible editor built around an OOXML-faithful core. Every change — human or AI —
+          flows through the same typed command bus, so agents and humans collaborate without two parallel
+          mutation paths. XLSX and PPTX land in follow-up sessions.
         </p>
         <div className="flex items-center gap-2">
           <Link href="/editor">
@@ -56,8 +56,8 @@ export default function HomePage() {
           <li className="rounded-lg border border-divider bg-surface p-4">
             <div className="text-foreground">CLI + headless API</div>
             <p className="mt-1 text-xs">
-              <code className="font-mono">office-agent</code> wraps the same headless agent for
-              server-side AI workflows.
+              <code className="font-mono">office-agent</code> wraps the same headless agent for server-side AI
+              workflows.
             </p>
           </li>
         </ul>

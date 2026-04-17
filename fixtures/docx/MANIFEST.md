@@ -14,13 +14,13 @@ Regenerate with:
 pnpm fixtures:docx
 ```
 
-| File | What it exercises |
-| --- | --- |
-| `01-plain-paragraphs.docx` | Heading + plain body paragraphs. Smallest happy path. |
-| `02-styled-runs.docx` | Bold / italic / underline / colored runs and centered alignment. |
-| `03-headings-and-body.docx` | Heading 1 + Heading 2 hierarchy. |
-| `04-with-table.docx` | Includes a 2-column table — round-trip preservation only (tables are P1). |
-| `05-long-body.docx` | 60+ paragraphs to smoke-test perf. |
+| File                        | What it exercises                                                         |
+| --------------------------- | ------------------------------------------------------------------------- |
+| `01-plain-paragraphs.docx`  | Heading + plain body paragraphs. Smallest happy path.                     |
+| `02-styled-runs.docx`       | Bold / italic / underline / colored runs and centered alignment.          |
+| `03-headings-and-body.docx` | Heading 1 + Heading 2 hierarchy.                                          |
+| `04-with-table.docx`        | Includes a 2-column table — round-trip preservation only (tables are P1). |
+| `05-long-body.docx`         | 60+ paragraphs to smoke-test perf.                                        |
 
 These cover the **shapes** we model in P0; they are not a substitute for real-world
 documents emitted by Word/LibreOffice/Google Docs (see below).
@@ -31,18 +31,18 @@ We have NOT yet collected real-world fixtures. The following slots are reserved;
 each should be a small, license-clean document we can check in (or a script that
 fetches a public-domain doc into `./real-world/.cache/` at test time):
 
-| Slot | Source | Why we need it |
-| --- | --- | --- |
-| `real-word-2021-letter.docx` | Microsoft Word for Windows | Verify our parser tolerates the dense "Word default" XML (font tables, settings, themes). |
-| `real-word-mac-2021-resume.docx` | Microsoft Word for Mac | Mac Word emits some attributes in different orders. |
-| `real-libreoffice-7-report.docx` | LibreOffice Writer | LibreOffice uses different namespace prefixes and sometimes emits `mc:AlternateContent` blocks. |
-| `real-google-docs-export.docx` | Google Docs "Download as .docx" | Google docs export has its own quirks (e.g. inline `w:rPr` in unusual orders). |
-| `real-pages-export.docx` | Apple Pages export | Pages exports can include non-standard relationships. |
-| `real-tracked-changes.docx` | Word with track-changes on | Verify we preserve `w:ins` / `w:del` / `w:moveTo` revisions opaquely. |
-| `real-comments-thread.docx` | Word with reviewer comments | Verify `comments.xml` round-trips and `commentRangeStart/End` markers stay aligned. |
-| `real-tables-merged.docx` | Word document with merged cells | Verify nested grids survive round-trip even though we don't model cells yet. |
-| `real-images-inline.docx` | Word document with inline image | Verify drawings survive round-trip as opaque inline blobs. |
-| `real-numbered-list.docx` | Word document with numbered list | Verify `w:numPr` / `numbering.xml` survives. |
+| Slot                             | Source                           | Why we need it                                                                                  |
+| -------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `real-word-2021-letter.docx`     | Microsoft Word for Windows       | Verify our parser tolerates the dense "Word default" XML (font tables, settings, themes).       |
+| `real-word-mac-2021-resume.docx` | Microsoft Word for Mac           | Mac Word emits some attributes in different orders.                                             |
+| `real-libreoffice-7-report.docx` | LibreOffice Writer               | LibreOffice uses different namespace prefixes and sometimes emits `mc:AlternateContent` blocks. |
+| `real-google-docs-export.docx`   | Google Docs "Download as .docx"  | Google docs export has its own quirks (e.g. inline `w:rPr` in unusual orders).                  |
+| `real-pages-export.docx`         | Apple Pages export               | Pages exports can include non-standard relationships.                                           |
+| `real-tracked-changes.docx`      | Word with track-changes on       | Verify we preserve `w:ins` / `w:del` / `w:moveTo` revisions opaquely.                           |
+| `real-comments-thread.docx`      | Word with reviewer comments      | Verify `comments.xml` round-trips and `commentRangeStart/End` markers stay aligned.             |
+| `real-tables-merged.docx`        | Word document with merged cells  | Verify nested grids survive round-trip even though we don't model cells yet.                    |
+| `real-images-inline.docx`        | Word document with inline image  | Verify drawings survive round-trip as opaque inline blobs.                                      |
+| `real-numbered-list.docx`        | Word document with numbered list | Verify `w:numPr` / `numbering.xml` survives.                                                    |
 
 > **Reproduction policy.** Real-world fixtures must be
 >
@@ -58,7 +58,7 @@ fetches a public-domain doc into `./real-world/.cache/` at test time):
   `packages/docx/src/serializer/serialize.test.ts` use **synthetic XML** (not these
   zip files) so the tests stay sub-millisecond. The fixtures here are the next
   layer: they run the full container path (`OoxmlContainer.load → parseDocx →
-  serializeDocx → reload`).
+serializeDocx → reload`).
 - `tests/roundtrip/` (top-level integration tests) iterates this directory and
   asserts `untouched parts are byte-identical`.
 - The web demo also bundles a tiny in-browser synthetic document in

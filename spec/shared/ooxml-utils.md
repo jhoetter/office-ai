@@ -53,16 +53,16 @@ const parserOptions = {
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   allowBooleanAttributes: true,
-  parseTagValue: false,        // never coerce "1" to 1; OOXML attrs are strings
+  parseTagValue: false, // never coerce "1" to 1; OOXML attrs are strings
   parseAttributeValue: false,
-  preserveOrder: true,         // CRITICAL: child order matters
-  trimValues: false,           // CRITICAL: whitespace can be significant in <w:t>
+  preserveOrder: true, // CRITICAL: child order matters
+  trimValues: false, // CRITICAL: whitespace can be significant in <w:t>
   unpairedTags: ["w:br", "w:tab", "w:cr"],
 };
 const builderOptions = {
   ...parserOptions,
-  format: false,               // do not pretty-print
-  suppressEmptyNode: false,    // keep <w:rPr/> when empty
+  format: false, // do not pretty-print
+  suppressEmptyNode: false, // keep <w:rPr/> when empty
   suppressBooleanAttributes: false,
 };
 ```
@@ -91,9 +91,9 @@ rebuilding children.
 
 ```typescript
 export interface Relationship {
-  readonly id: string;       // "rId7"
-  readonly type: string;     // "http://.../officeDocument/2006/relationships/hyperlink"
-  readonly target: string;   // "https://example.com" or "comments.xml"
+  readonly id: string; // "rId7"
+  readonly type: string; // "http://.../officeDocument/2006/relationships/hyperlink"
+  readonly target: string; // "https://example.com" or "comments.xml"
   readonly targetMode?: "External" | "Internal";
 }
 

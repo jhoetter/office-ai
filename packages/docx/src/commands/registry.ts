@@ -1,8 +1,4 @@
-import {
-  CommandError,
-  NotImplementedError,
-  type CommandHandler,
-} from "@officeai/core";
+import { CommandError, NotImplementedError, type CommandHandler } from "@officeai/core";
 import type { DocxSnapshot } from "../model/types.js";
 import { addCommentHandler } from "./add-comment.js";
 import { deleteRangeHandler } from "./delete-range.js";
@@ -41,5 +37,6 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   ...stubs,
 ];
 
-export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> =
-  new Map(allDocxHandlers.map((h) => [h.type, h]));
+export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(
+  allDocxHandlers.map((h) => [h.type, h])
+);

@@ -331,7 +331,8 @@ export function DocxEditor() {
                 "pointer-events-auto rounded-md border px-3 py-1.5 text-xs shadow-sm",
                 t.kind === "info" && "border-divider bg-surface text-foreground",
                 t.kind === "warn" && "border-[var(--warning)] bg-[var(--warning)]/10 text-[var(--warning)]",
-                t.kind === "error" && "border-[var(--error-border)] bg-[var(--error-bg)] text-[var(--error-text)]"
+                t.kind === "error" &&
+                  "border-[var(--error-border)] bg-[var(--error-bg)] text-[var(--error-text)]"
               )}
             >
               {t.text}
@@ -347,8 +348,8 @@ export function DocxEditor() {
             Agent
           </div>
           <p className="mt-1 text-xs text-secondary">
-            Ask the demo agent to propose changes. Each change goes into the pending queue
-            for human review before it lands.
+            Ask the demo agent to propose changes. Each change goes into the pending queue for human review
+            before it lands.
           </p>
           <div className="mt-3 flex flex-col gap-2">
             <textarea

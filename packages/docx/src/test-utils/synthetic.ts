@@ -31,14 +31,14 @@ export async function makeSyntheticDocx(opts: SyntheticDocxOptions): Promise<Arr
 export const DEFAULT_DOC_ROOT_ATTRS = `
   xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-`.replace(/\s+/g, " ").trim();
+`
+  .replace(/\s+/g, " ")
+  .trim();
 
 export function plainDocxXml(paragraphs: ReadonlyArray<{ text: string; styleId?: string }>): string {
   const ps = paragraphs
     .map((p) => {
-      const pPr = p.styleId
-        ? `<w:pPr><w:pStyle w:val="${escapeXml(p.styleId)}"/></w:pPr>`
-        : "";
+      const pPr = p.styleId ? `<w:pPr><w:pStyle w:val="${escapeXml(p.styleId)}"/></w:pPr>` : "";
       return `<w:p>${pPr}<w:r><w:t xml:space="preserve">${escapeXml(p.text)}</w:t></w:r></w:p>`;
     })
     .join("");
@@ -47,11 +47,7 @@ export function plainDocxXml(paragraphs: ReadonlyArray<{ text: string; styleId?:
 }
 
 export function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 const DEFAULT_CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

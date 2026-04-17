@@ -19,11 +19,7 @@ export interface CommandLite<TType extends string = string, TPayload = unknown> 
   readonly agentId?: string;
 }
 
-export type MutationStatus =
-  | "approved"
-  | "pending"
-  | "rejected"
-  | "rolled-back";
+export type MutationStatus = "approved" | "pending" | "rejected" | "rolled-back";
 
 export interface Mutation<TSnapshot = unknown> {
   readonly id: string;
@@ -43,11 +39,7 @@ export interface HandlerContext {
 
 export interface CommandHandler<TPayload = unknown, TSnapshot = unknown> {
   readonly type: string;
-  apply(
-    snapshot: TSnapshot,
-    payload: TPayload,
-    ctx: HandlerContext,
-  ): { next: TSnapshot; diff: DocumentDiff };
+  apply(snapshot: TSnapshot, payload: TPayload, ctx: HandlerContext): { next: TSnapshot; diff: DocumentDiff };
 }
 
 export class CommandError extends Error {
@@ -62,7 +54,10 @@ export class CommandError extends Error {
 
 export class NotImplementedError extends CommandError {
   constructor(commandType: string, opts?: { reason?: string }) {
-    super("not-implemented", `${commandType} is not implemented yet${opts?.reason ? `: ${opts.reason}` : ""}`);
+    super(
+      "not-implemented",
+      `${commandType} is not implemented yet${opts?.reason ? `: ${opts.reason}` : ""}`
+    );
     this.name = "NotImplementedError";
   }
 }

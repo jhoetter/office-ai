@@ -74,12 +74,12 @@ exit code 0. This keeps the surface stable for follow-ups.
 
 ## Exit codes
 
-| Code | Meaning                          |
-| ---- | -------------------------------- |
-| 0    | Success                          |
-| 1    | Generic error                    |
-| 2    | File not found / unreadable      |
-| 3    | OOXML parse error                |
-| 4    | Command handler error            |
-| 5    | Serializer error                 |
-| 64   | Usage error (commander default)  |
+| Code | Meaning                         |
+| ---- | ------------------------------- |
+| 0    | Success                         |
+| 1    | Generic error                   |
+| 2    | File not found / unreadable     |
+| 3    | OOXML parse error               |
+| 4    | Command handler error           |
+| 5    | Serializer error                |
+| 64   | Usage error (commander default) |

@@ -6,7 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'no lint configured for tests' && true",
+    "lint": "eslint \"**/*.ts\"",
     "build": "echo 'no build for tests' && true",
     "clean": "rm -rf node_modules"
   },

@@ -44,8 +44,20 @@ export interface DocumentDiff {
 export type DiffChange =
   | { kind: "node-inserted"; nodeId: NodeId; path: ReadonlyArray<string | number>; summary: string }
   | { kind: "node-deleted"; nodeId: NodeId; path: ReadonlyArray<string | number>; summary: string }
-  | { kind: "node-updated"; nodeId: NodeId; path: ReadonlyArray<string | number>; field: string; summary: string }
-  | { kind: "node-moved";   nodeId: NodeId; from: ReadonlyArray<string | number>; to: ReadonlyArray<string | number>; summary: string };
+  | {
+      kind: "node-updated";
+      nodeId: NodeId;
+      path: ReadonlyArray<string | number>;
+      field: string;
+      summary: string;
+    }
+  | {
+      kind: "node-moved";
+      nodeId: NodeId;
+      from: ReadonlyArray<string | number>;
+      to: ReadonlyArray<string | number>;
+      summary: string;
+    };
 ```
 
 ## Identity rules

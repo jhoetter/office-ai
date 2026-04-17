@@ -107,12 +107,7 @@ export interface RunProperties {
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
-export type RunChild =
-  | TextLeaf
-  | BreakLeaf
-  | TabLeaf
-  | DrawingLeaf
-  | OpaqueRunChild;
+export type RunChild = TextLeaf | BreakLeaf | TabLeaf | DrawingLeaf | OpaqueRunChild;
 
 export interface TextLeaf {
   readonly kind: "text";

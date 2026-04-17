@@ -99,7 +99,11 @@ const marks: Record<string, MarkSpec> = {
   strikethrough: { toDOM: () => ["s", 0], parseDOM: [{ tag: "s" }, { tag: "strike" }] },
   font_family: {
     attrs: { family: { default: "" } },
-    toDOM: (mark) => ["span", { class: "pm-font-family", style: `font-family: ${String(mark.attrs.family)}` }, 0],
+    toDOM: (mark) => [
+      "span",
+      { class: "pm-font-family", style: `font-family: ${String(mark.attrs.family)}` },
+      0,
+    ],
   },
   font_size: {
     attrs: { halfPoints: { default: 22 } },
@@ -131,7 +135,11 @@ const marks: Record<string, MarkSpec> = {
   },
   comment_mark: {
     attrs: { commentId: { default: "" } },
-    toDOM: (mark) => ["span", { class: "pm-comment-mark", "data-comment-id": String(mark.attrs.commentId) }, 0],
+    toDOM: (mark) => [
+      "span",
+      { class: "pm-comment-mark", "data-comment-id": String(mark.attrs.commentId) },
+      0,
+    ],
   },
   revision_mark: {
     attrs: {

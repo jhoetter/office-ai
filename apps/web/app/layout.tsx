@@ -25,17 +25,9 @@ export const metadata: Metadata = {
   description: "officeAI — a minimal product scaffold.",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`h-full ${inter.variable} ${ibmPlexMono.variable}`}
-      suppressHydrationWarning
-    >
+    <html lang="en" className={`h-full ${inter.variable} ${ibmPlexMono.variable}`} suppressHydrationWarning>
       <body className={`${inter.className} h-full bg-background text-foreground antialiased`}>
         <ThemeProvider>{children}</ThemeProvider>
       </body>

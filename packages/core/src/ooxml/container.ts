@@ -102,7 +102,9 @@ export class OoxmlContainer {
   /** Add a brand new part. Throws if it already exists. */
   addPart(path: string, content: Uint8Array): void {
     if (this._parts.has(path)) {
-      throw new OoxmlContainerError("part-exists", `Cannot addPart; already exists: ${path}`, { partPath: path });
+      throw new OoxmlContainerError("part-exists", `Cannot addPart; already exists: ${path}`, {
+        partPath: path,
+      });
     }
     this._parts.set(path, { path, bytes: content, dirty: true });
     this._order.push(path);

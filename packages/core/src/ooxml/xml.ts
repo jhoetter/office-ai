@@ -46,11 +46,12 @@ export function parseXml(xml: string): XmlNode {
  */
 export function serializeXml(tree: XmlNode, opts?: { xmlDeclaration?: string | null }): string {
   const xml = builder.build(tree);
-  const decl = opts?.xmlDeclaration === undefined
-    ? '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-    : opts.xmlDeclaration === null
-      ? ""
-      : opts.xmlDeclaration;
+  const decl =
+    opts?.xmlDeclaration === undefined
+      ? '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+      : opts.xmlDeclaration === null
+        ? ""
+        : opts.xmlDeclaration;
   if (typeof xml !== "string") return decl;
   if (xml.startsWith("<?xml")) return xml;
   return decl + xml;
@@ -155,7 +156,7 @@ export interface AttrMap {
 export function makeElement(
   tag: string,
   children: ReadonlyArray<unknown> = [],
-  attrs?: AttrMap,
+  attrs?: AttrMap
 ): Record<string, unknown> {
   const entry: Record<string, unknown> = { [tag]: children };
   if (attrs) {

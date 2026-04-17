@@ -99,33 +99,19 @@ function handleReplaceStep(
   if (from === to) {
     if (insertedHasBlocks) {
       // Treat any block-bearing slice insertion at a cursor as a paragraph split (Enter key).
-      out.commands.push(
-        wrap(
-          { type: "docx:insert-paragraph", payload: { at: startPos } },
-          source,
-          agentId
-        )
-      );
+      out.commands.push(wrap({ type: "docx:insert-paragraph", payload: { at: startPos } }, source, agentId));
       return true;
     }
     if (insertedText.length === 0) return true;
     out.commands.push(
-      wrap(
-        { type: "docx:insert-text", payload: { at: startPos, text: insertedText } },
-        source,
-        agentId
-      )
+      wrap({ type: "docx:insert-text", payload: { at: startPos, text: insertedText } }, source, agentId)
     );
     return true;
   }
 
   if (insertedText.length === 0 && !insertedHasBlocks) {
     out.commands.push(
-      wrap(
-        { type: "docx:delete-range", payload: { range: makeRange(startPos, endPos) } },
-        source,
-        agentId
-      )
+      wrap({ type: "docx:delete-range", payload: { range: makeRange(startPos, endPos) } }, source, agentId)
     );
     return true;
   }
@@ -136,17 +122,11 @@ function handleReplaceStep(
   );
   if (insertedText.length > 0) {
     out.commands.push(
-      wrap(
-        { type: "docx:insert-text", payload: { at: startPos, text: insertedText } },
-        source,
-        agentId
-      )
+      wrap({ type: "docx:insert-text", payload: { at: startPos, text: insertedText } }, source, agentId)
     );
   }
   if (insertedHasBlocks) {
-    out.commands.push(
-      wrap({ type: "docx:insert-paragraph", payload: { at: startPos } }, source, agentId)
-    );
+    out.commands.push(wrap({ type: "docx:insert-paragraph", payload: { at: startPos } }, source, agentId));
   }
   return true;
 }

@@ -94,9 +94,9 @@ describe("CommandBus", () => {
 
   it("rejects when no handler is registered", async () => {
     const bus = new CommandBus<ToySnapshot>(initial);
-    await expect(
-      bus.dispatch({ type: "missing", payload: {}, source: "human" }),
-    ).rejects.toBeInstanceOf(CommandError);
+    await expect(bus.dispatch({ type: "missing", payload: {}, source: "human" })).rejects.toBeInstanceOf(
+      CommandError
+    );
   });
 
   it("captures handler errors as a rejected mutation", async () => {

@@ -72,11 +72,7 @@ describe("DocxAgent end-to-end", () => {
 
   it("search finds substrings and returns paragraph indexes", async () => {
     const buf = await makeSyntheticDocx({
-      documentXml: plainDocxXml([
-        { text: "alpha beta" },
-        { text: "gamma delta" },
-        { text: "alpha epsilon" },
-      ]),
+      documentXml: plainDocxXml([{ text: "alpha beta" }, { text: "gamma delta" }, { text: "alpha epsilon" }]),
     });
     const agent = await DocxAgent.fromBuffer(buf, { idMinter: deterministicIdMinter() });
     const results = agent.search({ query: "alpha" });

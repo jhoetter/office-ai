@@ -16,10 +16,7 @@ export interface CommandBusOptions {
   readonly now?: () => number;
 }
 
-export type Listener<TSnapshot> = (
-  snapshot: TSnapshot,
-  mutation: Mutation<TSnapshot>,
-) => void;
+export type Listener<TSnapshot> = (snapshot: TSnapshot, mutation: Mutation<TSnapshot>) => void;
 
 /**
  * The command bus + mutation store. Holds the **approved** snapshot,
@@ -94,7 +91,7 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
 
   /** Atomic batch — if any handler throws, none are applied. */
   async dispatchAll(
-    commands: ReadonlyArray<Command | CommandLite>,
+    commands: ReadonlyArray<Command | CommandLite>
   ): Promise<ReadonlyArray<Mutation<TSnapshot>>> {
     const normalized = commands.map((c) => this.normalize(c));
     const snapshotOfApproved = this.approved;
@@ -165,10 +162,7 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
   private applyOneSync(cmd: Command): Mutation<TSnapshot> {
     const handler = this.handlers.get(cmd.type);
     if (!handler) {
-      throw new CommandError(
-        "no-handler",
-        `No handler registered for command type "${cmd.type}"`,
-      );
+      throw new CommandError("no-handler", `No handler registered for command type "${cmd.type}"`);
     }
     const before = this.working;
     let next: TSnapshot;

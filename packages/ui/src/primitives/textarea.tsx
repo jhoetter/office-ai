@@ -24,7 +24,7 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40 focus-visible:border-[var(--accent)]",
             "disabled:cursor-not-allowed disabled:opacity-50",
             error && "border-error focus-visible:ring-error/40",
-            className,
+            className
           )}
           ref={ref}
           {...props}
@@ -32,7 +32,7 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         {error && <p className="text-xs text-error">{error}</p>}
       </div>
     );
-  },
+  }
 );
 Textarea.displayName = "Textarea";
 

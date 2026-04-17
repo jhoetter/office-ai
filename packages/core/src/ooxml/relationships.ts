@@ -25,7 +25,7 @@ export class RelationshipGraph {
   constructor(
     /** The path to the relationships part itself, e.g. word/_rels/document.xml.rels. */
     public readonly relsPath: string,
-    rels: ReadonlyArray<Relationship>,
+    rels: ReadonlyArray<Relationship>
   ) {
     this._rels = [...rels];
   }
@@ -48,7 +48,7 @@ export class RelationshipGraph {
     const rootEntry = (tree as unknown[]).map((n) => asElement(n)).find((el) => el?.tag === "Relationships");
     if (!rootEntry) return new RelationshipGraph(relsPath, []);
     const rels: Relationship[] = filterChildren(rootEntry.children, "Relationship").map((el) =>
-      relationshipFromElement(el),
+      relationshipFromElement(el)
     );
     return new RelationshipGraph(relsPath, rels);
   }
@@ -97,11 +97,9 @@ export class RelationshipGraph {
         Type: r.type,
         Target: r.target,
         ...(r.targetMode ? { TargetMode: r.targetMode } : {}),
-      }),
+      })
     );
-    const tree = [
-      makeElement("Relationships", children, { xmlns: RELS_NS }),
-    ];
+    const tree = [makeElement("Relationships", children, { xmlns: RELS_NS })];
     const xml = serializeXml(tree);
     container.writeText(this.relsPath, xml);
   }

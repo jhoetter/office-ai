@@ -71,7 +71,10 @@ describe("docx command handlers", () => {
     const boldRun = runs.find((r) => r.kind === "run" && r.properties.bold === true);
     expect(boldRun).toBeTruthy();
     if (boldRun?.kind === "run") {
-      const txt = boldRun.children.filter((c) => c.kind === "text").map((c) => (c.kind === "text" ? c.text : "")).join("");
+      const txt = boldRun.children
+        .filter((c) => c.kind === "text")
+        .map((c) => (c.kind === "text" ? c.text : ""))
+        .join("");
       expect(txt).toBe("beta");
     }
   });
@@ -102,9 +105,7 @@ describe("docx command handlers", () => {
       payload: { at: { paragraph: 0, run: 0, offset: 5 } },
       source: "human",
     });
-    const paragraphs = agent
-      .getSnapshot()
-      .root.body.filter((b) => b.kind === "paragraph");
+    const paragraphs = agent.getSnapshot().root.body.filter((b) => b.kind === "paragraph");
     expect(paragraphs.length).toBe(2);
     const [p0, p1] = paragraphs;
     if (p0.kind !== "paragraph" || p1.kind !== "paragraph") throw new Error();
@@ -121,9 +122,7 @@ describe("docx command handlers", () => {
       payload: { at: { paragraph: 0, run: 0, offset: 99 } },
       source: "human",
     });
-    const paragraphs = agent
-      .getSnapshot()
-      .root.body.filter((b) => b.kind === "paragraph");
+    const paragraphs = agent.getSnapshot().root.body.filter((b) => b.kind === "paragraph");
     expect(paragraphs.length).toBe(2);
     const [p0, p1] = paragraphs;
     if (p0.kind !== "paragraph" || p1.kind !== "paragraph") throw new Error();

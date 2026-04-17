@@ -15,7 +15,7 @@ export const formatRangeHandler: CommandHandler<FormatRangePayload, DocxSnapshot
     if (range.start.paragraph !== range.end.paragraph) {
       throw new CommandError(
         "multi-paragraph-format",
-        "Multi-paragraph format-range is P1; apply per paragraph.",
+        "Multi-paragraph format-range is P1; apply per paragraph."
       );
     }
     const idx = range.start.paragraph;
@@ -40,7 +40,9 @@ export const formatRangeHandler: CommandHandler<FormatRangePayload, DocxSnapshot
       };
     }
 
-    const nextDoc = withParagraph(snapshot.root, idx, (p) => formatWithinParagraph(p, a, b, format, ctx.mintNodeId));
+    const nextDoc = withParagraph(snapshot.root, idx, (p) =>
+      formatWithinParagraph(p, a, b, format, ctx.mintNodeId)
+    );
     const next = evolveSnapshot(snapshot, nextDoc, { body: true });
     return {
       next,
@@ -101,7 +103,7 @@ function formatWithinParagraph(
   a: number,
   b: number,
   format: TextFormat,
-  mintNodeId: () => string,
+  mintNodeId: () => string
 ): Paragraph {
   let cursor = 0;
   const out = [];

@@ -9,7 +9,7 @@ Every change — a keystroke from a human, a tool call from an agent, a CLI
 invocation — must produce a `Command`, dispatch it through a `CommandBus`,
 and use the resulting `Mutation`.
 
-The parser is the only exception: it produces the *initial* snapshot. After
+The parser is the only exception: it produces the _initial_ snapshot. After
 that, the bus is the law.
 
 ## Types
@@ -43,7 +43,11 @@ export interface CommandHandler<TPayload, TSnapshot> {
   /** Handler-declared command type, e.g. "docx:insert-text". */
   readonly type: string;
   /** Pure function: snapshot + payload -> next snapshot + diff. */
-  apply(snapshot: TSnapshot, payload: TPayload, ctx: HandlerContext): {
+  apply(
+    snapshot: TSnapshot,
+    payload: TPayload,
+    ctx: HandlerContext
+  ): {
     next: TSnapshot;
     diff: DocumentDiff;
   };

@@ -7,10 +7,7 @@ import { serializeDocx } from "./serialize.js";
 describe("serializeDocx", () => {
   it("re-emits unchanged container byte-identically (untouched parts)", async () => {
     const buf = await makeSyntheticDocx({
-      documentXml: plainDocxXml([
-        { text: "Hello, world." },
-        { text: "Second paragraph." },
-      ]),
+      documentXml: plainDocxXml([{ text: "Hello, world." }, { text: "Second paragraph." }]),
     });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
     const out = await serializeDocx(snap);
@@ -24,10 +21,7 @@ describe("serializeDocx", () => {
 
   it("re-parses to a structurally-equivalent body after a no-op pass", async () => {
     const buf = await makeSyntheticDocx({
-      documentXml: plainDocxXml([
-        { text: "Title", styleId: "Title" },
-        { text: "Body content here." },
-      ]),
+      documentXml: plainDocxXml([{ text: "Title", styleId: "Title" }, { text: "Body content here." }]),
     });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter("a") });
     const out = await serializeDocx(snap);

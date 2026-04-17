@@ -20,7 +20,7 @@ export interface TextFormatPayload {
   strike?: boolean;
   fontFamily?: string;
   fontSize?: number; // half-points
-  color?: string;    // RRGGBB no #
+  color?: string; // RRGGBB no #
   highlight?: string;
 }
 ```

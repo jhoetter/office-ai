@@ -7,11 +7,11 @@ the OOXML file is the source of truth.
 
 ## Status
 
-| Format | Status      | Notes                                                |
-| ------ | ----------- | ---------------------------------------------------- |
-| DOCX   | active      | Spec complete. Parser/serializer with opaque-blob preservation. Six agent commands. ProseMirror renderer. CLI. |
-| XLSX   | deferred    | Spec slot reserved; implementation in a follow-up.   |
-| PPTX   | deferred    | Spec slot reserved; implementation in a follow-up.   |
+| Format | Status   | Notes                                                                                                          |
+| ------ | -------- | -------------------------------------------------------------------------------------------------------------- |
+| DOCX   | active   | Spec complete. Parser/serializer with opaque-blob preservation. Six agent commands. ProseMirror renderer. CLI. |
+| XLSX   | deferred | Spec slot reserved; implementation in a follow-up.                                                             |
+| PPTX   | deferred | Spec slot reserved; implementation in a follow-up.                                                             |
 
 ## Stack
 
@@ -57,7 +57,40 @@ make install         # install workspace deps
 make dev             # Next.js editor host on :3000
 make test            # roundtrip + agent tests
 make cli             # build the office-agent CLI
+make verify          # full quality gate (run before pushing)
 ```
+
+## Quality gates
+
+`make verify` runs the same pipeline as CI (`.github/workflows/ci.yml`).
+The gate is fail-fast and ordered cheapest → most expensive:
+
+| Step           | Tool                             | What it catches                                                         |
+| -------------- | -------------------------------- | ----------------------------------------------------------------------- |
+| `format-check` | Prettier                         | Inconsistent formatting (run `make format` to fix)                      |
+| `lint`         | ESLint (root flat config + Next) | Unused vars, deep `src/` imports, banned syntax, import boundaries      |
+| `architecture` | `scripts/check-architecture.mjs` | Forbidden cross-package deps in `package.json` (separation of concerns) |
+| `typecheck`    | `tsc --noEmit` (per package)     | TypeScript errors                                                       |
+| `test`         | Vitest                           | Behavioural regressions across every package                            |
+| `build`        | Turbo + Next + tsc               | Build / integration regressions                                         |
+
+The architecture check enforces this dep graph (see
+[`scripts/check-architecture.mjs`](scripts/check-architecture.mjs) for
+the source of truth):
+
+```
+core            ← leaf (no internal deps)
+design-tokens   ← leaf
+ui              → design-tokens
+docx            → core
+agent           → core, docx
+web             → core, docx, agent, ui, design-tokens
+```
+
+Headless packages (`core`, `docx`, `agent`, `design-tokens`) are
+additionally banned from importing `react` / `react-dom` / `next` —
+both at the manifest level (architecture check) and at the import
+level (ESLint `no-restricted-imports`).
 
 ## CLI
 

@@ -1,12 +1,6 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
 import type { DocxSnapshot, Paragraph, Run, RunChild, TextLeaf } from "../model/types.js";
-import {
-  buildDiff,
-  emptyRun,
-  evolveSnapshot,
-  textLeaf,
-  withParagraph,
-} from "./helpers.js";
+import { buildDiff, emptyRun, evolveSnapshot, textLeaf, withParagraph } from "./helpers.js";
 import type { InsertTextPayload } from "./payloads.js";
 
 export const insertTextHandler: CommandHandler<InsertTextPayload, DocxSnapshot> = {
@@ -35,7 +29,7 @@ export const insertTextHandler: CommandHandler<InsertTextPayload, DocxSnapshot> 
     }
 
     const nextDoc = withParagraph(snapshot.root, at.paragraph, (p) =>
-      insertTextIntoParagraph(p, at.run, at.offset ?? 0, text, ctx.mintNodeId),
+      insertTextIntoParagraph(p, at.run, at.offset ?? 0, text, ctx.mintNodeId)
     );
 
     const next = evolveSnapshot(snapshot, nextDoc, { body: true });
@@ -57,7 +51,7 @@ function insertTextIntoParagraph(
   runIndex: number | undefined,
   offset: number,
   text: string,
-  mintNodeId: () => string,
+  mintNodeId: () => string
 ): Paragraph {
   if (runIndex === undefined) {
     // No run targeting → prepend a new run with the inserted text.
@@ -91,12 +85,7 @@ function insertTextIntoParagraph(
   return { ...p, children };
 }
 
-function insertTextIntoRun(
-  run: Run,
-  offset: number,
-  text: string,
-  mintNodeId: () => string,
-): Run {
+function insertTextIntoRun(run: Run, offset: number, text: string, mintNodeId: () => string): Run {
   let consumed = 0;
   const newChildren: RunChild[] = [];
   let placed = false;

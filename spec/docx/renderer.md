@@ -103,14 +103,14 @@ agent.subscribe((snapshot) => {
 
 `transactionToCommands` translates standard editing transactions:
 
-| PM transaction               | Command                              |
-| ---------------------------- | ------------------------------------ |
-| insertText at pos            | `docx:insert-text { at, text }`      |
-| deleteRange (selection)      | `docx:delete-range { range }`        |
-| addMark / removeMark over a range | `docx:format-range { range, format }` |
-| Enter at end of paragraph    | `docx:insert-paragraph { at }`       |
-| set styleId via menu / API   | `docx:set-paragraph-style { at, style }` |
-| add comment via UI           | `docx:add-comment { range, text, author }` |
+| PM transaction                    | Command                                    |
+| --------------------------------- | ------------------------------------------ |
+| insertText at pos                 | `docx:insert-text { at, text }`            |
+| deleteRange (selection)           | `docx:delete-range { range }`              |
+| addMark / removeMark over a range | `docx:format-range { range, format }`      |
+| Enter at end of paragraph         | `docx:insert-paragraph { at }`             |
+| set styleId via menu / API        | `docx:set-paragraph-style { at, style }`   |
+| add comment via UI                | `docx:add-comment { range, text, author }` |
 
 A keystroke that produces an unsupported transaction (e.g. table
 insertion via the toolbar before P1 lands) is **rejected**, with a

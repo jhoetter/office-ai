@@ -1,11 +1,5 @@
 import { OoxmlContainer } from "./container.js";
-import {
-  asElement,
-  filterChildren,
-  makeElement,
-  parseXml,
-  serializeXml,
-} from "./xml.js";
+import { asElement, filterChildren, makeElement, parseXml, serializeXml } from "./xml.js";
 
 const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
 const CONTENT_TYPES_PATH = "[Content_Types].xml";
@@ -27,7 +21,7 @@ export interface OverrideEntry {
 export class ContentTypes {
   constructor(
     public readonly defaults: DefaultEntry[],
-    public readonly overrides: OverrideEntry[],
+    public readonly overrides: OverrideEntry[]
   ) {}
 
   static load(container: OoxmlContainer): ContentTypes {

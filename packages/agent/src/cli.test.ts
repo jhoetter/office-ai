@@ -21,7 +21,10 @@ function makeIO() {
   const stdout = new CapturedStream();
   const stderr = new CapturedStream();
   return {
-    io: { stdout: stdout as unknown as NodeJS.WritableStream, stderr: stderr as unknown as NodeJS.WritableStream },
+    io: {
+      stdout: stdout as unknown as NodeJS.WritableStream,
+      stderr: stderr as unknown as NodeJS.WritableStream,
+    },
     stdout,
     stderr,
   };

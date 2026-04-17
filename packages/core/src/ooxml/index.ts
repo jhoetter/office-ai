@@ -1,8 +1,4 @@
-export {
-  OoxmlContainer,
-  OoxmlContainerError,
-  type OoxmlPart,
-} from "./container.js";
+export { OoxmlContainer, OoxmlContainerError, type OoxmlPart } from "./container.js";
 
 export {
   parseXml,
@@ -23,13 +19,6 @@ export {
   type AttrMap,
 } from "./xml.js";
 
-export {
-  RelationshipGraph,
-  type Relationship,
-} from "./relationships.js";
+export { RelationshipGraph, type Relationship } from "./relationships.js";
 
-export {
-  ContentTypes,
-  type DefaultEntry,
-  type OverrideEntry,
-} from "./content-types.js";
+export { ContentTypes, type DefaultEntry, type OverrideEntry } from "./content-types.js";

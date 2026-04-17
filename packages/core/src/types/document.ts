@@ -53,7 +53,7 @@ export interface DocumentDiff {
 export const emptyDiff = (
   format: DocumentFormat,
   fromRevision: number,
-  toRevision: number,
+  toRevision: number
 ): DocumentDiff => ({
   format,
   fromRevision,

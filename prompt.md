@@ -347,20 +347,14 @@ interface DocumentAgent {
   applyCommands(commands: Command[]): Promise<Mutation[]>; // atomic batch
 
   // Diff & Review
-  getDiff(
-    fromSnapshot: DocumentSnapshot,
-    toSnapshot: DocumentSnapshot,
-  ): DocumentDiff;
+  getDiff(fromSnapshot: DocumentSnapshot, toSnapshot: DocumentSnapshot): DocumentDiff;
   getPendingMutations(): Mutation[]; // agent changes not yet approved by human
   approveMutation(mutationId: string): void;
   rejectMutation(mutationId: string): void;
   rollback(mutationId: string): void;
 
   // I/O
-  importFile(
-    buffer: ArrayBuffer,
-    format: "docx" | "xlsx" | "pptx",
-  ): Promise<void>;
+  importFile(buffer: ArrayBuffer, format: "docx" | "xlsx" | "pptx"): Promise<void>;
   exportFile(format: "docx" | "xlsx" | "pptx"): Promise<ArrayBuffer>;
 }
 ```

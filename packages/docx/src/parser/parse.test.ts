@@ -6,10 +6,7 @@ import { makeSyntheticDocx, plainDocxXml } from "../test-utils/synthetic.js";
 describe("parseDocx", () => {
   it("parses a minimal plain-text document", async () => {
     const buf = await makeSyntheticDocx({
-      documentXml: plainDocxXml([
-        { text: "Hello, world." },
-        { text: "Second paragraph." },
-      ]),
+      documentXml: plainDocxXml([{ text: "Hello, world." }, { text: "Second paragraph." }]),
     });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
     expect(snap.format).toBe("docx");

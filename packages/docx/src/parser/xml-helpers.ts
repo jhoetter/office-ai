@@ -55,7 +55,7 @@ export function elementEntries(siblings: ReadonlyArray<unknown>): Array<Record<s
 
 export function findElementEntry(
   siblings: ReadonlyArray<unknown>,
-  tag: string,
+  tag: string
 ): Record<string, unknown> | null {
   for (const e of elementEntries(siblings)) {
     if (ooxml.getTag(e) === tag) return e;

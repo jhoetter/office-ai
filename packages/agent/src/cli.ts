@@ -141,7 +141,10 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       await writeFile(resolve(opts.output), Buffer.from(await agent.exportFile()));
       io.stdout.write(
         JSON.stringify(
-          { wrote: opts.output, mutations: muts.map((m) => ({ id: m.id, type: m.command.type, status: m.status })) },
+          {
+            wrote: opts.output,
+            mutations: muts.map((m) => ({ id: m.id, type: m.command.type, status: m.status })),
+          },
           null,
           2
         ) + "\n"
@@ -149,7 +152,9 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
     });
 
   for (const stub of ["xlsx", "pptx"] as const) {
-    const cmd = new Command(stub).description(`(stub) ${stub.toUpperCase()} support is deferred to a future session`);
+    const cmd = new Command(stub).description(
+      `(stub) ${stub.toUpperCase()} support is deferred to a future session`
+    );
     cmd.action(() => {
       io.stderr.write(`${stub.toUpperCase()} support is not yet implemented in office-agent.\n`);
       throw new CliError(2, `${stub} not implemented`);
@@ -178,7 +183,10 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
 }
 
 class CliError extends Error {
-  constructor(public readonly code: number, message: string) {
+  constructor(
+    public readonly code: number,
+    message: string
+  ) {
     super(message);
   }
 }
@@ -193,7 +201,9 @@ function positionFromSelector(sel: Selector): DocxPosition {
   return sel.range.start;
 }
 
-function normalizeCommands(data: unknown): Array<{ type: string; payload: unknown; source?: "human" | "agent" | "system"; agentId?: string }> {
+function normalizeCommands(
+  data: unknown
+): Array<{ type: string; payload: unknown; source?: "human" | "agent" | "system"; agentId?: string }> {
   const list = Array.isArray(data)
     ? data
     : isObj(data) && Array.isArray((data as { commands?: unknown[] }).commands)

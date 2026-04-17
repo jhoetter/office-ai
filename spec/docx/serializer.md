@@ -57,12 +57,12 @@ serializeDocumentXml(doc):
 
 ## serializeBlock
 
-| Node                  | Output                                |
-| --------------------- | ------------------------------------- |
-| `Paragraph`           | `serializeParagraph(p)`               |
-| `Table { raw }`       | the captured subtree, unchanged       |
-| `SectionBreak { raw }`| the captured subtree, unchanged       |
-| `OpaqueBlock { raw }` | the captured subtree, unchanged       |
+| Node                   | Output                          |
+| ---------------------- | ------------------------------- |
+| `Paragraph`            | `serializeParagraph(p)`         |
+| `Table { raw }`        | the captured subtree, unchanged |
+| `SectionBreak { raw }` | the captured subtree, unchanged |
+| `OpaqueBlock { raw }`  | the captured subtree, unchanged |
 
 ## serializeParagraph
 
@@ -99,12 +99,12 @@ serializeRun(r):
 
 `serializeRunChild`:
 
-| Child               | Output |
-| ------------------- | ------ |
-| `text { text, xmlSpacePreserve }` | `<w:t xml:space="preserve">text</w:t>` if preserve else `<w:t>text</w:t>` |
-| `break { breakType }`             | `<w:br w:type="…"/>` (no breakType → `<w:br/>`) |
-| `tab`                             | `<w:tab/>` |
-| `drawing { raw }`, `opaque { raw }` | the captured subtree, unchanged |
+| Child                               | Output                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `text { text, xmlSpacePreserve }`   | `<w:t xml:space="preserve">text</w:t>` if preserve else `<w:t>text</w:t>` |
+| `break { breakType }`               | `<w:br w:type="…"/>` (no breakType → `<w:br/>`)                           |
+| `tab`                               | `<w:tab/>`                                                                |
+| `drawing { raw }`, `opaque { raw }` | the captured subtree, unchanged                                           |
 
 ## serializeHyperlink
 

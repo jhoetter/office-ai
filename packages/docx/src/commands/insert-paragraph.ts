@@ -151,10 +151,7 @@ function splitParagraph(
 
   const ensureRun = (children: InlineNode[]): InlineNode[] => {
     if (children.some((c) => c.kind === "run")) return children;
-    return [
-      ...children,
-      { kind: "run", id: mintNodeId(), properties: {}, children: [] },
-    ];
+    return [...children, { kind: "run", id: mintNodeId(), properties: {}, children: [] }];
   };
 
   const left: Paragraph = { ...p, children: ensureRun(leftChildren) };
@@ -197,9 +194,7 @@ function splitRun(
   }
   const left: Run | null = leftChildren.length > 0 ? { ...run, children: leftChildren } : null;
   const right: Run | null =
-    rightChildren.length > 0
-      ? { ...run, id: mintNodeId(), children: rightChildren }
-      : null;
+    rightChildren.length > 0 ? { ...run, id: mintNodeId(), children: rightChildren } : null;
   return { left, right };
 }
 
@@ -231,10 +226,7 @@ function splitHyperlink(
     placed = true;
   }
   const left = leftRuns.length > 0 ? { ...link, children: leftRuns } : null;
-  const right =
-    rightRuns.length > 0
-      ? { ...link, id: mintNodeId(), children: rightRuns }
-      : null;
+  const right = rightRuns.length > 0 ? { ...link, id: mintNodeId(), children: rightRuns } : null;
   return { left, right };
 }
 

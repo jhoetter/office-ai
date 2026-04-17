@@ -3,7 +3,6 @@ import type {
   BlockNode,
   CommentRangeEnd,
   CommentRangeStart,
-  CommentReference,
   DocxComment,
   DocxDirtyFlags,
   DocxDocument,
@@ -73,7 +72,7 @@ const DOC_ROOT_ATTR_KEYS = [
 
 export async function parseDocx(
   input: ArrayBuffer | Uint8Array,
-  opts: ParseOptions = {},
+  opts: ParseOptions = {}
 ): Promise<DocxSnapshot> {
   let container: ooxml.OoxmlContainer;
   try {
@@ -82,7 +81,9 @@ export async function parseDocx(
     throw new DocxParseError("invalid-zip", "Failed to read DOCX as a zip archive", { cause: err });
   }
   if (!container.has(MAIN_PART)) {
-    throw new DocxParseError("missing-main-part", `Missing required part: ${MAIN_PART}`, { partPath: MAIN_PART });
+    throw new DocxParseError("missing-main-part", `Missing required part: ${MAIN_PART}`, {
+      partPath: MAIN_PART,
+    });
   }
   const mintNodeId: IdMinter = opts.idMinter ?? defaultIdMinter;
 
@@ -91,14 +92,20 @@ export async function parseDocx(
   try {
     documentTree = ooxml.parseXml(documentXml);
   } catch (err) {
-    throw new DocxParseError("invalid-xml", `Failed to parse ${MAIN_PART}`, { partPath: MAIN_PART, cause: err });
+    throw new DocxParseError("invalid-xml", `Failed to parse ${MAIN_PART}`, {
+      partPath: MAIN_PART,
+      cause: err,
+    });
   }
 
   let docEntry: Record<string, unknown>;
   try {
     docEntry = rootEntry(documentTree, "w:document");
   } catch (err) {
-    throw new DocxParseError("missing-root", "Missing <w:document> root", { partPath: MAIN_PART, cause: err });
+    throw new DocxParseError("missing-root", "Missing <w:document> root", {
+      partPath: MAIN_PART,
+      cause: err,
+    });
   }
 
   const documentRootAttrs = readDocRootAttrs(docEntry);
@@ -398,8 +405,7 @@ function parseRunChild(entry: Record<string, unknown>, mintNodeId: IdMinter): Ru
     }
     case "w:br": {
       const t = attrOf(entry, "w:type");
-      const breakType =
-        t === "page" || t === "column" || t === "textWrapping" ? t : undefined;
+      const breakType = t === "page" || t === "column" || t === "textWrapping" ? t : undefined;
       return { kind: "break", id: mintNodeId(), ...(breakType ? { breakType } : {}) };
     }
     case "w:tab":
@@ -428,10 +434,7 @@ function parseHyperlink(entry: Record<string, unknown>, mintNodeId: IdMinter): H
   };
 }
 
-function parseRevisionWrapper(
-  entry: Record<string, unknown>,
-  mintNodeId: IdMinter,
-): RevisionWrapper {
+function parseRevisionWrapper(entry: Record<string, unknown>, mintNodeId: IdMinter): RevisionWrapper {
   const tag = ooxml.getTag(entry);
   const childrenSrc = (entry[tag] as unknown[] | undefined) ?? [];
   const inlines: InlineNode[] = [];

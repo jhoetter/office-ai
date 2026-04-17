@@ -15,7 +15,7 @@ export const deleteRangeHandler: CommandHandler<DeleteRangePayload, DocxSnapshot
     if (range.start.paragraph !== range.end.paragraph) {
       throw new CommandError(
         "multi-paragraph-delete",
-        "Multi-paragraph delete is P1; collapse to a single paragraph first.",
+        "Multi-paragraph delete is P1; collapse to a single paragraph first."
       );
     }
     const idx = range.start.paragraph;
