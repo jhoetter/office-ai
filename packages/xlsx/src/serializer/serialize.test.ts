@@ -52,14 +52,30 @@ describe("serializeXlsx — round-trip byte-preservation", () => {
 });
 
 describe("serializeXlsx — dirty-flag guard", () => {
-  it("throws when caller hand-sets a dirty flag (Phase 5 will wire re-emission)", async () => {
+  it("throws when caller hand-sets an unsupported dirty flag (sst not in Phase 5)", async () => {
     const buf = await loadFixture("01-single-sheet-numbers.xlsx");
     const snap = await parseXlsx(buf);
-    const dirty = {
-      ...snap.dirty,
-      sheets: new Set<string>(["xl/worksheets/sheet1.xml"]),
-    };
-    const tampered = { ...snap, dirty };
+    const tampered = { ...snap, dirty: { ...snap.dirty, sharedStrings: true } };
     await expect(serializeXlsx(tampered)).rejects.toBeInstanceOf(XlsxSerializeError);
+  });
+
+  it("rewrites a dirty sheet through SheetJS and round-trips the typed cells", async () => {
+    const buf = await loadFixture("01-single-sheet-numbers.xlsx");
+    const snap = await parseXlsx(buf);
+    const sheet = snap.root.sheets[0];
+    const cells = new Map(sheet.cells);
+    cells.set("0:25", { row: 0, col: 25, value: 12345 });
+    const nextSheet = { ...sheet, cells };
+    const sheets = snap.root.sheets.slice();
+    sheets[0] = nextSheet;
+    const tampered = {
+      ...snap,
+      root: { ...snap.root, sheets },
+      dirty: { ...snap.dirty, sheets: new Set([sheet.partPath]) },
+    };
+    const out = await serializeXlsx(tampered);
+    const reparsed = await parseXlsx(new Uint8Array(out));
+    const reSheet = reparsed.root.sheets[0];
+    expect(reSheet.cells.get("0:25")?.value).toBe(12345);
   });
 });

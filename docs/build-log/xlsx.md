@@ -16,6 +16,8 @@
 | 2026-04-18 | Renderer is a virtualized DOM grid (no canvas)                                                                                            | Mirrors how `@officeai/docx` renders. Keeps every interaction routable through ProseMirror-style command dispatch.                                                                             |
 | 2026-04-18 | Sparse cell store keyed by `${row}:${col}` strings (Phase 5)                                                                              | Agent workloads write in scattered patterns; `Map<string, Cell>` is faster for `delete` and avoids wasted intermediate row objects.                                                            |
 | 2026-04-18 | Phase 4 ships a thin model: typed `Sheet` (id/name/index/path/state/kind) + opaque parts; cells exposed only via the SheetJS escape hatch | Phase 5 needs the typed cell model anyway; shipping the round-trip oracle first lets us verify byte-preservation against the synthetic corpus before any commands exist that could falsify it. |
+| 2026-04-18 | Phase 5 ships only the 5 P0 commands that don't depend on the formula engine or new OPC parts; the other 8 commands defer to Phase 6/7    | Lets us land the cell model + bus wiring + dirty-sheet serializer behind a passing test suite, instead of stubbing 8 handlers without recalc/style/comment infrastructure to back them.        |
+| 2026-04-18 | String cells written by Phase 5 commands are emitted inline (`bookSST: false`)                                                            | Avoids touching `xl/sharedStrings.xml`, which keeps that part byte-identical for partially-edited workbooks. SST coalescing is a Phase 6+ concern.                                             |
 
 ## Deviations from spec
 
@@ -110,3 +112,136 @@ cellStyles, cellNF, cellDates, sheetStubs, bookVBA, xlfn`) and
 - Total Phase 4 test count: 36 (xlsx 24 + integration 12), all green.
   Full `pnpm verify` pipeline (format-check / lint / architecture /
   typecheck / test / build) is green.
+
+### Phase 5 — typed cell model + first 5 P0 commands (2026-04-18)
+
+**Scope shipped (5 of 13 P0 commands)**
+
+The cell model + the value/structure-mutation commands that do not
+depend on the formula engine. Specifically:
+
+- `xlsx:set-cell-value` — single-cell write/clear with merge-anchor
+  enforcement and a `formula-string` reject for `=`-prefixed strings.
+- `xlsx:set-range-values` — rectangular bulk-paste; rejects on
+  dimension mismatch, partial-merge overlap, and a 100k-cell cap.
+- `xlsx:merge-cells` — adds a merge, clears non-anchor values,
+  rejects partial overlaps with existing merges.
+- `xlsx:unmerge-cells` — removes an exact-match merge.
+- `xlsx:rename-sheet` — renames the typed `Sheet`, syncs the SheetJS
+  workbook, and surgically patches `<sheet name="...">` in
+  `xl/workbook.xml` while leaving every other byte untouched.
+  Cross-sheet formula reference rewriting (per `EC-R4`) lands in
+  Phase 7 with the formula engine.
+
+**Deferred (8 of 13, with stable type names exported)**
+
+| Command                              | Defers to | Why                                                       |
+| ------------------------------------ | --------- | --------------------------------------------------------- |
+| `xlsx:set-cell-formula`              | Phase 7   | Needs the lexer/parser/AST + recalc.                      |
+| `xlsx:set-cell-format`               | Phase 7+  | Needs typed style table on `XlsxWorkbook`.                |
+| `xlsx:insert-row` / `:insert-column` | Phase 7   | Reference adjustment requires the formula AST.            |
+| `xlsx:delete-row` / `:delete-column` | Phase 7   | Same.                                                     |
+| `xlsx:add-sheet`                     | Phase 6   | Needs `workbook.xml` + content-types + rels co-rewrite.   |
+| `xlsx:add-comment`                   | Phase 6   | Needs `xl/commentsN.xml` emission + sheet-rel attachment. |
+
+The deferrals are tracked in `packages/xlsx/src/commands/registry.ts`
+and the `spec/xlsx/agent-commands.md` document is the canonical source
+for the full P0 surface.
+
+**Model upgrades (`packages/xlsx/src/model/`)**
+
+- New `types`: `Cell`, `CellValue`, `CellErrorValue`, `CellErrorCode`,
+  `Formula`, `MergedCell`. `Sheet` gains `cells: ReadonlyMap<string,
+Cell>` (sparse, `${row}:${col}` keys, 0-based) and
+  `merges: ReadonlyArray<MergedCell>`.
+- New `refs.ts`: A1 ⇄ `{row, col}` plumbing — `parseA1`, `formatA1`,
+  `parseRange`, `formatRange`, `colToLetter`, `letterToCol`,
+  `cellKey`, `parseCellKey`, `rangeArea`, `rangesOverlap`. Strict
+  validation against Excel's `XFD1048576` ceiling.
+
+**Parser changes**
+
+- SheetJS load is now done before sheet resolution so each typed
+  `Sheet` can be hydrated with cells + merges in one pass.
+- New `extractCellsAndMerges(ws)` walks the dense `!data` matrix +
+  `!merges`, mapping SheetJS cell types (`n` / `s` / `b` / `d` / `e`
+  / `z`) to the typed `CellValue` union. Numeric error codes from
+  SheetJS (`0x07` = `#DIV/0!`, `0x17` = `#REF!`, …) are translated to
+  the `CellErrorCode` strings.
+- Empty cells and stub cells are not stored — the typed map stays
+  sparse.
+- Formulas are preserved verbatim as `Formula.text` (without the
+  leading `=`) — Phase 5 commands never write formulas, but parsing
+  preserves them so dirty-sheet round-trip keeps caller-authored
+  formulas intact.
+
+**Serializer changes**
+
+- Phase 4's "any dirty flag → throw" has been replaced with a
+  surgical, two-mode rewrite:
+  1. **Dirty sheets** → for each sheet path in `dirty.sheets`, sync
+     the typed cells + merges back onto the SheetJS WorkSheet
+     (`sheet-sync.ts`), then call `XLSX.write(book, { bookSST: false,
+… })` to emit a single workbook through SheetJS, load that
+     emitted xlsx as a temporary `OoxmlContainer`, and copy only the
+     dirty sheet's `xl/worksheets/sheetN.xml` bytes into the master
+     container. Untouched sheets stay byte-identical.
+  2. **Dirty workbook** → only used by `xlsx:rename-sheet`. We do an
+     attribute-level regex patch over the existing `xl/workbook.xml`
+     bytes, replacing only the `<sheet name="...">` attribute for
+     each renamed sheet (matched by stable `r:id`). Every other byte
+     in the workbook XML is preserved.
+- `bookSST: false` is intentional: string cells written by Phase 5
+  commands are emitted inline (`<c t="inlineStr">`) so the shared
+  strings part is never disturbed. This means edited workbooks may
+  grow slightly compared to a SheetJS-recompacted SST output, but
+  preserves byte-stability of unrelated parts.
+- `dirty.sharedStrings`, `dirty.styles`, `dirty.contentTypes`,
+  `dirty.rels`, `dirty.comments`, `dirty.threadedComments`, and
+  `dirty.sheetRels` continue to throw a typed
+  `XlsxSerializeError("container-failed", …)` — those rewrites land
+  with the deferred commands above.
+
+**Bus integration**
+
+- Each handler is a `CommandHandler<Payload, XlsxSnapshot>` consumed
+  by `@officeai/core`'s shared `CommandBus`. Agent-sourced commands
+  enter `pending`; human/system-sourced commands `approve` directly,
+  matching the DOCX semantics.
+- Validation is centralised in `commands/validation.ts`
+  (`resolveSheet`, `parseCellRef`, `parseRangeRef`,
+  `validateSheetName`, `assertUniqueSheetName`,
+  `assertNotMergedNonAnchor`, `assertNotFormulaString`,
+  `findContainingMerge`).
+- `evolveSnapshot` + `mergeDirty` in `commands/helpers.ts` keep dirty
+  flags monotonically additive and bump the snapshot revision on
+  every successful apply.
+
+**Tests landed**
+
+- `packages/xlsx/src/commands/handlers.test.ts` — 23 tests across
+  the 5 handlers + bus-integration smoke (agent pending → approve,
+  invalid-ref handling, formula-string rejection, merge anchor
+  enforcement).
+- `packages/xlsx/src/serializer/serialize.test.ts` — extended to 14
+  tests; new cases exercise the dirty-sheet rewrite path and the
+  unsupported-flag guard.
+- `tests/roundtrip/xlsx/commands-roundtrip.test.ts` — 5 integration
+  tests proving the dispatched commands persist across `serialize →
+parse` for value writes, range writes, merge/unmerge, and rename.
+- Phase 5 totals: **48 unit tests in `@officeai/xlsx`** + **17 xlsx
+  integration tests** (12 Phase 4 + 5 Phase 5), all green. Full
+  `pnpm verify` pipeline (format / lint / architecture / typecheck /
+  test / build) green.
+
+**Known limitations / follow-ups**
+
+- Cross-sheet formula references that name the renamed sheet are not
+  rewritten. Workbooks with formulas like `=Expenses!A1` will break
+  on recalc after `xlsx:rename-sheet`. Tracked for Phase 7.
+- The SheetJS-based dirty-sheet emission may not preserve exotic
+  worksheet features (custom XML inside the sheet, slicers, complex
+  conditional formatting) on the dirty sheet. The other sheets in
+  the workbook are untouched. Phase 6+ migrates to a native sheet
+  XML emitter that surgically patches `<sheetData>` + `<mergeCells>`
+  while preserving all other worksheet XML in place.

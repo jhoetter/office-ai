@@ -35,16 +35,16 @@ unchanged from the DOCX phase.
 
 ## Status
 
-| Doc                      | Status                       |
-| ------------------------ | ---------------------------- |
-| `analysis.md`            | landed (P1)                  |
-| `feature-scope.md`       | landed (P2)                  |
-| `document-model.md`      | landed (P2)                  |
-| `ooxml-mapping.md`       | landed (P2)                  |
-| `parser.md`              | implemented (P4 thin)        |
-| `serializer.md`          | implemented (P4 byte-oracle) |
-| `renderer.md`            | landed (P2)                  |
-| `formula-engine.md`      | landed (P2)                  |
-| `agent-commands.md`      | landed (P2)                  |
-| `edge-cases.md`          | landed (P2)                  |
-| `acceptance-criteria.md` | landed (P2)                  |
+| Doc                      | Status                                                                                         |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `analysis.md`            | landed (P1)                                                                                    |
+| `feature-scope.md`       | landed (P2)                                                                                    |
+| `document-model.md`      | landed (P2)                                                                                    |
+| `ooxml-mapping.md`       | landed (P2)                                                                                    |
+| `parser.md`              | implemented (P4 thin + P5 typed cells)                                                         |
+| `serializer.md`          | implemented (P4 byte-oracle + P5 dirty-sheet rewrite)                                          |
+| `renderer.md`            | landed (P2)                                                                                    |
+| `formula-engine.md`      | landed (P2)                                                                                    |
+| `agent-commands.md`      | partial (5/13 implemented in P5; remaining 8 deferred to P6/P7 — see `docs/build-log/xlsx.md`) |
+| `edge-cases.md`          | landed (P2)                                                                                    |
+| `acceptance-criteria.md` | landed (P2)                                                                                    |

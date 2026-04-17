@@ -1,20 +1,19 @@
 import type { DocumentSnapshot, NodeId, ooxml } from "@officeai/core";
 
 /**
- * XLSX in-memory model — Phase 4 surface.
+ * XLSX in-memory model — Phase 5 surface.
  *
- * Phase 4 ships a thin model that is sufficient to:
- *   - parse any real-world .xlsx into a typed workbook + opaque parts,
- *   - hash every part for the byte-preservation oracle, and
- *   - re-emit a byte-identical .xlsx for round-trip tests.
+ * Phase 5 grows the Phase 4 thin model with a typed cell store + merge
+ * regions per sheet, sufficient to author the value/structure-mutation
+ * commands (`xlsx:set-cell-value`, `xlsx:set-range-values`,
+ * `xlsx:add-sheet`, `xlsx:rename-sheet`, `xlsx:merge-cells`,
+ * `xlsx:unmerge-cells`). Styles, formulas, comments, hyperlinks, and
+ * conditional formats stay opaque for now and land in Phase 7+.
  *
- * Cells, formulas, styles, comments, hyperlinks, conditional formats,
- * and the per-sheet typed structures specified in
- * `spec/xlsx/document-model.md` are intentionally NOT modelled here yet
- * — they land in Phase 5 alongside the command handlers that mutate
- * them. Until then the cell layer is exposed only via the SheetJS
- * `WorkBook` (`XlsxWorkbook.sheetjs`); the typed `Sheet` carries name +
- * id + part path.
+ * The SheetJS `WorkBook` (`XlsxWorkbook.sheetjs`) remains the
+ * authoritative cell-layer wire format; the typed cells here are
+ * derived at parse time and projected back to SheetJS at serialize
+ * time when a sheet is dirty.
  */
 
 export interface XlsxSnapshot extends DocumentSnapshot<XlsxWorkbook> {
@@ -107,6 +106,64 @@ export interface Sheet {
    * comment/hyperlink/drawing references.
    */
   readonly relsPartPath?: string;
+  /**
+   * Typed sparse cell store. Key = `${row}:${col}` with both indices
+   * 0-based. Populated by the parser from the SheetJS dense workbook
+   * (Phase 5). Phase 5 commands mutate this map; the serializer
+   * re-emits the sheet XML when the sheet is in `dirty.sheets`.
+   */
+  readonly cells: ReadonlyMap<string, Cell>;
+  /** Merged regions (rectangular). 0-based inclusive bounds. */
+  readonly merges: ReadonlyArray<MergedCell>;
+}
+
+export interface Cell {
+  /** 0-based row. */
+  readonly row: number;
+  /** 0-based column. */
+  readonly col: number;
+  readonly value: CellValue;
+  /**
+   * Original formula, when present. Phase 5 only authors literal
+   * values; setting a formula is `xlsx:set-cell-formula`, which lands
+   * in Phase 7 alongside the formula engine. Round-trips verbatim.
+   */
+  readonly formula?: Formula;
+}
+
+export type CellValue = number | string | boolean | null | CellErrorValue;
+
+export interface CellErrorValue {
+  readonly kind: "error";
+  /** Excel error sentinel (`#REF!`, `#NAME?`, etc.). */
+  readonly code: CellErrorCode;
+}
+
+export type CellErrorCode =
+  | "#REF!"
+  | "#VALUE!"
+  | "#DIV/0!"
+  | "#NAME?"
+  | "#N/A"
+  | "#NULL!"
+  | "#NUM!"
+  | "#GETTING_DATA"
+  | "#SPILL!";
+
+export interface Formula {
+  /** Original formula text WITHOUT the leading `=`. */
+  readonly text: string;
+}
+
+export interface MergedCell {
+  /** Top row, 0-based inclusive. */
+  readonly r1: number;
+  /** Left column, 0-based inclusive. */
+  readonly c1: number;
+  /** Bottom row, 0-based inclusive. */
+  readonly r2: number;
+  /** Right column, 0-based inclusive. */
+  readonly c2: number;
 }
 
 export interface OpaquePart {

@@ -1,7 +1,13 @@
 import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core";
 import * as XLSX from "xlsx";
+import { cellKey } from "../model/refs.js";
 import {
   emptyDirty,
+  type Cell,
+  type CellErrorCode,
+  type CellValue,
+  type Formula,
+  type MergedCell,
   type OpaquePart,
   type Sheet,
   type XlsxSnapshot,
@@ -74,9 +80,28 @@ export async function parseXlsx(
 
   const { workbookRootAttrs, date1904, sheetEntries } = parseWorkbookXml(container);
 
+  let sheetjsBook: XLSX.WorkBook;
+  try {
+    const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
+    sheetjsBook = XLSX.read(buf, {
+      type: "array",
+      dense: true,
+      cellFormula: true,
+      cellStyles: true,
+      cellNF: true,
+      cellDates: false,
+      sheetStubs: true,
+      bookFiles: false,
+      bookVBA: true,
+      xlfn: true,
+    });
+  } catch (err) {
+    throw new XlsxParseError("sheetjs-failure", "SheetJS failed to read the workbook", { cause: err });
+  }
+
   const workbookRels = ooxml.RelationshipGraph.loadFor(container, WORKBOOK_PART);
   const sheets: Sheet[] = sheetEntries.map((entry, index) =>
-    resolveSheet(entry, index, workbookRels, container, mintNodeId)
+    resolveSheet(entry, index, workbookRels, container, sheetjsBook, mintNodeId)
   );
 
   const contentTypes = ooxml.ContentTypes.load(container);
@@ -98,25 +123,6 @@ export async function parseXlsx(
       contentType: ctMap.get(path),
       hash,
     });
-  }
-
-  let sheetjsBook: XLSX.WorkBook;
-  try {
-    const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
-    sheetjsBook = XLSX.read(buf, {
-      type: "array",
-      dense: true,
-      cellFormula: true,
-      cellStyles: true,
-      cellNF: true,
-      cellDates: false,
-      sheetStubs: true,
-      bookFiles: false,
-      bookVBA: true,
-      xlfn: true,
-    });
-  } catch (err) {
-    throw new XlsxParseError("sheetjs-failure", "SheetJS failed to read the workbook", { cause: err });
   }
 
   const workbook: XlsxWorkbook = {
@@ -216,6 +222,7 @@ function resolveSheet(
   index: number,
   workbookRels: ooxml.RelationshipGraph,
   container: ooxml.OoxmlContainer,
+  sheetjsBook: XLSX.WorkBook,
   mintNodeId: IdMinter
 ): Sheet {
   const rel = workbookRels.byId(entry.rId);
@@ -239,6 +246,9 @@ function resolveSheet(
 
   const kind: Sheet["kind"] = rel.type === DOC_REL_TYPES.worksheet ? "worksheet" : "non-worksheet";
 
+  const ws = sheetjsBook.Sheets[entry.name];
+  const { cells, merges } = kind === "worksheet" && ws ? extractCellsAndMerges(ws) : EMPTY_CELL_DATA;
+
   return {
     id: mintNodeId(),
     sheetId: entry.sheetId,
@@ -248,7 +258,114 @@ function resolveSheet(
     kind,
     partPath,
     ...(relsPartPath ? { relsPartPath } : {}),
+    cells,
+    merges,
   };
+}
+
+const EMPTY_CELL_DATA: { cells: ReadonlyMap<string, Cell>; merges: ReadonlyArray<MergedCell> } = {
+  cells: new Map(),
+  merges: [],
+};
+
+interface SheetJSCellLike {
+  readonly t?: string;
+  readonly v?: unknown;
+  readonly f?: string;
+}
+
+interface SheetJSWorksheetLike {
+  readonly "!data"?: ReadonlyArray<ReadonlyArray<SheetJSCellLike | undefined>>;
+  readonly "!merges"?: ReadonlyArray<{ s: { r: number; c: number }; e: { r: number; c: number } }>;
+}
+
+function extractCellsAndMerges(ws: XLSX.WorkSheet): {
+  cells: ReadonlyMap<string, Cell>;
+  merges: ReadonlyArray<MergedCell>;
+} {
+  const dense = ws as unknown as SheetJSWorksheetLike;
+  const cells = new Map<string, Cell>();
+
+  const data = dense["!data"];
+  if (data) {
+    for (let r = 0; r < data.length; r++) {
+      const row = data[r];
+      if (!row) continue;
+      for (let c = 0; c < row.length; c++) {
+        const raw = row[c];
+        if (!raw) continue;
+        const cell = sheetjsCellToTyped(raw, r, c);
+        if (cell) cells.set(cellKey(r, c), cell);
+      }
+    }
+  }
+
+  const merges: MergedCell[] = (dense["!merges"] ?? []).map((m) => ({
+    r1: m.s.r,
+    c1: m.s.c,
+    r2: m.e.r,
+    c2: m.e.c,
+  }));
+
+  return { cells, merges };
+}
+
+function sheetjsCellToTyped(raw: SheetJSCellLike, row: number, col: number): Cell | null {
+  const t = raw.t;
+  let value: CellValue;
+
+  switch (t) {
+    case "n":
+      value = typeof raw.v === "number" ? raw.v : Number(raw.v ?? 0);
+      break;
+    case "s":
+    case "str":
+      value = String(raw.v ?? "");
+      break;
+    case "b":
+      value = Boolean(raw.v);
+      break;
+    case "d":
+      value = typeof raw.v === "number" ? raw.v : String(raw.v ?? "");
+      break;
+    case "e":
+      value = mapErrorCode(raw.v);
+      break;
+    case "z":
+    case undefined:
+      if (raw.v === undefined && !raw.f) return null;
+      value = raw.v === undefined ? null : (raw.v as CellValue);
+      break;
+    default:
+      value = raw.v === undefined ? null : (raw.v as CellValue);
+  }
+
+  const formula: Formula | undefined = raw.f ? { text: raw.f } : undefined;
+  if (value === null && !formula) return null;
+
+  return formula ? { row, col, value, formula } : { row, col, value };
+}
+
+const ERROR_CODE_BY_NUM: Record<number, CellErrorCode> = {
+  0x00: "#NULL!",
+  0x07: "#DIV/0!",
+  0x0f: "#VALUE!",
+  0x17: "#REF!",
+  0x1d: "#NAME?",
+  0x24: "#NUM!",
+  0x2a: "#N/A",
+  0x2b: "#GETTING_DATA",
+};
+
+function mapErrorCode(v: unknown): CellValue {
+  if (typeof v === "number" && ERROR_CODE_BY_NUM[v]) {
+    return { kind: "error", code: ERROR_CODE_BY_NUM[v] };
+  }
+  if (typeof v === "string") {
+    const code = v as CellErrorCode;
+    return { kind: "error", code };
+  }
+  return { kind: "error", code: "#VALUE!" };
 }
 
 /**
