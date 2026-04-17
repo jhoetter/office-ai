@@ -1,12 +1,13 @@
 # XLSX Spec
 
-The contract for the XLSX (Microsoft Excel) editor in [`packages/xlsx`](../../packages/xlsx).
+The contract for the XLSX (Microsoft Excel) editor in
+[`packages/xlsx`](../../packages/xlsx).
 
 ## Reading order
 
 1. [`analysis.md`](analysis.md) — clean-room synthesis of the Univer +
-   SheetJS reference repos. Decides what we keep, what we differ on, what
-   we improve. Drawn from the four `analysis-*.md` companion notes.
+   SheetJS reference repos. Decides what we keep, what we differ on,
+   what we improve. Drawn from the four `analysis-*.md` companion notes.
 2. [`feature-scope.md`](feature-scope.md) — what is **in** the 80% and
    what is **explicitly out**. No ambiguity.
 3. [`document-model.md`](document-model.md) — `XlsxWorkbook`, `Sheet`,
@@ -25,8 +26,8 @@ The contract for the XLSX (Microsoft Excel) editor in [`packages/xlsx`](../../pa
    payload, behaviour, OOXML impact, examples.
 10. [`edge-cases.md`](edge-cases.md) — known hard cases and how we
     degrade gracefully.
-11. [`acceptance-criteria.md`](acceptance-criteria.md) — measurable done
-    criteria the build must hit before XLSX is declared shipped.
+11. [`acceptance-criteria.md`](acceptance-criteria.md) — measurable
+    done criteria the build must hit before XLSX is declared shipped.
 
 The shared specs in [`../shared/`](../shared) cover infrastructure
 (command bus, OOXML utils, agent API, plugin system) which is reused
@@ -34,16 +35,16 @@ unchanged from the DOCX phase.
 
 ## Status
 
-| Doc                      | Status  |
-| ------------------------ | ------- |
-| `analysis.md`            | Phase 1 |
-| `feature-scope.md`       | Phase 2 |
-| `document-model.md`      | Phase 2 |
-| `ooxml-mapping.md`       | Phase 2 |
-| `parser.md`              | Phase 2 |
-| `serializer.md`          | Phase 2 |
-| `renderer.md`            | Phase 2 |
-| `formula-engine.md`      | Phase 2 |
-| `agent-commands.md`      | Phase 2 |
-| `edge-cases.md`          | Phase 2 |
-| `acceptance-criteria.md` | Phase 2 |
+| Doc                      | Status      |
+| ------------------------ | ----------- |
+| `analysis.md`            | landed (P1) |
+| `feature-scope.md`       | landed (P2) |
+| `document-model.md`      | landed (P2) |
+| `ooxml-mapping.md`       | landed (P2) |
+| `parser.md`              | landed (P2) |
+| `serializer.md`          | landed (P2) |
+| `renderer.md`            | landed (P2) |
+| `formula-engine.md`      | landed (P2) |
+| `agent-commands.md`      | landed (P2) |
+| `edge-cases.md`          | landed (P2) |
+| `acceptance-criteria.md` | landed (P2) |
