@@ -1,17 +1,17 @@
 # officeAI
 
-Browser-embeddable, AI-native document editors for **DOCX** (and, deferred,
-XLSX/PPTX) — built per [`prompt.md`](prompt.md). Every edit (human or AI)
-flows through a single command bus, the editor runs **headless-first**, and
-the OOXML file is the source of truth.
+Browser-embeddable, AI-native document editors for **DOCX** and **XLSX**
+(PPTX deferred) — built per [`prompt.md`](prompt.md). Every edit (human or
+AI) flows through a single command bus, the editor runs **headless-first**,
+and the OOXML file is the source of truth.
 
 ## Status
 
-| Format | Status   | Notes                                                                                                          |
-| ------ | -------- | -------------------------------------------------------------------------------------------------------------- |
-| DOCX   | active   | Spec complete. Parser/serializer with opaque-blob preservation. Six agent commands. ProseMirror renderer. CLI. |
-| XLSX   | deferred | Spec slot reserved; implementation in a follow-up.                                                             |
-| PPTX   | deferred | Spec slot reserved; implementation in a follow-up.                                                             |
+| Format | Status   | Notes                                                                                                                                                                   |
+| ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DOCX   | active   | Spec complete. Parser/serializer with opaque-blob preservation. Agent commands + tracked changes. ProseMirror renderer. CLI + MCP.                                      |
+| XLSX   | active   | Spec complete. SheetJS-backed parser/serializer with opaque-blob preservation. **All 13 P0 commands**. Sync formula engine (89 functions). Virtualized grid. CLI + MCP. |
+| PPTX   | deferred | Spec slot reserved; implementation in a follow-up.                                                                                                                      |
 
 ## Stack
 
@@ -28,26 +28,26 @@ the OOXML file is the source of truth.
 
 ```
 office-ai/
-├── apps/web/                    # Next.js host: the DOCX editor surface
+├── apps/web/                    # Next.js host: DOCX editor + XLSX editor surfaces
 ├── packages/
 │   ├── core/                    # command bus, plugin registry, OOXML utils, model abstractions
 │   ├── docx/                    # DOCX parser, model, serializer, agent, ProseMirror renderer
-│   ├── xlsx/                    # deferred
+│   ├── xlsx/                    # XLSX parser, model, serializer, agent, formula engine, virtualized grid
 │   ├── pptx/                    # deferred
-│   ├── agent/                   # office-agent CLI + programmatic API
+│   ├── agent/                   # office-agent CLI + MCP server (docx_* + xlsx_* tools)
 │   ├── ui/                      # shared React primitives
 │   └── design-tokens/           # brand colors, typography, spacing
 ├── spec/                        # the contract for the build
 │   ├── shared/                  # format-agnostic spec
 │   ├── docx/                    # DOCX spec
-│   ├── xlsx/                    # XLSX spec (skeleton)
+│   ├── xlsx/                    # XLSX spec
 │   ├── pptx/                    # PPTX spec (skeleton)
 │   └── agent/                   # CLI / programmatic agent spec
-├── fixtures/docx/               # real-world (and synthetic) DOCX test files
+├── fixtures/{docx,xlsx}/        # real-world + synthetic test files
 ├── tests/
-│   ├── roundtrip/docx/          # parse → serialize → re-parse invariants
-│   └── agent/docx/              # CLI + agent-API smoke tests
-└── docs/build-log/docx.md       # decisions, deviations, deferrals
+│   ├── roundtrip/{docx,xlsx}/   # parse → serialize → re-parse invariants
+│   └── agent/{docx,xlsx}/       # CLI + agent-API smoke tests
+└── docs/build-log/{docx,xlsx}.md  # decisions, deviations, deferrals
 ```
 
 ## Quick start
@@ -97,12 +97,23 @@ level (ESLint `no-restricted-imports`).
 After `make cli`:
 
 ```bash
+# DOCX
 pnpm --filter @officeai/agent exec office-agent docx read --file fixtures/docx/01-letter.docx --format markdown
 pnpm --filter @officeai/agent exec office-agent docx write --file fixtures/docx/01-letter.docx \
   --at "paragraph:0" --text "Updated heading"
 pnpm --filter @officeai/agent exec office-agent docx comment --file fixtures/docx/01-letter.docx \
   --range "paragraph:1" --text "Please review" --author "AI Agent"
+
+# XLSX
+pnpm --filter @officeai/agent exec office-agent xlsx inspect --file fixtures/xlsx/01-basic-grid.xlsx
+pnpm --filter @officeai/agent exec office-agent xlsx read --file fixtures/xlsx/01-basic-grid.xlsx \
+  --sheet Sheet1 --range A1:D10 --format markdown
+pnpm --filter @officeai/agent exec office-agent xlsx set-formula --file fixtures/xlsx/01-basic-grid.xlsx \
+  --sheet Sheet1 --cell B5 --formula "=SUM(B1:B4)" --out updated.xlsx
 ```
+
+The same surface is exposed over MCP via `office-agent mcp`, with
+`docx_*` and `xlsx_*` tool families that share one transport.
 
 ## Design principles
 
@@ -119,4 +130,7 @@ Pulled from [`prompt.md`](prompt.md) §Architecture Principles:
 1. [`prompt.md`](prompt.md) — the brief
 2. [`spec/shared/`](spec/shared) — what a "document" is in our system
 3. [`spec/docx/`](spec/docx) — the DOCX contract (start with `ooxml-mapping.md`)
-4. [`docs/build-log/docx.md`](docs/build-log/docx.md) — what shipped, what was deferred, why
+4. [`spec/xlsx/`](spec/xlsx) — the XLSX contract (start with `analysis.md`,
+   then `agent-commands.md` + `formula-engine.md`)
+5. [`docs/build-log/docx.md`](docs/build-log/docx.md) — what shipped, what was deferred, why (DOCX)
+6. [`docs/build-log/xlsx.md`](docs/build-log/xlsx.md) — same, for XLSX

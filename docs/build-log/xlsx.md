@@ -1679,3 +1679,83 @@ default `e2e/*.spec.ts` glob.
 - **Keyboard navigation deferred.** Click + formula-bar editing is
   the documented minimum; arrow-key cell traversal is a P1 polish
   follow-up that doesn't change the agent contract.
+
+### Phase 10 — close-out (2026-04-18)
+
+**Test totals (xlsx-relevant)**:
+
+| Suite                                                   | Count    | Status |
+| ------------------------------------------------------- | -------- | ------ |
+| `@officeai/xlsx`                                        | 613 / 27 | green  |
+| `@officeai/agent`                                       | 47 / 2   | green  |
+| `@officeai/core`                                        | 12 / 2   | green  |
+| `@officeai/integration-tests` (incl. `roundtrip/xlsx/`) | 51 / 7   | green  |
+
+`pnpm --filter @officeai/xlsx {lint,build,test}` and the agent /
+core / integration suites all pass. Web-app `pnpm exec eslint` on
+the new Phase 9 files (`app/xlsx-editor/**`, `app/lib/sample-xlsx.ts`,
+`app/page.tsx`, `e2e/xlsx-editor.spec.ts`) is clean.
+
+**Browser smoke** (manual via `cursor-ide-browser` MCP against
+`pnpm --filter @officeai/web dev` on :3001):
+
+- Landing page (`/`) renders both **Open the DOCX editor** and
+  **Open the XLSX editor** CTAs.
+- `/xlsx-editor` boots the synthetic `sample.xlsx`. The seeded
+  formula `=SUM(B2:B3)` evaluates to `B4 = 79` on first paint,
+  confirming the formula engine fires through the live editor.
+- Click A2 → formula bar shows `Alex`. Fill `Bob` + Enter → grid
+  updates to `Bob`.
+- Click B2 → fill `=B3*2` + Enter → B2 = 74 and B4 cascades from
+  79 → 111, confirming the recalc orchestrator + dependency graph
+  ride along the live editor (not just the unit harness).
+
+**Known not-blocking**: `make verify` currently fails because of
+unrelated parallel docx WIP (P3.1 / P3.2 — style cascade, paged
+renderer, set-paragraph-spacing). Errors live entirely in
+`packages/docx/src/{commands/set-paragraph-spacing.ts,
+renderer/doc-to-pm.ts, serializer/serialize.ts}` plus the matching
+WIP in `apps/web/app/editor/{Toolbar.tsx, DocxEditor.tsx}` and
+`apps/web/app/lib/format-helpers.ts`. None of those files are
+touched by the XLSX build; the XLSX-only gate (xlsx + agent + core
+
+- integration-tests + web-eslint of xlsx-editor files) is green.
+
+**README**: refreshed for the new state — XLSX flipped from
+"deferred" to "active", monorepo layout note adds the xlsx package
+
+- tests + build log, CLI section gains an `office-agent xlsx`
+  example, reading order now points at `spec/xlsx/` and
+  `docs/build-log/xlsx.md`.
+
+**Sequence delivered (Phases 0–10)**:
+
+| Phase | Deliverable                                                             | Tests delta         |
+| ----- | ----------------------------------------------------------------------- | ------------------- |
+| 0     | Scaffold `@officeai/xlsx`, architecture wiring                          | -                   |
+| 1     | Four parallel clean-room analyses + synthesis                           | -                   |
+| 2     | Spec corpus (`agent-commands.md`, `formula-engine.md`, `model.md`, ...) | -                   |
+| 3     | Synthetic fixtures (`fixtures/xlsx/01-09`)                              | -                   |
+| 4     | Round-trip oracle (parser + serializer skeleton)                        | +12 roundtrip       |
+| 5     | Typed cell model + 5 / 13 P0 commands                                   | +35                 |
+| 6     | Headless `XlsxAgent` (DocxAgent parity) + diff module                   | +63 unit + 17 int.  |
+| 7a    | Formula primitives (tokens, errors, values, refs)                       | +101                |
+| 7b    | Lexer + AST + precedence-climbing parser                                | +34                 |
+| 7c    | Function registry + tree-walk evaluator                                 | +27                 |
+| 7d    | Dependency graph (Tarjan SCC) + recalc orchestrator                     | +11                 |
+| 7e    | Function library (89 P0 funcs across 5 parallel agents)                 | +302                |
+| 7f    | `xlsx:set-cell-formula`                                                 | +11                 |
+| 7g    | `xlsx:set-cell-format` + typed style table                              | +25                 |
+| 7h    | `xlsx:add-sheet`                                                        | +14                 |
+| 7i    | `xlsx:{insert,delete}-{row,column}` + AST serialize + ref rewrite       | +49                 |
+| 7j    | `xlsx:add-comment` + classic notes parser/serializer                    | +17                 |
+| 8     | `office-agent xlsx` CLI subcommands + 22 `xlsx_*` MCP tools             | +15 (7 CLI + 8 MCP) |
+| 9     | Virtualized grid + `/xlsx-editor` web surface + Playwright smoke        | +1 e2e              |
+| 10    | Browser smoke, README refresh, build-log close-out                      | -                   |
+
+**Out of scope for this build (queued for P1)**: threaded comments,
+VML drawing emission, cross-sheet formula rewriting on rename,
+defined names, hyperlinks, sheet reorder/delete/hide,
+`xlsx:edit-comment` / `xlsx:delete-comment` / `xlsx:reply-comment`
+/ `xlsx:resolve-comment`, rich-text comment runs, and arrow-key
+keyboard navigation in the web grid.
