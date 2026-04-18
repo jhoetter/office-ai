@@ -254,6 +254,23 @@ export class XlsxAgent {
     this.bus.rollback(toRevision);
   }
 
+  // ── Undo / Redo ────────────────────────────────────────────────────────
+  canUndo(): boolean {
+    return this.bus.canUndo();
+  }
+
+  canRedo(): boolean {
+    return this.bus.canRedo();
+  }
+
+  undo(): Mutation<XlsxSnapshot> | null {
+    return this.bus.undo();
+  }
+
+  redo(): Mutation<XlsxSnapshot> | null {
+    return this.bus.redo();
+  }
+
   // ── I/O ────────────────────────────────────────────────────────────────
   async exportFile(): Promise<ArrayBuffer> {
     return serializeXlsx(this.getSnapshot());

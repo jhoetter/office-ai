@@ -121,4 +121,64 @@ describe("CommandBus", () => {
     await bus.dispatch({ type: "toy:inc", payload: { by: 2 }, source: "human" });
     expect(seen).toEqual([1, 3]);
   });
+
+  describe("undo / redo", () => {
+    it("undoes the most recent approved mutation", async () => {
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+      await bus.dispatch({ type: "toy:inc", payload: { by: 5 }, source: "human" });
+      await bus.dispatch({ type: "toy:inc", payload: { by: 3 }, source: "human" });
+      expect(bus.getApproved().root.value).toBe(8);
+      expect(bus.canUndo()).toBe(true);
+      const undone = bus.undo();
+      expect(undone?.status).toBe("undone");
+      expect(bus.getApproved().root.value).toBe(5);
+      expect(bus.canRedo()).toBe(true);
+    });
+
+    it("redoes by re-applying against the current approved snapshot", async () => {
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+      await bus.dispatch({ type: "toy:inc", payload: { by: 5 }, source: "human" });
+      bus.undo();
+      expect(bus.getApproved().root.value).toBe(0);
+      const redone = bus.redo();
+      expect(redone?.status).toBe("approved");
+      expect(bus.getApproved().root.value).toBe(5);
+      expect(bus.canRedo()).toBe(false);
+    });
+
+    it("clears the redo stack when a new authored mutation lands", async () => {
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+      await bus.dispatch({ type: "toy:inc", payload: { by: 5 }, source: "human" });
+      bus.undo();
+      expect(bus.canRedo()).toBe(true);
+      await bus.dispatch({ type: "toy:inc", payload: { by: 7 }, source: "human" });
+      expect(bus.canRedo()).toBe(false);
+      expect(bus.getApproved().root.value).toBe(7);
+    });
+
+    it("returns null when nothing to undo / redo", () => {
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+      expect(bus.canUndo()).toBe(false);
+      expect(bus.canRedo()).toBe(false);
+      expect(bus.undo()).toBeNull();
+      expect(bus.redo()).toBeNull();
+    });
+
+    it("supports multi-step undo + redo round-trips", async () => {
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+      for (const v of [1, 2, 3, 4]) {
+        await bus.dispatch({ type: "toy:inc", payload: { by: v }, source: "human" });
+      }
+      expect(bus.getApproved().root.value).toBe(10);
+      bus.undo(); bus.undo(); bus.undo();
+      expect(bus.getApproved().root.value).toBe(1);
+      bus.redo(); bus.redo();
+      expect(bus.getApproved().root.value).toBe(6);
+    });
+  });
 });

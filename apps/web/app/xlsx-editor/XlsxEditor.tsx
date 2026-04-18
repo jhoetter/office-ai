@@ -52,8 +52,6 @@ const SAMPLE_NAME = "sample.xlsx";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-const noop = (): void => undefined;
-
 /**
  * Top-level XLSX editor surface for /xlsx-editor.
  *
@@ -764,6 +762,28 @@ export function XlsxEditor(): ReactNode {
         if (!selection) return;
         e.preventDefault();
         setSelection(singleSelection(selection.anchor));
+        return;
+      }
+
+      // Undo / Redo — match Excel exactly:
+      //   Cmd/Ctrl+Z       → undo
+      //   Cmd/Ctrl+Shift+Z → redo (Cmd/Ctrl+Y also accepted)
+      if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        const a = agentRef.current;
+        if (!a) return;
+        if (e.shiftKey) {
+          if (a.canRedo()) a.redo();
+        } else {
+          if (a.canUndo()) a.undo();
+        }
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        const a = agentRef.current;
+        if (!a) return;
+        if (a.canRedo()) a.redo();
         return;
       }
 
@@ -1529,10 +1549,16 @@ export function XlsxEditor(): ReactNode {
           canUnmerge={canUnmerge}
           onMerge={onMerge}
           onUnmerge={onUnmerge}
-          canUndo={false}
-          canRedo={false}
-          onUndo={noop}
-          onRedo={noop}
+          canUndo={agent?.canUndo() ?? false}
+          canRedo={agent?.canRedo() ?? false}
+          onUndo={() => {
+            const a = agentRef.current;
+            if (a && a.canUndo()) a.undo();
+          }}
+          onRedo={() => {
+            const a = agentRef.current;
+            if (a && a.canRedo()) a.redo();
+          }}
           canTextToColumns={canTextToColumns}
           onTextToColumns={onTextToColumns}
         />

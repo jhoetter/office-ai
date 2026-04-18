@@ -212,6 +212,23 @@ export class DocxAgent {
     this.bus.rollback(toRevision);
   }
 
+  // ── Undo / Redo ────────────────────────────────────────────────────────
+  canUndo(): boolean {
+    return this.bus.canUndo();
+  }
+
+  canRedo(): boolean {
+    return this.bus.canRedo();
+  }
+
+  undo(): Mutation<DocxSnapshot> | null {
+    return this.bus.undo();
+  }
+
+  redo(): Mutation<DocxSnapshot> | null {
+    return this.bus.redo();
+  }
+
   // ── I/O ────────────────────────────────────────────────────────────────
   async exportFile(): Promise<ArrayBuffer> {
     return serializeDocx(this.getSnapshot());

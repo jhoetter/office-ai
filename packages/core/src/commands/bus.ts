@@ -28,6 +28,12 @@ export type Listener<TSnapshot> = (snapshot: TSnapshot, mutation: Mutation<TSnap
 export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
   private readonly handlers = new Map<string, CommandHandler<unknown, TSnapshot>>();
   private readonly history: Mutation<TSnapshot>[] = [];
+  /**
+   * Stack of mutations that have been undone and are still eligible
+   * for redo. Cleared the moment any new approved mutation lands —
+   * matches Excel's "branching kills the redo trail" behaviour.
+   */
+  private redoStack: Mutation<TSnapshot>[] = [];
   private pending: Mutation<TSnapshot>[] = [];
   private approved: TSnapshot;
   private working: TSnapshot;
@@ -126,6 +132,7 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
     this.approved = m.after;
     this.pending.splice(idx, 1);
     this.history.push(m);
+    this.redoStack = [];
     this.recomputeWorking();
   }
 
@@ -137,6 +144,98 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
     this.pending.splice(idx, 1);
     this.history.push(m);
     this.recomputeWorking();
+  }
+
+  /**
+   * Returns true iff there is at least one approved mutation in the
+   * history that can be undone (P13).
+   */
+  canUndo(): boolean {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (this.history[i]!.status === "approved") return true;
+    }
+    return false;
+  }
+
+  /** True iff `redoStack` has at least one entry. */
+  canRedo(): boolean {
+    return this.redoStack.length > 0;
+  }
+
+  /**
+   * Undo the most recent approved mutation by restoring its `before`
+   * snapshot. Pending agent mutations are re-applied on top so the
+   * `working` view stays consistent.
+   *
+   * Returns the undone mutation, or `null` if there's nothing to undo.
+   */
+  undo(): Mutation<TSnapshot> | null {
+    let idx = -1;
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (this.history[i]!.status === "approved") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx === -1) return null;
+    const m = this.history[idx]!;
+    m.status = "undone";
+    this.approved = m.before as TSnapshot;
+    this.redoStack.push(m);
+    this.recomputeWorking();
+    this.notify(m);
+    return m;
+  }
+
+  /**
+   * Re-apply the most recently undone mutation. Returns the
+   * re-applied mutation, or `null` if there's nothing to redo.
+   *
+   * Implementation note: we re-run the handler against the current
+   * approved snapshot rather than naively restoring the old `after`,
+   * so structurally-rebased pending mutations don't desync.
+   */
+  redo(): Mutation<TSnapshot> | null {
+    const m = this.redoStack.pop();
+    if (!m) return null;
+    const handler = this.handlers.get(m.command.type);
+    if (!handler) {
+      // Handler vanished (re-registration mid-session?). Best-effort:
+      // restore the recorded `after` and keep going.
+      m.status = "approved";
+      this.approved = m.after as TSnapshot;
+      this.history.push(m);
+      this.recomputeWorking();
+      this.notify(m);
+      return m;
+    }
+    try {
+      const out = handler.apply(this.approved, m.command.payload, this.ctx);
+      const re: Mutation<TSnapshot> = {
+        ...m,
+        before: this.approved,
+        after: out.next,
+        diff: out.diff,
+        status: "approved",
+      };
+      this.approved = out.next;
+      this.history.push(re);
+      this.recomputeWorking();
+      this.notify(re);
+      return re;
+    } catch (err) {
+      const rejected: Mutation<TSnapshot> = {
+        ...m,
+        status: "rejected",
+        rejection: {
+          code: err instanceof CommandError ? err.code : "handler-threw",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+      this.history.push(rejected);
+      this.notify(rejected);
+      return rejected;
+    }
   }
 
   /** Roll back approved history; pending stack is dropped. */
@@ -213,6 +312,8 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
     } else {
       this.approved = next;
       this.history.push(m);
+      // Any new authored mutation kills the redo trail.
+      this.redoStack = [];
     }
     this.working = next;
     return m;

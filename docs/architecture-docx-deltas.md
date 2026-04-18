@@ -120,6 +120,42 @@ through the style chain.
 relying on the cascade to render the rest. We never copy the
 resolved value down into the run.
 
+### 3a. Theme-aware font resolution (P3.9)
+
+`<w:rFonts>` is the one cascade slot where Word does **not** do
+per-attribute leaf-wins merging. When a child level supplies an
+`<w:rFonts>` element of any shape — a literal `w:ascii="Calibri"`
+or a theme ref `w:asciiTheme="majorHAnsi"` — the parent's entire
+`<w:rFonts>` is discarded. The resolver mirrors this by treating
+the trio `(fontFamily, fontFamilyAsciiTheme, fontFamilyHAnsiTheme)`
+as a single property: if the child sets any of them, all three
+parent values are dropped. See `style-resolver.ts → mergeRpr`.
+
+After the cascade collapses, theme refs are projected into a
+literal typeface so the toolbar can display "Aptos Display" rather
+than the opaque `majorHAnsi`. Resolution order:
+
+1. **Literal wins**: if the merged rPr has `fontFamily` set, return
+   it as-is. (A run-level `<w:rFonts w:ascii="Comic Sans"/>` always
+   beats an inherited theme ref.)
+2. **`word/theme/theme1.xml`**: parsed by `parser/theme.ts` into a
+   typed `ThemePart` carrying `majorFont.latin` / `minorFont.latin`.
+   `majorHAnsi` / `majorAscii` / `majorBidi` map to `majorFont.latin`,
+   `minor*` to `minorFont.latin`. East-Asian variants project to
+   `*.ea` with a Latin fallback.
+3. **Word-default fallback**: when the package ships no theme part
+   (synthetic fixtures, hand-written demo docs), `WORD_DEFAULT_THEME_FONTS`
+   in `style-resolver.ts` returns the Word 2024+ defaults
+   ("Aptos Display" / "Aptos") so the editor still agrees with what
+   Word would render on export.
+
+The byte-level round-trip is unaffected: the original `<w:rFonts>`
+element is captured via `opaqueProps` at parse time and the
+serializer re-emits it verbatim unless an explicit `fontFamily`
+mutation overrides it, in which case a fresh `<w:rFonts w:ascii=…
+w:hAnsi=…/>` replaces both the literal and theme attributes (which
+matches Word's authoring behavior).
+
 ## 4. Opaque-blob preservation with a typed display classifier
 
 Both products preserve unknown OOXML byte-identically through
