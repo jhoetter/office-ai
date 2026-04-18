@@ -1572,3 +1572,110 @@ P1 surface (out of scope for this build):
 `xlsx:hide-sheet`, `xlsx:set-defined-name`,
 `xlsx:set-hyperlink`, plus the VML drawing emission needed for
 visual comment anchoring in Excel proper.
+
+### Phase 8 — office-agent CLI + MCP xlsx\*\* surface (2026-04-18)
+
+Wires the headless `XlsxAgent` through both interactive surfaces with
+DOCX parity.
+
+**CLI** (`packages/agent/src/cli-xlsx.ts`, new):
+
+- New `office-agent xlsx` subcommand group: `inspect`, `read`,
+  `search`, `set-cell`, `set-formula`, `set-range`, `set-format`,
+  `add-sheet`, `rename-sheet`, `insert-row|column`,
+  `delete-row|column`, `merge|unmerge`, `add-comment`, `apply` /
+  `apply-file`, and on-disk `diff`.
+- Common helpers (`IO`, `CliError`, `stringifyJson`, `parseIntOpt`)
+  factored into `cli-shared.ts` so `cli.ts` and `cli-xlsx.ts` don't
+  need to import each other.
+- `office-agent xlsx` no longer emits the "not implemented" stub;
+  pptx still parks the next format.
+
+**MCP** (`packages/agent/src/mcp.ts`):
+
+- 22 new tools: `xlsx_load`, `xlsx_save`, `xlsx_inspect`,
+  `xlsx_list_sheets`, `xlsx_get_text`, `xlsx_search`,
+  `xlsx_apply_command`, `xlsx_list_pending`, `xlsx_approve`,
+  `xlsx_reject`, `xlsx_diff`, plus the convenience wrappers
+  (`xlsx_set_cell`, `xlsx_set_formula`, `xlsx_set_range`,
+  `xlsx_set_format`, `xlsx_add_sheet`, `xlsx_rename_sheet`,
+  `xlsx_{insert,delete}_{row,column}`, `xlsx_merge`, `xlsx_unmerge`,
+  `xlsx_add_comment`).
+- Each convenience tool collapses to `xlsx_apply_command` so there is
+  one code path for every typed write.
+- Reset hook now clears both `docxSessions` and `xlsxSessions` for
+  test isolation.
+
+**Tests**: agent suite 47 / 47 (+15: 7 CLI round-trips, 8 MCP tool
+flows). DOCX surface untouched, still 32 / 32 green. `pnpm
+--filter @officeai/agent test`, `lint`, `build`, and `pnpm
+format:check` all green.
+
+### Phase 9 — virtualized browser grid + XLSX web app surface (2026-04-18)
+
+Mounts the headless `XlsxAgent` behind a real Excel-shaped surface
+in the existing Next.js app.
+
+**New route** `/xlsx-editor` (`apps/web/app/xlsx-editor/`):
+
+- `page.tsx` — client wrapper, dynamic-imports `XlsxEditor` with
+  `ssr: false`, mirrors the chrome of `/editor`.
+- `Grid.tsx` (296 LOC) — hand-rolled virtualized grid. Fixed
+  geometry (24 × 88 px), 1000 × 26 visible cells, OVERSCAN = 4,
+  scroll-tracked sticky headers (column letters + row numbers +
+  corner), in-cell editing on double-click with Enter / Escape
+  commit. No 3rd-party grid library.
+- `XlsxEditor.tsx` (436 LOC) — main surface. Header strip
+  (`sample.xlsx` label + `rev N` + pending-mutation badges + Save),
+  formula bar with cell-ref pill + `fx` input, sheet tabs, the
+  `Grid`, and an "Agent" prompt row. Mounts `XlsxAgent.fromBuffer`
+  on a synthetic seed workbook, subscribes to mutations,
+  dispatches `xlsx:set-cell-value` for plain text and
+  `xlsx:set-cell-formula` for `=`-prefixed input.
+
+**Synthetic seed** (`apps/web/app/lib/sample-xlsx.ts`, 88 LOC):
+JSZip-built `sample.xlsx` (Sheet1: `Name | Score`, `Alex | 42`,
+`Sam | 37`, `Total | =SUM(B2:B3)`). Uses `t="inlineStr"` to skip
+`xl/sharedStrings.xml`. Verified end-to-end: opens, edits, saves,
+re-opens through the agent.
+
+**Landing page**: home page now ships a second "Open the XLSX
+editor" CTA alongside the DOCX one. Copy updated to
+"DOCX editor: live. XLSX editor: live."
+
+**Playwright smoke** (`apps/web/e2e/xlsx-editor.spec.ts`): loads
+`/xlsx-editor`, asserts the seeded `Score` / `Alex` cells, clicks
+A2, verifies the formula bar displays `Alex`, types `Bob` + Enter,
+asserts the grid re-renders to `Bob` and the revision badge ticks
+0 → 1. The spec is registered under `playwright.config.ts`'s
+default `e2e/*.spec.ts` glob.
+
+**Browser smoke** (manual via the cursor IDE browser MCP, against
+`pnpm --filter @officeai/web dev` on :3001):
+
+- `/xlsx-editor` boots, the seeded sheet renders with `B4 = 79`
+  (`=SUM(B2:B3)` evaluated by the formula engine).
+- Click A2 → formula bar shows `Alex`. Fill `Bob` + Enter →
+  grid shows `Bob`.
+- Click B2 → fill `=B3*2` + Enter → B2 becomes `74`, B4 cascades
+  from `79` to `111`, confirming the recalc orchestrator wires
+  through the live editor (not just the headless tests).
+
+**Decisions**:
+
+- **No 3rd-party grid library.** Virtualization is hand-rolled
+  with fixed cell geometry + scroll tracking + absolute
+  positioning. Keeps the dependency tree small and matches the
+  "everything goes through our command bus" discipline of the
+  DOCX editor.
+- **Inline strings in the seed.** Skipping `sharedStrings.xml`
+  in the synthetic workbook keeps the demo file under 100 LOC and
+  exercises the same "sparse-edit, byte-preserve untouched parts"
+  path the real fixtures hit.
+- **Pending-mutation badge, not a panel.** The header surfaces a
+  count; full approve / reject UI is a P1 polish task —
+  `xlsx_list_pending` / `xlsx_approve` / `xlsx_reject` already work
+  through the MCP surface for now.
+- **Keyboard navigation deferred.** Click + formula-bar editing is
+  the documented minimum; arrow-key cell traversal is a P1 polish
+  follow-up that doesn't change the agent contract.

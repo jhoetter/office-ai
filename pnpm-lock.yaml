@@ -53,6 +53,9 @@ importers:
       '@officeai/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@officeai/xlsx':
+        specifier: workspace:^
+        version: link:../../packages/xlsx
       jszip:
         specifier: ^3.10.1
         version: 3.10.1

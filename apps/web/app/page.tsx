@@ -19,17 +19,23 @@ export default function HomePage() {
           AI-native office editors
         </span>
         <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-          Headless-first DOCX editor with a real command bus.
+          Headless-first office editors with a real command bus.
         </h1>
         <p className="max-w-prose text-base text-secondary">
-          A working Word-compatible editor built around an OOXML-faithful core. Every change — human or AI —
+          Word- and Excel-compatible editors built around an OOXML-faithful core. Every change — human or AI —
           flows through the same typed command bus, so agents and humans collaborate without two parallel
-          mutation paths. XLSX and PPTX land in follow-up sessions.
+          mutation paths. DOCX editor: live. XLSX editor: live. PPTX still in follow-up.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link href="/editor">
             <Button variant="accent" size="lg">
               Open the DOCX editor
+              <ArrowRight size={14} />
+            </Button>
+          </Link>
+          <Link href="/xlsx-editor">
+            <Button variant="secondary" size="lg">
+              Open the XLSX editor
               <ArrowRight size={14} />
             </Button>
           </Link>
