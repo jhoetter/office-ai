@@ -1,8 +1,12 @@
 import { ooxml, type IdMinter } from "@officeai/core";
 import type {
   BlockNode,
+  BorderSide,
+  BoxSides,
   Paragraph,
+  Shading,
   Table,
+  TableBorders,
   TableCell,
   TableCellProperties,
   TableGridCol,
@@ -62,6 +66,13 @@ function parseTableProperties(entry: Record<string, unknown>): TableProperties {
   const opaqueProps: ReturnType<typeof captureOpaque>[] = [];
   for (const c of elementEntries(children)) {
     const tag = ooxml.getTag(c);
+    // Phase 2 contract: typed projections (`tblBorders`, `tblCellMar`,
+    // `tblLayout`, `tblInd`) feed the renderer but are ALSO captured in
+    // `opaqueProps` so the serializer (which doesn't emit them yet)
+    // still round-trips byte-identical via the opaque path. The two
+    // pre-existing typed fields (`width`, `jc`) skip the opaque
+    // duplicate because the serializer already emits them from the
+    // typed slot — duplicating would produce two `<w:tblW>` elements.
     switch (tag) {
       case "w:tblW": {
         const w = parseWidth(c);
@@ -76,6 +87,30 @@ function parseTableProperties(entry: Record<string, unknown>): TableProperties {
         } else {
           opaqueProps.push(captureOpaque(c));
         }
+        break;
+      }
+      case "w:tblBorders": {
+        const borders = parseBorders(c, "w:tblBorders");
+        if (borders) props.tblBorders = borders;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:tblCellMar": {
+        const sides = parseBoxSides(c, "w:tblCellMar");
+        if (sides) props.tblCellMar = sides;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:tblLayout": {
+        const t = attrOf(c, "w:type");
+        if (t === "fixed" || t === "auto") props.tblLayout = t;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:tblInd": {
+        const w = parseWidth(c);
+        if (w) props.tblInd = w;
+        opaqueProps.push(captureOpaque(c));
         break;
       }
       default:
@@ -203,6 +238,10 @@ function parseTableCellProperties(entry: Record<string, unknown>): TableCellProp
   const opaqueProps: ReturnType<typeof captureOpaque>[] = [];
   for (const c of elementEntries(children)) {
     const tag = ooxml.getTag(c);
+    // See note in `parseTableProperties` for the dual-capture contract.
+    // Pre-existing typed slots (`gridSpan`, `vMerge`, `tcW`) are emitted
+    // by the serializer from the typed fields, so they don't get
+    // duplicated into opaqueProps. New Phase 2 typed projections do.
     switch (tag) {
       case "w:gridSpan": {
         const v = attrOf(c, "w:val");
@@ -224,6 +263,30 @@ function parseTableCellProperties(entry: Record<string, unknown>): TableCellProp
         else opaqueProps.push(captureOpaque(c));
         break;
       }
+      case "w:shd": {
+        const shd = parseShading(c);
+        if (shd) props.shd = shd;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:tcBorders": {
+        const borders = parseBorders(c, "w:tcBorders");
+        if (borders) props.tcBorders = borders;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:vAlign": {
+        const v = attrOf(c, "w:val");
+        if (v === "top" || v === "center" || v === "bottom") props.vAlign = v;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:tcMar": {
+        const sides = parseBoxSides(c, "w:tcMar");
+        if (sides) props.tcMar = sides;
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
       default:
         opaqueProps.push(captureOpaque(c));
         break;
@@ -231,6 +294,100 @@ function parseTableCellProperties(entry: Record<string, unknown>): TableCellProp
   }
   if (opaqueProps.length > 0) props.opaqueProps = opaqueProps;
   return props;
+}
+
+/* ── Helpers shared across `<w:tblPr>` / `<w:tcPr>` ───────────────────────── */
+
+function parseShading(entry: Record<string, unknown>): Shading | null {
+  const fill = attrOf(entry, "w:fill");
+  const color = attrOf(entry, "w:color");
+  const pattern = attrOf(entry, "w:val");
+  const out: { -readonly [K in keyof Shading]: Shading[K] } = {};
+  if (fill !== undefined) out.fill = fill;
+  if (color !== undefined) out.color = color;
+  if (pattern !== undefined) out.pattern = pattern;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function parseBorderSide(entry: Record<string, unknown>): BorderSide | null {
+  const val = attrOf(entry, "w:val");
+  if (val === undefined) return null;
+  const side: { -readonly [K in keyof BorderSide]: BorderSide[K] } = { style: val };
+  const sz = attrOf(entry, "w:sz");
+  if (sz !== undefined) {
+    const n = Number(sz);
+    if (Number.isFinite(n)) side.size = n;
+  }
+  const color = attrOf(entry, "w:color");
+  if (color !== undefined) side.color = color;
+  const space = attrOf(entry, "w:space");
+  if (space !== undefined) {
+    const n = Number(space);
+    if (Number.isFinite(n)) side.space = n;
+  }
+  return side;
+}
+
+function parseBorders(entry: Record<string, unknown>, hostTag: string): TableBorders | null {
+  const children = (entry[hostTag] as unknown[] | undefined) ?? [];
+  const out: { -readonly [K in keyof TableBorders]: TableBorders[K] } = {};
+  for (const c of elementEntries(children)) {
+    const tag = ooxml.getTag(c);
+    const side = parseBorderSide(c);
+    if (!side) continue;
+    switch (tag) {
+      case "w:top":
+        out.top = side;
+        break;
+      case "w:left":
+      case "w:start":
+        out.left = side;
+        break;
+      case "w:bottom":
+        out.bottom = side;
+        break;
+      case "w:right":
+      case "w:end":
+        out.right = side;
+        break;
+      case "w:insideH":
+        out.insideH = side;
+        break;
+      case "w:insideV":
+        out.insideV = side;
+        break;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function parseBoxSides(entry: Record<string, unknown>, hostTag: string): BoxSides | null {
+  const children = (entry[hostTag] as unknown[] | undefined) ?? [];
+  const out: { -readonly [K in keyof BoxSides]: BoxSides[K] } = {};
+  for (const c of elementEntries(children)) {
+    const tag = ooxml.getTag(c);
+    const w = attrOf(c, "w:w");
+    if (w === undefined) continue;
+    const n = Number(w);
+    if (!Number.isFinite(n)) continue;
+    switch (tag) {
+      case "w:top":
+        out.top = n;
+        break;
+      case "w:left":
+      case "w:start":
+        out.left = n;
+        break;
+      case "w:bottom":
+        out.bottom = n;
+        break;
+      case "w:right":
+      case "w:end":
+        out.right = n;
+        break;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function parseWidth(entry: Record<string, unknown>): TableWidth | null {

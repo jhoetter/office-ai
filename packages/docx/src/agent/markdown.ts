@@ -96,6 +96,11 @@ export function snapshotToMarkdown(snapshot: DocxSnapshot, options?: SnapshotToM
         lines.push(`> [opaque block: ${block.raw.tag}]`);
         lines.push("");
         break;
+      case "wrapper-marker":
+        // Invisible body bracket — the wrapped inner blocks already
+        // serialize themselves between the begin / end pair. No
+        // markdown surface here.
+        break;
       default: {
         const _exhaustive: never = block;
         void _exhaustive;

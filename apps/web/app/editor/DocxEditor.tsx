@@ -7,6 +7,7 @@ import {
   DocxAgent,
   chunkIntoPages,
   documentPageGeometry,
+  documentMaxPageGeometry,
   mountDocxEditor,
   resolveEffectivePpr,
 } from "@officeai/docx";
@@ -917,15 +918,27 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
             //   US-Letter so the visual frame has a stable initial size
             //   instead of collapsing to 0.
             const TWIPS_PER_CSS_PX = 15;
-            const geometry = snapshot
-              ? documentPageGeometry(snapshot)
+            // Phase 1 of docx-fidelity-overhaul: the wrapper uses the
+            // WIDEST geometry across all sections so a doc that mixes
+            // portrait + landscape (or different page sizes per
+            // section) has enough horizontal room for every page. The
+            // FIRST-section geometry still drives the default
+            // `--pm-page-margin-*` variables on the editor card; each
+            // page-block decoration overrides them per chunk via inline
+            // `--pm-page-margin-left` / `--pm-page-margin-right` in
+            // `page-decorations.ts`.
+            const wrapperGeometry = snapshot
+              ? documentMaxPageGeometry(snapshot)
               : {
                   pgSz: { w: 12240, h: 15840 },
                   pgMar: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 720 },
                 };
-            const pageWidthCssPx = geometry.pgSz.w / TWIPS_PER_CSS_PX;
-            const pageMarginLeftCssPx = geometry.pgMar.left / TWIPS_PER_CSS_PX;
-            const pageMarginRightCssPx = geometry.pgMar.right / TWIPS_PER_CSS_PX;
+            const firstSectionGeometry = snapshot
+              ? documentPageGeometry(snapshot)
+              : wrapperGeometry;
+            const pageWidthCssPx = wrapperGeometry.pgSz.w / TWIPS_PER_CSS_PX;
+            const pageMarginLeftCssPx = firstSectionGeometry.pgMar.left / TWIPS_PER_CSS_PX;
+            const pageMarginRightCssPx = firstSectionGeometry.pgMar.right / TWIPS_PER_CSS_PX;
             const cssVars = {
               "--pm-page-width": `${pageWidthCssPx}px`,
               "--pm-page-margin-left": `${pageMarginLeftCssPx}px`,

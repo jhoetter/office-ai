@@ -63,6 +63,14 @@ export function PptxEditor(): React.ReactNode {
   // by default so it's hidden on tablets/phones). The toolbar "Add
   // comment" button flips this so the composer is always reachable.
   const [commentsForceOpen, setCommentsForceOpen] = useState(false);
+  // Bumped each time the comments sidebar requests "scroll / focus on
+  // this comment". The canvas keys its flash overlay off `nonce` so
+  // re-clicking the same comment re-plays the animation.
+  const [commentFlashTarget, setCommentFlashTarget] = useState<
+    | { kind: "shape"; shapeId: string; nonce: number }
+    | { kind: "pin"; xEmu: number; yEmu: number; nonce: number }
+    | null
+  >(null);
   const shortcutsDialog = useShortcutsDialog();
 
   const onZoomChange = useCallback((next: number) => {
@@ -544,6 +552,51 @@ export function PptxEditor(): React.ReactNode {
     });
   }, []);
 
+  // "Click to locate" handler wired into the comments sidebar. Looks
+  // up the comment in the active slide's comments part, switches the
+  // canvas selection to the anchored shape (if any) and triggers a
+  // yellow flash overlay so the user can find it. Falls back to a
+  // pin-position flash for free-floating comments.
+  const scrollToComment = useCallback(
+    (commentId: string) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const snap = a.getSnapshot();
+      const target = snap.root.slides[activeIndex];
+      if (!target || !target.commentsPartPath) return;
+      const part = snap.root.commentsByPart.get(target.commentsPartPath);
+      if (!part) return;
+      const c = part.comments.find((cm) => cm.id === commentId);
+      if (!c) return;
+      const surface = slideSurfaceRef.current;
+      if (surface) surface.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (c.shapeId) {
+        setSelectedShapeIds([c.shapeId]);
+        setCommentFlashTarget((prev) => ({
+          kind: "shape",
+          shapeId: c.shapeId!,
+          nonce: (prev?.nonce ?? 0) + 1,
+        }));
+      } else {
+        setCommentFlashTarget((prev) => ({
+          kind: "pin",
+          xEmu: c.xEmu,
+          yEmu: c.yEmu,
+          nonce: (prev?.nonce ?? 0) + 1,
+        }));
+      }
+    },
+    [activeIndex]
+  );
+
+  // Auto-clear the flash overlay after the animation completes so we
+  // don't keep stale SVG nodes in the tree.
+  useEffect(() => {
+    if (!commentFlashTarget) return;
+    const handle = window.setTimeout(() => setCommentFlashTarget(null), 1700);
+    return () => window.clearTimeout(handle);
+  }, [commentFlashTarget]);
+
   usePptxShortcuts({
     surfaceRef: slideSurfaceRef,
     agentRef,
@@ -656,6 +709,7 @@ export function PptxEditor(): React.ReactNode {
                 onTextSelectionChange={setTextSelection}
                 selectedShapeIds={selectedShapeIds}
                 commentedShapeIds={commentedShapeIds}
+                commentFlashTarget={commentFlashTarget}
               />
             </div>
           ) : null}
@@ -686,9 +740,14 @@ export function PptxEditor(): React.ReactNode {
             </div>
             <CommentsSidebar
               key={`comments-${activeIndex}-${tick}`}
-              provider={createPptxCommentsProvider({ agent, slideIndex: activeIndex })}
+              provider={createPptxCommentsProvider({
+                agent,
+                slideIndex: activeIndex,
+                onScrollTo: scrollToComment,
+              })}
               author="You"
               emptyHint="No comments on this slide yet. Select a shape and press Add comment, or comment on the slide as a whole."
+              onScrollTo={scrollToComment}
             />
             <div className="mt-2">
               <CommentComposer

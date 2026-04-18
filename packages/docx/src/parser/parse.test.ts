@@ -63,17 +63,31 @@ describe("parseDocx", () => {
     });
   });
 
-  it("preserves unknown elements as opaque blocks", async () => {
+  it("lifts a body-level <w:sdt> carrier into wrapper-marker brackets + inner blocks", async () => {
+    // Phase B of docx-fidelity-overhaul: body-level wrappers
+    // (`<w:sdt>`, `mc:AlternateContent`, `<w:fldSimple>`, …) that
+    // contain typed body blocks no longer survive as opaque-block
+    // atoms. The parser splits them into
+    //   `[ wrapper-marker(begin), ...inner blocks, wrapper-marker(end) ]`
+    // so the page chunker can flow the inner paragraphs as regular
+    // body content and the heading next to a TOC SDT no longer ends
+    // up orphaned on its own page.
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
   <w:sdt><w:sdtPr><w:tag w:val="custom"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>X</w:t></w:r></w:p></w:sdtContent></w:sdt>
 </w:body></w:document>`;
     const buf = await makeSyntheticDocx({ documentXml: xml });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
-    const sdt = snap.root.body[0];
-    expect(sdt.kind).toBe("opaque-block");
-    if (sdt.kind !== "opaque-block") throw new Error();
-    expect(sdt.raw.tag).toBe("w:sdt");
+    const begin = snap.root.body[0];
+    if (begin.kind !== "wrapper-marker") throw new Error();
+    expect(begin.side).toBe("begin");
+    expect(begin.wrapperRaw.tag).toBe("w:sdt");
+    const inner = snap.root.body[1];
+    if (inner.kind !== "paragraph") throw new Error();
+    const end = snap.root.body[2];
+    if (end.kind !== "wrapper-marker") throw new Error();
+    expect(end.side).toBe("end");
+    expect(end.wrapperId).toBe(begin.wrapperId);
   });
 
   it("unwraps a <w:sdt> wrapper's <w:sdtContent> into typed paragraph children", async () => {
@@ -89,21 +103,24 @@ describe("parseDocx", () => {
 </w:body></w:document>`;
     const buf = await makeSyntheticDocx({ documentXml: xml });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
-    const sdt = snap.root.body[0];
-    expect(sdt.kind).toBe("opaque-block");
-    if (sdt.kind !== "opaque-block") throw new Error();
-    expect(sdt.raw.tag).toBe("w:sdt");
-    expect(sdt.children).toBeDefined();
-    expect(sdt.children).toHaveLength(2);
-    const c0 = sdt.children![0];
+    expect(snap.root.body).toHaveLength(4);
+    const begin = snap.root.body[0];
+    if (begin.kind !== "wrapper-marker") throw new Error();
+    expect(begin.side).toBe("begin");
+    expect(begin.wrapperRaw.tag).toBe("w:sdt");
+    const c0 = snap.root.body[1];
     if (c0.kind !== "paragraph") throw new Error();
     expect(c0.properties.styleId).toBe("Heading1");
     expect(c0.children[0]).toMatchObject({ kind: "run" });
-    const c1 = sdt.children![1];
+    const c1 = snap.root.body[2];
     if (c1.kind !== "paragraph") throw new Error();
     const r = c1.children[0];
     if (r.kind !== "run") throw new Error();
     expect(r.children[0]).toMatchObject({ kind: "text", text: "Entry one" });
+    const end = snap.root.body[3];
+    if (end.kind !== "wrapper-marker") throw new Error();
+    expect(end.side).toBe("end");
+    expect(end.wrapperId).toBe(begin.wrapperId);
   });
 
   it("unwraps a <w:fldSimple> wrapper into typed inline children", async () => {
@@ -130,19 +147,20 @@ describe("parseDocx", () => {
     expect(inner.children[0]).toMatchObject({ kind: "text", text: "1" });
   });
 
-  it("preserves SDT carrier raw subtree for byte-identical re-emission", async () => {
+  it("preserves SDT carrier raw subtree on the wrapper-marker for byte-identical re-emission", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
   <w:sdt><w:sdtPr><w:tag w:val="custom"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>X</w:t></w:r></w:p></w:sdtContent></w:sdt>
 </w:body></w:document>`;
     const buf = await makeSyntheticDocx({ documentXml: xml });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
-    const sdt = snap.root.body[0];
-    if (sdt.kind !== "opaque-block") throw new Error();
+    const begin = snap.root.body[0];
+    if (begin.kind !== "wrapper-marker") throw new Error();
     // The wrapper's raw subtree retains both <w:sdtPr> and <w:sdtContent>
-    // with the original paragraph inside, regardless of the parsed children.
-    expect(sdt.raw.subtree.length).toBeGreaterThan(0);
-    expect(sdt.subtreeDirty).toBeFalsy();
+    // with the original paragraph inside, so the serializer can rebuild
+    // the carrier envelope on a body-dirty round-trip.
+    expect(begin.wrapperRaw.subtree.length).toBeGreaterThan(0);
+    expect(begin.wrapperRaw.tag).toBe("w:sdt");
   });
 
   it("throws DocxParseError on missing main part", async () => {

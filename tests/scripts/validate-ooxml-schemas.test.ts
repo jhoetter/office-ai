@@ -38,10 +38,10 @@ function runScript(args: string[]): { code: number; stdout: string; stderr: stri
 }
 
 describe("scripts/validate-ooxml-schemas.mjs", () => {
-  it("--self-test: discovers all 7 real-world fixtures and exits 0", () => {
+  it("--self-test: discovers all real-world fixtures and exits 0", () => {
     const r = runScript(["--self-test"]);
     expect(r.code, `stderr: ${r.stderr}\nstdout: ${r.stdout}`).toBe(0);
-    expect(r.stdout).toMatch(/discovered 7 fixture\(s\)/);
+    expect(r.stdout).toMatch(/discovered 11 fixture\(s\)/);
     expect(r.stdout).toContain("self-test: ✅ all checks passed.");
   });
 

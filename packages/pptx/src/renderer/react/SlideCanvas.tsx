@@ -71,6 +71,18 @@ export interface SlideCanvasProps {
    * draws what it's told.
    */
   readonly commentedShapeIds?: ReadonlyArray<string>;
+  /**
+   * One-shot "look here" pulse triggered by the comments sidebar's
+   * "click to locate" affordance. The canvas paints a yellow flash
+   * over the requested shape (or pin position when the comment isn't
+   * shape-anchored), keyed off `nonce` so re-clicking the same
+   * comment re-triggers the animation. Cleared by the parent or by
+   * the canvas's own timer.
+   */
+  readonly commentFlashTarget?:
+    | { readonly kind: "shape"; readonly shapeId: string; readonly nonce: number }
+    | { readonly kind: "pin"; readonly xEmu: number; readonly yEmu: number; readonly nonce: number }
+    | null;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
@@ -571,6 +583,14 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           slide={slide}
           slideSize={slideSize}
           shapeIds={props.commentedShapeIds}
+        />
+      ) : null}
+      {props.commentFlashTarget ? (
+        <CommentFlashOverlay
+          key={`flash-${props.commentFlashTarget.nonce}`}
+          slide={slide}
+          slideSize={slideSize}
+          target={props.commentFlashTarget}
         />
       ) : null}
       <SelectionOverlaySvg
@@ -1466,6 +1486,84 @@ function CommentMarkerOverlay({
           </g>
         );
       })}
+    </svg>
+  );
+}
+
+interface CommentFlashOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly target:
+    | { readonly kind: "shape"; readonly shapeId: string; readonly nonce: number }
+    | { readonly kind: "pin"; readonly xEmu: number; readonly yEmu: number; readonly nonce: number };
+}
+
+/**
+ * One-shot yellow flash painted over a shape (or around a pin
+ * coordinate) so the user can spot the comment they just clicked in
+ * the sidebar. Uses inline SVG SMIL animations so the file is
+ * self-contained and doesn't depend on any host-app stylesheet.
+ */
+function CommentFlashOverlay({
+  slide,
+  slideSize,
+  target,
+}: CommentFlashOverlayProps): React.ReactElement | null {
+  let box: BoundingBox | null = null;
+  if (target.kind === "shape") {
+    const sh = findShape(slide.shapes, target.shapeId);
+    if (sh) box = shapeBoundingBox(sh);
+  } else {
+    // Pin-anchored flash: draw a fixed ~1 inch square around the pin
+    // so there's something visible even when no shape is associated.
+    const halfEmu = 457200; // 0.5"
+    box = {
+      x: Math.max(0, target.xEmu - halfEmu),
+      y: Math.max(0, target.yEmu - halfEmu),
+      cx: halfEmu * 2,
+      cy: halfEmu * 2,
+    };
+  }
+  if (!box) return null;
+  const x = px(box.x);
+  const y = px(box.y);
+  const w = px(box.cx);
+  const h = px(box.cy);
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        fill="#facc15"
+        fillOpacity={0.55}
+        stroke="#d97706"
+        strokeWidth={3}
+        vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
+      >
+        <animate
+          attributeName="fill-opacity"
+          from="0.55"
+          to="0"
+          dur="1.4s"
+          fill="freeze"
+        />
+        <animate
+          attributeName="stroke-opacity"
+          from="1"
+          to="0"
+          dur="1.4s"
+          fill="freeze"
+        />
+      </rect>
     </svg>
   );
 }

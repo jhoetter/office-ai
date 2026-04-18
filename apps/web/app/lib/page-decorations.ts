@@ -213,6 +213,20 @@ function buildDecorations(
     // base class; the chunk's first / last blocks pick up the
     // edge classes so CSS can round their corners and add the
     // sheet-of-paper drop shadow.
+    //
+    // Phase 1 of docx-fidelity-overhaul: each block also carries the
+    // chunk's geometry as inline CSS variables so a doc that mixes
+    // portrait and landscape (or different margin profiles) per
+    // section renders each page block at its OWN margins instead of
+    // the document's first-section margins. The wrapper width itself
+    // is still uniform (Phase 5 will introduce per-section sheets).
+    const marginLeftCssPx = chunk.geometry.pgMar.left / TWIPS_PER_CSS_PX;
+    const marginRightCssPx = chunk.geometry.pgMar.right / TWIPS_PER_CSS_PX;
+    const pageWidthCssPx = chunk.geometry.pgSz.w / TWIPS_PER_CSS_PX;
+    const blockStyle =
+      `--pm-page-margin-left:${marginLeftCssPx}px;` +
+      `--pm-page-margin-right:${marginRightCssPx}px;` +
+      `--pm-page-width:${pageWidthCssPx}px`;
     for (let b = chunk.startBlock; b < chunk.endBlock; b++) {
       const start = childPositions[b];
       if (start === undefined) continue;
@@ -224,12 +238,14 @@ function buildDecorations(
         Decoration.node(start, end, {
           class: classes.join(" "),
           "data-page-number": String(chunk.pageNumber),
+          "data-section-index": String(chunk.sectionIndex),
           // Stamped so the measurement pass in remeasureAndForce can
           // correlate a measured DOM rect back to its body index — PM
           // does not expose top-level child indices on `view.dom`'s
           // DOM children, and counting siblings is fragile because of
           // interleaved widget decorations (caps, edges).
           "data-block-index": String(b),
+          style: blockStyle,
         })
       );
     }
@@ -383,11 +399,28 @@ function renderPageEdge(
 }
 
 function renderHeaderZone(chunk: PageChunk, part: HeaderFooterPart | undefined): HTMLElement {
-  return renderZone("header", chunk, part);
+  const el = renderZone("header", chunk, part);
+  applyChunkGeometryStyle(el, chunk);
+  return el;
 }
 
 function renderFooterZone(chunk: PageChunk, part: HeaderFooterPart | undefined): HTMLElement {
-  return renderZone("footer", chunk, part);
+  const el = renderZone("footer", chunk, part);
+  applyChunkGeometryStyle(el, chunk);
+  return el;
+}
+
+/**
+ * Stamp a header/footer zone with the chunk's per-section margins so
+ * the zone's `padding-left` / `padding-right` (which read
+ * `--pm-page-margin-left` / `--pm-page-margin-right` in `globals.css`)
+ * align with the body block's margins for the same chunk.
+ */
+function applyChunkGeometryStyle(el: HTMLElement, chunk: PageChunk): void {
+  const left = chunk.geometry.pgMar.left / TWIPS_PER_CSS_PX;
+  const right = chunk.geometry.pgMar.right / TWIPS_PER_CSS_PX;
+  el.style.setProperty("--pm-page-margin-left", `${left}px`);
+  el.style.setProperty("--pm-page-margin-right", `${right}px`);
 }
 
 function renderZone(

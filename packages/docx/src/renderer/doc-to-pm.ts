@@ -3,6 +3,7 @@ import { docxSchema } from "./schema.js";
 import { classifyOpaqueTag, extractOpaqueText } from "../model/opaque-classification.js";
 import type {
   BlockNode,
+  BorderSide,
   DocxDocument,
   DocxSnapshot,
   Hyperlink,
@@ -16,10 +17,21 @@ import type {
   RunChild,
   RunProperties,
   Table,
+  TableBorders,
   TableCell,
   TableRow,
 } from "../model/types.js";
-import type { RenderableTable, RenderableTableCell, RenderableTableRow } from "./schema.js";
+import type {
+  RenderableTable,
+  RenderableTableBlock,
+  RenderableTableBorderSide,
+  RenderableTableBorders,
+  RenderableTableCell,
+  RenderableTableCellProps,
+  RenderableTableProps,
+  RenderableTableRow,
+  RenderableTableRun,
+} from "./schema.js";
 
 const IMAGE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -132,6 +144,13 @@ function blockToPM(block: BlockNode): PMNode | null {
       });
     case "opaque-block":
       return opaqueBlockToPM(block.id, block.raw, block.children);
+    case "wrapper-marker":
+      return docxSchema.nodes.wrapper_marker.create({
+        blockId: block.id,
+        wrapperId: block.wrapperId,
+        side: block.side,
+        tag: block.wrapperRaw.tag,
+      });
     default: {
       const _exhaustive: never = block;
       void _exhaustive;
@@ -423,6 +442,8 @@ function blockToWrapperBlock(
       const t = extractOpaqueText(block.raw);
       return { kind: "paragraph", text: t.length > 0 ? t : `[${block.raw.tag}]` };
     }
+    case "wrapper-marker":
+      return null;
     default: {
       const _exhaustive: never = block;
       void _exhaustive;
@@ -447,16 +468,71 @@ function runMarks(props: RunProperties): Mark[] {
 
 /**
  * Project a typed `Table` into the `RenderableTable` shape consumed by
- * the `table` node's `toDOM`. The renderer flattens cell paragraphs to
- * plain text on purpose: cells are read-only in this iteration, so the
- * extra fidelity (marks, runs, nested tables) would be wasted and would
- * complicate paragraph indexing in `transactionToCommands`.
+ * the `table` node's `toDOM`. Phase 2 of the docx-fidelity overhaul
+ * upgraded this projection from "plain text per cell" to a structural
+ * one that carries the typed run marks (bold, italic, color, font, …)
+ * plus per-cell shading / borders / vAlign and per-table border / layout
+ * / cell-margin metadata. Cells stay read-only — editability is Phase 6.
  *
- * Nested tables are surfaced by joining their cell text with " | " to
- * preserve some structural cue while keeping the projection flat.
+ * Nested tables are still flattened (rendering nested table chrome
+ * inside an atom node would double the read-only scope without much
+ * payoff today). They round-trip via `Table.raw` exactly like before.
  */
 function tableToRenderable(table: Table): RenderableTable {
-  return { rows: table.rows.map(rowToRenderable) };
+  const out: { -readonly [K in keyof RenderableTable]: RenderableTable[K] } = {
+    rows: table.rows.map(rowToRenderable),
+  };
+  const gridCols = table.grid
+    .map((g) => g.w ?? 0)
+    .filter((w): w is number => Number.isFinite(w));
+  if (gridCols.length > 0) out.gridCols = gridCols;
+  const props = tablePropsToRenderable(table);
+  if (props) out.props = props;
+  return out;
+}
+
+function tablePropsToRenderable(table: Table): RenderableTableProps | undefined {
+  const p = table.properties;
+  const out: { -readonly [K in keyof RenderableTableProps]: RenderableTableProps[K] } = {};
+  if (p.tblBorders) {
+    const b = bordersToRenderable(p.tblBorders);
+    if (b) out.borders = b;
+  }
+  if (p.tblCellMar) {
+    if (p.tblCellMar.top !== undefined) out.padTop = p.tblCellMar.top;
+    if (p.tblCellMar.right !== undefined) out.padRight = p.tblCellMar.right;
+    if (p.tblCellMar.bottom !== undefined) out.padBottom = p.tblCellMar.bottom;
+    if (p.tblCellMar.left !== undefined) out.padLeft = p.tblCellMar.left;
+  }
+  if (p.tblLayout) out.layout = p.tblLayout;
+  if (p.width) {
+    out.widthType = p.width.type;
+    if (p.width.type === "dxa") out.widthTw = p.width.value;
+    else if (p.width.type === "pct") out.widthPct = p.width.value;
+  }
+  if (p.jc) out.jc = p.jc;
+  if (p.tblInd && p.tblInd.type === "dxa") out.indentTw = p.tblInd.value;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function bordersToRenderable(b: TableBorders): RenderableTableBorders | undefined {
+  const out: { -readonly [K in keyof RenderableTableBorders]: RenderableTableBorders[K] } = {};
+  if (b.top) out.top = borderSideToRenderable(b.top);
+  if (b.left) out.left = borderSideToRenderable(b.left);
+  if (b.bottom) out.bottom = borderSideToRenderable(b.bottom);
+  if (b.right) out.right = borderSideToRenderable(b.right);
+  if (b.insideH) out.insideH = borderSideToRenderable(b.insideH);
+  if (b.insideV) out.insideV = borderSideToRenderable(b.insideV);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function borderSideToRenderable(s: BorderSide): RenderableTableBorderSide {
+  const out: { -readonly [K in keyof RenderableTableBorderSide]: RenderableTableBorderSide[K] } = {
+    style: s.style,
+  };
+  if (s.size !== undefined) out.size = s.size;
+  if (s.color !== undefined) out.color = s.color;
+  return out;
 }
 
 function rowToRenderable(row: TableRow): RenderableTableRow {
@@ -467,7 +543,7 @@ function rowToRenderable(row: TableRow): RenderableTableRow {
 }
 
 function cellToRenderable(cell: TableCell): RenderableTableCell {
-  return {
+  const out: { -readonly [K in keyof RenderableTableCell]: RenderableTableCell[K] } = {
     gridSpan: cell.properties.gridSpan ?? 1,
     vMerge: cell.properties.vMerge ?? null,
     blocks: cell.body.flatMap((block) => {
@@ -478,28 +554,118 @@ function cellToRenderable(cell: TableCell): RenderableTableCell {
         return [
           {
             kind: "paragraph" as const,
-            text: block.rows
-              .map((r) =>
-                r.cells.map((c) => c.body.map(extractBlockText).filter(Boolean).join(" ")).join(" | ")
-              )
-              .join("\n"),
-          },
+            runs: [
+              {
+                text: block.rows
+                  .map((r) =>
+                    r.cells
+                      .map((c) => c.body.map(extractBlockText).filter(Boolean).join(" "))
+                      .join(" | ")
+                  )
+                  .join("\n"),
+              },
+            ],
+          } satisfies RenderableTableBlock,
         ];
       }
       return [];
     }),
   };
+  const props = cellPropsToRenderable(cell);
+  if (props) out.props = props;
+  return out;
 }
 
-function paragraphToRenderable(
-  p: Paragraph
-): RenderableTable["rows"][number]["cells"][number]["blocks"][number] {
-  const out: { kind: "paragraph"; text: string; styleId?: string; alignment?: string } = {
+function cellPropsToRenderable(cell: TableCell): RenderableTableCellProps | undefined {
+  const p = cell.properties;
+  const out: { -readonly [K in keyof RenderableTableCellProps]: RenderableTableCellProps[K] } = {};
+  if (p.shd?.fill && p.shd.fill !== "auto") out.shadingFill = p.shd.fill;
+  if (p.tcBorders) {
+    const b = bordersToRenderable(p.tcBorders);
+    if (b) out.borders = b;
+  }
+  if (p.vAlign) out.vAlign = p.vAlign;
+  if (p.tcW && p.tcW.type === "dxa") out.widthTw = p.tcW.value;
+  if (p.tcMar) {
+    if (p.tcMar.top !== undefined) out.padTop = p.tcMar.top;
+    if (p.tcMar.right !== undefined) out.padRight = p.tcMar.right;
+    if (p.tcMar.bottom !== undefined) out.padBottom = p.tcMar.bottom;
+    if (p.tcMar.left !== undefined) out.padLeft = p.tcMar.left;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function paragraphToRenderable(p: Paragraph): RenderableTableBlock {
+  const out: { -readonly [K in keyof RenderableTableBlock]: RenderableTableBlock[K] } = {
     kind: "paragraph",
-    text: paragraphPlainText(p),
+    runs: collectRenderableRuns(p),
   };
   if (p.properties.styleId) out.styleId = p.properties.styleId;
   if (p.properties.alignment) out.alignment = p.properties.alignment;
+  return out;
+}
+
+/**
+ * Walk a paragraph's inline children and collect their visible text plus
+ * the typed run marks. Hyperlinks contribute their child runs (the
+ * hyperlink mark itself is dropped — table cells are read-only and we
+ * already render the underlying typography). Comment ranges, bookmarks,
+ * and other metadata-only carriers contribute nothing. Tabs become a
+ * literal `\t` so CSS `white-space: pre-wrap` renders them sensibly.
+ */
+function collectRenderableRuns(p: Paragraph): RenderableTableRun[] {
+  const runs: RenderableTableRun[] = [];
+  for (const child of p.children) {
+    appendRenderableRuns(child, runs);
+  }
+  return runs;
+}
+
+function appendRenderableRuns(node: InlineNode, out: RenderableTableRun[]): void {
+  switch (node.kind) {
+    case "run": {
+      const text = runPlainText(node);
+      if (text.length === 0) return;
+      out.push(runToRenderable(text, node.properties));
+      return;
+    }
+    case "hyperlink":
+      for (const child of node.children) appendRenderableRuns(child, out);
+      return;
+    case "revision":
+      // Show inserted text; suppress deleted text (matches what the main
+      // body renderer does for run-level revision marks: the typed
+      // `revision_mark` would carry display semantics, which we don't
+      // surface inside cells in this phase).
+      if (node.revisionType === "del") return;
+      for (const child of node.children) appendRenderableRuns(child, out);
+      return;
+    case "comment-range-start":
+    case "comment-range-end":
+    case "comment-reference":
+      return;
+    case "opaque-inline":
+      if (node.children && node.children.length > 0) {
+        for (const child of node.children) appendRenderableRuns(child, out);
+      }
+      return;
+    default: {
+      const _exhaustive: never = node;
+      void _exhaustive;
+    }
+  }
+}
+
+function runToRenderable(text: string, props: RunProperties): RenderableTableRun {
+  const out: { -readonly [K in keyof RenderableTableRun]: RenderableTableRun[K] } = { text };
+  if (props.bold) out.bold = true;
+  if (props.italic) out.italic = true;
+  if (props.underline !== undefined) out.underline = props.underline;
+  if (props.strike) out.strike = true;
+  if (props.fontFamily) out.fontFamily = props.fontFamily;
+  if (typeof props.fontSize === "number") out.fontSize = props.fontSize;
+  if (props.color) out.color = props.color;
+  if (props.highlight) out.highlight = props.highlight;
   return out;
 }
 

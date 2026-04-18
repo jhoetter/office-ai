@@ -64,7 +64,16 @@ describe("chunkIntoPages (P3.3 / W9)", () => {
     expect(pages[1].endBlock).toBe(3);
   });
 
-  it("ignores hint breaks when a measure function is provided", async () => {
+  it("ignores Word's <w:lastRenderedPageBreak/> hint when a measure function is provided", async () => {
+    // Word's `<w:lastRenderedPageBreak/>` is computed against Word's
+    // own font / line metrics. In the browser our metrics differ
+    // (font fallback, line-height, hyphenation), so trusting the hint
+    // produced large blank gaps where the chunker flushed earlier
+    // than our actually-measured content needed. Once measurement is
+    // available, measurement is the source of truth — the saved hint
+    // is only consulted on the no-measure code path used by Node-side
+    // tests and the very first render frame before the measurement
+    // pass settles.
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>
   <w:p><w:r><w:t xml:space="preserve">first</w:t></w:r></w:p>
@@ -72,10 +81,47 @@ describe("chunkIntoPages (P3.3 / W9)", () => {
   ${SECT_PR}
 </w:body></w:document>`;
     const snap = await snapshotFromXml(xml);
-    // Tiny per-block heights so nothing overflows; the hint must be ignored.
     const measure: Measure = () => 10;
     const pages = chunkIntoPages(snap, measure);
-    expect(pages).toHaveLength(1);
+    expect(pages.map((p) => p.pageNumber)).toEqual([1]);
+    expect(pages[0].endBlock).toBe(2);
+  });
+
+  it("honours <w:pageBreakBefore/> on a paragraph property like an explicit hard break (Phase 1)", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>
+  <w:p><w:r><w:t xml:space="preserve">first</w:t></w:r></w:p>
+  <w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t xml:space="preserve">forced second page</w:t></w:r></w:p>
+  ${SECT_PR}
+</w:body></w:document>`;
+    const snap = await snapshotFromXml(xml);
+    const pages = chunkIntoPages(snap);
+    expect(pages.map((p) => p.pageNumber)).toEqual([1, 2]);
+    expect(pages[0].endBlock).toBe(1);
+    expect(pages[1].startBlock).toBe(1);
+  });
+
+  it("keeps a `keepNext` paragraph together with the next block (Phase 1)", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>
+  <w:p><w:r><w:t xml:space="preserve">filler</w:t></w:r></w:p>
+  <w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t xml:space="preserve">heading</w:t></w:r></w:p>
+  <w:p><w:r><w:t xml:space="preserve">body</w:t></w:r></w:p>
+  ${SECT_PR}
+</w:body></w:document>`;
+    const snap = await snapshotFromXml(xml);
+    // Content area = 12960 twips. Make the filler 8000 twips, the
+    // heading 3000 twips, the body 3000 twips. Without keep-next the
+    // chunker would land filler+heading on page 1 (8000+3000 = 11000)
+    // and the body on page 2. With keep-next the chunker flushes
+    // BEFORE the heading so heading + body land together on page 2.
+    const heights = [8000, 3000, 3000];
+    const measure: Measure = (i) => heights[i] ?? 0;
+    const pages = chunkIntoPages(snap, measure);
+    expect(pages).toHaveLength(2);
+    expect(pages[0].endBlock).toBe(1); // filler only
+    expect(pages[1].startBlock).toBe(1); // heading + body
+    expect(pages[1].endBlock).toBe(3);
   });
 
   it("flushes a page when measured content overflows the section content height", async () => {

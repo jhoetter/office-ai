@@ -114,27 +114,7 @@ const nodes: Record<string, NodeSpec> = {
       if (!data || data.rows.length === 0) {
         return ["div", { class: "pm-table-placeholder", contenteditable: "false" }, "[table]"];
       }
-      const tbody: unknown[] = ["tbody"];
-      for (const row of data.rows) {
-        const tr: unknown[] = [
-          "tr",
-          { class: row.header ? "pm-table-row pm-table-header-row" : "pm-table-row" },
-        ];
-        for (const cell of row.cells) {
-          if (cell.vMerge === "continue") continue;
-          const cellAttrs: Record<string, string> = { class: "pm-table-cell" };
-          if (cell.gridSpan > 1) cellAttrs.colspan = String(cell.gridSpan);
-          const cellChildren: unknown[] = [];
-          for (const block of cell.blocks) {
-            const pAttrs: Record<string, string> = { class: "pm-table-cell-p" };
-            if (block.alignment) pAttrs.style = `text-align:${block.alignment}`;
-            cellChildren.push(["p", pAttrs, block.text]);
-          }
-          tr.push([row.header ? "th" : "td", cellAttrs, ...cellChildren]);
-        }
-        tbody.push(tr);
-      }
-      return ["table", { class: "pm-table", contenteditable: "false" }, tbody];
+      return renderTableDom(data) as import("prosemirror-model").DOMOutputSpec;
     },
   },
   opaque_block_wrapper: {
@@ -243,6 +223,43 @@ const nodes: Record<string, NodeSpec> = {
     attrs: { blockId: { default: null }, rawJson: { default: null } },
     toDOM() {
       return ["hr", { class: "pm-section-break", contenteditable: "false" }];
+    },
+  },
+  /**
+   * Invisible PM marker that mirrors a `WrapperMarker` body block (the
+   * begin / end brackets the parser inserts around a *lifted*
+   * content-wrapper carrier — `<w:sdt>`, `mc:AlternateContent`, …).
+   *
+   * - `atom: true` so PM does not let the user place a caret inside it
+   *   (the marker has no inner content; it is purely structural).
+   * - Renders as a zero-size `<span>` with `display:none` so it does
+   *   not contribute height to its enclosing page block — the page
+   *   chunker treats it the same way.
+   * - Carries `wrapperId` + `side` (`begin` | `end`) attrs so a future
+   *   command pipeline (typed editing inside SDT carriers) can locate
+   *   the bracketing markers without re-reading the snapshot.
+   */
+  wrapper_marker: {
+    group: "block",
+    atom: true,
+    attrs: {
+      blockId: { default: null },
+      wrapperId: { default: null },
+      side: { default: "begin" },
+      tag: { default: null },
+    },
+    toDOM(node) {
+      return [
+        "span",
+        {
+          class: "pm-wrapper-marker",
+          contenteditable: "false",
+          "data-wrapper-id": String(node.attrs.wrapperId ?? ""),
+          "data-wrapper-side": String(node.attrs.side ?? ""),
+          "data-tag": String(node.attrs.tag ?? ""),
+          style: "display:none",
+        },
+      ];
     },
   },
   text: { group: "inline" },
@@ -401,17 +418,74 @@ const marks: Record<string, MarkSpec> = {
   },
 };
 
+/**
+ * Lightweight projection of a `<w:r>` for renderable table cells. Phase 2
+ * keeps cells read-only but preserves typed runs (text + the marks the
+ * editor already understands) so cell paragraphs render with bold,
+ * italic, color, highlight, font, etc. instead of being flattened to
+ * plain text.
+ *
+ * The shape is deliberately structural — only fields the renderer needs
+ * to paint Word-flavoured tables. The full typed `Run` lives on the
+ * snapshot for round-trip; the renderer doesn't need it.
+ */
+export interface RenderableTableRun {
+  readonly text: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean | string;
+  readonly strike?: boolean;
+  readonly fontFamily?: string;
+  /** Half-points (Word units). 22 = 11pt. */
+  readonly fontSize?: number;
+  /** Hex RGB without leading `#`. */
+  readonly color?: string;
+  /** OOXML highlight enum value (yellow, green, …). */
+  readonly highlight?: string;
+}
+
 export interface RenderableTableBlock {
   readonly kind: "paragraph";
-  readonly text: string;
+  readonly runs: ReadonlyArray<RenderableTableRun>;
   readonly styleId?: string;
   readonly alignment?: string;
+}
+
+export interface RenderableTableBorderSide {
+  readonly style: string;
+  /** OOXML `w:sz` units (eighths of a point). */
+  readonly size?: number;
+  readonly color?: string;
+}
+
+export interface RenderableTableBorders {
+  readonly top?: RenderableTableBorderSide;
+  readonly left?: RenderableTableBorderSide;
+  readonly bottom?: RenderableTableBorderSide;
+  readonly right?: RenderableTableBorderSide;
+  readonly insideH?: RenderableTableBorderSide;
+  readonly insideV?: RenderableTableBorderSide;
+}
+
+export interface RenderableTableCellProps {
+  /** Hex RGB cell shading fill (no leading `#`). `auto` → undefined. */
+  readonly shadingFill?: string;
+  readonly borders?: RenderableTableBorders;
+  readonly vAlign?: "top" | "center" | "bottom";
+  /** Twips. */
+  readonly widthTw?: number;
+  /** Per-side cell padding overrides, twips. */
+  readonly padTop?: number;
+  readonly padRight?: number;
+  readonly padBottom?: number;
+  readonly padLeft?: number;
 }
 
 export interface RenderableTableCell {
   readonly gridSpan: number;
   readonly vMerge: "restart" | "continue" | null;
   readonly blocks: ReadonlyArray<RenderableTableBlock>;
+  readonly props?: RenderableTableCellProps;
 }
 
 export interface RenderableTableRow {
@@ -419,8 +493,29 @@ export interface RenderableTableRow {
   readonly cells: ReadonlyArray<RenderableTableCell>;
 }
 
+export interface RenderableTableProps {
+  readonly borders?: RenderableTableBorders;
+  /** Default cell padding in twips (`<w:tblCellMar>`). */
+  readonly padTop?: number;
+  readonly padRight?: number;
+  readonly padBottom?: number;
+  readonly padLeft?: number;
+  readonly layout?: "auto" | "fixed";
+  /** Table width in twips when `widthType` is `"dxa"`. */
+  readonly widthTw?: number;
+  /** Table width as 50ths of a percent when `widthType` is `"pct"`. */
+  readonly widthPct?: number;
+  readonly widthType?: "auto" | "dxa" | "pct" | "nil";
+  readonly jc?: "left" | "center" | "right" | "start" | "end";
+  /** Table indent in twips (positive = inset from left margin). */
+  readonly indentTw?: number;
+}
+
 export interface RenderableTable {
   readonly rows: ReadonlyArray<RenderableTableRow>;
+  /** Per-column widths in twips. Drives `<colgroup>`. */
+  readonly gridCols?: ReadonlyArray<number>;
+  readonly props?: RenderableTableProps;
 }
 
 export interface WrapperContentBlock {
@@ -470,6 +565,258 @@ function parseTableJson(value: unknown): RenderableTable | null {
   } catch {
     return null;
   }
+}
+
+/* ── Phase 2 table rendering helpers ─────────────────────────────────────── */
+
+const TWIPS_PER_INCH = 1440;
+
+function twipsToInches(tw: number): number {
+  return tw / TWIPS_PER_INCH;
+}
+
+function eighthPtToPx(sz: number): number {
+  // OOXML `w:sz` on a border is eighths of a point. Convert to CSS px
+  // assuming the standard 96 DPI / 72 pt-per-inch ratio so the rendered
+  // border is visually close to Word.
+  return Math.max(0.5, (sz / 8) * (96 / 72));
+}
+
+function isMeaningfulBorderStyle(style: string | undefined): boolean {
+  if (!style) return false;
+  const v = style.toLowerCase();
+  return v !== "nil" && v !== "none";
+}
+
+function borderStyleToCss(style: string): string {
+  // OOXML border styles are richer than CSS; map the common ones.
+  switch (style.toLowerCase()) {
+    case "single":
+      return "solid";
+    case "double":
+      return "double";
+    case "dashed":
+    case "dashsmallgap":
+    case "dashedheavy":
+      return "dashed";
+    case "dotted":
+    case "dottedheavy":
+      return "dotted";
+    case "thick":
+    case "thickthinsmallgap":
+      return "solid";
+    default:
+      return "solid";
+  }
+}
+
+function borderSideCss(side: RenderableTableBorderSide | undefined): string | null {
+  if (!side || !isMeaningfulBorderStyle(side.style)) return null;
+  const widthPx = side.size !== undefined ? eighthPtToPx(side.size) : 1;
+  const color = side.color && side.color !== "auto" ? `#${side.color}` : "currentColor";
+  return `${widthPx.toFixed(2)}px ${borderStyleToCss(side.style)} ${color}`;
+}
+
+function isHexColor(value: string | undefined): value is string {
+  if (!value) return false;
+  if (value === "auto") return false;
+  return /^[0-9A-Fa-f]{6}$/.test(value);
+}
+
+function tableCellPaddingStyle(
+  cell: RenderableTableCell,
+  table: RenderableTable
+): { padding: string } | null {
+  const tableProps = table.props;
+  const cellProps = cell.props;
+  const top = cellProps?.padTop ?? tableProps?.padTop;
+  const right = cellProps?.padRight ?? tableProps?.padRight;
+  const bottom = cellProps?.padBottom ?? tableProps?.padBottom;
+  const left = cellProps?.padLeft ?? tableProps?.padLeft;
+  if (top === undefined && right === undefined && bottom === undefined && left === undefined) {
+    return null;
+  }
+  const t = top !== undefined ? `${twipsToInches(top).toFixed(3)}in` : "0";
+  const r = right !== undefined ? `${twipsToInches(right).toFixed(3)}in` : "0";
+  const b = bottom !== undefined ? `${twipsToInches(bottom).toFixed(3)}in` : "0";
+  const l = left !== undefined ? `${twipsToInches(left).toFixed(3)}in` : "0";
+  return { padding: `${t} ${r} ${b} ${l}` };
+}
+
+function tableStyleString(table: RenderableTable): string {
+  const parts: string[] = [];
+  const props = table.props;
+  if (props?.widthType === "dxa" && props.widthTw !== undefined && props.widthTw > 0) {
+    parts.push(`width: ${twipsToInches(props.widthTw).toFixed(3)}in`);
+  } else if (props?.widthType === "pct" && props.widthPct !== undefined) {
+    // OOXML pct unit is 50ths of a percent.
+    const pct = props.widthPct / 50;
+    parts.push(`width: ${pct}%`);
+  } else if (props?.widthType === "auto") {
+    parts.push("width: auto");
+  }
+  if (props?.layout === "fixed") parts.push("table-layout: fixed");
+  if (props?.indentTw !== undefined && props.indentTw > 0) {
+    parts.push(`margin-left: ${twipsToInches(props.indentTw).toFixed(3)}in`);
+  }
+  if (props?.jc === "center") parts.push("margin-left: auto; margin-right: auto");
+  else if (props?.jc === "right" || props?.jc === "end") parts.push("margin-left: auto; margin-right: 0");
+
+  const borders = props?.borders;
+  if (borders) {
+    const top = borderSideCss(borders.top);
+    const right = borderSideCss(borders.right);
+    const bottom = borderSideCss(borders.bottom);
+    const left = borderSideCss(borders.left);
+    if (top) parts.push(`border-top: ${top}`);
+    if (right) parts.push(`border-right: ${right}`);
+    if (bottom) parts.push(`border-bottom: ${bottom}`);
+    if (left) parts.push(`border-left: ${left}`);
+  }
+  return parts.join("; ");
+}
+
+function cellStyleString(
+  cell: RenderableTableCell,
+  table: RenderableTable,
+  rowIndex: number,
+  rowCount: number,
+  cellIndex: number,
+  visibleCellCount: number,
+  colSpan: number
+): string {
+  const parts: string[] = [];
+  const props = cell.props;
+  const tableProps = table.props;
+
+  if (props?.vAlign) parts.push(`vertical-align: ${props.vAlign}`);
+  if (isHexColor(props?.shadingFill)) parts.push(`background-color: #${props.shadingFill}`);
+
+  // Cell border resolution: per-cell `tcBorders` wins; otherwise fall
+  // back to the table's `tblBorders` (top/left/bottom/right for the
+  // table edges, insideH/insideV for the interior). This mirrors
+  // Word's resolution order.
+  const isFirstRow = rowIndex === 0;
+  const isLastRow = rowIndex === rowCount - 1;
+  const isFirstCol = cellIndex === 0;
+  const isLastCol = cellIndex === visibleCellCount - 1;
+
+  const cellBorders = props?.borders;
+  const tblBorders = tableProps?.borders;
+
+  const pickSide = (
+    cellSide: RenderableTableBorderSide | undefined,
+    edgeSide: RenderableTableBorderSide | undefined,
+    insideSide: RenderableTableBorderSide | undefined,
+    isEdge: boolean
+  ): string | null => {
+    if (cellSide) return borderSideCss(cellSide);
+    return borderSideCss(isEdge ? edgeSide : insideSide);
+  };
+
+  const top = pickSide(cellBorders?.top, tblBorders?.top, tblBorders?.insideH, isFirstRow);
+  const right = pickSide(cellBorders?.right, tblBorders?.right, tblBorders?.insideV, isLastCol);
+  const bottom = pickSide(cellBorders?.bottom, tblBorders?.bottom, tblBorders?.insideH, isLastRow);
+  const left = pickSide(cellBorders?.left, tblBorders?.left, tblBorders?.insideV, isFirstCol);
+
+  if (top) parts.push(`border-top: ${top}`);
+  if (right) parts.push(`border-right: ${right}`);
+  if (bottom) parts.push(`border-bottom: ${bottom}`);
+  if (left) parts.push(`border-left: ${left}`);
+
+  const padding = tableCellPaddingStyle(cell, table);
+  if (padding) parts.push(`padding: ${padding.padding}`);
+
+  // Colspan-aware width hint when grid columns are known and cell width
+  // is implicit. For the explicit `<w:tcW>` case we let the column
+  // group drive the layout instead so we don't double-constrain.
+  void colSpan;
+
+  return parts.join("; ");
+}
+
+function runToDom(run: RenderableTableRun): unknown {
+  const styleParts: string[] = [];
+  if (run.fontFamily) styleParts.push(`font-family: ${run.fontFamily}`);
+  if (run.fontSize !== undefined) styleParts.push(`font-size: ${run.fontSize / 2}pt`);
+  if (run.color && run.color !== "auto") styleParts.push(`color: #${run.color}`);
+
+  let node: unknown = run.text;
+  // Wrap inside-out so the outermost element is the most specific
+  // (matches the order used by `pm-to-doc` reverse mapping for runs).
+  if (run.bold) node = ["strong", {}, node];
+  if (run.italic) node = ["em", {}, node];
+  if (run.underline) node = ["u", {}, node];
+  if (run.strike) node = ["s", {}, node];
+
+  const attrs: Record<string, string> = { class: "pm-table-run" };
+  if (styleParts.length > 0) attrs.style = styleParts.join("; ");
+  if (run.highlight) attrs["data-highlight"] = run.highlight;
+  return ["span", attrs, node];
+}
+
+function paragraphToDom(block: RenderableTableBlock): unknown {
+  const tag = paragraphHtmlTag(block.styleId ?? "");
+  const attrs: Record<string, string> = { class: "pm-table-cell-p" };
+  if (block.alignment) attrs.style = `text-align: ${block.alignment}`;
+  if (block.styleId) attrs["data-style"] = block.styleId;
+  // Render each run as its own inline span so marks survive; if the
+  // block has no runs at all, emit an empty paragraph (still valid
+  // HTML and Word does the same for empty cells).
+  if (block.runs.length === 0) return [tag, attrs];
+  const children: unknown[] = block.runs.map(runToDom);
+  return [tag, attrs, ...children];
+}
+
+function renderTableDom(data: RenderableTable): unknown {
+  const tableAttrs: Record<string, string> = {
+    class: "pm-table",
+    contenteditable: "false",
+  };
+  const tableStyle = tableStyleString(data);
+  if (tableStyle.length > 0) tableAttrs.style = tableStyle;
+
+  const children: unknown[] = [];
+
+  if (data.gridCols && data.gridCols.length > 0) {
+    const colgroup: unknown[] = ["colgroup"];
+    for (const w of data.gridCols) {
+      if (w > 0) {
+        colgroup.push(["col", { style: `width: ${twipsToInches(w).toFixed(3)}in` }]);
+      } else {
+        colgroup.push(["col", {}]);
+      }
+    }
+    children.push(colgroup);
+  }
+
+  const tbody: unknown[] = ["tbody"];
+  const rowCount = data.rows.length;
+  for (let r = 0; r < rowCount; r++) {
+    const row = data.rows[r];
+    const tr: unknown[] = [
+      "tr",
+      { class: row.header ? "pm-table-row pm-table-header-row" : "pm-table-row" },
+    ];
+    const visibleCells = row.cells.filter((c) => c.vMerge !== "continue");
+    let visibleIndex = 0;
+    for (let c = 0; c < row.cells.length; c++) {
+      const cell = row.cells[c];
+      if (cell.vMerge === "continue") continue;
+      const colSpan = cell.gridSpan;
+      const cellAttrs: Record<string, string> = { class: "pm-table-cell" };
+      if (colSpan > 1) cellAttrs.colspan = String(colSpan);
+      const style = cellStyleString(cell, data, r, rowCount, visibleIndex, visibleCells.length, colSpan);
+      if (style.length > 0) cellAttrs.style = style;
+      const cellChildren: unknown[] = cell.blocks.map(paragraphToDom);
+      tr.push([row.header ? "th" : "td", cellAttrs, ...cellChildren]);
+      visibleIndex++;
+    }
+    tbody.push(tr);
+  }
+  children.push(tbody);
+
+  return ["table", tableAttrs, ...children];
 }
 
 export const docxSchema = new Schema({ nodes, marks });

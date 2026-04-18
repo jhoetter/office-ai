@@ -278,7 +278,51 @@ export interface Relationship {
 
 /* ── Block-level ─────────────────────────────────────────────────────────── */
 
-export type BlockNode = Paragraph | Table | SectionBreak | OpaqueBlock;
+export type BlockNode = Paragraph | Table | SectionBreak | OpaqueBlock | WrapperMarker;
+
+/**
+ * Body-level marker that brackets a *lifted* content-wrapper carrier
+ * (`<w:sdt>`, `mc:AlternateContent`, `<w:fldSimple>`, `<w:smartTag>`,
+ * `<w:customXml>`) whose `<w:sdtContent>` (etc.) used to nest body
+ * blocks. The parser splits such carriers into
+ *   `[ wrapper-begin, ...inner blocks, wrapper-end ]`
+ * so the renderer + page chunker can flow the inner paragraphs as
+ * regular body content (they paginate, they pick up per-section
+ * geometry, they no longer get orphaned on a page of their own
+ * because the wrapper used to be one giant atom).
+ *
+ * Round-trip safety: when the body is *not* dirty, the serializer
+ * still emits the original `word/document.xml` bytes verbatim, so the
+ * SDT envelope is preserved byte-for-byte. When the body is dirty,
+ * the serializer walks `body`, re-emits the wrapper envelope from
+ * `wrapperRaw` at every `wrapper-begin`, serializes the bracketed
+ * inner blocks back into the wrapper's content slot, and closes the
+ * envelope at the matching `wrapper-end`.
+ */
+export interface WrapperMarker {
+  readonly kind: "wrapper-marker";
+  readonly id: NodeId;
+  /** "begin" opens the envelope; "end" closes it. */
+  readonly side: "begin" | "end";
+  /**
+   * Stable id shared by the begin / end pair. Same `wrapperId` for
+   * both ends so the serializer can pair them up even when other
+   * markers nest in between (rare, but possible — e.g. an SDT inside
+   * an SDT).
+   */
+  readonly wrapperId: string;
+  /**
+   * The carrier's full XML subtree as captured by the parser. The
+   * serializer uses this to rebuild the envelope (carrier tag +
+   * properties + content shell) verbatim, replacing only the
+   * inner-blocks slot with the freshly serialized content.
+   *
+   * Both ends carry the SAME `wrapperRaw` (it describes the whole
+   * carrier) so a partial body slice that contains the begin marker
+   * but not the end one is still self-describing.
+   */
+  readonly wrapperRaw: OpaqueXml;
+}
 
 export interface Paragraph {
   readonly kind: "paragraph";
@@ -303,6 +347,27 @@ export interface ParagraphProperties {
     readonly lineRule?: "auto" | "exact" | "atLeast";
   };
   readonly numbering?: { readonly numId: number; readonly ilvl: number };
+  /**
+   * Pagination control flags (Phase 1 of docx-fidelity-overhaul).
+   *
+   * These are parsed into typed booleans so the page chunker can split
+   * the body into Word-flavoured pages without re-walking opaqueProps.
+   * The serializer continues to emit the original `<w:keepNext/>` /
+   * `<w:keepLines/>` / `<w:pageBreakBefore/>` / `<w:widowControl/>`
+   * elements through `opaqueProps` (each typed value is **also** kept
+   * in `opaqueProps` so byte-for-byte round-trip is unaffected).
+   *
+   * `keepNext` — paragraph stays on the same page as the next block.
+   * `keepLines` — all lines of this paragraph stay on the same page.
+   * `pageBreakBefore` — Word forces a page break before this paragraph.
+   * `widowControl` — when `false`, Word may leave a single-line widow
+   *   at the page top/bottom; when `true` (or absent), Word avoids it.
+   *   The XML uses `<w:widowControl/>` (true) or `<w:widowControl w:val="0"/>` (false).
+   */
+  readonly keepNext?: boolean;
+  readonly keepLines?: boolean;
+  readonly pageBreakBefore?: boolean;
+  readonly widowControl?: boolean;
   /** XML children of <w:pPr> we don't model explicitly. */
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
@@ -366,11 +431,70 @@ export interface TableWidth {
  * round-trip stays lossless. Order is the OOXML canonical order on emit
  * (`tblPr` is order-sensitive in the schema; we keep typed fields first then
  * append opaque children in their original document order).
+ *
+ * Phase 2 of docx-fidelity-overhaul adds typed projections of
+ * `<w:tblBorders>`, `<w:tblCellMar>`, `<w:tblLayout>`, `<w:tblInd>` so
+ * the renderer can paint Word-flavoured tables (border colors, cell
+ * padding, fixed/auto layout). Parser keeps each new element in
+ * `opaqueProps` as well so the serializer round-trip is unaffected.
  */
 export interface TableProperties {
   readonly width?: TableWidth;
   readonly jc?: "left" | "center" | "right" | "start" | "end";
+  readonly tblBorders?: TableBorders;
+  /** `<w:tblCellMar>` — default cell padding (twips). */
+  readonly tblCellMar?: BoxSides;
+  /** `<w:tblLayout w:type="…"/>` — `auto` (default) or `fixed`. */
+  readonly tblLayout?: "auto" | "fixed";
+  /** `<w:tblInd w:w="…"/>` — table indent in twips (positive = right of left margin). */
+  readonly tblInd?: TableWidth;
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+/**
+ * One border side. `<w:top val="single" sz="4" color="000000"/>` becomes
+ * `{ style: "single", size: 4, color: "000000" }`. `style` may be the
+ * OOXML "nil" or "none" markers, in which case the renderer omits the
+ * border entirely.
+ */
+export interface BorderSide {
+  readonly style: string;
+  /** Size in eighths of a point (`w:sz` units). */
+  readonly size?: number;
+  /** Hex RGB color (no leading `#`), or `"auto"` for theme default. */
+  readonly color?: string;
+  /** Padding between border and content, in points. */
+  readonly space?: number;
+}
+
+/** Modeled subset of `<w:tblBorders>` (and `<w:tcBorders>`). */
+export interface TableBorders {
+  readonly top?: BorderSide;
+  readonly left?: BorderSide;
+  readonly bottom?: BorderSide;
+  readonly right?: BorderSide;
+  readonly insideH?: BorderSide;
+  readonly insideV?: BorderSide;
+}
+
+/** Per-side spacing in twips. Used for cell padding (`<w:tcMar>`/`<w:tblCellMar>`). */
+export interface BoxSides {
+  readonly top?: Twips;
+  readonly left?: Twips;
+  readonly bottom?: Twips;
+  readonly right?: Twips;
+}
+
+/**
+ * Modeled subset of `<w:shd>`. `fill` is the background color (hex RGB);
+ * `color` is the foreground/pattern color; `pattern` is the OOXML
+ * `w:val` (e.g. `clear`, `pct25`, `solid`). The renderer only honours
+ * `fill` for now; `pattern` round-trips through the raw cache.
+ */
+export interface Shading {
+  readonly fill?: string;
+  readonly color?: string;
+  readonly pattern?: string;
 }
 
 /** Modeled subset of `<w:trPr>`. */
@@ -390,6 +514,14 @@ export interface TableCellProperties {
   readonly vMerge?: "restart" | "continue";
   /** `<w:tcW>` cell width. */
   readonly tcW?: TableWidth;
+  /** `<w:shd>` cell shading (background fill, pattern). */
+  readonly shd?: Shading;
+  /** `<w:tcBorders>` — per-cell border overrides. */
+  readonly tcBorders?: TableBorders;
+  /** `<w:vAlign w:val="…"/>` — vertical alignment of cell content. */
+  readonly vAlign?: "top" | "center" | "bottom";
+  /** `<w:tcMar>` — per-cell padding overrides (twips). */
+  readonly tcMar?: BoxSides;
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 

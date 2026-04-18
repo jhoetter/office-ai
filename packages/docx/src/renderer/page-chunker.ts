@@ -37,7 +37,11 @@ import type {
  *        the last save. We honor them only when the caller did not
  *        provide a `measure` function — they're a cheap heuristic for
  *        Node-side tests and the initial render before measurement
- *        completes.
+ *        completes. Once measurement is available we IGNORE hints,
+ *        because Word's saved positions assume Word's own font / line
+ *        metrics and trusting them in the browser produced large
+ *        whitespace gaps where the chunker flushed earlier than our
+ *        actually-measured content needed.
  *      - **Measured breaks** — when `measure(blockIndex)` is
  *        provided, the chunker tracks accumulated content height and
  *        flushes the current page when the next block would overflow
@@ -124,9 +128,35 @@ export function chunkIntoPages(snapshot: DocxSnapshot, measure?: Measure): Reado
       accumulated = 0;
     };
 
-    for (const blockIndex of section.blocks) {
+    // Phase 1 of docx-fidelity-overhaul (pagination fidelity):
+    //   - `<w:pageBreakBefore/>` on a paragraph property forces a page
+    //     break ahead of that paragraph, just like a `<w:br
+    //     w:type="page"/>`.
+    //   - When measuring, a `keepNext` paragraph keeps its successor on
+    //     the same page (we don't flush between the keep-next paragraph
+    //     and the next block; if both together overflow, we flush
+    //     before the keep-next pair).
+    //
+    // Word's `<w:lastRenderedPageBreak/>` hint is honoured ONLY in the
+    // no-measure code path. The hint is computed from Word's own line
+    // metrics and is invariably stale once the doc renders inside the
+    // browser (different fonts, line heights, hyphenation). Honouring
+    // it under measurement caused pages to flush long before our
+    // content actually filled the page, leaving large blank gaps. The
+    // measurement pass is the source of truth — let it decide where to
+    // break, and treat the saved hint as a fallback only for the
+    // initial render before the first measurement frame settles.
+    //
+    // Table-row splitting (a single tall table spilling across pages)
+    // is intentionally deferred to Phase 6 of the overhaul: tables are
+    // currently atom PM nodes, so the chunker cannot reliably address
+    // a sub-row position. Until Phase 6 makes tables non-atom, a tall
+    // table is flushed as a single block; the measured-overflow path
+    // already pushes it onto its own page when it doesn't fit.
+    for (let i = 0; i < section.blocks.length; i++) {
+      const blockIndex = section.blocks[i];
       const block = body[blockIndex];
-      const breakSignal = classifyBreakSignal(block, measure !== undefined);
+      const breakSignal = classifyBreakSignal(block);
 
       if (breakSignal === "hard-before" && currentBlocks.length > 0) {
         flush();
@@ -134,7 +164,12 @@ export function chunkIntoPages(snapshot: DocxSnapshot, measure?: Measure): Reado
 
       if (measure) {
         const h = measure(blockIndex);
-        if (currentBlocks.length > 0 && accumulated + h > contentHeightTwips) {
+        // Keep-next: tentatively include this block + the next one on
+        // the same page. If both together overflow, flush BEFORE this
+        // pair so they land together.
+        const next = section.blocks[i + 1];
+        const nextH = next !== undefined && shouldKeepWithNext(block) ? measure(next) : 0;
+        if (currentBlocks.length > 0 && accumulated + h + nextH > contentHeightTwips) {
           flush();
         }
         accumulated += h;
@@ -259,15 +294,63 @@ export function documentPageGeometry(snapshot: DocxSnapshot): PageGeometry {
   return DEFAULT_GEOMETRY;
 }
 
+/**
+ * Return the WIDEST page geometry across every section in the document
+ * (Phase 1 of docx-fidelity-overhaul).
+ *
+ * Used by the React shell to size the editor wrapper so a doc that
+ * mixes portrait and landscape sections has enough horizontal room for
+ * the wider section. Per-section geometry switching (a properly
+ * separate "sheet of paper" per section) is Phase 5; until then the
+ * wrapper picks the max so landscape content never clips. When the
+ * body has no section break, falls back to the US-Letter default.
+ */
+export function documentMaxPageGeometry(snapshot: DocxSnapshot): PageGeometry {
+  let widest: PageGeometry | null = null;
+  for (const block of snapshot.root.body) {
+    if (block.kind !== "section-break") continue;
+    const g = geometryFromSection(block);
+    if (widest === null || g.pgSz.w > widest.pgSz.w) widest = g;
+  }
+  return widest ?? DEFAULT_GEOMETRY;
+}
+
 type BreakSignal = "none" | "hard-before" | "hint";
 
-function classifyBreakSignal(block: BlockNode, measureProvided: boolean): BreakSignal {
+function classifyBreakSignal(block: BlockNode): BreakSignal {
   if (block.kind !== "paragraph") return "none";
+  // Phase 1: typed paragraph property `pageBreakBefore` is treated like
+  // an explicit `<w:br w:type="page"/>` — both force a page break ahead
+  // of the paragraph.
+  if (block.properties.pageBreakBefore === true) return "hard-before";
   for (const child of paragraphRunChildren(block)) {
     if (child.kind === "page-break") return "hard-before";
-    if (!measureProvided && child.kind === "last-rendered-page-break") return "hint";
+    if (child.kind === "last-rendered-page-break") return "hint";
   }
   return "none";
+}
+
+/**
+ * Wrapper markers are zero-height envelope brackets emitted by the
+ * parser around lifted SDT / mc:AlternateContent / etc. carriers (see
+ * `WrapperMarker`). They do not occupy vertical space, do not carry
+ * page-break signals, and must never trigger a flush by themselves —
+ * they exist solely so the serializer can rebuild the wrapper
+ * envelope on a body-dirty round-trip. The chunker and the page
+ * decoration plugin treat them as transparent to pagination logic.
+ */
+
+/**
+ * `keepNext` on the current paragraph (or `keepLines` on a table row,
+ * for now approximated by `keepNext`) tells the chunker not to break
+ * between this block and the immediately following one. The chunker
+ * uses this to flush BEFORE the pair when the pair would together
+ * overflow the page, so they stay together on the next page instead of
+ * being orphaned across the boundary.
+ */
+function shouldKeepWithNext(block: BlockNode): boolean {
+  if (block.kind === "paragraph") return block.properties.keepNext === true;
+  return false;
 }
 
 function* paragraphRunChildren(p: Paragraph): IterableIterator<RunChild> {

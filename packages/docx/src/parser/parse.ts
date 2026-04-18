@@ -19,6 +19,7 @@ import type {
   RunChild,
   RunProperties,
   SectionBreak,
+  WrapperMarker,
 } from "../model/types.js";
 import { DocxParseError } from "./errors.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
@@ -215,10 +216,122 @@ function parseBody(bodyEntry: Record<string, unknown>, mintNodeId: IdMinter): Bl
         out.push(parseSectionBreak(entry, mintNodeId));
         break;
       default:
-        out.push(parseOpaqueBlock(entry, mintNodeId));
+        appendOpaqueOrLifted(entry, mintNodeId, out);
         break;
     }
   }
+  return out;
+}
+
+/**
+ * Body-level entry point for non-paragraph / non-table / non-sectPr
+ * elements (`<w:sdt>`, `mc:AlternateContent`, `<w:fldSimple>`,
+ * `<w:smartTag>`, `<w:customXml>`).
+ *
+ * For carriers we know how to crack open (`blockContentSlot` returns
+ * a non-null slot), AND that crack open to typed body blocks
+ * (paragraphs, tables, section breaks), we LIFT the inner blocks into
+ * `body` directly, bracketed by `wrapper-marker` blocks so the
+ * serializer can rebuild the carrier's envelope on a body-dirty
+ * round-trip.
+ *
+ * This is what fixes the "TOC sits on its own page even though the
+ * heading is short" symptom: the SDT used to be one giant atom, now
+ * it's a sequence of regular body blocks the page chunker can flow
+ * across pages.
+ */
+function appendOpaqueOrLifted(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter,
+  out: BlockNode[]
+): void {
+  const lifted = liftOpaqueBlock(entry, mintNodeId);
+  if (lifted) {
+    for (const block of lifted) out.push(block);
+    return;
+  }
+  out.push(parseOpaqueBlock(entry, mintNodeId));
+}
+
+let WRAPPER_ID_COUNTER = 0;
+function nextWrapperId(): string {
+  WRAPPER_ID_COUNTER += 1;
+  return `wrap-${WRAPPER_ID_COUNTER}`;
+}
+
+/**
+ * Try to lift a body-level content-wrapper carrier. Returns `null`
+ * when the entry is not a known wrapper or its content slot does not
+ * contain typed body blocks (in which case the caller falls back to
+ * the legacy `parseOpaqueBlock` path that produces a single atom).
+ *
+ * Returns a flat list `[ wrapper-begin, ...inner blocks, wrapper-end ]`
+ * when the lift succeeds.
+ */
+function liftOpaqueBlock(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter
+): BlockNode[] | null {
+  const slot = blockContentSlot(entry);
+  if (slot === null || slot.length === 0) return null;
+  // Only lift when the slot contains at least one typed body block.
+  // Pure-metadata slots (e.g. an `<w:sdt>` whose content is just a
+  // single `<w:r>` with a field result) are still better rendered as
+  // a chip rather than re-flowed into body.
+  let hasTypedBlock = false;
+  for (const child of slot) {
+    const childTag = ooxml.getTag(child);
+    if (childTag === "w:p" || childTag === "w:tbl" || childTag === "w:sectPr") {
+      hasTypedBlock = true;
+      break;
+    }
+  }
+  if (!hasTypedBlock) return null;
+
+  const wrapperRaw = captureOpaque(entry);
+  const wrapperId = nextWrapperId();
+
+  const out: BlockNode[] = [];
+  const begin: WrapperMarker = {
+    kind: "wrapper-marker",
+    id: mintNodeId(),
+    side: "begin",
+    wrapperId,
+    wrapperRaw,
+  };
+  out.push(begin);
+  for (const child of slot) {
+    const childTag = ooxml.getTag(child);
+    switch (childTag) {
+      case "w:p":
+        out.push(parseParagraph(child, mintNodeId));
+        break;
+      case "w:tbl":
+        out.push(parseTableTyped(child, mintNodeId, parseParagraph));
+        break;
+      case "w:sectPr":
+        out.push(parseSectionBreak(child, mintNodeId));
+        break;
+      default: {
+        // Nested wrapper — recurse so SDTs inside SDTs also lift.
+        const nested = liftOpaqueBlock(child, mintNodeId);
+        if (nested) {
+          for (const n of nested) out.push(n);
+        } else {
+          out.push(parseOpaqueBlock(child, mintNodeId));
+        }
+        break;
+      }
+    }
+  }
+  const end: WrapperMarker = {
+    kind: "wrapper-marker",
+    id: mintNodeId(),
+    side: "end",
+    wrapperId,
+    wrapperRaw,
+  };
+  out.push(end);
   return out;
 }
 
@@ -403,6 +516,32 @@ export function parseParagraphProperties(entry: Record<string, unknown>): Paragr
         const numId = numIdEl ? Number(attrOf(numIdEl, "w:val") ?? "0") : 0;
         const ilvl = ilvlEl ? Number(attrOf(ilvlEl, "w:val") ?? "0") : 0;
         props.numbering = { numId, ilvl };
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:keepNext": {
+        // Pagination flag: stay on same page as next block. The
+        // element is a typed projection only — we keep the original
+        // entry in opaqueProps so the serializer's existing emit path
+        // re-emits it byte-identical.
+        props.keepNext = ooxmlBoolFlag(c);
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:keepLines": {
+        props.keepLines = ooxmlBoolFlag(c);
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:pageBreakBefore": {
+        props.pageBreakBefore = ooxmlBoolFlag(c);
+        opaqueProps.push(captureOpaque(c));
+        break;
+      }
+      case "w:widowControl": {
+        // Note: widow control defaults to TRUE in Word; the typical
+        // emit pattern is `<w:widowControl w:val="0"/>` to disable.
+        props.widowControl = ooxmlBoolFlag(c);
         opaqueProps.push(captureOpaque(c));
         break;
       }
@@ -593,6 +732,18 @@ function boolAttr(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   if (value === "false" || value === "0" || value === "off") return false;
   return true;
+}
+
+/**
+ * Decode the OOXML "toggle" boolean encoding for `<w:keepNext/>`,
+ * `<w:keepLines/>`, `<w:bold/>`, `<w:widowControl/>`, etc. The element's
+ * presence alone means `true`; an explicit `w:val="0"` (or `"false"` /
+ * `"off"`) flips it to `false`. Used by the paragraph-property parser
+ * to surface pagination flags as typed booleans.
+ */
+function ooxmlBoolFlag(entry: Record<string, unknown>): boolean {
+  const v = attrOf(entry, "w:val");
+  return boolAttr(v, true);
 }
 
 function parseComments(container: ooxml.OoxmlContainer, mintNodeId: IdMinter): DocxComment[] {

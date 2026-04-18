@@ -131,7 +131,7 @@ const FORMATS = {
     extension: ".docx",
     fixtureDirs: ["fixtures/docx/real-world"],
     sentinelXsd: "wml.xsd",
-    selfTestCount: 7,
+    selfTestCount: 11,
     agentDist: resolve(root, "packages/docx/dist/index.js"),
     agentName: "DocxAgent",
     ctMap: {

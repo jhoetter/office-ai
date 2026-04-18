@@ -28,6 +28,7 @@ export {
   mountDocxEditor,
   chunkIntoPages,
   documentPageGeometry,
+  documentMaxPageGeometry,
   geometryFromProperties,
   type MountOptions,
   type MountResult,

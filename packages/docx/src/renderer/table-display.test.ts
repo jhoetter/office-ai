@@ -24,7 +24,44 @@ async function loadAgentWithBody(bodyXml: string): Promise<DocxAgent> {
 function tableSpec(node: import("prosemirror-model").Node): unknown[] {
   const spec = docxSchema.nodes.table.spec;
   if (typeof spec.toDOM !== "function") throw new Error("table spec has no toDOM");
-  return spec.toDOM(node) as unknown[];
+  return spec.toDOM(node) as unknown as unknown[];
+}
+
+/**
+ * Phase 2 of the renderer wraps every cell run in a `<span class="pm-table-run">`
+ * so that bold/italic/font/highlight marks survive into the DOM. The
+ * tests that originally asserted `p[2] === "raw text"` need to walk
+ * through the span layer to recover the literal text — that is what
+ * this helper does. It joins multiple runs into a single string so the
+ * assertions stay readable.
+ */
+function cellTextOf(cell: unknown): string {
+  const p = findElement(cell, "p");
+  if (!Array.isArray(p)) return "";
+  let out = "";
+  for (let i = 2; i < p.length; i++) {
+    const child = p[i];
+    if (typeof child === "string") {
+      out += child;
+    } else if (Array.isArray(child) && child[0] === "span") {
+      // Span structure: ["span", attrs, textOrNestedSpec]
+      const inner = child[2];
+      if (typeof inner === "string") out += inner;
+      else if (Array.isArray(inner)) out += extractInnerText(inner);
+    }
+  }
+  return out;
+}
+
+function extractInnerText(spec: unknown[]): string {
+  // Walk through nested mark wrappers (strong/em/u/s) until we hit text.
+  let cur: unknown = spec;
+  while (Array.isArray(cur)) {
+    const last = cur[cur.length - 1];
+    if (typeof last === "string") return last;
+    cur = last;
+  }
+  return "";
 }
 
 function findElement(spec: unknown, tag: string): unknown[] | null {
@@ -72,10 +109,7 @@ describe("renderer typed-table display", () => {
     expect(tableEl).not.toBeNull();
     const cells = collectAllElements(spec, "td");
     expect(cells).toHaveLength(4);
-    const cellText = cells.map((cell) => {
-      const p = findElement(cell, "p");
-      return Array.isArray(p) ? p[2] : "";
-    });
+    const cellText = cells.map(cellTextOf);
     expect(cellText).toEqual(["A1", "A2", "B1", "B2"]);
   });
 
@@ -150,7 +184,7 @@ describe("renderer typed-table display", () => {
       rawJson: "null",
       tableJson: JSON.stringify({ rows: [] }),
     });
-    const spec = docxSchema.nodes.table.spec.toDOM!(node) as unknown[];
+    const spec = docxSchema.nodes.table.spec.toDOM!(node) as unknown as unknown[];
     expect(spec[0]).toBe("div");
     expect(spec[2]).toBe("[table]");
   });

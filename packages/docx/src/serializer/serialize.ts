@@ -173,10 +173,7 @@ function extensionOf(partPath: string): string {
 }
 
 function serializeDocumentXml(doc: DocxDocument): string {
-  const bodyChildren: unknown[] = [];
-  for (const block of doc.body) {
-    bodyChildren.push(serializeBlock(block));
-  }
+  const bodyChildren: unknown[] = serializeBodyBlocks(doc.body);
   const bodyEntry: Record<string, unknown> = { "w:body": bodyChildren };
   const docEntry: Record<string, unknown> = {
     "w:document": [bodyEntry],
@@ -223,11 +220,103 @@ function serializeBlock(block: BlockNode): unknown {
         return reemitOpaqueBlockWithChildren(block.raw, block.children);
       }
       return opaqueToEntry(block.raw);
+    case "wrapper-marker":
+      // Wrapper markers are never serialized standalone — they must
+      // appear in matched begin / end pairs that `serializeBodyBlocks`
+      // consumes structurally. Hitting this branch means the body
+      // model contains an orphan marker (or some other code path tried
+      // to serialize a body block in isolation), which is a model-shape
+      // bug we want to surface loudly rather than silently emit
+      // malformed XML.
+      throw new DocxSerializeError(
+        "orphan-wrapper-marker",
+        `Wrapper marker (${block.side}, wrapperId=${block.wrapperId}) cannot be serialized in isolation; ` +
+          `it must be paired and processed via serializeBodyBlocks.`
+      );
     default: {
       const _exhaustive: never = block;
       throw new DocxSerializeError("unknown-block", `Unknown block kind: ${JSON.stringify(_exhaustive)}`);
     }
   }
+}
+
+/**
+ * Walk the document body and serialize every block, re-bracketing
+ * lifted content-wrapper carriers (`<w:sdt>`, `mc:AlternateContent`,
+ * `<w:fldSimple>`, `<w:smartTag>`, `<w:customXml>`) using their
+ * `WrapperMarker` begin / end pairs.
+ *
+ * The parser inlines a wrapper's inner blocks into `body` so the page
+ * chunker and renderer flow them as regular paragraphs (the TOC SDT,
+ * for instance, used to be one giant atom block that orphaned its
+ * heading on a page of its own). On serialize we have to reconstruct
+ * the carrier envelope verbatim — `wrapperRaw` carries the original
+ * subtree, and `rewriteContentSlot` swaps in the freshly serialized
+ * inner blocks at exactly the slot they came from.
+ *
+ * Nested wrappers (an SDT inside an SDT, for example) work via a
+ * simple stack: every begin pushes a frame whose inner blocks
+ * accumulate as we walk; the matching end pops the frame, rebuilds
+ * the carrier, and appends the result to its parent frame (or the
+ * body root if the stack is now empty).
+ *
+ * Unmatched markers are a model-shape bug and throw — the parser's
+ * `liftOpaqueBlock` always emits balanced pairs, so encountering an
+ * orphan means a mutation produced a malformed body.
+ */
+interface WrapperFrame {
+  readonly raw: OpaqueXml;
+  readonly wrapperId: string;
+  readonly inner: unknown[];
+}
+
+function serializeBodyBlocks(blocks: ReadonlyArray<BlockNode>): unknown[] {
+  const root: unknown[] = [];
+  const stack: WrapperFrame[] = [];
+
+  const pushSerialized = (entry: unknown): void => {
+    if (stack.length === 0) {
+      root.push(entry);
+    } else {
+      stack[stack.length - 1].inner.push(entry);
+    }
+  };
+
+  for (const block of blocks) {
+    if (block.kind === "wrapper-marker") {
+      if (block.side === "begin") {
+        stack.push({ raw: block.wrapperRaw, wrapperId: block.wrapperId, inner: [] });
+        continue;
+      }
+      // side === "end"
+      const top = stack.pop();
+      if (!top) {
+        throw new DocxSerializeError(
+          "orphan-wrapper-marker",
+          `Wrapper end marker without matching begin (wrapperId=${block.wrapperId}).`
+        );
+      }
+      if (top.wrapperId !== block.wrapperId) {
+        throw new DocxSerializeError(
+          "mismatched-wrapper-marker",
+          `Wrapper end marker (wrapperId=${block.wrapperId}) does not match top of stack (wrapperId=${top.wrapperId}).`
+        );
+      }
+      pushSerialized(rewriteContentSlot(top.raw, top.inner));
+      continue;
+    }
+    pushSerialized(serializeBlock(block));
+  }
+
+  if (stack.length > 0) {
+    const open = stack[stack.length - 1];
+    throw new DocxSerializeError(
+      "unclosed-wrapper-marker",
+      `Body ended with ${stack.length} unclosed wrapper(s); top wrapperId=${open.wrapperId}.`
+    );
+  }
+
+  return root;
 }
 
 function serializeParagraph(p: Paragraph): unknown {

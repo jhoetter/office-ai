@@ -42,7 +42,13 @@ describe("serializeDocx", () => {
     expect(q0.properties.styleId).toBe(p0.properties.styleId);
   });
 
-  it("re-emits an unwrapped <w:sdt> carrier byte-identically when subtreeDirty is false", async () => {
+  it("re-emits a lifted <w:sdt> carrier (wrapper-marker pair) when body is forced dirty", async () => {
+    // Phase B of docx-fidelity-overhaul: body-level SDT carriers are
+    // lifted into a `wrapper-marker(begin) ... wrapper-marker(end)`
+    // pair around their inner blocks. On a dirty-body round-trip the
+    // serializer must rebuild the carrier envelope from `wrapperRaw`
+    // and splice the freshly serialized inner blocks back into the
+    // `<w:sdtContent>` slot.
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
   <w:sdt>
@@ -53,44 +59,46 @@ describe("serializeDocx", () => {
 </w:body></w:document>`;
     const buf = await makeSyntheticDocx({ documentXml: xml });
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
-    // Force body re-emission so the cached document.xml is rebuilt from the
-    // typed model. Even with `subtreeDirty=false` the SDT should round-trip
-    // through the typed serializer to byte-equivalent bytes (the typed
-    // `children` are NOT the source of truth — `raw` is).
     const dirtied = { ...snap, dirty: { ...snap.dirty, body: true } };
     const out = await serializeDocx(dirtied);
     const reparsed = await parseDocx(out, { idMinter: deterministicIdMinter("rt") });
-    const sdt = reparsed.root.body[0];
-    expect(sdt.kind).toBe("opaque-block");
-    if (sdt.kind !== "opaque-block") throw new Error();
-    expect(sdt.raw.tag).toBe("w:sdt");
-    // Children must still be present after a round-trip (parser unwraps
-    // them again).
-    expect(sdt.children).toBeDefined();
-    expect(sdt.children).toHaveLength(1);
-    const c0 = sdt.children![0];
-    if (c0.kind !== "paragraph") throw new Error();
-    expect(c0.properties.styleId).toBe("Heading1");
-    expect(reparsed.root.body[1]?.kind).toBe("paragraph");
+    // Re-parse must lift the carrier the same way again.
+    expect(reparsed.root.body).toHaveLength(4);
+    const begin = reparsed.root.body[0];
+    if (begin.kind !== "wrapper-marker") throw new Error();
+    expect(begin.side).toBe("begin");
+    expect(begin.wrapperRaw.tag).toBe("w:sdt");
+    const inner = reparsed.root.body[1];
+    if (inner.kind !== "paragraph") throw new Error();
+    expect(inner.properties.styleId).toBe("Heading1");
+    const end = reparsed.root.body[2];
+    if (end.kind !== "wrapper-marker") throw new Error();
+    expect(end.side).toBe("end");
+    expect(end.wrapperId).toBe(begin.wrapperId);
+    const trailing = reparsed.root.body[3];
+    if (trailing.kind !== "paragraph") throw new Error();
   });
 
   it("round-trips the masterthesis TOC fixture (SDT carrier preserved)", async () => {
     const buf = loadFixture("fixtures/docx/real-world/07-toc-sdt.docx");
     const snap = await parseDocx(buf, { idMinter: deterministicIdMinter("toc") });
-    // The fixture contains two SDT carriers (table-of-contents wrappers).
-    const sdts = snap.root.body.filter((b) => b.kind === "opaque-block" && b.raw.tag === "w:sdt");
-    expect(sdts.length).toBeGreaterThanOrEqual(1);
-    for (const sdt of sdts) {
-      if (sdt.kind !== "opaque-block") throw new Error();
-      // Each TOC SDT must surface its inner paragraphs as typed children
-      // so the renderer can show the entries instead of an opaque chip.
-      expect(sdt.children).toBeDefined();
-      expect(sdt.children!.length).toBeGreaterThan(0);
-      expect(sdt.children!.some((c) => c.kind === "paragraph")).toBe(true);
+    // The fixture contains at least one TOC SDT carrier — Phase B
+    // lifts it so we look for matched `wrapper-marker` pairs whose
+    // captured `wrapperRaw.tag` is `w:sdt`.
+    const begins = snap.root.body.filter(
+      (b) => b.kind === "wrapper-marker" && b.side === "begin" && b.wrapperRaw.tag === "w:sdt"
+    );
+    expect(begins.length).toBeGreaterThanOrEqual(1);
+    for (const begin of begins) {
+      if (begin.kind !== "wrapper-marker") throw new Error();
+      const endIdx = snap.root.body.findIndex(
+        (b) => b.kind === "wrapper-marker" && b.side === "end" && b.wrapperId === begin.wrapperId
+      );
+      expect(endIdx).toBeGreaterThan(0);
     }
-    // Pure round-trip with no dirty flags must reproduce the original bytes
-    // byte-for-byte (typed `children` are render-only when subtreeDirty is
-    // false).
+    // Pure round-trip with no dirty flags must reproduce the original
+    // bytes byte-for-byte (the lifted children are render-only here;
+    // the cached `word/document.xml` is preserved verbatim).
     const out = await serializeDocx(snap);
     const reloaded = await ooxml.OoxmlContainer.load(out);
     for (const path of snap.container.parts.keys()) {

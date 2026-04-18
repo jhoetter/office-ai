@@ -131,9 +131,22 @@ Each adapter:
   `groupThreads`.
 - Implements `add / reply / resolve / delete` by dispatching the
   matching `format:verb-comment` command via `agent.applyCommand`.
-- Optionally wires `onScrollTo` to the editor's native scroll/flash
-  affordance (DOCX flashes the highlight mark, PPTX scrolls the slide
-  rail, XLSX selects the anchored cell).
+- Wires `onScrollTo` to the editor's native "click to locate"
+  affordance:
+  - **DOCX** scrolls the page-card to the highlight mark and adds
+    `.pm-comment-flash` for ~1.4 s (yellow background fade).
+  - **XLSX** moves the active selection to the anchored cell, scrolls
+    the grid so the cell is visible (with a small margin off the
+    headers), and paints a yellow flash overlay (`.xlsx-comment-flash`,
+    keyframes in `apps/web/app/globals.css`) that fades over ~1.4 s.
+  - **PPTX** sets the canvas selection to the anchored shape (when
+    the comment carries `shapeId`) or falls back to a 1-inch flash box
+    around the pin coordinates. The flash is a self-contained inline
+    SVG `<animate>` so it doesn't rely on the host stylesheet.
+
+  All three editors auto-open the comments rail when `onScrollTo`
+  fires, so a click from the dashboard / outline still surfaces the
+  conversation.
 - Optionally accepts a `onToast` hook so the editor surface can
   surface success/error toasts without duplicating try/catch logic.
 

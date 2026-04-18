@@ -88,11 +88,14 @@ describe("renderer opaque display", () => {
     expect(JSON.stringify(pm.toJSON())).not.toContain("[opaque]");
   });
 
-  it("surfaces SDT content text via the unwrapped opaque_block_wrapper node", async () => {
-    // A minimal SDT block wraps a paragraph that holds the user-visible
-    // TOC text. Pre-P2.3, this rendered as a single "[w:sdt]" chip; with
-    // SDT/TOC unwrapping the parser exposes the inner paragraphs and the
-    // renderer produces a structured `opaque_block_wrapper` carrying them.
+  it("lifts SDT inner paragraphs to top-level PM nodes bracketed by wrapper-marker atoms", async () => {
+    // Phase B of docx-fidelity-overhaul: body-level SDT carriers no
+    // longer survive as a single `opaque_block_wrapper` PM atom (which
+    // could not be split across pages and orphaned the heading next
+    // to the TOC on its own page). The parser lifts the inner blocks
+    // to top-level body and brackets them with invisible
+    // `wrapper-marker` atoms that the serializer pairs back into the
+    // original `<w:sdt>` envelope on a body-dirty round-trip.
     const sdt =
       "<w:sdt>" +
       '<w:sdtPr><w:alias w:val="Inhaltsverzeichnis"/></w:sdtPr>' +
@@ -104,12 +107,20 @@ describe("renderer opaque display", () => {
     const agent = await loadAgent(sdt);
     const pm = docToPM(agent.getSnapshot());
 
-    // body contributes the SDT block plus a trailing section-break block
-    // (synthetic helper always appends `<w:sectPr>`).
-    expect(pm.childCount).toBe(2);
-    const block = pm.child(0);
-    expect(block.type.name).toBe("opaque_block_wrapper");
-    expect(block.attrs.tag).toBe("w:sdt");
+    // body now contributes:
+    //   wrapper-marker(begin) + paragraph + paragraph +
+    //   wrapper-marker(end) + section-break  =  5 children
+    // The synthetic helper always appends `<w:sectPr>` for the trailing
+    // section break.
+    expect(pm.childCount).toBe(5);
+    expect(pm.child(0).type.name).toBe("wrapper_marker");
+    expect(pm.child(0).attrs.side).toBe("begin");
+    expect(pm.child(0).attrs.tag).toBe("w:sdt");
+    expect(pm.child(1).type.name).toBe("paragraph");
+    expect(pm.child(2).type.name).toBe("paragraph");
+    expect(pm.child(3).type.name).toBe("wrapper_marker");
+    expect(pm.child(3).attrs.side).toBe("end");
+    expect(pm.child(3).attrs.wrapperId).toBe(pm.child(0).attrs.wrapperId);
     const json = JSON.stringify(pm.toJSON());
     expect(json).toContain("Inhaltsverzeichnis");
     expect(json).toContain("1 Einleitung");
