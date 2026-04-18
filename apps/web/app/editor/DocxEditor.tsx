@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
-import { DocxAgent, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
+import { DocxAgent, chunkIntoPages, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
 import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
+import { getPageChunks, pageDecorationsPlugin, pageNumberForPos } from "@/lib/page-decorations";
 import type { EditorView } from "prosemirror-view";
 import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
@@ -87,7 +88,9 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     paragraphs: number;
     revision: number;
     commentThreads: number;
+    pageCount: number;
   } | null>(null);
+  const [zoom, setZoom] = useState<number>(1);
   // Bumped to force re-derivation of toolbar state (active marks /
   // active style) without keeping a redundant copy of the snapshot.
   const [uiTick, setUiTick] = useState(0);
@@ -129,6 +132,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           paragraphs,
           revision: snap.revision,
           commentThreads: commentThreads(snap).length,
+          pageCount: chunkIntoPages(snap).length,
         });
         setUiTick((t) => t + 1);
       };
@@ -139,6 +143,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
         source: "human",
         onUnsupported,
         onError,
+        extraPlugins: [pageDecorationsPlugin(agentInstance)],
       });
       mountRef.current = mount;
       setView(mount.view);
@@ -800,9 +805,18 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
         />
         <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
           <div
-            ref={setHostEl}
-            className="prose-pm mx-auto min-h-[60vh] w-full max-w-[720px] px-8 py-12 outline-none"
-          />
+            className="mx-auto"
+            style={{
+              width: `${720 * zoom}px`,
+              transform: `scale(${zoom})`,
+              transformOrigin: "top center",
+            }}
+          >
+            <div
+              ref={setHostEl}
+              className="prose-pm min-h-[60vh] w-[720px] px-8 py-12 outline-none"
+            />
+          </div>
           {!agentReady && (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
               <Loader2 className="mr-2 animate-spin" size={14} />
@@ -819,6 +833,12 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
             />
           )}
         </div>
+        <PageStatusBar
+          view={view}
+          totalPages={docInfo?.pageCount ?? 1}
+          zoom={zoom}
+          onZoomChange={setZoom}
+        />
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
           {toasts.map((t) => (
             <div
@@ -955,4 +975,64 @@ function computeActiveIndentLeft(snapshot: DocxSnapshot | null, paragraphIndex: 
   if (!block || block.kind !== "paragraph") return null;
   const resolved = resolveEffectivePpr(snapshot, paragraphIndex);
   return resolved.indentation?.left ?? 0;
+}
+
+/**
+ * P3.3 / W12-W13 — bottom status bar for the editor pane.
+ *
+ * Shows `Page X of N` based on the live caret position (resolved via
+ * the page-decorations plugin's chunk array) and exposes a zoom
+ * slider (50–200 %). Both are read-only against the snapshot — zoom
+ * is purely a CSS transform on the editor surface, never written
+ * back into the document model.
+ */
+function PageStatusBar(props: {
+  view: EditorView | null;
+  totalPages: number;
+  zoom: number;
+  onZoomChange: (z: number) => void;
+}) {
+  const { view, totalPages, zoom, onZoomChange } = props;
+  const currentPage = (() => {
+    if (!view) return 1;
+    const chunks = getPageChunks(view.state);
+    if (chunks.length === 0) return 1;
+    return pageNumberForPos(chunks, view.state, view.state.selection.from);
+  })();
+
+  return (
+    <div className="mt-2 flex items-center justify-between gap-3 px-1 text-xs text-secondary">
+      <span className="tabular-nums" data-testid="page-status">
+        Page {currentPage} of {totalPages}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onZoomChange(Math.max(0.5, Math.round((zoom - 0.1) * 10) / 10))}
+          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+        <span className="tabular-nums" data-testid="zoom-percent">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={() => onZoomChange(Math.min(2, Math.round((zoom + 0.1) * 10) / 10))}
+          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => onZoomChange(1)}
+          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+  );
 }

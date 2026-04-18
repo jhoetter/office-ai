@@ -1,4 +1,4 @@
-import { EditorState, TextSelection, type Transaction } from "prosemirror-state";
+import { EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import { baseKeymap } from "prosemirror-commands";
@@ -14,6 +14,15 @@ export interface MountOptions {
   source?: "human" | "agent" | "system";
   onUnsupported?: (events: UnsupportedTx[]) => void;
   onError?: (err: unknown) => void;
+  /**
+   * Optional ProseMirror plugins to install alongside the built-in
+   * history / keymap stack. P3.3 / W11 uses this to inject the
+   * page-decorations plugin from the React layer (where chunkIntoPages
+   * has access to the live `DocxAgent`). The plugins MUST be read-only
+   * — any plugin that dispatches transactions must route them through
+   * the bus to keep the round-trip contract.
+   */
+  extraPlugins?: ReadonlyArray<Plugin>;
 }
 
 export interface MountResult {
@@ -53,6 +62,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
         "Mod-Shift-z": redo,
       }),
       keymap(baseKeymap),
+      ...(opts.extraPlugins ?? []),
     ],
   });
 

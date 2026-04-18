@@ -619,3 +619,30 @@ textarea::placeholder {
 .docx-editor .side-panel {
   font-size: 0.8125rem;
 }
+
+/* P3.3 / W11-W12 — page-divider widget rendered between page chunks
+ * by `pageDecorationsPlugin`. The widget is a `contenteditable=false`
+ * block so PM treats it as inert chrome; the dashed rule + tabular
+ * label intentionally mirror Word's "Page break" indicator without
+ * pretending to be a true paginated viewport. */
+.prose-pm .ProseMirror .pm-page-divider {
+  position: relative;
+  margin: 1.5rem -0.5rem;
+  border-top: 1px dashed var(--divider);
+  text-align: center;
+  user-select: none;
+  pointer-events: none;
+}
+
+.prose-pm .ProseMirror .pm-page-divider__label {
+  position: relative;
+  top: -0.6rem;
+  display: inline-block;
+  padding: 0 0.5rem;
+  background: var(--background);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
