@@ -2,11 +2,13 @@
 import * as React from "react";
 import type { PptxAgent } from "../../agent/agent.js";
 import type { Shape, Slide, SlideSize, TextShape } from "../../model/types.js";
+import { DEFAULT_THEME } from "../layout/color.js";
 import { shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
-import { DEFAULT_DPI, clampZoom } from "../layout/units.js";
+import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
+import { resolveSlideBackgroundColor } from "../svg/slide.js";
 import { useAgentSnapshot } from "./use-agent-snapshot.js";
 
 export interface SlideCanvasProps {
@@ -18,6 +20,12 @@ export interface SlideCanvasProps {
   readonly zoom?: number;
   /** DPI used for converting EMU/font sizes to CSS pixels in the HTML overlay. */
   readonly dpi?: number;
+  /**
+   * Notified whenever the user selects (or deselects) a shape on the canvas.
+   * Lets the parent route toolbar actions (bold/italic/underline) to the
+   * selected shape instead of guessing the first text shape on the slide.
+   */
+  readonly onSelectionChange?: (shapeId: string | null) => void;
 }
 
 interface DragState {
@@ -36,9 +44,22 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [selectedId, setSelectedIdState] = React.useState<string | null>(null);
+  const onSelectionChange = props.onSelectionChange;
+  const setSelectedId = React.useCallback(
+    (next: string | null) => {
+      setSelectedIdState(next);
+      onSelectionChange?.(next);
+    },
+    [onSelectionChange]
+  );
 
-  const themeDefault = snap.root.themeDefault;
+  React.useEffect(() => {
+    setSelectedIdState(null);
+    onSelectionChange?.(null);
+  }, [props.slideIndex, onSelectionChange]);
+
+  const themeDefault = snap.root.themeDefault ?? DEFAULT_THEME;
   const charts = snap.root.charts;
   const ctx: SvgRenderCtx = React.useMemo(
     () => ({ slideSize, mediaUrls: props.mediaUrls, theme: themeDefault, charts }),
@@ -198,7 +219,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         preserveAspectRatio="xMidYMid meet"
         style={{ width: "100%", height: "100%", display: "block" }}
         dangerouslySetInnerHTML={{
-          __html: `<rect width="100%" height="100%" fill="white"/>${svgInner}${animationBadgesSvg(slide)}${selectionOverlaySvg(slide, selectedId)}`,
+          __html: `<rect width="100%" height="100%" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide)}${selectionOverlaySvg(slide, selectedId)}`,
         }}
       />
       {editingId
@@ -206,6 +227,11 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         : null}
     </div>
   );
+}
+
+function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
+  const bg = resolveSlideBackgroundColor(slide.cSldHead, theme);
+  return bg ? `#${bg}` : "white";
 }
 
 function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
@@ -236,18 +262,23 @@ function animationBadgesSvg(slide: Slide): string {
     if (!shape) continue;
     const box = shapeBoundingBox(shape);
     if (!box) continue;
-    const r = 90000;
-    const cx = box.x + r;
-    const cy = box.y + r;
+    const r = px(90000);
+    const cx = px(box.x) + r;
+    const cy = px(box.y) + r;
     const order = a.order + 1;
     parts.push(
       `<g class="anim-badge" pointer-events="none">`,
-      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#facc15" stroke="#1f2937" stroke-width="12000"/>`,
-      `<text x="${cx}" y="${cy + 36000}" text-anchor="middle" font-size="100000" font-family="sans-serif" font-weight="700" fill="#1f2937">${order}</text>`,
+      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#facc15" stroke="#1f2937" stroke-width="${px(12000)}"/>`,
+      `<text x="${cx}" y="${cy + px(36000)}" text-anchor="middle" font-size="${px(100000)}" font-family="sans-serif" font-weight="700" fill="#1f2937">${order}</text>`,
       `</g>`
     );
   }
   return parts.join("");
+}
+
+/** EMU → SVG user units (matches `shapes.ts#u`); see `slideViewBox` rationale. */
+function px(emu: number): number {
+  return Math.round((emu / EMU_PER_PX_AT_96DPI) * 100) / 100;
 }
 
 function collectShapesByCNvPrId(shapes: ReadonlyArray<Shape>, out: Map<number, Shape>): void {
@@ -263,13 +294,16 @@ function selectionOverlaySvg(slide: Slide, selectedId: string | null): string {
   if (!shape) return "";
   const box = shapeBoundingBox(shape);
   if (!box) return "";
-  const handleSize = 80000;
+  const handleSize = px(80000);
+  const x = px(box.x);
+  const y = px(box.y);
+  const cx = px(box.cx);
+  const cy = px(box.cy);
   return [
     `<g class="selection" pointer-events="none">`,
-    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="none" stroke="#7c3aed" stroke-width="20000" stroke-dasharray="40000,20000"/>`,
+    `<rect x="${x}" y="${y}" width="${cx}" height="${cy}" fill="none" stroke="#7c3aed" stroke-width="${px(20000)}" stroke-dasharray="${px(40000)},${px(20000)}"/>`,
     `</g>`,
-    // SE resize handle (interactive — hit area in SVG; transformed via data-handle)
-    `<rect data-shape-id="${escAttr(selectedId)}" data-handle="resize-se" x="${box.x + box.cx - handleSize / 2}" y="${box.y + box.cy - handleSize / 2}" width="${handleSize}" height="${handleSize}" fill="#7c3aed" pointer-events="all" style="cursor:nwse-resize"/>`,
+    `<rect data-shape-id="${escAttr(selectedId)}" data-handle="resize-se" x="${x + cx - handleSize / 2}" y="${y + cy - handleSize / 2}" width="${handleSize}" height="${handleSize}" fill="#7c3aed" pointer-events="all" style="cursor:nwse-resize"/>`,
   ].join("");
 }
 

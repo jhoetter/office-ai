@@ -31,6 +31,7 @@ export function PptxEditor(): React.ReactNode {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastId = useRef(0);
   const [zoom, setZoom] = useState(1);
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
 
   const onZoomChange = useCallback((next: number) => {
     setZoom(clampZoom(next));
@@ -186,15 +187,39 @@ export function PptxEditor(): React.ReactNode {
     }
   }, [activeIndex, onError]);
 
+  // Picks the text shape to format: prefer the selected shape (if it is
+  // text + has runs); otherwise fall back to the first non-empty text shape
+  // on the slide. This keeps the toolbar useful even before the user has
+  // clicked anywhere — the previous "first shape on the slide" logic broke
+  // on real-world decks because the first shape is usually a decorative rect.
+  const pickFormattingTarget = useCallback((): TextShape | null => {
+    const a = agentRef.current;
+    if (!a) return null;
+    const slide = a.getSnapshot().root.slides[activeIndex];
+    if (!slide) return null;
+    const isFormattable = (s: unknown): s is TextShape => {
+      if (!s || typeof s !== "object") return false;
+      const sh = s as { kind?: string; txBody?: { paragraphs?: ReadonlyArray<{ runs?: ReadonlyArray<{ isLineBreak?: boolean; text?: string }> }> } };
+      if (sh.kind !== "text") return false;
+      return (sh.txBody?.paragraphs ?? []).some((p) =>
+        (p.runs ?? []).some((r) => !r.isLineBreak && (r.text?.length ?? 0) > 0)
+      );
+    };
+    if (selectedShapeId) {
+      const sel = slide.shapes.find((s) => s.id === selectedShapeId);
+      if (isFormattable(sel)) return sel;
+    }
+    const first = slide.shapes.find(isFormattable);
+    return first ?? null;
+  }, [activeIndex, selectedShapeId]);
+
   const toggleMark = useCallback(
     async (mark: "bold" | "italic" | "underline") => {
       const a = agentRef.current;
       if (!a) return;
-      const slide = a.getSnapshot().root.slides[activeIndex];
-      if (!slide) return;
-      const ts = slide.shapes.find((s): s is TextShape => s.kind === "text");
-      if (!ts || ts.txBody.paragraphs.length === 0) {
-        pushToast("info", "No text shape on this slide.");
+      const ts = pickFormattingTarget();
+      if (!ts) {
+        pushToast("info", "Select a text shape first (or add one with the Text box button).");
         return;
       }
       const p = ts.txBody.paragraphs[0];
@@ -214,7 +239,7 @@ export function PptxEditor(): React.ReactNode {
         onError(err);
       }
     },
-    [activeIndex, onError, pushToast]
+    [activeIndex, onError, pickFormattingTarget, pushToast]
   );
 
   // Routes prompts through the shared `/api/llm` bridge with `format: "pptx"`.
@@ -297,6 +322,7 @@ export function PptxEditor(): React.ReactNode {
                 mediaUrls={mediaUrls}
                 onError={onError}
                 zoom={zoom}
+                onSelectionChange={setSelectedShapeId}
               />
             </div>
           ) : null}

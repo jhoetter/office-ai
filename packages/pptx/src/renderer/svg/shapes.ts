@@ -14,7 +14,24 @@ import type {
 } from "../../model/types.js";
 import { DEFAULT_THEME, type ThemeColorScheme } from "../layout/color.js";
 import { shapeBoundingBox } from "../layout/shape.js";
+import { SVG_UNIT_PER_EMU } from "../layout/slide.js";
 import { escXml } from "./escape.js";
+
+/**
+ * Convert an EMU value to the renderer's user-unit space (1 unit ≈ 1px @ 96 DPI).
+ *
+ * The SVG `viewBox` is emitted in pixel-equivalent units (see `slideViewBox`)
+ * so every coordinate, size, font-size, and stroke-width inside the SVG
+ * document must go through this helper. Earlier versions kept everything in
+ * EMU and relied on a `transform="scale(…)"` wrapper, but Chrome quietly
+ * degrades text rendering when `font-size` is in the 5–6-digit EMU range
+ * even under such a wrapper. Emitting pre-scaled values avoids that gotcha
+ * and produces SVG that round-trips cleanly through other tools.
+ */
+function u(emu: number): number {
+  // Two decimals is plenty: 0.01 user units ≈ 0.01 px ≈ 0.0001 inch.
+  return Math.round(emu * SVG_UNIT_PER_EMU * 100) / 100;
+}
 
 export interface SvgRenderCtx {
   readonly slideSize: SlideSize;
@@ -47,17 +64,130 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   if (!box) return groupOpen("text", shape.id) + groupClose();
   const theme = ctx.theme ?? DEFAULT_THEME;
 
-  const lines = shape.txBody.paragraphs.map((p) => paragraphToTSpan(p, theme));
-  const fontSizePx = estimateFontSizeEmu(shape.txBody.paragraphs[0]);
+  const fill = readFillFromOpaque(shape.spPrTail, theme);
+  const stroke = readStrokeFromOpaque(shape.spPrTail, theme);
+  const prst = readPrstGeom(shape.spPrTail);
 
-  return [
-    groupOpen("text", shape.id, { transform: `translate(${box.x} ${box.y})` }),
-    `<rect width="${box.cx}" height="${box.cy}" fill="transparent"/>`,
-    `<text x="0" y="${fontSizePx}" font-family="sans-serif" font-size="${fontSizePx}" fill="#${theme.tx1}" xml:space="preserve">`,
-    lines.join(""),
-    `</text>`,
-    groupClose(),
-  ].join("");
+  if (prst === "line" && stroke) {
+    return [
+      groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }),
+      `<line x1="0" y1="0" x2="${u(box.cx)}" y2="${u(box.cy)}" stroke="#${stroke.color}" stroke-width="${u(stroke.widthEmu)}" stroke-linecap="round"/>`,
+      groupClose(),
+    ].join("");
+  }
+
+  const rectFill = fill ? `#${fill}` : "transparent";
+  const strokeAttrs = stroke
+    ? ` stroke="#${stroke.color}" stroke-width="${u(stroke.widthEmu)}"`
+    : "";
+
+  const hasText = shape.txBody.paragraphs.some((p) =>
+    p.runs.some((r) => !r.isLineBreak && r.text.length > 0)
+  );
+
+  const out = [
+    groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }),
+    `<rect width="${u(box.cx)}" height="${u(box.cy)}" fill="${rectFill}"${strokeAttrs}/>`,
+  ];
+  if (hasText) {
+    const lines = shape.txBody.paragraphs.map((p) => paragraphToTSpan(p, theme));
+    const fontSizePx = u(estimateFontSizeEmu(shape.txBody.paragraphs[0]));
+    const defaultColor = pickContrastingTextColor(fill, theme);
+    out.push(
+      `<text x="0" y="${fontSizePx}" font-family="sans-serif" font-size="${fontSizePx}" fill="#${defaultColor}" xml:space="preserve">`,
+      lines.join(""),
+      `</text>`
+    );
+  }
+  out.push(groupClose());
+  return out.join("");
+}
+
+interface StrokeStyle {
+  readonly color: string;
+  readonly widthEmu: number;
+}
+
+function readStrokeFromOpaque(
+  children: ReadonlyArray<OpaqueXml>,
+  theme: ThemeColorScheme
+): StrokeStyle | null {
+  for (const c of children) {
+    if (c.tag !== "a:ln") continue;
+    // `<a:ln>` may carry `noFill` (explicit "no stroke") — in which case
+    // we honour it even if a width attribute is present.
+    let hasNoFill = false;
+    let nestedFill: string | null = null;
+    for (const inner of c.subtree) {
+      if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+      const obj = inner as Record<string, unknown>;
+      const keys = Object.keys(obj).filter((k) => k !== ":@");
+      if (keys.length !== 1) continue;
+      const tag = keys[0];
+      if (tag === "a:noFill") {
+        hasNoFill = true;
+        continue;
+      }
+      if (tag === "a:solidFill") {
+        nestedFill = readFillFromOpaque([toOpaqueChild(obj)], theme);
+      }
+    }
+    if (hasNoFill) return null;
+    const wRaw = c.attrs?.w ?? c.rawAttrs?.["@_w"];
+    const w = typeof wRaw === "string" ? Number(wRaw) : NaN;
+    const widthEmu = Number.isFinite(w) && w > 0 ? w : 6350;
+    if (nestedFill) return { color: nestedFill, widthEmu };
+    // No nested fill: still draw a thin black hairline if a width was set
+    // explicitly (matches PowerPoint's "outline by default").
+    if (Number.isFinite(w) && w > 0) {
+      return { color: theme.tx1, widthEmu };
+    }
+  }
+  return null;
+}
+
+function toOpaqueChild(obj: Record<string, unknown>): OpaqueXml {
+  const keys = Object.keys(obj).filter((k) => k !== ":@");
+  const tag = keys[0] ?? "";
+  const attrsRaw = (obj[":@"] as Record<string, unknown> | undefined) ?? {};
+  const attrs: Record<string, string> = {};
+  for (const [k, v] of Object.entries(attrsRaw)) {
+    if (typeof v === "string" && k.startsWith("@_")) attrs[k.slice(2)] = v;
+  }
+  const subtreeNode = obj[tag];
+  const subtree = Array.isArray(subtreeNode) ? subtreeNode : [];
+  return { tag, attrs, subtree, rawAttrs: attrsRaw } as OpaqueXml;
+}
+
+function readPrstGeom(children: ReadonlyArray<OpaqueXml>): string | null {
+  for (const c of children) {
+    if (c.tag !== "a:prstGeom") continue;
+    const prst = c.attrs?.prst ?? c.rawAttrs?.["@_prst"];
+    if (typeof prst === "string") return prst;
+  }
+  return null;
+}
+
+/**
+ * If a shape has a dark fill, the body-text default (`tx1`, usually black)
+ * is unreadable. Pick a light text color in that case so the renderer
+ * remains a useful preview even when an authoring tool relied on master
+ * placeholders we don't yet inherit. Per-run fills (typed `properties.color`
+ * or opaque `solidFill`) still win — this only affects runs that fell back
+ * to the default.
+ */
+function pickContrastingTextColor(
+  fillHex: string | null,
+  theme: ThemeColorScheme
+): string {
+  if (!fillHex) return theme.tx1;
+  const v = fillHex.replace(/^#/, "");
+  if (v.length !== 6) return theme.tx1;
+  const r = parseInt(v.slice(0, 2), 16);
+  const g = parseInt(v.slice(2, 4), 16);
+  const b = parseInt(v.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5 ? theme.bg1 : theme.tx1;
 }
 
 function paragraphToTSpan(p: TextParagraph, theme: ThemeColorScheme): string {
@@ -82,7 +212,7 @@ function runToTSpan(r: TextRun, theme: ThemeColorScheme): string {
   if (r.properties.fontSizeHundredths !== undefined) {
     // sz is hundredths of a point. EMU per point = 12700.
     const sizeEmu = (r.properties.fontSizeHundredths / 100) * 12700;
-    attrs.push(`font-size="${sizeEmu}"`);
+    attrs.push(`font-size="${u(sizeEmu)}"`);
   }
   return `<tspan ${attrs.join(" ")}>${escXml(r.text)}</tspan>`;
 }
@@ -108,28 +238,40 @@ function readFillFromOpaque(
   for (const c of children) {
     if (c.tag !== "a:solidFill") continue;
     for (const inner of c.subtree) {
-      if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
-      const obj = inner as Record<string, unknown>;
-      const keys = Object.keys(obj).filter((k) => k !== ":@");
-      if (keys.length !== 1) continue;
-      const tag = keys[0];
-      const attrs = obj[":@"] as Record<string, unknown> | undefined;
-      const val =
-        attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
-      if (typeof val !== "string") continue;
-      if (tag === "a:srgbClr") {
-        return val;
-      }
-      if (tag === "a:sysClr") {
-        const last =
-          attrs && typeof attrs === "object" ? attrs["@_lastClr"] : undefined;
-        return typeof last === "string" ? last : val;
-      }
-      if (tag === "a:schemeClr") {
-        const mapped = mapSchemeName(val);
-        if (mapped) return theme[mapped];
-      }
+      const color = resolveSchemeOrLiteralColor(inner, theme);
+      if (color) return color;
     }
+  }
+  return null;
+}
+
+/**
+ * Resolve a single fast-xml-parser node like `{ "a:srgbClr": [], ":@": { "@_val": "FF0000" }}`
+ * to a 6-char hex colour, taking literal/sys/scheme colours into account.
+ * Exported so the slide-level `<p:bg>` walker can share the same logic.
+ */
+export function resolveSchemeOrLiteralColor(
+  inner: unknown,
+  theme: ThemeColorScheme
+): string | null {
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) return null;
+  const obj = inner as Record<string, unknown>;
+  const keys = Object.keys(obj).filter((k) => k !== ":@");
+  if (keys.length !== 1) return null;
+  const tag = keys[0];
+  const attrs = obj[":@"] as Record<string, unknown> | undefined;
+  const val =
+    attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
+  if (typeof val !== "string") return null;
+  if (tag === "a:srgbClr") return val;
+  if (tag === "a:sysClr") {
+    const last =
+      attrs && typeof attrs === "object" ? attrs["@_lastClr"] : undefined;
+    return typeof last === "string" ? last : val;
+  }
+  if (tag === "a:schemeClr") {
+    const mapped = mapSchemeName(val);
+    if (mapped) return theme[mapped];
   }
   return null;
 }
@@ -175,28 +317,31 @@ function pictureToSvg(shape: Picture, ctx: SvgRenderCtx): string {
   const box = shapeBoundingBox(shape);
   if (!box) return groupOpen("pic", shape.id) + groupClose();
   const url = ctx.mediaUrls?.get(shape.mediaPartPath);
+  const x = u(box.x);
+  const y = u(box.y);
+  const cx = u(box.cx);
+  const cy = u(box.cy);
   if (!url) {
     return [
       groupOpen("pic", shape.id),
-      `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="#f4f4f5" stroke="#d4d4d8"/>`,
-      `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy / 2}" text-anchor="middle" font-size="${estimateLabelSizeEmu(box.cx, box.cy)}" fill="#71717a">image</text>`,
+      `<rect x="${x}" y="${y}" width="${cx}" height="${cy}" fill="#f4f4f5" stroke="#d4d4d8"/>`,
+      `<text x="${x + cx / 2}" y="${y + cy / 2}" text-anchor="middle" font-size="${u(estimateLabelSizeEmu(box.cx, box.cy))}" fill="#71717a">image</text>`,
       groupClose(),
     ].join("");
   }
   return [
     groupOpen("pic", shape.id),
-    `<image href="${escXml(url)}" x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" preserveAspectRatio="xMidYMid meet"/>`,
+    `<image href="${escXml(url)}" x="${x}" y="${y}" width="${cx}" height="${cy}" preserveAspectRatio="xMidYMid meet"/>`,
     groupClose(),
   ].join("");
 }
 
 function groupShapeToSvg(shape: GroupShape, ctx: SvgRenderCtx): string {
   const inner = shape.children.map((c) => shapeToSvg(c, ctx)).join("");
-  // Group transform — translate to position; we don't yet implement chOff/chExt scaling.
   const tx = shape.position?.xEmu ?? 0;
   const ty = shape.position?.yEmu ?? 0;
   return [
-    groupOpen("group", shape.id, { transform: `translate(${tx} ${ty})` }),
+    groupOpen("group", shape.id, { transform: `translate(${u(tx)} ${u(ty)})` }),
     inner,
     groupClose(),
   ].join("");
@@ -232,10 +377,9 @@ function tableToSvg(shape: TableShape, ctx: SvgRenderCtx): string {
   );
 
   const parts: string[] = [];
-  parts.push(groupOpen("table", shape.id, { transform: `translate(${box.x} ${box.y})` }));
-  // Optional outer outline for visual hint.
+  parts.push(groupOpen("table", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }));
   parts.push(
-    `<rect x="0" y="0" width="${box.cx}" height="${box.cy}" fill="white" stroke="#9CA3AF"/>`
+    `<rect x="0" y="0" width="${u(box.cx)}" height="${u(box.cy)}" fill="white" stroke="#9CA3AF"/>`
   );
 
   let yAcc = 0;
@@ -246,25 +390,21 @@ function tableToSvg(shape: TableShape, ctx: SvgRenderCtx): string {
       const cell = row.cells[c]!;
       const cx = colXs[c]!;
       const cw = shape.columnWidths[c]!;
-      // Cell border.
       parts.push(
-        `<rect x="${cx}" y="${yAcc}" width="${cw}" height="${rowH}" fill="transparent" stroke="#9CA3AF"/>`
+        `<rect x="${u(cx)}" y="${u(yAcc)}" width="${u(cw)}" height="${u(rowH)}" fill="transparent" stroke="#9CA3AF"/>`
       );
-      // Cell text — first paragraph only, rendered as one centered line.
       const text = cellToFlatText(cell.txBody.paragraphs);
       if (text.length > 0) {
-        const fontSize = estimateFontSizeEmu(cell.txBody.paragraphs[0]);
-        // Scale total column width to keep cell rendering within plausible bounds.
+        const fontSize = u(estimateFontSizeEmu(cell.txBody.paragraphs[0]));
         const fillColor = theme.tx1;
         parts.push(
-          `<text x="${cx + cw / 2}" y="${yAcc + rowH / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${fontSize}" fill="#${fillColor}" xml:space="preserve">${escXml(text)}</text>`
+          `<text x="${u(cx + cw / 2)}" y="${u(yAcc + rowH / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${fontSize}" fill="#${fillColor}" xml:space="preserve">${escXml(text)}</text>`
         );
       }
     }
     yAcc += rowH;
   }
   parts.push(groupClose());
-  // Suppress unused-variable warning when columnWidths sum != box.cx.
   void totalColWidth;
   return parts.join("");
 }
@@ -315,8 +455,8 @@ interface ChartBox {
 function chartPlaceholder(shape: ChartShape, box: ChartBox, label: string): string {
   return [
     groupOpen("chart", shape.id),
-    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="#f9fafb" stroke="#9CA3AF"/>`,
-    `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${estimateLabelSizeEmu(box.cx, box.cy)}" fill="#374151">${escXml(label)}</text>`,
+    `<rect x="${u(box.x)}" y="${u(box.y)}" width="${u(box.cx)}" height="${u(box.cy)}" fill="#f9fafb" stroke="#9CA3AF"/>`,
+    `<text x="${u(box.x + box.cx / 2)}" y="${u(box.y + box.cy / 2)}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${u(estimateLabelSizeEmu(box.cx, box.cy))}" fill="#374151">${escXml(label)}</text>`,
     groupClose(),
   ].join("");
 }
@@ -365,7 +505,7 @@ function plotAreaFor(box: ChartBox, part: ChartPart): PlotArea {
 function chartTitleSvg(box: ChartBox, part: ChartPart): string {
   if (!part.title) return "";
   const fs = estimateLabelSizeEmu(box.cx, box.cy);
-  return `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy * 0.06 + fs}" text-anchor="middle" font-family="sans-serif" font-size="${fs}" fill="#111827">${escXml(part.title)}</text>`;
+  return `<text x="${u(box.x + box.cx / 2)}" y="${u(box.y + box.cy * 0.06 + fs)}" text-anchor="middle" font-family="sans-serif" font-size="${u(fs)}" fill="#111827">${escXml(part.title)}</text>`;
 }
 
 function chartBarSvg(
@@ -377,7 +517,7 @@ function chartBarSvg(
   const pa = plotAreaFor(box, part);
   const out: string[] = [groupOpen("chart", shape.id)];
   out.push(
-    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="white" stroke="#E5E7EB"/>`
+    `<rect x="${u(box.x)}" y="${u(box.y)}" width="${u(box.cx)}" height="${u(box.cy)}" fill="white" stroke="#E5E7EB"/>`
   );
   out.push(chartTitleSvg(box, part));
   const groupCount = Math.max(1, part.categories.length || part.series[0]?.values.length || 1);
@@ -396,12 +536,12 @@ function chartBarSvg(
       const y = baselineY - h;
       const fill = palette[si % palette.length];
       out.push(
-        `<rect x="${x}" y="${y}" width="${barWidth}" height="${h}" fill="${escXml(fill)}"/>`
+        `<rect x="${u(x)}" y="${u(y)}" width="${u(barWidth)}" height="${u(h)}" fill="${escXml(fill)}"/>`
       );
     }
   }
   out.push(
-    `<line x1="${pa.inner.x}" y1="${baselineY}" x2="${pa.inner.x + pa.inner.cx}" y2="${baselineY}" stroke="#9CA3AF"/>`
+    `<line x1="${u(pa.inner.x)}" y1="${u(baselineY)}" x2="${u(pa.inner.x + pa.inner.cx)}" y2="${u(baselineY)}" stroke="#9CA3AF"/>`
   );
   out.push(groupClose());
   return out.join("");
@@ -435,7 +575,7 @@ function chartLineOrAreaSvg(
   const pa = plotAreaFor(box, part);
   const out: string[] = [groupOpen("chart", shape.id)];
   out.push(
-    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="white" stroke="#E5E7EB"/>`
+    `<rect x="${u(box.x)}" y="${u(box.y)}" width="${u(box.cx)}" height="${u(box.cy)}" fill="white" stroke="#E5E7EB"/>`
   );
   out.push(chartTitleSvg(box, part));
   const range = pa.valueMax - pa.valueMin;
@@ -450,26 +590,26 @@ function chartLineOrAreaSvg(
       const v = series.values[i] ?? 0;
       const x = pa.inner.x + (n === 1 ? pa.inner.cx / 2 : i * stepX);
       const y = baselineY - ((Math.max(0, v) - pa.valueMin) / range) * pa.inner.cy;
-      points.push(`${x},${y}`);
+      points.push(`${u(x)},${u(y)}`);
     }
     const stroke = palette[si % palette.length];
     if (filled) {
       const polyPoints = [
         ...points,
-        `${pa.inner.x + pa.inner.cx},${baselineY}`,
-        `${pa.inner.x},${baselineY}`,
+        `${u(pa.inner.x + pa.inner.cx)},${u(baselineY)}`,
+        `${u(pa.inner.x)},${u(baselineY)}`,
       ].join(" ");
       out.push(
-        `<polygon points="${polyPoints}" fill="${escXml(stroke)}" fill-opacity="0.35" stroke="${escXml(stroke)}" stroke-width="${Math.max(2, pa.inner.cy / 200)}"/>`
+        `<polygon points="${polyPoints}" fill="${escXml(stroke)}" fill-opacity="0.35" stroke="${escXml(stroke)}" stroke-width="${u(Math.max(2, pa.inner.cy / 200))}"/>`
       );
     } else {
       out.push(
-        `<polyline points="${points.join(" ")}" fill="none" stroke="${escXml(stroke)}" stroke-width="${Math.max(2, pa.inner.cy / 150)}"/>`
+        `<polyline points="${points.join(" ")}" fill="none" stroke="${escXml(stroke)}" stroke-width="${u(Math.max(2, pa.inner.cy / 150))}"/>`
       );
     }
   }
   out.push(
-    `<line x1="${pa.inner.x}" y1="${baselineY}" x2="${pa.inner.x + pa.inner.cx}" y2="${baselineY}" stroke="#9CA3AF"/>`
+    `<line x1="${u(pa.inner.x)}" y1="${u(baselineY)}" x2="${u(pa.inner.x + pa.inner.cx)}" y2="${u(baselineY)}" stroke="#9CA3AF"/>`
   );
   out.push(groupClose());
   return out.join("");
@@ -483,10 +623,9 @@ function chartPieSvg(
 ): string {
   const out: string[] = [groupOpen("chart", shape.id)];
   out.push(
-    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="white" stroke="#E5E7EB"/>`
+    `<rect x="${u(box.x)}" y="${u(box.y)}" width="${u(box.cx)}" height="${u(box.cy)}" fill="white" stroke="#E5E7EB"/>`
   );
   out.push(chartTitleSvg(box, part));
-  // Pie uses the first series only.
   const series = part.series[0];
   const titleHeight = part.title ? box.cy * 0.12 : 0;
   const padX = box.cx * 0.06;
@@ -498,7 +637,7 @@ function chartPieSvg(
   const cyc = box.y + padY + titleHeight + innerCy / 2;
   if (!series || series.values.length === 0) {
     out.push(
-      `<circle cx="${cxc}" cy="${cyc}" r="${r}" fill="#F3F4F6" stroke="#9CA3AF"/>`
+      `<circle cx="${u(cxc)}" cy="${u(cyc)}" r="${u(r)}" fill="#F3F4F6" stroke="#9CA3AF"/>`
     );
     out.push(groupClose());
     return out.join("");
@@ -516,10 +655,10 @@ function chartPieSvg(
     const largeArc = sweep > Math.PI ? 1 : 0;
     const fill = palette[i % palette.length];
     if (sweep >= Math.PI * 2 - 1e-9) {
-      out.push(`<circle cx="${cxc}" cy="${cyc}" r="${r}" fill="${escXml(fill)}"/>`);
+      out.push(`<circle cx="${u(cxc)}" cy="${u(cyc)}" r="${u(r)}" fill="${escXml(fill)}"/>`);
     } else {
       out.push(
-        `<path d="M ${cxc} ${cyc} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z" fill="${escXml(fill)}"/>`
+        `<path d="M ${u(cxc)} ${u(cyc)} L ${u(x1)} ${u(y1)} A ${u(r)} ${u(r)} 0 ${largeArc} 1 ${u(x2)} ${u(y2)} Z" fill="${escXml(fill)}"/>`
       );
     }
     startAngle = endAngle;
@@ -535,8 +674,8 @@ function opaqueShapeToSvg(shape: OpaqueShape): string {
   }
   return [
     groupOpen("opaque", shape.id),
-    `<rect class="placeholder" x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="#fafafa" stroke="#a1a1aa" stroke-dasharray="50000,30000"/>`,
-    `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy / 2}" text-anchor="middle" font-size="${estimateLabelSizeEmu(box.cx, box.cy)}" fill="#71717a">${escXml(shape.tag)}</text>`,
+    `<rect class="placeholder" x="${u(box.x)}" y="${u(box.y)}" width="${u(box.cx)}" height="${u(box.cy)}" fill="#fafafa" stroke="#a1a1aa" stroke-dasharray="${u(50000)},${u(30000)}"/>`,
+    `<text x="${u(box.x + box.cx / 2)}" y="${u(box.y + box.cy / 2)}" text-anchor="middle" font-size="${u(estimateLabelSizeEmu(box.cx, box.cy))}" fill="#71717a">${escXml(shape.tag)}</text>`,
     groupClose(),
   ].join("");
 }
