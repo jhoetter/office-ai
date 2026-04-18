@@ -53,6 +53,9 @@ importers:
       '@officeai/docx':
         specifier: workspace:^
         version: link:../../packages/docx
+      '@officeai/pptx':
+        specifier: workspace:^
+        version: link:../../packages/pptx
       '@officeai/ui':
         specifier: workspace:*
         version: link:../../packages/ui

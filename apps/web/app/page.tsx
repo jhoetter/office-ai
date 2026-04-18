@@ -26,10 +26,16 @@ export default function HomePage() {
           flows through the same typed command bus, so agents and humans collaborate without two parallel
           mutation paths. XLSX and PPTX land in follow-up sessions.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link href="/editor">
             <Button variant="accent" size="lg">
               Open the DOCX editor
+              <ArrowRight size={14} />
+            </Button>
+          </Link>
+          <Link href="/pptx-editor">
+            <Button variant="accent" size="lg">
+              Open the PPTX editor
               <ArrowRight size={14} />
             </Button>
           </Link>

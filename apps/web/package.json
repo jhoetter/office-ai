@@ -15,6 +15,7 @@
     "@officeai/core": "workspace:^",
     "@officeai/design-tokens": "workspace:*",
     "@officeai/docx": "workspace:^",
+    "@officeai/pptx": "workspace:^",
     "@officeai/ui": "workspace:*",
     "jszip": "^3.10.1",
     "lucide-react": "^0.574.0",
