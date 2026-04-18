@@ -34,6 +34,12 @@ export type PartialDirtyFlags = Partial<{
   sheetRels: ReadonlyArray<string>;
   /** Sheet part paths the serializer must drop entirely (delete-sheet). */
   removedSheetParts: ReadonlyArray<string>;
+  /** Sheet part paths whose drawing part needs re-emitting. */
+  drawings: ReadonlyArray<string>;
+  /** Media part paths to (re)emit. */
+  media: ReadonlyArray<string>;
+  /** Media part paths the serializer must drop entirely. */
+  removedMediaParts: ReadonlyArray<string>;
 }>;
 
 export function mergeDirty(prev: XlsxDirtyFlags, patch: PartialDirtyFlags): XlsxDirtyFlags {
@@ -47,6 +53,12 @@ export function mergeDirty(prev: XlsxDirtyFlags, patch: PartialDirtyFlags): Xlsx
   for (const p of patch.sheetRels ?? []) sheetRels.add(p);
   const removedSheetParts = new Set(prev.removedSheetParts);
   for (const p of patch.removedSheetParts ?? []) removedSheetParts.add(p);
+  const drawings = new Set(prev.drawings);
+  for (const p of patch.drawings ?? []) drawings.add(p);
+  const media = new Set(prev.media);
+  for (const p of patch.media ?? []) media.add(p);
+  const removedMediaParts = new Set(prev.removedMediaParts);
+  for (const p of patch.removedMediaParts ?? []) removedMediaParts.add(p);
   return {
     workbook: patch.workbook ?? prev.workbook,
     sharedStrings: patch.sharedStrings ?? prev.sharedStrings,
@@ -58,6 +70,9 @@ export function mergeDirty(prev: XlsxDirtyFlags, patch: PartialDirtyFlags): Xlsx
     threadedComments,
     sheetRels,
     removedSheetParts,
+    drawings,
+    media,
+    removedMediaParts,
   };
 }
 

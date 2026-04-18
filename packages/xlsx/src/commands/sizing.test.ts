@@ -20,6 +20,8 @@ function makeSheet(name: string): Sheet {
     commentAuthors: [],
     columnWidths: new Map(),
     rowHeights: new Map(),
+    hiddenRows: new Set(),
+    images: [],
   };
 }
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
+import { ImageOverlay, type AnchorFromPx } from "./ImageOverlay";
 import {
   containsCell,
   isSingle,
@@ -125,6 +126,46 @@ export interface GridProps {
    * convention) so the user can spot commented anchors at a glance.
    */
   readonly commentMarkers?: ReadonlyArray<CommentMarker>;
+  /**
+   * Imperative "scroll to + flash this cell" hook. When `nonce`
+   * changes the Grid scrolls so the cell is visible and paints a
+   * brief yellow pulse over it (~1.4 s) — used by the comments
+   * sidebar's "click to locate" affordance. The parent owns the
+   * nonce so repeated clicks on the same comment re-trigger the
+   * effect.
+   */
+  readonly scrollTarget?: { readonly row: number; readonly col: number; readonly nonce: number } | null;
+  /**
+   * Click handler for the per-column AutoFilter dropdown chevron.
+   * The Grid renders the chevron inside the header cell when
+   * `sheet.autoFilter` covers that column; the parent owns the
+   * dropdown's open/close state and dispatches the resulting
+   * `xlsx:set-filter-column` / `xlsx:sort-range` commands.
+   *
+   * `colId` is the 0-based offset from `sheet.autoFilter.range.c1`.
+   * `anchor` is the bounding rect of the chevron button (viewport
+   * coords) so the dropdown can position itself.
+   */
+  readonly onOpenFilter?: (colId: number, anchor: DOMRect) => void;
+  /**
+   * Sheet-image overlays (Phase: image insertion). The Grid renders
+   * each `sheet.images` entry as a free-floating overlay anchored
+   * via `colXs / rowYs` so it tracks column / row resizes. Image
+   * pointer interactions are routed through these callbacks; the
+   * parent dispatches `xlsx:move-image` / `xlsx:resize-image`.
+   */
+  readonly imageObjectUrls?: ReadonlyMap<string, string>;
+  readonly selectedImageId?: string | null;
+  readonly onSelectImage?: (id: string | null) => void;
+  readonly onMoveImage?: (id: string, anchor: AnchorFromPx) => void;
+  readonly onResizeImage?: (id: string, size: { widthPx: number; heightPx: number }) => void;
+  /**
+   * Right-click on an image overlay surfaces a dedicated context
+   * target so the parent can show "Delete image" entries. When the
+   * handler isn't wired, image right-clicks fall through to the
+   * cell context menu underneath (Excel parity).
+   */
+  readonly onImageContextMenu?: (imageId: string, coords: { x: number; y: number }) => void;
 }
 
 export interface CommentMarker {
@@ -143,7 +184,8 @@ export interface MarchingAntsRect {
 export type GridContextTarget =
   | { readonly kind: "cell"; readonly row: number; readonly col: number }
   | { readonly kind: "row-header"; readonly row: number }
-  | { readonly kind: "col-header"; readonly col: number };
+  | { readonly kind: "col-header"; readonly col: number }
+  | { readonly kind: "image"; readonly imageId: string };
 
 export interface RefRect {
   readonly r1: number;
@@ -184,10 +226,22 @@ export function Grid(props: GridProps): ReactNode {
     onFill,
     liveEditDraft,
     commentMarkers,
+    scrollTarget,
+    onOpenFilter,
+    imageObjectUrls,
+    selectedImageId,
+    onSelectImage,
+    onMoveImage,
+    onResizeImage,
+    onImageContextMenu,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
+  // Transient yellow pulse painted over a cell after the comments
+  // sidebar issues a "scroll to me" request. Cleared by a timer so
+  // the highlight fades on its own.
+  const [flashCell, setFlashCell] = useState<{ row: number; col: number } | null>(null);
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   // True while the user holds the primary mouse button after a
@@ -311,6 +365,10 @@ export function Grid(props: GridProps): ReactNode {
     }
     const rh = new Array<number>(TOTAL_ROWS);
     for (let r = 0; r < TOTAL_ROWS; r++) {
+      if (sheet.hiddenRows.has(r)) {
+        rh[r] = 0;
+        continue;
+      }
       const override = sheet.rowHeights.get(r);
       let h = override ?? ROW_HEIGHT;
       if (rowDrag && rowDrag.row === r) h = rowDrag.heightPx;
@@ -330,10 +388,45 @@ export function Grid(props: GridProps): ReactNode {
       totalWidth: cx[TOTAL_COLS]!,
       totalHeight: ry[TOTAL_ROWS]!,
     };
-  }, [sheet.columnWidths, sheet.rowHeights, colDrag, rowDrag]);
+  }, [sheet.columnWidths, sheet.rowHeights, sheet.hiddenRows, colDrag, rowDrag]);
 
   const visibleH = Math.max(viewport.height - HEADER_ROW_HEIGHT, ROW_HEIGHT);
   const visibleW = Math.max(viewport.width - HEADER_COL_WIDTH, COL_WIDTH);
+
+  // Whenever the parent bumps `scrollTarget.nonce` we scroll the
+  // requested cell into view (with a small margin so the cell isn't
+  // pinned against the headers) and trigger a yellow flash overlay
+  // that auto-clears.
+  const scrollTargetNonce = scrollTarget?.nonce ?? null;
+  const scrollTargetRow = scrollTarget?.row;
+  const scrollTargetCol = scrollTarget?.col;
+  useEffect(() => {
+    if (scrollTargetNonce == null) return;
+    if (scrollTargetRow == null || scrollTargetCol == null) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const cellLeft = colXs[scrollTargetCol] ?? 0;
+    const cellRight = colXs[scrollTargetCol + 1] ?? cellLeft;
+    const cellTop = rowYs[scrollTargetRow] ?? 0;
+    const cellBottom = rowYs[scrollTargetRow + 1] ?? cellTop;
+    const viewLeft = el.scrollLeft;
+    const viewRight = viewLeft + Math.max(el.clientWidth - HEADER_COL_WIDTH, 0);
+    const viewTop = el.scrollTop;
+    const viewBottom = viewTop + Math.max(el.clientHeight - HEADER_ROW_HEIGHT, 0);
+    let nextLeft = viewLeft;
+    let nextTop = viewTop;
+    const margin = 16;
+    if (cellLeft < viewLeft) nextLeft = Math.max(0, cellLeft - margin);
+    else if (cellRight > viewRight) nextLeft = Math.max(0, cellRight - (viewRight - viewLeft) + margin);
+    if (cellTop < viewTop) nextTop = Math.max(0, cellTop - margin);
+    else if (cellBottom > viewBottom) nextTop = Math.max(0, cellBottom - (viewBottom - viewTop) + margin);
+    if (nextLeft !== viewLeft || nextTop !== viewTop) {
+      el.scrollTo({ left: nextLeft, top: nextTop, behavior: "smooth" });
+    }
+    setFlashCell({ row: scrollTargetRow, col: scrollTargetCol });
+    const handle = window.setTimeout(() => setFlashCell(null), 1600);
+    return () => window.clearTimeout(handle);
+  }, [scrollTargetNonce, scrollTargetRow, scrollTargetCol, colXs, rowYs]);
 
   // Binary-search the prefix arrays to find the first / last visible
   // index, then pad with the overscan window.
@@ -456,6 +549,7 @@ export function Grid(props: GridProps): ReactNode {
   const cellList: ReactNode[] = useMemo(() => {
     const out: ReactNode[] = [];
     for (let r = startRow; r <= endRow; r++) {
+      if (sheet.hiddenRows.has(r)) continue;
       for (let c = startCol; c <= endCol; c++) {
         const k = cellKey(r, c);
         if (mergeIndex.covered.has(k)) continue;
@@ -712,6 +806,42 @@ export function Grid(props: GridProps): ReactNode {
     }
   }
 
+  // Brief yellow pulse painted on top of a cell after a comments-rail
+  // "scroll to me" request. Uses a CSS animation defined in
+  // `globals.css` (`.xlsx-comment-flash`) so the highlight fades on
+  // its own without re-renders.
+  let flashOverlay: ReactNode = null;
+  if (
+    flashCell &&
+    flashCell.row >= 0 &&
+    flashCell.row < TOTAL_ROWS &&
+    flashCell.col >= 0 &&
+    flashCell.col < TOTAL_COLS
+  ) {
+    const ftop = HEADER_ROW_HEIGHT + rowYs[flashCell.row]!;
+    const fleft = HEADER_COL_WIDTH + colXs[flashCell.col]!;
+    const fwidth = colXs[flashCell.col + 1]! - colXs[flashCell.col]!;
+    const fheight = rowYs[flashCell.row + 1]! - rowYs[flashCell.row]!;
+    flashOverlay = (
+      <div
+        key={`flash-${flashCell.row}-${flashCell.col}`}
+        data-testid="comment-flash"
+        aria-hidden
+        className="xlsx-comment-flash"
+        style={{
+          position: "absolute",
+          top: ftop,
+          left: fleft,
+          width: fwidth,
+          height: fheight,
+          boxSizing: "border-box",
+          pointerEvents: "none",
+          zIndex: 5,
+        }}
+      />
+    );
+  }
+
   // Marching-ants clipboard source overlay (Phase 13d). Drawn behind
   // the active selection marquee so the user can still see what's
   // currently selected; the dashed border keeps moving until the user
@@ -829,10 +959,13 @@ export function Grid(props: GridProps): ReactNode {
 
   // Column header band — tracks the viewport's top edge.
   const colHeaders: ReactNode[] = [];
+  const af = sheet.autoFilter;
   for (let c = startCol; c <= endCol; c++) {
     const n = selection ? normalizeSelection(selection) : null;
     const isActive = n ? c >= n.c0 && c <= n.c1 : false;
     const colWidth = colWidths[c]!;
+    const filterColId = af && c >= af.range.c1 && c <= af.range.c2 ? c - af.range.c1 : null;
+    const filterActive = filterColId !== null && af!.columns.has(filterColId);
     colHeaders.push(
       <div
         key={`ch-${c}`}
@@ -876,6 +1009,45 @@ export function Grid(props: GridProps): ReactNode {
         }}
       >
         {colToLetter(c)}
+        {filterColId !== null && onOpenFilter ? (
+          <button
+            type="button"
+            data-testid={`col-filter-${colToLetter(c)}`}
+            aria-label={`Filter column ${colToLetter(c)}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              onOpenFilter(filterColId, rect);
+            }}
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 14,
+              height: 14,
+              padding: 0,
+              border: "1px solid var(--divider)",
+              borderRadius: 2,
+              background: filterActive ? "var(--accent, #2563eb)" : "var(--surface)",
+              color: filterActive ? "#fff" : "var(--secondary)",
+              fontSize: 9,
+              lineHeight: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              zIndex: 6,
+            }}
+          >
+            ▾
+          </button>
+        ) : null}
         {onResizeColumn ? (
           <div
             data-testid={`col-resize-${colToLetter(c)}`}
@@ -907,6 +1079,7 @@ export function Grid(props: GridProps): ReactNode {
   // Row header band — tracks the viewport's left edge.
   const rowHeaders: ReactNode[] = [];
   for (let r = startRow; r <= endRow; r++) {
+    if (sheet.hiddenRows.has(r)) continue;
     const n = selection ? normalizeSelection(selection) : null;
     const isActive = n ? r >= n.r0 && r <= n.r1 : false;
     const rowHeight = rowHeights[r]!;
@@ -1012,8 +1185,34 @@ export function Grid(props: GridProps): ReactNode {
         {colHeaders}
         {rowHeaders}
         {cellList}
+        {sheet.images.map((image) => (
+          <div
+            key={`image-wrap-${image.id}`}
+            onContextMenu={(e) => {
+              if (!onImageContextMenu) return;
+              e.preventDefault();
+              e.stopPropagation();
+              onSelectImage?.(image.id);
+              onImageContextMenu(image.id, { x: e.clientX, y: e.clientY });
+            }}
+          >
+            <ImageOverlay
+              image={image}
+              imageId={image.id}
+              src={imageObjectUrls?.get(image.mediaRef)}
+              colXs={colXs}
+              rowYs={rowYs}
+              headerOffset={{ x: HEADER_COL_WIDTH, y: HEADER_ROW_HEIGHT }}
+              selected={selectedImageId === image.id}
+              onSelect={() => onSelectImage?.(image.id)}
+              onMoveCommit={(anchor) => onMoveImage?.(image.id, anchor)}
+              onResizeCommit={(size) => onResizeImage?.(image.id, size)}
+            />
+          </div>
+        ))}
         {refHighlights}
         {commentOverlays}
+        {flashOverlay}
         {antsOverlay}
         {fillPreviewOverlay}
         {marquee}

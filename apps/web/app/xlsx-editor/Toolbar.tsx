@@ -13,6 +13,8 @@ import {
   TableProperties,
   Keyboard,
   MessageSquarePlus,
+  Filter,
+  Image as ImageIcon,
 } from "lucide-react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
@@ -72,6 +74,21 @@ export interface ToolbarProps {
    * there is no selection (the composer needs an A1 anchor).
    */
   readonly onAddComment: () => void;
+  /**
+   * Toggle the AutoFilter band on the active sheet. The toolbar
+   * stays presentational; the parent computes the range to use
+   * (current selection or auto-detected used range) and dispatches
+   * `xlsx:set-auto-filter` with `range: null` to remove.
+   */
+  readonly onToggleFilter: () => void;
+  /** True iff the active sheet currently has an AutoFilter applied. */
+  readonly filterActive: boolean;
+  /**
+   * Open the OS file picker for an image (PNG/JPEG/GIF). The selected
+   * file is anchored at the active selection's anchor cell on the
+   * active sheet via `xlsx:add-image`.
+   */
+  readonly onInsertImage: () => void;
 }
 
 /**
@@ -110,6 +127,9 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     canTextToColumns,
     onOpenShortcuts,
     onAddComment,
+    onToggleFilter,
+    filterActive,
+    onInsertImage,
   } = props;
 
   const effective: EffectiveStyle = useMemo(
@@ -224,6 +244,15 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onClick={onTextToColumns}
       />
 
+      <ToggleBtn
+        icon={<Filter size={14} />}
+        label={filterActive ? "Remove AutoFilter" : "Apply AutoFilter"}
+        testId="data-filter-toggle"
+        active={filterActive}
+        disabled={disabled}
+        onClick={onToggleFilter}
+      />
+
       <Divider />
 
       <ActionBtn
@@ -232,6 +261,14 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         testId="action-add-comment"
         disabled={disabled || !selection}
         onClick={onAddComment}
+      />
+
+      <ActionBtn
+        icon={<ImageIcon size={14} />}
+        label="Insert image"
+        testId="action-insert-image"
+        disabled={disabled}
+        onClick={onInsertImage}
       />
 
       <Divider />

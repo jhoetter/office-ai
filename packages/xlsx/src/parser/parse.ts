@@ -1,13 +1,17 @@
 import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core";
 import * as XLSX from "xlsx";
-import { cellKey, formatA1 } from "../model/refs.js";
+import { cellKey, formatA1, parseRange } from "../model/refs.js";
 import { defaultStyleTable, type StyleTable } from "../model/style-table.js";
 import {
   emptyDirty,
+  type AutoFilter,
   type Cell,
   type CellErrorCode,
   type CellValue,
   type Comment,
+  type CustomFilterOp,
+  type DynamicFilterType,
+  type FilterColumn,
   type Formula,
   type MergedCell,
   type OpaquePart,
@@ -15,7 +19,9 @@ import {
   type XlsxSnapshot,
   type XlsxWorkbook,
 } from "../model/types.js";
+import type { ImageBlob } from "../model/index.js";
 import { parseCommentsPart } from "./comments.js";
+import { resolveDrawings } from "./drawings.js";
 import { XlsxParseError } from "./errors.js";
 import { parseStylesXml } from "./styles.js";
 
@@ -106,8 +112,9 @@ export async function parseXlsx(
   }
 
   const workbookRels = ooxml.RelationshipGraph.loadFor(container, WORKBOOK_PART);
+  const images = new Map<string, ImageBlob>();
   const sheets: Sheet[] = sheetEntries.map((entry, index) =>
-    resolveSheet(entry, index, workbookRels, container, sheetjsBook, mintNodeId)
+    resolveSheet(entry, index, workbookRels, container, sheetjsBook, mintNodeId, images)
   );
 
   const contentTypes = ooxml.ContentTypes.load(container);
@@ -117,12 +124,27 @@ export async function parseXlsx(
     ctMap.set(partName, o.contentType);
   }
 
+  // Drawing parts and media we successfully modeled — exclude from
+  // opaqueParts so we don't double-store them, and so commands that
+  // remove an image can drop the bytes from the package without a
+  // stale opaque copy resurrecting them.
+  const modeledDrawingParts = new Set<string>();
+  for (const sheet of sheets) {
+    if (sheet.drawingPartPath) {
+      modeledDrawingParts.add(sheet.drawingPartPath);
+      modeledDrawingParts.add(ooxml.RelationshipGraph.relsPathFor(sheet.drawingPartPath));
+    }
+  }
+  const modeledMediaParts = new Set(images.keys());
+
   const opaqueParts = new Map<string, OpaquePart>();
   const partHashes: Record<string, string> = {};
   for (const [path, part] of container.parts) {
     const hash = sha256Hex(part.bytes);
     partHashes[path] = hash;
     if (isModeledPath(path)) continue;
+    if (modeledDrawingParts.has(path)) continue;
+    if (modeledMediaParts.has(path)) continue;
     opaqueParts.set(path, {
       path,
       bytes: part.bytes,
@@ -144,6 +166,7 @@ export async function parseXlsx(
     workbookRootAttrs,
     styles,
     sheetjs: sheetjsBook,
+    images,
   };
 
   return {
@@ -234,7 +257,8 @@ function resolveSheet(
   workbookRels: ooxml.RelationshipGraph,
   container: ooxml.OoxmlContainer,
   sheetjsBook: XLSX.WorkBook,
-  mintNodeId: IdMinter
+  mintNodeId: IdMinter,
+  images: Map<string, ImageBlob>
 ): Sheet {
   const rel = workbookRels.byId(entry.rId);
   if (!rel) {
@@ -258,14 +282,25 @@ function resolveSheet(
   const kind: Sheet["kind"] = rel.type === DOC_REL_TYPES.worksheet ? "worksheet" : "non-worksheet";
 
   const ws = sheetjsBook.Sheets[entry.name];
-  const styleIdByRef =
-    kind === "worksheet" && container.has(partPath)
-      ? extractStyleIdsFromXml(container.readText(partPath))
-      : undefined;
+  const sheetXml =
+    kind === "worksheet" && container.has(partPath) ? container.readText(partPath) : undefined;
+  const styleIdByRef = sheetXml ? extractStyleIdsFromXml(sheetXml) : undefined;
   const { cells, merges } =
     kind === "worksheet" && ws ? extractCellsAndMerges(ws, styleIdByRef) : EMPTY_CELL_DATA;
 
   const { commentsPartPath, comments, commentAuthors } = resolveComments(container, partPath);
+
+  const { autoFilter, hiddenRows } = sheetXml
+    ? extractAutoFilterAndHiddenRows(sheetXml)
+    : { autoFilter: undefined, hiddenRows: new Set<number>() };
+
+  const drawings =
+    kind === "worksheet"
+      ? resolveDrawings(container, partPath, mintNodeId, images)
+      : { images: [] as ReadonlyArray<import("../model/index.js").SheetImage>, mediaBlobs: [] };
+  for (const blob of drawings.mediaBlobs) {
+    if (!images.has(blob.partPath)) images.set(blob.partPath, blob);
+  }
 
   return {
     id: mintNodeId(),
@@ -282,6 +317,12 @@ function resolveSheet(
     commentAuthors,
     columnWidths: new Map(),
     rowHeights: new Map(),
+    hiddenRows,
+    images: drawings.images,
+    ...("drawingPartPath" in drawings && drawings.drawingPartPath
+      ? { drawingPartPath: drawings.drawingPartPath }
+      : {}),
+    ...(autoFilter ? { autoFilter } : {}),
     ...(commentsPartPath ? { commentsPartPath } : {}),
   };
 }
@@ -437,6 +478,165 @@ function extractStyleIdsFromXml(xml: string): Map<string, number> {
     result.set(refMatch[2], idx);
   }
   return result;
+}
+
+/**
+ * Extract `<autoFilter>` and `<row r="N" hidden="1">` from a worksheet
+ * XML string. Regex-based to match the same posture as
+ * {@link extractStyleIdsFromXml} — full XML parsing would pull in
+ * another dependency just to read two patterns.
+ *
+ * Excel allows at most one `<autoFilter>` per worksheet; we only
+ * honour the first match.
+ */
+export function extractAutoFilterAndHiddenRows(xml: string): {
+  autoFilter: AutoFilter | undefined;
+  hiddenRows: Set<number>;
+} {
+  const hiddenRows = new Set<number>();
+  const rowRe = /<row\b([^/>]*)\/?>/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rowRe.exec(xml)) !== null) {
+    const attrs = rm[1] ?? "";
+    const rMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+    if (!rMatch) continue;
+    const rowNum = Number(rMatch[2]);
+    if (!Number.isInteger(rowNum) || rowNum < 1) continue;
+    const hMatch = /\bhidden=("|')([^"']+)\1/.exec(attrs);
+    if (!hMatch) continue;
+    const hVal = hMatch[2];
+    if (hVal === "1" || hVal === "true") hiddenRows.add(rowNum - 1);
+  }
+
+  const afMatch = /<autoFilter\b([^>]*)(?:\/>|>([\s\S]*?)<\/autoFilter>)/.exec(xml);
+  let autoFilter: AutoFilter | undefined;
+  if (afMatch) {
+    const headerAttrs = afMatch[1] ?? "";
+    const body = afMatch[2] ?? "";
+    const refMatch = /\bref=("|')([^"']+)\1/.exec(headerAttrs);
+    if (refMatch) {
+      try {
+        const range = parseRange(refMatch[2]!);
+        const columns = parseFilterColumns(body);
+        autoFilter = {
+          range: {
+            r1: range.start.row,
+            c1: range.start.col,
+            r2: range.end.row,
+            c2: range.end.col,
+          },
+          columns,
+        };
+      } catch {
+        // Malformed ref — skip silently rather than fail the whole parse.
+      }
+    }
+  }
+
+  return { autoFilter, hiddenRows };
+}
+
+function parseFilterColumns(body: string): Map<number, FilterColumn> {
+  const out = new Map<number, FilterColumn>();
+  if (!body) return out;
+  const fcRe = /<filterColumn\b([^>]*)(?:\/>|>([\s\S]*?)<\/filterColumn>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fcRe.exec(body)) !== null) {
+    const attrs = m[1] ?? "";
+    const inner = m[2] ?? "";
+    const idMatch = /\bcolId=("|')([^"']+)\1/.exec(attrs);
+    if (!idMatch) continue;
+    const colId = Number(idMatch[2]);
+    if (!Number.isInteger(colId) || colId < 0) continue;
+    const fc = parseSingleFilterColumn(inner);
+    if (fc) out.set(colId, fc);
+  }
+  return out;
+}
+
+function parseSingleFilterColumn(inner: string): FilterColumn | null {
+  // <filters> with <filter val="..."/> children
+  const filtersMatch = /<filters\b([^>]*)(?:\/>|>([\s\S]*?)<\/filters>)/.exec(inner);
+  if (filtersMatch) {
+    const attrs = filtersMatch[1] ?? "";
+    const body = filtersMatch[2] ?? "";
+    const blank = /\bblank=("|')(1|true)\1/.test(attrs);
+    const values = new Set<string>();
+    const fRe = /<filter\b[^/>]*\bval=("|')([^"']*)\1/g;
+    let fm: RegExpExecArray | null;
+    while ((fm = fRe.exec(body)) !== null) {
+      values.add(fm[2] ?? "");
+    }
+    return { kind: "values", values, blank };
+  }
+
+  // <customFilters> with <customFilter operator="..." val="..."/>
+  const cfMatch = /<customFilters\b([^>]*)(?:\/>|>([\s\S]*?)<\/customFilters>)/.exec(inner);
+  if (cfMatch) {
+    const attrs = cfMatch[1] ?? "";
+    const body = cfMatch[2] ?? "";
+    const combine: "and" | "or" = /\band=("|')(1|true)\1/.test(attrs) ? "and" : "or";
+    const ops: CustomFilterOp[] = [];
+    const opRe = /<customFilter\b([^/>]*)\/?>/g;
+    let om: RegExpExecArray | null;
+    while ((om = opRe.exec(body)) !== null) {
+      const opAttrs = om[1] ?? "";
+      const opMatch = /\boperator=("|')([^"']+)\1/.exec(opAttrs);
+      const valMatch = /\bval=("|')([^"']*)\1/.exec(opAttrs);
+      const operator = (opMatch?.[2] ?? "equal") as CustomFilterOp["operator"];
+      const val = valMatch?.[2] ?? "";
+      ops.push({ operator, val });
+    }
+    if (ops.length === 0) return null;
+    return { kind: "custom", op1: ops[0]!, op2: ops[1], combine };
+  }
+
+  // <top10 top="1" percent="0" val="10" filterVal="..."/>
+  const top10Match = /<top10\b([^/>]*)\/?>/.exec(inner);
+  if (top10Match) {
+    const attrs = top10Match[1] ?? "";
+    const top = !/\btop=("|')0\1/.test(attrs); // default true
+    const percent = /\bpercent=("|')(1|true)\1/.test(attrs);
+    const valMatch = /\bval=("|')([^"']+)\1/.exec(attrs);
+    const filterValMatch = /\bfilterVal=("|')([^"']+)\1/.exec(attrs);
+    const n = valMatch ? Number(valMatch[2]) : 10;
+    const filterVal = filterValMatch ? Number(filterValMatch[2]) : Number.NaN;
+    return {
+      kind: "top10",
+      top,
+      percent,
+      n: Number.isFinite(n) ? n : 10,
+      filterVal: Number.isFinite(filterVal) ? filterVal : 0,
+    };
+  }
+
+  // <dynamicFilter type="..."/>
+  const dynMatch = /<dynamicFilter\b([^/>]*)\/?>/.exec(inner);
+  if (dynMatch) {
+    const attrs = dynMatch[1] ?? "";
+    const tMatch = /\btype=("|')([^"']+)\1/.exec(attrs);
+    if (tMatch) {
+      return { kind: "dynamic", type: tMatch[2] as DynamicFilterType };
+    }
+  }
+
+  // <colorFilter dxfId="0" cellColor="1"/>
+  // We persist the *resolved* color rather than the dxfId since the
+  // dxf table is opaque in our model. Fall back to a dxfId stamp so a
+  // round-trip stays semantically meaningful.
+  const colorMatch = /<colorFilter\b([^/>]*)\/?>/.exec(inner);
+  if (colorMatch) {
+    const attrs = colorMatch[1] ?? "";
+    const isCellColor = !/\bcellColor=("|')0\1/.test(attrs);
+    const dxfMatch = /\bdxfId=("|')([^"']+)\1/.exec(attrs);
+    return {
+      kind: "color",
+      argb: dxfMatch ? `dxf:${dxfMatch[2]}` : "FFFFFFFF",
+      isCellColor,
+    };
+  }
+
+  return null;
 }
 
 const ERROR_CODE_BY_NUM: Record<number, CellErrorCode> = {

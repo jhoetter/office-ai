@@ -19,11 +19,22 @@ export {
   replyCommentHandler,
   resolveCommentHandler,
 } from "./comment-crud.js";
+export {
+  addImageHandler,
+  moveImageHandler,
+  resizeImageHandler,
+  removeImageHandler,
+} from "./image-commands.js";
 export { setColumnWidthHandler } from "./set-column-width.js";
 export { setRowHeightHandler } from "./set-row-height.js";
 export { deleteSheetHandler } from "./delete-sheet.js";
 export { pasteRangeHandler } from "./paste-range.js";
 export { textToColumnsHandler } from "./text-to-columns.js";
 export { fillRangeHandler } from "./fill-range.js";
+export { setAutoFilterHandler } from "./set-auto-filter.js";
+export { setFilterColumnHandler } from "./set-filter-column.js";
+export { clearFilterColumnHandler } from "./clear-filter-column.js";
+export { sortRangeHandler } from "./sort-range.js";
+export { recomputeHiddenRows } from "./auto-filter-eval.js";
 export { evolveSnapshot, mergeDirty, findSheet, replaceSheet, buildDiff } from "./helpers.js";
 export { resolveSheet, parseCellRef, parseRangeRef, validateSheetName } from "./validation.js";

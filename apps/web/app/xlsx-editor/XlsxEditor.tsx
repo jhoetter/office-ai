@@ -46,6 +46,7 @@ import { Toolbar } from "./Toolbar";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { TextToColumnsPopover } from "./TextToColumnsPopover";
+import { FilterDropdown } from "./FilterDropdown";
 import { sniffDelimiter } from "@officeai/xlsx";
 import { formatCellValue as renderCellValue } from "./styles";
 import {
@@ -72,6 +73,46 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
  * guards so typing in the comments composer doesn't get hijacked by
  * the grid's "type-to-edit" handler.
  */
+/**
+ * Decode an image blob just enough to learn its intrinsic pixel
+ * size. We need this when inserting because xlsx:add-image insists
+ * on positive width/height in CSS pixels — the XLSX serializer then
+ * converts to EMU. We use an `Image` element rather than parsing
+ * PNG/JPEG headers so we transparently support whatever the browser
+ * supports (incl. JPEG variants we don't want to hand-roll).
+ */
+const SUPPORTED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif"]);
+
+function isSupportedImageFile(file: { type?: string; name?: string }): boolean {
+  if (file.type && SUPPORTED_IMAGE_MIME.has(file.type)) return true;
+  // Some browsers leave `type` empty for OS-drag payloads; fall back to
+  // the extension so a dragged-in `.png` still goes through the
+  // image insertion path instead of being treated as an xlsx file.
+  const name = (file.name ?? "").toLowerCase();
+  return name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif");
+}
+
+function defaultInsertAnchor(selection: Selection | null): { fromRow: number; fromCol: number } {
+  if (!selection) return { fromRow: 0, fromCol: 0 };
+  return { fromRow: selection.anchor.row, fromCol: selection.anchor.col };
+}
+
+async function measureImage(buf: ArrayBuffer, contentType: string): Promise<{ width: number; height: number }> {
+  const blob = new Blob([buf], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  try {
+    const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || 96, height: img.naturalHeight || 96 });
+      img.onerror = () => reject(new Error("Failed to decode image"));
+      img.src = url;
+    });
+    return dims;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function isFormControlTarget(t: EventTarget | null): boolean {
   if (!t || !(t instanceof HTMLElement)) return false;
   const tag = t.tagName;
@@ -101,12 +142,17 @@ export function XlsxEditor(): ReactNode {
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
   const [activeSheetName, setActiveSheetName] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(singleSelection({ row: 0, col: 0 }));
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [formulaDraft, setFormulaDraft] = useState("");
   const [formulaFocused, setFormulaFocused] = useState(false);
   const formulaInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Dedicated hidden <input type=file> for the toolbar's "Insert image"
+  // affordance — kept separate from the workbook open input so the
+  // accept= filter doesn't bleed across the two flows.
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [filename, setFilename] = useState<string>(SAMPLE_NAME);
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{
@@ -224,14 +270,72 @@ export function XlsxEditor(): ReactNode {
   const onDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
     if (e.currentTarget === e.target) setDragOver(false);
   }, []);
+  const dispatchAddImage = useCallback(
+    async (
+      file: Blob,
+      anchor: { fromRow: number; fromCol: number; fromOffsetXPx?: number; fromOffsetYPx?: number }
+    ) => {
+      const sheet = activeSheetRef.current;
+      if (!sheet) return;
+      const a = agentRef.current;
+      if (!a) return;
+      const contentType = file.type;
+      if (contentType !== "image/png" && contentType !== "image/jpeg" && contentType !== "image/gif") {
+        pushToast("error", `Unsupported image type: ${contentType || "unknown"}`);
+        return;
+      }
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const { width, height } = await measureImage(buf, contentType);
+      try {
+        await a.applyCommand({
+          type: "xlsx:add-image",
+          payload: {
+            sheet: sheet.name,
+            bytes,
+            contentType,
+            fromRow: anchor.fromRow,
+            fromCol: anchor.fromCol,
+            fromOffsetXPx: anchor.fromOffsetXPx ?? 0,
+            fromOffsetYPx: anchor.fromOffsetYPx ?? 0,
+            widthPx: width,
+            heightPx: height,
+          },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
   const onDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       setDragOver(false);
       const file = e.dataTransfer.files?.[0];
-      if (file) void openFile(file);
+      if (!file) return;
+      if (isSupportedImageFile(file)) {
+        void dispatchAddImage(file, defaultInsertAnchor(selectionRef.current));
+        return;
+      }
+      void openFile(file);
     },
-    [openFile]
+    [dispatchAddImage, openFile]
+  );
+
+  const onInsertImageClick = useCallback(() => {
+    imageInputRef.current?.click();
+  }, []);
+
+  const onImageInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) void dispatchAddImage(file, defaultInsertAnchor(selectionRef.current));
+      e.target.value = "";
+    },
+    [dispatchAddImage]
   );
 
   const activeSheet: Sheet | null = useMemo(() => {
@@ -471,6 +575,7 @@ export function XlsxEditor(): ReactNode {
       } else {
         setSelection(singleSelection(pos));
       }
+      setSelectedImageId(null);
       // Pull keyboard focus back to the surface so the next printable
       // key starts type-to-edit on the new anchor. Focus synchronously
       // so the active element is already the surface by the time the
@@ -487,6 +592,14 @@ export function XlsxEditor(): ReactNode {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const commentsAsideRef = useRef<HTMLElement | null>(null);
   const [commentsForceOpen, setCommentsForceOpen] = useState(false);
+  // Bumped each time the comments sidebar requests "scroll to this
+  // cell". The Grid effect keys off `nonce` so clicking the same
+  // comment twice still re-scrolls and re-flashes.
+  const [commentScrollTarget, setCommentScrollTarget] = useState<{
+    row: number;
+    col: number;
+    nonce: number;
+  } | null>(null);
   const focusCommentComposer = useCallback(() => {
     setCommentsForceOpen(true);
     requestAnimationFrame(() => {
@@ -501,6 +614,35 @@ export function XlsxEditor(): ReactNode {
       }
     });
   }, []);
+  // Locate the cell carrying `commentId` on the active sheet, move
+  // the selection there (so the marquee + name-box update too) and
+  // ask the Grid to scroll + flash the cell. Wired into the comments
+  // provider's `onScrollTo` hook.
+  const scrollToComment = useCallback(
+    (commentId: string) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const snap = a.getSnapshot();
+      const sheet = snap.root.sheets.find((s) => s.name === activeSheetName);
+      if (!sheet) return;
+      const target = sheet.comments.find((c) => c.id === commentId);
+      if (!target) return;
+      let addr: { row: number; col: number };
+      try {
+        addr = parseA1(target.ref);
+      } catch {
+        return;
+      }
+      setSelection(singleSelection(addr));
+      setCommentsForceOpen(true);
+      setCommentScrollTarget((prev) => ({
+        row: addr.row,
+        col: addr.col,
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
+    },
+    [activeSheetName]
+  );
   // Move the active selection one cell in the given direction, with
   // optional Shift-extend. Pure helper — no side effects beyond
   // calling setSelection.
@@ -736,12 +878,28 @@ export function XlsxEditor(): ReactNode {
     (e: React.ClipboardEvent<HTMLDivElement>) => {
       if (isFormControlTarget(e.target)) return;
       if (!agentRef.current || !activeSheet || !selection) return;
+      // Image clipboard branch — when the user pastes a screenshot or
+      // copied image we route to xlsx:add-image instead of the cell
+      // paste flow. We pick the FIRST image item (the rest are usually
+      // alternative encodings of the same image: png + jpg fallbacks).
+      const items = Array.from(e.clipboardData.items ?? []);
+      const imgItem = items.find(
+        (it) => it.kind === "file" && SUPPORTED_IMAGE_MIME.has(it.type)
+      );
+      if (imgItem) {
+        const file = imgItem.getAsFile();
+        if (file) {
+          e.preventDefault();
+          void dispatchAddImage(file, defaultInsertAnchor(selection));
+          return;
+        }
+      }
       e.preventDefault();
       const html = e.clipboardData.getData("text/html");
       const text = e.clipboardData.getData("text/plain");
       void pasteAtSelection({ html, text });
     },
-    [activeSheet, selection, pasteAtSelection]
+    [activeSheet, selection, pasteAtSelection, dispatchAddImage]
   );
 
   const onSurfaceKeyDown = useCallback(
@@ -951,7 +1109,25 @@ export function XlsxEditor(): ReactNode {
       }
 
       if (e.key === "Backspace" || e.key === "Delete") {
-        if (!activeSheet || !selection) return;
+        if (!activeSheet) return;
+        if (selectedImageId) {
+          e.preventDefault();
+          const a0 = agentRef.current;
+          if (!a0) return;
+          const removedId = selectedImageId;
+          setSelectedImageId(null);
+          void a0
+            .applyCommand({
+              type: "xlsx:remove-image",
+              payload: { sheet: activeSheet.name, imageId: removedId },
+              source: "human",
+            })
+            .catch((err: unknown) =>
+              pushToast("error", err instanceof Error ? err.message : String(err))
+            );
+          return;
+        }
+        if (!selection) return;
         e.preventDefault();
         const a = agentRef.current;
         if (!a) return;
@@ -1039,6 +1215,7 @@ export function XlsxEditor(): ReactNode {
       moveSelection,
       pushToast,
       selectedCell,
+      selectedImageId,
       selection,
       wholeColSelection,
       wholeRowSelection,
@@ -1103,6 +1280,76 @@ export function XlsxEditor(): ReactNode {
     [activeSheet, dispatchCellEdit]
   );
 
+  const onMoveImage = useCallback(
+    (
+      imageId: string,
+      anchor: { fromRow: number; fromCol: number; fromOffsetXPx: number; fromOffsetYPx: number }
+    ) => {
+      if (!activeSheet) return;
+      const a = agentRef.current;
+      if (!a) return;
+      void a
+        .applyCommand({
+          type: "xlsx:move-image",
+          payload: {
+            sheet: activeSheet.name,
+            imageId,
+            fromRow: anchor.fromRow,
+            fromCol: anchor.fromCol,
+            fromOffsetXPx: anchor.fromOffsetXPx,
+            fromOffsetYPx: anchor.fromOffsetYPx,
+          },
+          source: "human",
+        })
+        .catch((err: unknown) =>
+          pushToast("error", err instanceof Error ? err.message : String(err))
+        );
+    },
+    [activeSheet, pushToast]
+  );
+
+  const onResizeImage = useCallback(
+    (imageId: string, size: { widthPx: number; heightPx: number }) => {
+      if (!activeSheet) return;
+      const a = agentRef.current;
+      if (!a) return;
+      void a
+        .applyCommand({
+          type: "xlsx:resize-image",
+          payload: {
+            sheet: activeSheet.name,
+            imageId,
+            widthPx: size.widthPx,
+            heightPx: size.heightPx,
+          },
+          source: "human",
+        })
+        .catch((err: unknown) =>
+          pushToast("error", err instanceof Error ? err.message : String(err))
+        );
+    },
+    [activeSheet, pushToast]
+  );
+
+  const onRemoveImage = useCallback(
+    (imageId: string) => {
+      if (!activeSheet) return;
+      const a = agentRef.current;
+      if (!a) return;
+      setSelectedImageId(null);
+      void a
+        .applyCommand({
+          type: "xlsx:remove-image",
+          payload: { sheet: activeSheet.name, imageId },
+          source: "human",
+        })
+        .catch((err: unknown) =>
+          pushToast("error", err instanceof Error ? err.message : String(err))
+        );
+    },
+    [activeSheet, pushToast]
+  );
+
   const onSave = useCallback(async () => {
     const a = agentRef.current;
     if (!a) return;
@@ -1123,6 +1370,25 @@ export function XlsxEditor(): ReactNode {
 
   const sheets = snapshot?.root.sheets ?? [];
   const revision = snapshot?.revision ?? 0;
+
+  // Build object URLs for image media. Re-built only when the workbook
+  // image map changes (identity), so editing other parts of the sheet
+  // doesn't churn the URLs and force <img> reloads. We revoke on the
+  // next build / unmount.
+  const imageObjectUrls = useMemo<ReadonlyMap<string, string>>(() => {
+    const m = new Map<string, string>();
+    if (!snapshot) return m;
+    for (const [path, blob] of snapshot.root.images.entries()) {
+      const b = new Blob([blob.bytes as BlobPart], { type: blob.contentType });
+      m.set(path, URL.createObjectURL(b));
+    }
+    return m;
+  }, [snapshot?.root.images]);
+  useEffect(() => {
+    return () => {
+      for (const url of imageObjectUrls.values()) URL.revokeObjectURL(url);
+    };
+  }, [imageObjectUrls]);
 
   // Recompute autocomplete matches whenever the user types or moves
   // the caret while the formula bar is focused. `getSuggestions`
@@ -1177,7 +1443,11 @@ export function XlsxEditor(): ReactNode {
         | "xlsx:set-column-width"
         | "xlsx:set-row-height"
         | "xlsx:text-to-columns"
-        | "xlsx:fill-range",
+        | "xlsx:fill-range"
+        | "xlsx:set-auto-filter"
+        | "xlsx:set-filter-column"
+        | "xlsx:clear-filter-column"
+        | "xlsx:sort-range",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -1284,6 +1554,103 @@ export function XlsxEditor(): ReactNode {
       });
     },
     [activeSheet, selection, dispatchOrToast]
+  );
+
+  // ── AutoFilter (P17) ───────────────────────────────────────────────
+  // Filter dropdown anchor + active column. The dropdown is rendered
+  // at the editor surface level (not inside the Grid) so it can
+  // escape the scrollable viewport's clip rect.
+  const [filterDropdown, setFilterDropdown] = useState<{
+    colId: number;
+    anchor: DOMRect;
+  } | null>(null);
+
+  // Auto-detect the used range on a sheet — the smallest A1 rectangle
+  // covering every populated cell. Mirrors Excel's behaviour when the
+  // user toggles AutoFilter from a single-cell selection.
+  const detectUsedRange = useCallback((sheet: Sheet): string | null => {
+    let minR = Infinity;
+    let minC = Infinity;
+    let maxR = -1;
+    let maxC = -1;
+    for (const cell of sheet.cells.values()) {
+      if (cell.value === null || cell.value === "") continue;
+      if (cell.row < minR) minR = cell.row;
+      if (cell.col < minC) minC = cell.col;
+      if (cell.row > maxR) maxR = cell.row;
+      if (cell.col > maxC) maxC = cell.col;
+    }
+    if (maxR < 0) return null;
+    return formatRange({
+      start: { row: minR, col: minC },
+      end: { row: maxR, col: maxC },
+    });
+  }, []);
+
+  const onToggleFilter = useCallback(() => {
+    if (!activeSheet) return;
+    if (activeSheet.autoFilter) {
+      dispatchOrToast("xlsx:set-auto-filter", { sheet: activeSheet.name, range: null });
+      setFilterDropdown(null);
+      return;
+    }
+    let range: string | null = null;
+    if (selection && !isSingle(selection)) {
+      range = formatSelection(selection);
+    } else {
+      range = detectUsedRange(activeSheet);
+    }
+    if (!range) {
+      pushToast("warn", "No data to filter on this sheet");
+      return;
+    }
+    dispatchOrToast("xlsx:set-auto-filter", { sheet: activeSheet.name, range });
+  }, [activeSheet, selection, detectUsedRange, dispatchOrToast, pushToast]);
+
+  const onOpenFilter = useCallback((colId: number, anchor: DOMRect) => {
+    setFilterDropdown({ colId, anchor });
+  }, []);
+
+  const onCloseFilter = useCallback(() => setFilterDropdown(null), []);
+
+  const onApplyFilterColumn = useCallback(
+    (criterion: import("@officeai/xlsx").FilterColumn) => {
+      if (!activeSheet || !filterDropdown) return;
+      dispatchOrToast("xlsx:set-filter-column", {
+        sheet: activeSheet.name,
+        colId: filterDropdown.colId,
+        criterion,
+      });
+      setFilterDropdown(null);
+    },
+    [activeSheet, filterDropdown, dispatchOrToast]
+  );
+
+  const onClearFilterColumn = useCallback(() => {
+    if (!activeSheet || !filterDropdown) return;
+    dispatchOrToast("xlsx:clear-filter-column", {
+      sheet: activeSheet.name,
+      colId: filterDropdown.colId,
+    });
+    setFilterDropdown(null);
+  }, [activeSheet, filterDropdown, dispatchOrToast]);
+
+  const onSortFromFilter = useCallback(
+    (order: "asc" | "desc") => {
+      if (!activeSheet || !activeSheet.autoFilter || !filterDropdown) return;
+      const af = activeSheet.autoFilter;
+      const range = formatRange({
+        start: { row: af.range.r1, col: af.range.c1 },
+        end: { row: af.range.r2, col: af.range.c2 },
+      });
+      dispatchOrToast("xlsx:sort-range", {
+        sheet: activeSheet.name,
+        range,
+        sortBy: { colId: filterDropdown.colId, order },
+      });
+      setFilterDropdown(null);
+    },
+    [activeSheet, filterDropdown, dispatchOrToast]
   );
 
   const onUnmerge = useCallback(() => {
@@ -1498,6 +1865,18 @@ export function XlsxEditor(): ReactNode {
         onSelect: onTextToColumns,
       },
     ];
+    if (target.kind === "image") {
+      const imageId = target.imageId;
+      return [
+        {
+          kind: "action",
+          id: "delete-image",
+          label: "Delete image",
+          shortcut: "⌫",
+          onSelect: () => onRemoveImage(imageId),
+        },
+      ];
+    }
     if (target.kind === "row-header") {
       return [
         {
@@ -1577,6 +1956,60 @@ export function XlsxEditor(): ReactNode {
           disabled: !canTextToColumns,
           onSelect: onTextToColumns,
         },
+        { kind: "divider", id: "div-col-filter" },
+        {
+          kind: "action",
+          id: "sort-asc",
+          label: "Sort A → Z",
+          disabled: !activeSheet?.autoFilter,
+          onSelect: () => {
+            if (!activeSheet?.autoFilter) return;
+            const af = activeSheet.autoFilter;
+            const range = formatRange({
+              start: { row: af.range.r1, col: af.range.c1 },
+              end: { row: af.range.r2, col: af.range.c2 },
+            });
+            const colId = target.col - af.range.c1;
+            if (colId < 0 || colId > af.range.c2 - af.range.c1) return;
+            dispatchOrToast("xlsx:sort-range", {
+              sheet: activeSheet.name,
+              range,
+              sortBy: { colId, order: "asc" },
+            });
+          },
+        },
+        {
+          kind: "action",
+          id: "sort-desc",
+          label: "Sort Z → A",
+          disabled: !activeSheet?.autoFilter,
+          onSelect: () => {
+            if (!activeSheet?.autoFilter) return;
+            const af = activeSheet.autoFilter;
+            const range = formatRange({
+              start: { row: af.range.r1, col: af.range.c1 },
+              end: { row: af.range.r2, col: af.range.c2 },
+            });
+            const colId = target.col - af.range.c1;
+            if (colId < 0 || colId > af.range.c2 - af.range.c1) return;
+            dispatchOrToast("xlsx:sort-range", {
+              sheet: activeSheet.name,
+              range,
+              sortBy: { colId, order: "desc" },
+            });
+          },
+        },
+        {
+          kind: "action",
+          id: "clear-filter-from-col",
+          label: "Clear filter from column",
+          disabled: !activeSheet?.autoFilter || !activeSheet.autoFilter.columns.has(target.col - activeSheet.autoFilter.range.c1),
+          onSelect: () => {
+            if (!activeSheet?.autoFilter) return;
+            const colId = target.col - activeSheet.autoFilter.range.c1;
+            dispatchOrToast("xlsx:clear-filter-column", { sheet: activeSheet.name, colId });
+          },
+        },
       ];
     }
     return cellEntries;
@@ -1597,6 +2030,8 @@ export function XlsxEditor(): ReactNode {
     onClearFormats,
     canTextToColumns,
     onTextToColumns,
+    dispatchOrToast,
+    onRemoveImage,
   ]);
 
   const acceptSuggestion = useCallback(
@@ -1667,6 +2102,14 @@ export function XlsxEditor(): ReactNode {
         data-testid="open-xlsx-input"
         className="sr-only"
         onChange={onFileInputChange}
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif"
+        data-testid="insert-image-input"
+        className="sr-only"
+        onChange={onImageInputChange}
       />
       <header className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-divider bg-surface px-3 py-2">
         <div className="flex items-center gap-3">
@@ -1752,6 +2195,9 @@ export function XlsxEditor(): ReactNode {
           onTextToColumns={onTextToColumns}
           onOpenShortcuts={() => shortcutsDialog.setOpen(true)}
           onAddComment={focusCommentComposer}
+          onToggleFilter={onToggleFilter}
+          filterActive={!!activeSheet?.autoFilter}
+          onInsertImage={onInsertImageClick}
         />
       ) : null}
 
@@ -1761,6 +2207,21 @@ export function XlsxEditor(): ReactNode {
         onCancel={() => setTtocOpen(false)}
         onConfirm={onTextToColumnsConfirm}
       />
+
+      {activeSheet?.autoFilter && filterDropdown ? (
+        <FilterDropdown
+          open
+          sheet={activeSheet}
+          styles={snapshot!.root.styles}
+          autoFilter={activeSheet.autoFilter}
+          colId={filterDropdown.colId}
+          anchor={filterDropdown.anchor}
+          onClose={onCloseFilter}
+          onSort={onSortFromFilter}
+          onClear={onClearFilterColumn}
+          onApply={onApplyFilterColumn}
+        />
+      ) : null}
 
       <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
         <span
@@ -1890,6 +2351,7 @@ export function XlsxEditor(): ReactNode {
             onResizeRow={onResizeRow}
             refRects={refRects}
             commentMarkers={commentMarkers}
+            scrollTarget={commentScrollTarget}
             onSelectAxis={handleAxisSelect}
             onContextMenu={onContextMenuOpen}
             marchingAnts={
@@ -1904,6 +2366,19 @@ export function XlsxEditor(): ReactNode {
                 : null
             }
             onFill={onFill}
+            onOpenFilter={onOpenFilter}
+            imageObjectUrls={imageObjectUrls}
+            selectedImageId={selectedImageId}
+            onSelectImage={(id) => {
+              setSelectedImageId(id);
+              if (id !== null) surfaceRef.current?.focus({ preventScroll: true });
+            }}
+            onMoveImage={onMoveImage}
+            onResizeImage={onResizeImage}
+            onImageContextMenu={(imageId, coords) => {
+              setSelectedImageId(imageId);
+              setCtxMenu({ target: { kind: "image", imageId }, x: coords.x, y: coords.y });
+            }}
             liveEditDraft={
               formulaFocused && selection && isSingle(selection)
                 ? {
@@ -1941,9 +2416,14 @@ export function XlsxEditor(): ReactNode {
             </div>
             <CommentsSidebar
               key={`xlsx-comments-${activeSheet.name}-${revision}`}
-              provider={createXlsxCommentsProvider({ agent, sheetName: activeSheet.name })}
+              provider={createXlsxCommentsProvider({
+                agent,
+                sheetName: activeSheet.name,
+                onScrollTo: scrollToComment,
+              })}
               author="You"
               emptyHint="No comments on this sheet yet. Select a cell and press Add comment in the toolbar."
+              onScrollTo={scrollToComment}
             />
             {selection ? (
               <CommentComposer

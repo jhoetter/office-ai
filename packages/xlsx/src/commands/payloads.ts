@@ -1,4 +1,11 @@
-import type { CellErrorCode, CellValue } from "../model/types.js";
+import type { ImageContentType } from "../model/drawings.js";
+import type {
+  CellErrorCode,
+  CellValue,
+  CustomFilterOp,
+  DynamicFilterType,
+  FilterColumn,
+} from "../model/types.js";
 
 /**
  * Wire payloads for every `xlsx:*` command. Mirrors
@@ -7,7 +14,7 @@ import type { CellErrorCode, CellValue } from "../model/types.js";
  * code: "#REF!" }` for error sentinels.
  */
 
-export type { CellErrorCode, CellValue };
+export type { CellErrorCode, CellValue, CustomFilterOp, DynamicFilterType, FilterColumn };
 
 /** `xlsx:set-cell-value` */
 export interface SetCellValuePayload {
@@ -283,4 +290,110 @@ export interface TextToColumnsPayload {
   readonly delimiter: string;
   readonly treatConsecutiveAsOne?: boolean;
   readonly destination?: string;
+}
+
+/* ── AutoFilter (§17) ────────────────────────────────────────────────────
+ * Per-column header dropdowns with sort, value checklist, and
+ * text / number / date / colour condition filters. Round-trips through
+ * the worksheet's native `<autoFilter>` element so the saved file
+ * opens in Excel with the same filter applied.
+ */
+
+/**
+ * `xlsx:set-auto-filter` — toggle the AutoFilter band on a sheet.
+ *
+ * Pass `range: null` to remove the filter entirely (and unhide every
+ * filter-driven hidden row). Setting a fresh range clears any
+ * pre-existing per-column criteria.
+ */
+export interface SetAutoFilterPayload {
+  readonly sheet: string;
+  /** A1 range covering header + body, e.g. `"A1:E100"`. `null` removes. */
+  readonly range: string | null;
+}
+
+/**
+ * `xlsx:set-filter-column` — set / replace the criterion on one column
+ * of the active AutoFilter. The handler recomputes hidden rows.
+ */
+export interface SetFilterColumnPayload {
+  readonly sheet: string;
+  /** 0-based offset from `autoFilter.range.c1`. */
+  readonly colId: number;
+  readonly criterion: FilterColumn;
+}
+
+/**
+ * `xlsx:clear-filter-column` — drop the criterion on one column;
+ * recomputes hidden rows.
+ */
+export interface ClearFilterColumnPayload {
+  readonly sheet: string;
+  readonly colId: number;
+}
+
+/**
+ * `xlsx:sort-range` — sort the rows inside `range` (excluding the
+ * header) by `sortBy.colId`. Used by both standalone Sort and the
+ * dropdown's Sort A→Z / Z→A. Mutates cells in place via the existing
+ * `set-range-values` plumbing; no autoFilter mutation.
+ */
+export interface SortRangePayload {
+  readonly sheet: string;
+  /** A1 range; the first row is treated as the header and never moved. */
+  readonly range: string;
+  readonly sortBy: {
+    /** 0-based offset from the range's first column. */
+    readonly colId: number;
+    readonly order: "asc" | "desc";
+  };
+}
+
+/* ── Images (raster, free-floating overlays) ─────────────────────────────
+ * v1 only authors `editAs="oneCell"` — images move with cells but do
+ * not size with cells. Anchor + dimensions live in CSS pixels in the
+ * model; the serializer converts to EMUs.
+ */
+
+/** `xlsx:add-image` */
+export interface AddImagePayload {
+  readonly sheet: string;
+  readonly bytes: Uint8Array;
+  readonly contentType: ImageContentType;
+  /** Optional friendly name. Defaults to `Picture N`. */
+  readonly name?: string;
+  readonly altText?: string;
+  /** Top-left anchor: 0-based row + column the image is pinned to. */
+  readonly fromRow: number;
+  readonly fromCol: number;
+  /** Pixel offset INTO the from-cell. Defaults to 0,0. */
+  readonly fromOffsetXPx?: number;
+  readonly fromOffsetYPx?: number;
+  /** Rendered size in CSS pixels. Defaults to the natural image size. */
+  readonly widthPx: number;
+  readonly heightPx: number;
+}
+
+/** `xlsx:move-image` — repin an image to a new from-cell + offset. */
+export interface MoveImagePayload {
+  readonly sheet: string;
+  readonly imageId: string;
+  readonly fromRow: number;
+  readonly fromCol: number;
+  readonly fromOffsetXPx: number;
+  readonly fromOffsetYPx: number;
+}
+
+/** `xlsx:resize-image` — change the rendered width/height (in CSS pixels). */
+export interface ResizeImagePayload {
+  readonly sheet: string;
+  readonly imageId: string;
+  readonly widthPx: number;
+  readonly heightPx: number;
+}
+
+/** `xlsx:remove-image` — drop an image from a sheet (GCs orphan media). */
+export interface RemoveImagePayload {
+  readonly sheet: string;
+  readonly imageId: string;
 }

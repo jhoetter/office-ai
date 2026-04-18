@@ -1,6 +1,7 @@
 import type { CommandHandler } from "@officeai/core";
 import type { XlsxSnapshot } from "../model/types.js";
 import { addCommentHandler } from "./add-comment.js";
+import { clearFilterColumnHandler } from "./clear-filter-column.js";
 import {
   deleteCommentHandler,
   editCommentHandler,
@@ -12,17 +13,26 @@ import { deleteColumnHandler } from "./delete-column.js";
 import { deleteRowHandler } from "./delete-row.js";
 import { deleteSheetHandler } from "./delete-sheet.js";
 import { fillRangeHandler } from "./fill-range.js";
+import {
+  addImageHandler,
+  moveImageHandler,
+  removeImageHandler,
+  resizeImageHandler,
+} from "./image-commands.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertRowHandler } from "./insert-row.js";
 import { mergeCellsHandler } from "./merge-cells.js";
 import { pasteRangeHandler } from "./paste-range.js";
 import { renameSheetHandler } from "./rename-sheet.js";
+import { setAutoFilterHandler } from "./set-auto-filter.js";
 import { setCellFormatHandler } from "./set-cell-format.js";
 import { setCellFormulaHandler } from "./set-cell-formula.js";
 import { setCellValueHandler } from "./set-cell-value.js";
 import { setColumnWidthHandler } from "./set-column-width.js";
+import { setFilterColumnHandler } from "./set-filter-column.js";
 import { setRangeValuesHandler } from "./set-range-values.js";
 import { setRowHeightHandler } from "./set-row-height.js";
+import { sortRangeHandler } from "./sort-range.js";
 import { textToColumnsHandler } from "./text-to-columns.js";
 import { unmergeCellsHandler } from "./unmerge-cells.js";
 
@@ -69,6 +79,14 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   pasteRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
   textToColumnsHandler as CommandHandler<unknown, XlsxSnapshot>,
   fillRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setAutoFilterHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setFilterColumnHandler as CommandHandler<unknown, XlsxSnapshot>,
+  clearFilterColumnHandler as CommandHandler<unknown, XlsxSnapshot>,
+  sortRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
+  addImageHandler as CommandHandler<unknown, XlsxSnapshot>,
+  moveImageHandler as CommandHandler<unknown, XlsxSnapshot>,
+  resizeImageHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeImageHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

@@ -1,8 +1,25 @@
 import { ooxml } from "@officeai/core";
 import * as XLSX from "xlsx";
+import { EXTENSION_BY_CONTENT_TYPE } from "../model/drawings.js";
 import { formatA1 } from "../model/refs.js";
-import type { Cell, Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
+import type {
+  AutoFilter,
+  Cell,
+  CustomFilterOp,
+  FilterColumn,
+  Sheet,
+  XlsxSnapshot,
+  XlsxWorkbook,
+} from "../model/types.js";
 import { serializeCommentsPart } from "./comments.js";
+import {
+  buildDrawingRels,
+  DRAWING_CONTENT_TYPE,
+  injectDrawingRef,
+  mintDrawingPartPath,
+  serializeDrawingPart,
+  upsertSheetDrawingRel,
+} from "./drawings.js";
 import { XlsxSerializeError } from "./errors.js";
 import { syncSheetToSheetJS } from "./sheet-sync.js";
 import { serializeStylesXml } from "./styles.js";
@@ -57,8 +74,22 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
     );
   }
 
+  // Drawings + media are processed BEFORE the sheet pass so the sheet
+  // pass can splice the freshly-minted `<drawing r:id>` reference
+  // straight into the regenerated worksheet XML.
+  const drawingRidByPath = new Map<string, string | null>();
+  if (dirty.drawings.size > 0) {
+    rewriteDirtyDrawings(snapshot.root, container, dirty.drawings, drawingRidByPath);
+  }
+  if (dirty.media.size > 0) {
+    rewriteDirtyMedia(snapshot.root, container, dirty.media);
+  }
+  if (dirty.removedMediaParts.size > 0) {
+    dropRemovedMediaParts(container, dirty.removedMediaParts);
+  }
+
   if (dirtySheetPaths.size > 0) {
-    await rewriteDirtySheets(snapshot, container, dirtySheetPaths);
+    await rewriteDirtySheets(snapshot, container, dirtySheetPaths, drawingRidByPath);
   }
 
   if (dirty.comments.size > 0) {
@@ -74,7 +105,12 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   }
 
   if (dirty.contentTypes) {
-    rewriteContentTypes(snapshot.root, container, dirty.removedSheetParts);
+    rewriteContentTypes(
+      snapshot.root,
+      container,
+      dirty.removedSheetParts,
+      dirty.removedMediaParts
+    );
   }
 
   if (dirty.rels) {
@@ -99,7 +135,8 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
 async function rewriteDirtySheets(
   snapshot: XlsxSnapshot,
   master: ooxml.OoxmlContainer,
-  dirtySheetPaths: ReadonlySet<string>
+  dirtySheetPaths: ReadonlySet<string>,
+  drawingRidByPath: ReadonlyMap<string, string | null>
 ): Promise<void> {
   const book = snapshot.root.sheetjs;
   const sheetsByPath = new Map<string, Sheet>();
@@ -161,8 +198,209 @@ async function rewriteDirtySheets(
     }
     let xml = emittedContainer.readText(emittedPath);
     xml = injectStyleIds(xml, sheet.cells);
+    xml = injectHiddenRows(xml, sheet.hiddenRows);
+    xml = injectAutoFilter(xml, sheet.autoFilter);
+    if (drawingRidByPath.has(path)) {
+      xml = injectDrawingRef(xml, drawingRidByPath.get(path) ?? null);
+    } else if (sheet.drawingPartPath) {
+      // Sheet has a pre-existing drawing we did not re-author; reuse
+      // the existing rId from the on-disk sheet rels so the
+      // SheetJS-emitted XML keeps pointing at it.
+      const rels = ooxml.RelationshipGraph.loadFor(master, path);
+      const existing = rels.relationships.find(
+        (r) => r.type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+      );
+      xml = injectDrawingRef(xml, existing?.id ?? null);
+    }
     master.writeText(path, xml);
   }
+}
+
+/**
+ * For each sheet whose `dirty.drawings` flag is set, (re)emit its
+ * `xl/drawings/drawingN.xml`, that part's rels, and the sheet rels
+ * that point at it. Tracks the rId Excel will see in the worksheet's
+ * `<drawing>` element so the sheet pass can splice it in.
+ */
+function rewriteDirtyDrawings(
+  workbook: XlsxWorkbook,
+  container: ooxml.OoxmlContainer,
+  paths: ReadonlySet<string>,
+  drawingRidByPath: Map<string, string | null>
+): void {
+  for (const sheetPartPath of paths) {
+    const sheet = workbook.sheets.find((s) => s.partPath === sheetPartPath);
+    if (!sheet) continue;
+
+    const sheetRels = ooxml.RelationshipGraph.loadFor(container, sheetPartPath);
+
+    if (sheet.images.length === 0) {
+      // No images left → drop the drawing part + rels and clear the
+      // sheet's drawing relationship.
+      if (sheet.drawingPartPath) {
+        if (container.has(sheet.drawingPartPath)) container.removePart(sheet.drawingPartPath);
+        const drawingRelsPath = ooxml.RelationshipGraph.relsPathFor(sheet.drawingPartPath);
+        if (container.has(drawingRelsPath)) container.removePart(drawingRelsPath);
+      }
+      upsertSheetDrawingRel(sheetRels, sheetPartPath, null);
+      sheetRels.writeBack(container);
+      drawingRidByPath.set(sheetPartPath, null);
+      continue;
+    }
+
+    const drawingPartPath = sheet.drawingPartPath ?? mintDrawingPartPath(container);
+    const { graph: drawingRels, embedRidByMediaPath } = buildDrawingRels(
+      drawingPartPath,
+      sheet.images,
+      workbook.images
+    );
+    const xml = serializeDrawingPart(sheet.images, embedRidByMediaPath);
+    container.writeText(drawingPartPath, xml);
+    drawingRels.writeBack(container);
+
+    const rid = upsertSheetDrawingRel(sheetRels, sheetPartPath, drawingPartPath);
+    sheetRels.writeBack(container);
+    drawingRidByPath.set(sheetPartPath, rid);
+  }
+}
+
+/**
+ * (Re)write media bytes for every dirty media path.
+ */
+function rewriteDirtyMedia(
+  workbook: XlsxWorkbook,
+  container: ooxml.OoxmlContainer,
+  paths: ReadonlySet<string>
+): void {
+  for (const path of paths) {
+    const blob = workbook.images.get(path);
+    if (!blob) continue;
+    container.writeBytes(path, blob.bytes);
+  }
+}
+
+function dropRemovedMediaParts(
+  container: ooxml.OoxmlContainer,
+  paths: ReadonlySet<string>
+): void {
+  for (const path of paths) {
+    if (container.has(path)) container.removePart(path);
+  }
+}
+
+/**
+ * Set / strip `hidden="1"` on `<row>` elements based on
+ * `sheet.hiddenRows`. Rows present in the set get `hidden="1"`,
+ * `ht="0"`, and `customHeight="1"` (matches Excel's filter-driven
+ * row hiding wire format). Rows not in the set get those three
+ * attributes stripped so re-applying then clearing a filter
+ * round-trips cleanly.
+ *
+ * Rows that aren't already emitted as `<row>` elements but live in
+ * the hidden set (rare — the row would have to be empty) are not
+ * synthesised here; the autoFilter evaluator only adds rows that
+ * carry data, and SheetJS emits a `<row>` for every cell it sees.
+ */
+function injectHiddenRows(xml: string, hiddenRows: ReadonlySet<number>): string {
+  if (xml.indexOf("<row") === -1) return xml;
+  return xml.replace(/<row\b([^/>]*?)(\/?)>/g, (_match, attrs: string, selfClose: string) => {
+    const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+    if (!refMatch) return `<row${attrs}${selfClose}>`;
+    const rowNum = Number(refMatch[2]);
+    if (!Number.isInteger(rowNum) || rowNum < 1) return `<row${attrs}${selfClose}>`;
+    const rowIdx = rowNum - 1;
+    let stripped = attrs
+      .replace(/\s+hidden=("|')[^"']*\1/, "")
+      .replace(/\s+ht=("|')[^"']*\1/, "")
+      .replace(/\s+customHeight=("|')[^"']*\1/, "");
+    if (hiddenRows.has(rowIdx)) {
+      stripped = `${stripped} hidden="1" ht="0" customHeight="1"`;
+    }
+    return `<row${stripped}${selfClose}>`;
+  });
+}
+
+/**
+ * Strip any pre-existing `<autoFilter>` block from the worksheet XML
+ * and, if `autoFilter` is non-undefined, splice a freshly serialized
+ * one in immediately before `</worksheet>` (Excel orders it after
+ * `<sheetData>` / `<mergeCells>`).
+ */
+function injectAutoFilter(xml: string, autoFilter: AutoFilter | undefined): string {
+  let next = xml.replace(/<autoFilter\b[^>]*(?:\/>|>[\s\S]*?<\/autoFilter>)/g, "");
+  if (!autoFilter) return next;
+
+  const ref = `${colToA1(autoFilter.range.c1)}${autoFilter.range.r1 + 1}:${colToA1(autoFilter.range.c2)}${autoFilter.range.r2 + 1}`;
+  const cols: string[] = [];
+  // Sort by colId for deterministic output.
+  const ids = [...autoFilter.columns.keys()].sort((a, b) => a - b);
+  for (const id of ids) {
+    const fc = autoFilter.columns.get(id);
+    if (!fc) continue;
+    cols.push(serializeFilterColumn(id, fc));
+  }
+  const block = `<autoFilter ref="${ref}">${cols.join("")}</autoFilter>`;
+
+  const closeIdx = next.lastIndexOf("</worksheet>");
+  if (closeIdx === -1) {
+    // Defensive: append the block at the end. SheetJS always emits a
+    // `<worksheet>` wrapper so this branch is essentially unreachable.
+    return next + block;
+  }
+  return next.slice(0, closeIdx) + block + next.slice(closeIdx);
+}
+
+function serializeFilterColumn(colId: number, fc: FilterColumn): string {
+  switch (fc.kind) {
+    case "values": {
+      const filters = [...fc.values]
+        .map((v) => `<filter val="${escapeXmlAttr(v)}"/>`)
+        .join("");
+      const blankAttr = fc.blank ? ' blank="1"' : "";
+      return `<filterColumn colId="${colId}"><filters${blankAttr}>${filters}</filters></filterColumn>`;
+    }
+    case "custom": {
+      const ops = [serializeCustomOp(fc.op1)];
+      if (fc.op2) ops.push(serializeCustomOp(fc.op2));
+      const andAttr = fc.combine === "and" ? ' and="1"' : "";
+      return `<filterColumn colId="${colId}"><customFilters${andAttr}>${ops.join("")}</customFilters></filterColumn>`;
+    }
+    case "top10": {
+      const topAttr = fc.top ? "" : ' top="0"';
+      const pctAttr = fc.percent ? ' percent="1"' : "";
+      const filterValAttr = Number.isFinite(fc.filterVal)
+        ? ` filterVal="${fc.filterVal}"`
+        : "";
+      return `<filterColumn colId="${colId}"><top10${topAttr}${pctAttr} val="${fc.n}"${filterValAttr}/></filterColumn>`;
+    }
+    case "dynamic":
+      return `<filterColumn colId="${colId}"><dynamicFilter type="${escapeXmlAttr(fc.type)}"/></filterColumn>`;
+    case "color": {
+      // We round-trip the dxf id when the parser stamped one. For
+      // colour filters set in our UI (where we don't author dxfs) the
+      // serializer falls back to dxfId="0" — Excel still loads the
+      // file but the colour swatch may not match the original.
+      const m = /^dxf:(\d+)$/.exec(fc.argb);
+      const dxfId = m ? Number(m[1]) : 0;
+      const cellAttr = fc.isCellColor ? "" : ' cellColor="0"';
+      return `<filterColumn colId="${colId}"><colorFilter dxfId="${dxfId}"${cellAttr}/></filterColumn>`;
+    }
+  }
+}
+
+function serializeCustomOp(op: CustomFilterOp): string {
+  return `<customFilter operator="${op.operator}" val="${escapeXmlAttr(op.val)}"/>`;
+}
+
+function colToA1(col: number): string {
+  let n = col + 1;
+  let s = "";
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }
 
 /**
@@ -209,7 +447,8 @@ function injectStyleIds(xml: string, cells: ReadonlyMap<string, Cell>): string {
 function rewriteContentTypes(
   workbook: XlsxWorkbook,
   container: ooxml.OoxmlContainer,
-  removedSheetParts: ReadonlySet<string>
+  removedSheetParts: ReadonlySet<string>,
+  removedMediaParts: ReadonlySet<string>
 ): void {
   const ct = ooxml.ContentTypes.load(container);
   let mutated = false;
@@ -234,8 +473,53 @@ function rewriteContentTypes(
         mutated = true;
       }
     }
+    if (sheet.drawingPartPath && sheet.images.length > 0) {
+      const drawingPartName = `/${sheet.drawingPartPath}`;
+      if (!ct.hasOverride(drawingPartName)) {
+        ct.addOverride(drawingPartName, DRAWING_CONTENT_TYPE);
+        mutated = true;
+      }
+    }
   }
+
+  // Drop overrides for drawing parts no sheet still references.
+  const liveDrawingPartNames = new Set<string>();
+  for (const sheet of workbook.sheets) {
+    if (sheet.drawingPartPath && sheet.images.length > 0) {
+      liveDrawingPartNames.add(`/${sheet.drawingPartPath}`);
+    }
+  }
+  for (const o of [...ct.overrides]) {
+    if (o.contentType === DRAWING_CONTENT_TYPE && !liveDrawingPartNames.has(o.partName)) {
+      ct.removeOverride(o.partName);
+      mutated = true;
+    }
+  }
+
+  // Media uses `<Default Extension>` entries (one per file extension).
+  // Walk the live media set; add an extension default for each
+  // distinct file type.
+  const liveExtensions = new Set<string>();
+  for (const blob of workbook.images.values()) {
+    const ext = EXTENSION_BY_CONTENT_TYPE[blob.contentType];
+    if (ext) liveExtensions.add(ext);
+  }
+  for (const ext of liveExtensions) {
+    if (!ct.hasDefault(ext)) {
+      ct.addDefault(ext, mimeForExtension(ext));
+      mutated = true;
+    }
+  }
+  void removedMediaParts;
+
   if (mutated) ct.writeBack(container);
+}
+
+function mimeForExtension(ext: string): string {
+  if (ext === "png") return "image/png";
+  if (ext === "jpeg" || ext === "jpg") return "image/jpeg";
+  if (ext === "gif") return "image/gif";
+  return `image/${ext}`;
 }
 
 /**
@@ -379,10 +663,39 @@ function dropRemovedSheetParts(
   removedSheetParts: ReadonlySet<string>
 ): void {
   for (const path of removedSheetParts) {
-    if (container.has(path)) container.removePart(path);
     const relsPath = ooxml.RelationshipGraph.relsPathFor(path);
-    if (container.has(relsPath)) container.removePart(relsPath);
+    // Best-effort drop of any drawing part the removed sheet owned —
+    // its `_rels` would otherwise be orphaned. Media bytes are GC'd
+    // at command-handler time when no sheet still references them, so
+    // they live in `removedMediaParts` instead of being dropped here.
+    if (container.has(relsPath)) {
+      const drawingRel = ooxml.RelationshipGraph.loadFor(container, path).relationships.find(
+        (r) => r.type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+      );
+      if (drawingRel) {
+        const drawingPath = drawingRel.target.startsWith("/")
+          ? drawingRel.target.slice(1)
+          : joinRel(path, drawingRel.target);
+        if (container.has(drawingPath)) container.removePart(drawingPath);
+        const drawingRelsPath = ooxml.RelationshipGraph.relsPathFor(drawingPath);
+        if (container.has(drawingRelsPath)) container.removePart(drawingRelsPath);
+      }
+      container.removePart(relsPath);
+    }
+    if (container.has(path)) container.removePart(path);
   }
+}
+
+function joinRel(ownerPartPath: string, target: string): string {
+  const ownerDir = ownerPartPath.includes("/") ? ownerPartPath.slice(0, ownerPartPath.lastIndexOf("/")) : "";
+  const segments = (ownerDir ? ownerDir.split("/") : []).concat(target.split("/"));
+  const stack: string[] = [];
+  for (const seg of segments) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") stack.pop();
+    else stack.push(seg);
+  }
+  return stack.join("/");
 }
 
 /**

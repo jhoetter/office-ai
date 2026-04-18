@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, NodeId, ooxml } from "@officeai/core";
+import type { ImageBlob, SheetImage } from "./drawings.js";
 import type { StyleTable } from "./style-table.js";
 
 /**
@@ -53,6 +54,26 @@ export interface XlsxDirtyFlags {
    * been removed from `workbook.sheets`.
    */
   removedSheetParts: ReadonlySet<string>;
+  /**
+   * Sheet part paths whose drawing part needs to be re-emitted
+   * (`xl/drawings/drawingN.xml` + its `_rels`). Driven by
+   * `xlsx:add-image` / `move-image` / `resize-image` / `remove-image`.
+   * Membership implies the sheet's `<drawing>` reference + content-types
+   * override are managed alongside the dirty pass.
+   */
+  drawings: ReadonlySet<string>;
+  /**
+   * Media part paths (`xl/media/imageN.png`) the next serializer pass
+   * must (re)write. Brand-new media is added; bytes for existing
+   * media are overwritten on edit. Removed media ends up in
+   * `removedMediaParts` instead.
+   */
+  media: ReadonlySet<string>;
+  /**
+   * Media part paths the serializer must drop entirely (no sheet
+   * references them anymore). Mirrors `removedSheetParts`'s shape.
+   */
+  removedMediaParts: ReadonlySet<string>;
 }
 
 export interface XlsxWorkbook {
@@ -99,6 +120,13 @@ export interface XlsxWorkbook {
    * and the Phase 5 model upgrade path.
    */
   readonly sheetjs: import("xlsx").WorkBook;
+  /**
+   * Image media keyed by `xl/media/...` part path. Sheet-level image
+   * placements reference into this map via `SheetImage.mediaRef`, so
+   * identical bytes uploaded twice round-trip through a single media
+   * part (deduped on `ImageBlob.hash`).
+   */
+  readonly images: ReadonlyMap<string, ImageBlob>;
 }
 
 export interface Sheet {
@@ -155,7 +183,169 @@ export interface Sheet {
    * default `ROW_HEIGHT`. Populated by `xlsx:set-row-height` (P11g).
    */
   readonly rowHeights: ReadonlyMap<number, number>;
+  /**
+   * AutoFilter applied to the sheet, if any. Excel allows at most one
+   * `<autoFilter>` per worksheet. The header row is `range.r1`; the
+   * remaining rows in the range (`r1+1..r2`) are evaluated against
+   * `columns` to populate {@link Sheet.hiddenRows}.
+   */
+  readonly autoFilter?: AutoFilter;
+  /**
+   * 0-based row indices currently hidden by the active AutoFilter (or
+   * any other "hide row" affordance). The grid renders these rows at
+   * height 0 and the serializer emits `hidden="1"` on the matching
+   * `<row>` element. Mirrors Excel's filter-driven row hiding —
+   * Excel never auto-recomputes hiddenness on cell edits, so we don't
+   * either; only filter mutations rebuild this set.
+   */
+  readonly hiddenRows: ReadonlySet<number>;
+  /**
+   * Free-floating images anchored to this sheet (raster only in v1).
+   * Render order = array order (= z-order: later items overlay
+   * earlier ones), matching Excel's drawing list semantics.
+   */
+  readonly images: ReadonlyArray<SheetImage>;
+  /**
+   * Container path for this sheet's drawing part
+   * (`xl/drawings/drawingN.xml`). Resolved via the sheet's rels.
+   * Undefined when the sheet has no images.
+   */
+  readonly drawingPartPath?: string;
 }
+
+/**
+ * Excel `<autoFilter>` element. Anchored to a rectangular range whose
+ * first row is the header. Per OOXML spec there's at most one per
+ * worksheet.
+ */
+export interface AutoFilter {
+  readonly range: AutoFilterRange;
+  /**
+   * Per-column criteria, keyed by `colId` (0-based offset from
+   * `range.c1`). Columns absent from this map carry no filter and
+   * never contribute to the row-hide AND.
+   */
+  readonly columns: ReadonlyMap<number, FilterColumn>;
+}
+
+export interface AutoFilterRange {
+  readonly r1: number;
+  readonly c1: number;
+  readonly r2: number;
+  readonly c2: number;
+}
+
+/**
+ * Discriminated union of every Excel filter criterion shape we
+ * support. Mirrors the OOXML `<filterColumn>` children:
+ *   - `<filters>`        → `kind: "values"`
+ *   - `<customFilters>`  → `kind: "custom"`
+ *   - `<top10>`          → `kind: "top10"`
+ *   - `<dynamicFilter>`  → `kind: "dynamic"`
+ *   - `<colorFilter>`    → `kind: "color"`
+ */
+export type FilterColumn =
+  | FilterColumnValues
+  | FilterColumnCustom
+  | FilterColumnTop10
+  | FilterColumnDynamic
+  | FilterColumnColor;
+
+export interface FilterColumnValues {
+  readonly kind: "values";
+  /**
+   * Allowed displayed values. Strings come from the same
+   * `formatCellValue` pipeline the grid uses, so "$1,234" matches a
+   * cell rendered as currency even though the underlying number is
+   * `1234`.
+   */
+  readonly values: ReadonlySet<string>;
+  /** When true, blank cells are also kept (Excel's "(Blanks)" entry). */
+  readonly blank: boolean;
+}
+
+export interface FilterColumnCustom {
+  readonly kind: "custom";
+  readonly op1: CustomFilterOp;
+  readonly op2?: CustomFilterOp;
+  /** Combinator for `op2`. Defaults to "and". */
+  readonly combine: "and" | "or";
+}
+
+export interface CustomFilterOp {
+  readonly operator:
+    | "equal"
+    | "notEqual"
+    | "greaterThan"
+    | "greaterThanOrEqual"
+    | "lessThan"
+    | "lessThanOrEqual";
+  /** Comparison value. May contain `*` / `?` wildcards (text only). */
+  readonly val: string;
+}
+
+export interface FilterColumnTop10 {
+  readonly kind: "top10";
+  /** True for "Top N" (largest); false for "Bottom N" (smallest). */
+  readonly top: boolean;
+  /** True for "% of records" mode; false for "Items". */
+  readonly percent: boolean;
+  /** N — usually 10. Excel exposes 1..500. */
+  readonly n: number;
+  /** Cached threshold value Excel writes; recomputed by the evaluator. */
+  readonly filterVal: number;
+}
+
+export interface FilterColumnDynamic {
+  readonly kind: "dynamic";
+  readonly type: DynamicFilterType;
+}
+
+export interface FilterColumnColor {
+  readonly kind: "color";
+  /** ARGB hex (8 chars, e.g. "FFFFEB9C"). */
+  readonly argb: string;
+  /** True → fill colour; false → font colour. */
+  readonly isCellColor: boolean;
+}
+
+/**
+ * Excel `<dynamicFilter type="…">` enumeration. Date-relative criteria
+ * are evaluated against "today" at filter-apply time.
+ */
+export type DynamicFilterType =
+  | "today"
+  | "yesterday"
+  | "tomorrow"
+  | "thisWeek"
+  | "lastWeek"
+  | "nextWeek"
+  | "thisMonth"
+  | "lastMonth"
+  | "nextMonth"
+  | "thisQuarter"
+  | "lastQuarter"
+  | "nextQuarter"
+  | "thisYear"
+  | "lastYear"
+  | "nextYear"
+  | "yearToDate"
+  | "M1"
+  | "M2"
+  | "M3"
+  | "M4"
+  | "M5"
+  | "M6"
+  | "M7"
+  | "M8"
+  | "M9"
+  | "M10"
+  | "M11"
+  | "M12"
+  | "Q1"
+  | "Q2"
+  | "Q3"
+  | "Q4";
 
 export interface Comment {
   readonly id: string;
@@ -257,5 +447,8 @@ export function emptyDirty(): XlsxDirtyFlags {
     threadedComments: new Set<string>(),
     sheetRels: new Set<string>(),
     removedSheetParts: new Set<string>(),
+    drawings: new Set<string>(),
+    media: new Set<string>(),
+    removedMediaParts: new Set<string>(),
   };
 }
