@@ -14,7 +14,13 @@ import {
   type XlsxSnapshot,
 } from "@officeai/xlsx";
 import { buildSampleXlsx } from "@/lib/sample-xlsx";
-import { Grid, type GridSelection } from "./Grid";
+import { Grid } from "./Grid";
+import {
+  formatSelection,
+  singleSelection,
+  type CellPos,
+  type Selection,
+} from "./selection";
 
 interface ToastMessage {
   id: number;
@@ -44,7 +50,7 @@ export function XlsxEditor(): ReactNode {
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
   const [activeSheetName, setActiveSheetName] = useState<string | null>(null);
-  const [selection, setSelection] = useState<GridSelection | null>({ row: 0, col: 0 });
+  const [selection, setSelection] = useState<Selection | null>(singleSelection({ row: 0, col: 0 }));
   const [pendingCount, setPendingCount] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -76,7 +82,7 @@ export function XlsxEditor(): ReactNode {
       const snap = a.getSnapshot();
       setSnapshot(snap);
       setActiveSheetName(snap.root.sheets[0]?.name ?? null);
-      setSelection({ row: 0, col: 0 });
+      setSelection(singleSelection({ row: 0, col: 0 }));
       setPendingCount(a.getPendingMutations().length);
       offRef.current = a.subscribe((s) => {
         setSnapshot(s);
@@ -166,10 +172,25 @@ export function XlsxEditor(): ReactNode {
 
   const selectedCell = useMemo(() => {
     if (!activeSheet || !selection) return null;
-    return activeSheet.cells.get(cellKey(selection.row, selection.col)) ?? null;
+    // Formula bar / derived display always reflect the *anchor* cell
+    // (Excel matches this — the active cell stays white in a range).
+    return activeSheet.cells.get(cellKey(selection.anchor.row, selection.anchor.col)) ?? null;
   }, [activeSheet, selection]);
 
-  const selectedRef = selection ? formatA1({ row: selection.row, col: selection.col }) : "";
+  const selectedRef = selection ? formatSelection(selection) : "";
+
+  const handleGridSelect = useCallback(
+    (pos: CellPos, opts?: { extend?: boolean }) => {
+      if (opts?.extend) {
+        setSelection((prev) =>
+          prev ? { anchor: prev.anchor, focus: pos } : singleSelection(pos)
+        );
+      } else {
+        setSelection(singleSelection(pos));
+      }
+    },
+    []
+  );
 
   // Derived display for the formula bar when the user is NOT actively
   // editing it. While the input has focus we surface `formulaDraft`
@@ -210,7 +231,9 @@ export function XlsxEditor(): ReactNode {
 
   const onFormulaSubmit = useCallback(() => {
     if (!activeSheet || !selection) return;
-    const ref = formatA1({ row: selection.row, col: selection.col });
+    // Formula-bar Enter applies to the *anchor* cell, mirroring Excel
+    // (the moving end of the range doesn't receive the value).
+    const ref = formatA1({ row: selection.anchor.row, col: selection.anchor.col });
     void dispatchCellEdit(activeSheet.name, ref, formulaDraft);
     setFormulaFocused(false);
     setFormulaDraft("");
@@ -218,9 +241,9 @@ export function XlsxEditor(): ReactNode {
   }, [activeSheet, selection, formulaDraft, dispatchCellEdit]);
 
   const onCommitGridEdit = useCallback(
-    (sel: GridSelection, value: string) => {
+    (pos: CellPos, value: string) => {
       if (!activeSheet) return;
-      const ref = formatA1({ row: sel.row, col: sel.col });
+      const ref = formatA1({ row: pos.row, col: pos.col });
       void dispatchCellEdit(activeSheet.name, ref, value);
     },
     [activeSheet, dispatchCellEdit]
@@ -398,7 +421,7 @@ export function XlsxEditor(): ReactNode {
           <Grid
             sheet={activeSheet}
             selection={selection}
-            onSelect={setSelection}
+            onSelect={handleGridSelect}
             onCommitEdit={onCommitGridEdit}
           />
         ) : (

@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { cellKey, colToLetter, type Sheet, type CellValue } from "@officeai/xlsx";
+import {
+  containsCell,
+  isSingle,
+  normalizeSelection,
+  singleSelection,
+  type CellPos,
+  type Selection,
+} from "./selection";
 
 /**
  * Fixed cell geometry. Excel's defaults are 64px wide × 20px tall;
@@ -22,21 +30,23 @@ const TOTAL_ROWS = 1000;
 const TOTAL_COLS = 26;
 const OVERSCAN = 4;
 
-export interface GridSelection {
-  readonly row: number;
-  readonly col: number;
-}
+export type GridSelection = Selection;
 
 export interface GridProps {
   readonly sheet: Sheet;
-  readonly selection: GridSelection | null;
-  readonly onSelect: (sel: GridSelection) => void;
+  readonly selection: Selection | null;
+  /**
+   * Drives selection moves. `extend` mirrors Shift-click / drag-extend:
+   * keep `anchor`, replace `focus`. Single-cell mousedown leaves both
+   * pinned to the same `pos`.
+   */
+  readonly onSelect: (pos: CellPos, opts?: { extend?: boolean }) => void;
   /**
    * Called when the user commits an in-cell edit (double-click → type
    * → Enter). Parent dispatches `xlsx:set-cell-value` /
    * `xlsx:set-cell-formula`.
    */
-  readonly onCommitEdit: (sel: GridSelection, value: string) => void;
+  readonly onCommitEdit: (pos: CellPos, value: string) => void;
 }
 
 /**
@@ -50,6 +60,9 @@ export interface GridProps {
  *     `top` / `left` is set to `scrollTop` / `scrollLeft` so they track
  *     the viewport edge as the user scrolls (poor man's sticky that
  *     plays nicely with absolutely positioned siblings).
+ *   - Active selection draws a single bounding-box marquee absolutely
+ *     positioned over the cells (`pointer-events: none`) so it reads
+ *     like Excel even when the user drags up/left.
  */
 export function Grid(props: GridProps): ReactNode {
   const { sheet, selection, onSelect, onCommitEdit } = props;
@@ -58,6 +71,9 @@ export function Grid(props: GridProps): ReactNode {
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  // True while the user holds the primary mouse button after a
+  // mousedown on a body cell — drag-extends the selection.
+  const draggingRef = useRef(false);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -67,6 +83,16 @@ export function Grid(props: GridProps): ReactNode {
     const ro = new ResizeObserver(onResize);
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  // Stop the drag on any global mouseup, even if the user releases
+  // outside the grid (e.g. over the formula bar).
+  useEffect(() => {
+    const onUp = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
   }, []);
 
   const onScroll = useCallback((ev: React.UIEvent<HTMLDivElement>) => {
@@ -94,16 +120,29 @@ export function Grid(props: GridProps): ReactNode {
       for (let c = startCol; c <= endCol; c++) {
         const cell = sheet.cells.get(cellKey(r, c));
         const display = cell ? formatDisplay(cell.value) : "";
-        const isSelected = selection?.row === r && selection?.col === c;
+        const inSel = !!selection && containsCell(selection, r, c);
+        const anchorCell =
+          !!selection && selection.anchor.row === r && selection.anchor.col === c;
         const isEditing = editing?.row === r && editing?.col === c;
         out.push(
           <div
             key={`c-${r}-${c}`}
             data-testid={`cell-${colToLetter(c)}${r + 1}`}
             role="gridcell"
-            aria-selected={isSelected || undefined}
-            onMouseDown={() => {
-              if (!isEditing) onSelect({ row: r, col: c });
+            aria-selected={inSel || undefined}
+            onMouseDown={(e) => {
+              if (isEditing) return;
+              draggingRef.current = true;
+              onSelect({ row: r, col: c }, { extend: e.shiftKey });
+            }}
+            onMouseEnter={(e) => {
+              if (!draggingRef.current) return;
+              // Only "buttons & 1" (primary still pressed) qualifies as drag.
+              if ((e.buttons & 1) === 0) {
+                draggingRef.current = false;
+                return;
+              }
+              onSelect({ row: r, col: c }, { extend: true });
             }}
             onDoubleClick={() =>
               setEditing({
@@ -126,16 +165,21 @@ export function Grid(props: GridProps): ReactNode {
               alignItems: "center",
               fontSize: 12,
               lineHeight: `${ROW_HEIGHT - 2}px`,
-              background: isSelected ? "var(--ai-violet-light)" : "var(--background)",
-              outline: isSelected ? "2px solid var(--ai-violet)" : "none",
-              outlineOffset: -2,
+              // The bounding-box marquee draws the outline; per-cell
+              // background only differentiates the anchor cell from the
+              // rest of the selection (Excel-like white anchor).
+              background: inSel
+                ? anchorCell
+                  ? "var(--background)"
+                  : "var(--ai-violet-light)"
+                : "var(--background)",
               color: "var(--foreground)",
               overflow: "hidden",
               whiteSpace: "nowrap",
               textOverflow: "ellipsis",
               cursor: "cell",
               userSelect: "none",
-              zIndex: isSelected ? 1 : 0,
+              zIndex: anchorCell ? 1 : 0,
             }}
           >
             {isEditing ? (
@@ -175,10 +219,36 @@ export function Grid(props: GridProps): ReactNode {
     return out;
   }, [sheet, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
 
+  // Bounding-box marquee — positioned over the union of the selection.
+  let marquee: ReactNode = null;
+  if (selection) {
+    const n = normalizeSelection(selection);
+    marquee = (
+      <div
+        data-testid="grid-marquee"
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: HEADER_ROW_HEIGHT + n.r0 * ROW_HEIGHT,
+          left: HEADER_COL_WIDTH + n.c0 * COL_WIDTH,
+          width: (n.c1 - n.c0 + 1) * COL_WIDTH,
+          height: (n.r1 - n.r0 + 1) * ROW_HEIGHT,
+          border: "2px solid var(--ai-violet)",
+          boxSizing: "border-box",
+          pointerEvents: "none",
+          zIndex: 4,
+          background: isSingle(selection) ? "transparent" : "var(--ai-violet-light)",
+          mixBlendMode: isSingle(selection) ? "normal" : "multiply",
+        }}
+      />
+    );
+  }
+
   // Column header band — tracks the viewport's top edge.
   const colHeaders: ReactNode[] = [];
   for (let c = startCol; c <= endCol; c++) {
-    const isActive = selection?.col === c;
+    const n = selection ? normalizeSelection(selection) : null;
+    const isActive = n ? c >= n.c0 && c <= n.c1 : false;
     colHeaders.push(
       <div
         key={`ch-${c}`}
@@ -210,7 +280,8 @@ export function Grid(props: GridProps): ReactNode {
   // Row header band — tracks the viewport's left edge.
   const rowHeaders: ReactNode[] = [];
   for (let r = startRow; r <= endRow; r++) {
-    const isActive = selection?.row === r;
+    const n = selection ? normalizeSelection(selection) : null;
+    const isActive = n ? r >= n.r0 && r <= n.r1 : false;
     rowHeaders.push(
       <div
         key={`rh-${r}`}
@@ -274,10 +345,16 @@ export function Grid(props: GridProps): ReactNode {
         {colHeaders}
         {rowHeaders}
         {cellList}
+        {marquee}
       </div>
     </div>
   );
 }
+
+// Re-export for convenience so XlsxEditor doesn't have to import from
+// two adjacent modules.
+export { singleSelection } from "./selection";
+export type { CellPos, Selection } from "./selection";
 
 function formatDisplay(value: CellValue): string {
   if (value === null || value === undefined) return "";
