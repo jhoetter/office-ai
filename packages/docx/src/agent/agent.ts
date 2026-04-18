@@ -4,8 +4,15 @@ import type { DocxSnapshot, DocxPosition } from "../model/types.js";
 import { paragraphPlainText } from "../commands/helpers.js";
 import { parseDocx, type ParseOptions } from "../parser/parse.js";
 import { serializeDocx } from "../serializer/serialize.js";
-import { snapshotToMarkdown } from "./markdown.js";
+import { snapshotToMarkdown, type SnapshotToMarkdownOptions } from "./markdown.js";
 import { diffDocxSnapshots } from "./diff.js";
+import {
+  getPageInfos,
+  getPageMarkdown,
+  getPagePlainText,
+  pageForParagraph,
+  type PageInfo,
+} from "./pages.js";
 
 export interface DocxAgentOptions extends ParseOptions {
   readonly sessionId?: string;
@@ -85,8 +92,38 @@ export class DocxAgent {
     return this.bus.getApproved();
   }
 
-  toMarkdown(): string {
-    return snapshotToMarkdown(this.getSnapshot());
+  toMarkdown(options?: SnapshotToMarkdownOptions): string {
+    return snapshotToMarkdown(this.getSnapshot(), options);
+  }
+
+  // ── Pages (P3.6 / W22-W24) ────────────────────────────────────────────
+  /**
+   * All page chunks for the current snapshot, including the trigger
+   * that started each page (hard break, hint break, section break,
+   * etc.) and a short preview snippet. Backed by the same
+   * `chunkIntoPages` helper the editor uses, so editor and agent
+   * always agree on the page count.
+   */
+  getPages(): ReadonlyArray<PageInfo> {
+    return getPageInfos(this.getSnapshot());
+  }
+
+  /**
+   * 1-based page number containing the body block at `paragraphIndex`,
+   * or `null` when the index is out of range.
+   */
+  pageForParagraph(paragraphIndex: number): number | null {
+    return pageForParagraph(this.getSnapshot(), paragraphIndex);
+  }
+
+  /** Markdown projection of a single page, or `null` when out of range. */
+  getPageMarkdown(pageNumber: number): string | null {
+    return getPageMarkdown(this.getSnapshot(), pageNumber);
+  }
+
+  /** Plain-text projection of a single page, or `null` when out of range. */
+  getPageText(pageNumber: number): string | null {
+    return getPagePlainText(this.getSnapshot(), pageNumber);
   }
 
   getRange(req: DocxRangeRequest): DocxRangeSnapshot {

@@ -6,8 +6,16 @@ export {
   resolveEffectiveRpr,
   resolveEffectivePpr,
   resolveHeaderFooterParts,
+  snapshotToMarkdown,
+  getPageInfos,
+  getPageMarkdown,
+  getPagePlainText,
+  pageForParagraph,
   type ResolvedHeaderFooter,
   type ResolvedSectionHeaderFooters,
+  type SnapshotToMarkdownOptions,
+  type PageInfo,
+  type PageTrigger,
 } from "./agent/index.js";
 export { docxPlugin } from "./plugin.js";
 export * from "./commands/index.js";

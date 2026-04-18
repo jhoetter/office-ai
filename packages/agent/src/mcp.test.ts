@@ -75,6 +75,8 @@ describe("OfficeAI MCP server", () => {
       "docx_apply_command",
       "docx_approve",
       "docx_diff",
+      "docx_get_page_text",
+      "docx_get_pages",
       "docx_get_text",
       "docx_inspect",
       "docx_list_pending",
@@ -156,6 +158,59 @@ describe("OfficeAI MCP server", () => {
     );
     expect(text.content as string).toContain("first paragraph body");
     expect(text.content as string).not.toContain("#");
+  });
+
+  it("docx_get_pages returns at least one doc-start page for a single-page doc", async () => {
+    const client = await makeClient();
+    const path = await makeFixture();
+    const loaded = structured(await client.callTool({ name: "docx_load", arguments: { path } }));
+    const handle = loaded.handle as string;
+    const out = structured(await client.callTool({ name: "docx_get_pages", arguments: { handle } }));
+    const pages = out.pages as Array<{
+      pageNumber: number;
+      trigger: string;
+      preview: string;
+    }>;
+    expect(pages.length).toBeGreaterThanOrEqual(1);
+    expect(pages[0].pageNumber).toBe(1);
+    expect(pages[0].trigger).toBe("doc-start");
+    expect(out.total).toBe(pages.length);
+  });
+
+  it("docx_get_page_text returns markdown for an in-range page and errors for out-of-range", async () => {
+    const client = await makeClient();
+    const path = await makeFixture();
+    const loaded = structured(await client.callTool({ name: "docx_load", arguments: { path } }));
+    const handle = loaded.handle as string;
+    const md = structured(
+      await client.callTool({ name: "docx_get_page_text", arguments: { handle, page: 1 } })
+    );
+    expect(md.format).toBe("markdown");
+    expect(typeof md.content).toBe("string");
+    expect(md.content as string).toContain("# Hello");
+
+    const errResult = (await client.callTool({
+      name: "docx_get_page_text",
+      arguments: { handle, page: 999 },
+    })) as { isError?: boolean; content?: Array<{ text: string }> };
+    expect(errResult.isError).toBe(true);
+    const text = errResult.content?.[0]?.text ?? "";
+    expect(text).toContain("out-of-range");
+  });
+
+  it("docx_get_text with with_page_sections injects page anchors", async () => {
+    const client = await makeClient();
+    const path = await makeFixture();
+    const loaded = structured(await client.callTool({ name: "docx_load", arguments: { path } }));
+    const handle = loaded.handle as string;
+    const md = structured(
+      await client.callTool({
+        name: "docx_get_text",
+        arguments: { handle, format: "markdown", with_page_sections: true },
+      })
+    );
+    expect(md.content as string).toContain("<!-- page 1 -->");
+    expect(md.content as string).toContain("## Page 1");
   });
 
   it("docx_search returns matches", async () => {

@@ -162,19 +162,28 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     "docx_get_text",
     {
-      description: "Return the document content as Markdown (default), structured JSON, or plain text.",
+      description:
+        "Return the document content as Markdown (default), structured JSON, or plain text. Pass `with_page_sections: true` to interleave `<!-- page N -->` anchors so the LLM can cite pages.",
       inputSchema: {
         handle: z.string(),
         format: z.enum(["markdown", "json", "text"]).optional().default("markdown"),
+        with_page_sections: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("When true and format is markdown, prepend each page with a <!-- page N --> anchor + ## Page N heading."),
       },
     },
-    async ({ handle, format }) => {
+    async ({ handle, format, with_page_sections }) => {
       try {
         const agent = lookupAgent(handle);
         const fmt = format ?? "markdown";
         switch (fmt) {
           case "markdown":
-            return ok({ format: fmt, content: agent.toMarkdown() });
+            return ok({
+              format: fmt,
+              content: agent.toMarkdown(with_page_sections ? { withPageSections: true } : undefined),
+            });
           case "json":
             return ok(snapshotToJsonProjection(agent.getSnapshot()));
           case "text": {
@@ -202,6 +211,65 @@ export function createMcpServer(): McpServer {
         }
       } catch (err) {
         return fail(`docx_get_text failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── docx_get_pages ────────────────────────────────────────────────────
+  server.registerTool(
+    "docx_get_pages",
+    {
+      description:
+        "List the document's logical pages with their body-block range, the trigger that started each page (doc-start, page-break, last-rendered, section-break), and a short text preview. Page numbers are 1-based and global across the document.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        const agent = lookupAgent(handle);
+        const pages = agent.getPages();
+        return ok({ pages, total: pages.length });
+      } catch (err) {
+        return fail(`docx_get_pages failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── docx_get_page_text ────────────────────────────────────────────────
+  server.registerTool(
+    "docx_get_page_text",
+    {
+      description:
+        "Return the markdown (default) or plain-text projection of a single page. Pass `page` (1-based) and optionally `format`. Use docx_get_pages first to discover the available page numbers.",
+      inputSchema: {
+        handle: z.string(),
+        page: z.number().int().positive(),
+        format: z.enum(["markdown", "text"]).optional().default("markdown"),
+      },
+    },
+    async ({ handle, page, format }) => {
+      try {
+        const agent = lookupAgent(handle);
+        const fmt = format ?? "markdown";
+        const pages = agent.getPages();
+        const info = pages.find((p) => p.pageNumber === page);
+        if (!info) {
+          return fail(
+            `docx_get_page_text: page ${page} out-of-range (document has ${pages.length} page${pages.length === 1 ? "" : "s"})`
+          );
+        }
+        const content = fmt === "markdown" ? agent.getPageMarkdown(page) : agent.getPageText(page);
+        if (content === null) {
+          return fail(`docx_get_page_text: page ${page} out-of-range`);
+        }
+        return ok({
+          pageNumber: page,
+          startBlockIndex: info.startBlockIndex,
+          endBlockIndex: info.endBlockIndex,
+          format: fmt,
+          content,
+        });
+      } catch (err) {
+        return fail(`docx_get_page_text failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   );
