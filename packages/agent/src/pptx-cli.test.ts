@@ -53,6 +53,7 @@ const SINGLE = FIXTURE("03-title-and-content.pptx");
 const MULTI = FIXTURE("07-multi-slide.pptx");
 const TABLE = FIXTURE("06-with-table.pptx");
 const CHART = FIXTURE("09-with-chart.pptx");
+const ANIM = FIXTURE("10-with-anim.pptx");
 
 describe("office-agent pptx subcommand group", () => {
   it("pptx inspect prints structural counts as JSON", async () => {
@@ -621,6 +622,145 @@ describe("office-agent pptx subcommand group", () => {
       );
       expect(code).not.toBe(0);
       expect(stderr.text()).toMatch(/length/);
+    });
+  });
+
+  describe("animation CLI subcommands", () => {
+    it("inspect reports animation + transition counts and read --format json projects them", async () => {
+      const { io, stdout } = makeIO();
+      let code = await runCli(["pptx", "inspect", "--file", ANIM], io);
+      expect(code).toBe(0);
+      const summary = JSON.parse(stdout.text());
+      expect(summary.animations).toBeGreaterThan(0);
+      expect(summary.transitions).toBeGreaterThan(0);
+
+      const { io: io2, stdout: stdout2 } = makeIO();
+      code = await runCli(["pptx", "read", "--file", ANIM, "--format", "json"], io2);
+      expect(code).toBe(0);
+      const projection = JSON.parse(stdout2.text());
+      const slide0 = projection.slides[0];
+      expect(slide0.transition?.kind).toBe("fade");
+      expect(slide0.animations.length).toBe(2);
+      expect(slide0.animations[0]).toMatchObject({
+        effect: "appear",
+        targetCNvPrId: 2,
+        order: 0,
+      });
+    });
+
+    it("set-slide-transition writes a different transition that survives reload", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-trans-"));
+      const out = join(dir, "out.pptx");
+      const { io } = makeIO();
+      const code = await runCli(
+        [
+          "pptx", "set-slide-transition",
+          "--file", ANIM, "--out", out,
+          "--slide", "0",
+          "--kind", "wipe",
+          "--speed", "fast",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const after = await loadDeterministic(out);
+      const t = after.getSnapshot().root.slides[0]!.transition!;
+      expect(t.kind).toBe("wipe");
+      expect(t.speed).toBe("fast");
+    });
+
+    it("set-slide-transition --kind none removes an existing transition", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-trans-none-"));
+      const out = join(dir, "out.pptx");
+      const { io } = makeIO();
+      const code = await runCli(
+        [
+          "pptx", "set-slide-transition",
+          "--file", ANIM, "--out", out,
+          "--slide", "0",
+          "--kind", "none",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const after = await loadDeterministic(out);
+      expect(after.getSnapshot().root.slides[0]!.transition).toBeUndefined();
+    });
+
+    it("add/remove/reorder animations roundtrip through CLI invocations", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-anim-"));
+      const a = join(dir, "a.pptx");
+      const b = join(dir, "b.pptx");
+      const c = join(dir, "c.pptx");
+
+      const baseAgent = await loadDeterministic(SINGLE);
+      const target = baseAgent.getSnapshot().root.slides[0]!.shapes.find(
+        (s) => s.cNvPrId > 0
+      )!;
+
+      const { io } = makeIO();
+      let code = await runCli(
+        [
+          "pptx", "add-shape-animation",
+          "--file", SINGLE, "--out", a,
+          "--slide", "0",
+          "--shape", target.id,
+          "--effect", "appear",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      code = await runCli(
+        [
+          "pptx", "add-shape-animation",
+          "--file", a, "--out", b,
+          "--slide", "0",
+          "--shape", target.id,
+          "--effect", "fade",
+          "--duration-ms", "400",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const afterAdd = await loadDeterministic(b);
+      const anims = afterAdd.getSnapshot().root.slides[0]!.animations;
+      expect(anims.length).toBe(2);
+      expect(anims[0]!.effect).toBe("appear");
+      expect(anims[1]!.effect).toBe("fade");
+      expect(anims[1]!.durationMs).toBe(400);
+
+      const reverseOrder = [anims[1]!.id, anims[0]!.id].join(",");
+      code = await runCli(
+        [
+          "pptx", "reorder-shape-animations",
+          "--file", b, "--out", c,
+          "--slide", "0",
+          "--order", reverseOrder,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const afterReorder = await loadDeterministic(c);
+      const reordered = afterReorder.getSnapshot().root.slides[0]!.animations;
+      expect(reordered[0]!.effect).toBe("fade");
+      expect(reordered[1]!.effect).toBe("appear");
+
+      const dropId = reordered[0]!.id;
+      const d = join(dir, "d.pptx");
+      code = await runCli(
+        [
+          "pptx", "remove-shape-animation",
+          "--file", c, "--out", d,
+          "--slide", "0",
+          "--animation", dropId,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const afterDel = await loadDeterministic(d);
+      const left = afterDel.getSnapshot().root.slides[0]!.animations;
+      expect(left.length).toBe(1);
+      expect(left[0]!.effect).toBe("appear");
     });
   });
 

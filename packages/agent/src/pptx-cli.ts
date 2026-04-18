@@ -713,6 +713,140 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
       }
     );
 
+  // ── Animations (F4) ─────────────────────────────────────────────────
+  pptx
+    .command("set-slide-transition")
+    .description("Replace a slide's typed transition. Pass --kind none to remove it.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .addOption(
+      new Option("--kind <kind>", "Transition kind")
+        .choices(["none", "fade", "push", "wipe", "split", "cut"])
+        .makeOptionMandatory(true)
+    )
+    .addOption(
+      new Option("--speed <speed>", "Transition speed").choices(["slow", "med", "fast"])
+    )
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        kind: "none" | "fade" | "push" | "wipe" | "split" | "cut";
+        speed?: "slow" | "med" | "fast";
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-slide-transition",
+            payload: {
+              slideIndex: opts.slide,
+              kind: opts.kind,
+              ...(opts.speed ? { speed: opts.speed } : {}),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("add-shape-animation")
+    .description("Append (or insert) a typed entrance animation on a shape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Shape NodeId to animate")
+    .addOption(
+      new Option("--effect <effect>", "Entrance effect")
+        .choices(["appear", "fade", "fly-in", "wipe"])
+        .makeOptionMandatory(true)
+    )
+    .option("--at <n>", "Insert position in the entrance sequence", parseIntArg)
+    .option("--duration-ms <n>", "Effect duration in milliseconds", parseIntArg)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        effect: "appear" | "fade" | "fly-in" | "wipe";
+        at?: number;
+        durationMs?: number;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:add-shape-animation",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              effect: opts.effect,
+              ...(opts.at !== undefined ? { at: opts.at } : {}),
+              ...(opts.durationMs !== undefined ? { durationMs: opts.durationMs } : {}),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("remove-shape-animation")
+    .description("Remove a typed entrance animation by its animation NodeId.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--animation <id>", "Animation NodeId returned by inspect/read")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        animation: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:remove-shape-animation",
+            payload: { slideIndex: opts.slide, animationId: opts.animation },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("reorder-shape-animations")
+    .description("Atomically reorder a slide's typed animations. --order accepts a comma-separated list of NodeIds.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--order <ids>", "Comma-separated NodeIds in the new order")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        order: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        const order = opts.order
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        if (order.length === 0) throw new Error("--order requires at least one id");
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:reorder-shape-animations",
+            payload: { slideIndex: opts.slide, order },
+          },
+        ]);
+      }
+    );
+
   pptx
     .command("apply")
     .description("Apply a JSON command file (single command or { commands: [...] }) and write the result.")
@@ -778,11 +912,21 @@ export interface PptxSnapshotSummary {
     chart: number;
     opaque: number;
   };
+  /** F4: total typed entrance animations across all slides. */
+  animations: number;
+  /** F4: number of slides carrying a typed transition. */
+  transitions: number;
 }
 
 export function inspectSnapshot(snap: PptxSnapshot): PptxSnapshotSummary {
   const counts = { text: 0, pic: 0, group: 0, table: 0, chart: 0, opaque: 0 };
   for (const slide of snap.root.slides) walkShapes(slide.shapes, (s) => bumpShapeKind(counts, s));
+  let animations = 0;
+  let transitions = 0;
+  for (const slide of snap.root.slides) {
+    animations += slide.animations.length;
+    if (slide.transition) transitions++;
+  }
   const parts = Array.from(snap.container.parts.keys()).sort();
   return {
     format: "pptx",
@@ -794,6 +938,8 @@ export function inspectSnapshot(snap: PptxSnapshot): PptxSnapshotSummary {
     mediaParts: snap.root.media.size,
     parts,
     shapeCounts: counts,
+    animations,
+    transitions,
   };
 }
 
@@ -810,6 +956,14 @@ export interface PptxSnapshotProjection {
     id: string;
     partPath: string;
     slideId: number;
+    transition?: { kind: string; speed?: string };
+    animations?: ReadonlyArray<{
+      id: string;
+      effect: string;
+      targetCNvPrId: number;
+      durationMs?: number;
+      order: number;
+    }>;
     shapes: ReadonlyArray<{
       id: string;
       kind: Shape["kind"];
@@ -848,6 +1002,25 @@ export function snapshotToJsonProjection(
       id: s.id,
       partPath: s.partPath,
       slideId: s.slideId,
+      ...(s.transition
+        ? {
+            transition: {
+              kind: s.transition.kind,
+              ...(s.transition.speed ? { speed: s.transition.speed } : {}),
+            },
+          }
+        : {}),
+      ...(s.animations.length > 0
+        ? {
+            animations: s.animations.map((a) => ({
+              id: a.id,
+              effect: a.effect,
+              targetCNvPrId: a.targetCNvPrId,
+              ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}),
+              order: a.order,
+            })),
+          }
+        : {}),
       shapes: s.shapes.map((sh) => projectShape(sh, snap)),
     });
   }

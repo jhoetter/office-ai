@@ -295,6 +295,9 @@ describe("OfficeAI MCP server — PPTX tools", () => {
   const PPTX_CHART_FIXTURE = resolve(
     fileURLToPath(new URL("../../../fixtures/pptx/synthetic/09-with-chart.pptx", import.meta.url))
   );
+  const PPTX_ANIM_FIXTURE = resolve(
+    fileURLToPath(new URL("../../../fixtures/pptx/synthetic/10-with-anim.pptx", import.meta.url))
+  );
 
   it("pptx_load returns a handle and an inspection summary", async () => {
     const client = await makeClient();
@@ -504,6 +507,77 @@ describe("OfficeAI MCP server — PPTX tools", () => {
       .find((sh) => sh.kind === "chart");
     expect(ch?.chart?.chartType).toBe("pie");
     expect(ch?.chart?.title).toBe("MCP Chart Title");
+  });
+
+  it("pptx_apply_command dispatches typed animation commands and json projection surfaces them", async () => {
+    const client = await makeClient();
+    const loaded = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_ANIM_FIXTURE } })
+    );
+    const handle = loaded.handle as string;
+
+    const summary = loaded.summary as { animations: number; transitions: number };
+    expect(summary.animations).toBeGreaterThan(0);
+    expect(summary.transitions).toBeGreaterThan(0);
+
+    const json = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "json" } })
+    ) as unknown as {
+      slides: Array<{
+        index: number;
+        transition?: { kind: string };
+        animations?: Array<{ id: string; effect: string; targetCNvPrId: number }>;
+      }>;
+    };
+    const slide0 = json.slides[0]!;
+    expect(slide0.transition?.kind).toBe("fade");
+    expect(slide0.animations?.length).toBe(2);
+
+    const apply = structured(
+      await client.callTool({
+        name: "pptx_apply_command",
+        arguments: {
+          handle,
+          type: "pptx:set-slide-transition",
+          payload: { slideIndex: 0, kind: "push", speed: "fast" },
+        },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("approved");
+
+    const dropId = slide0.animations![0]!.id;
+    const apply2 = structured(
+      await client.callTool({
+        name: "pptx_apply_command",
+        arguments: {
+          handle,
+          type: "pptx:remove-shape-animation",
+          payload: { slideIndex: 0, animationId: dropId },
+        },
+      })
+    );
+    expect((apply2.mutation as { status: string }).status).toBe("approved");
+
+    const after = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "json" } })
+    ) as unknown as {
+      slides: Array<{
+        transition?: { kind: string; speed?: string };
+        animations?: Array<{ effect: string }>;
+      }>;
+    };
+    expect(after.slides[0]!.transition?.kind).toBe("push");
+    expect(after.slides[0]!.transition?.speed).toBe("fast");
+    expect(after.slides[0]!.animations?.length).toBe(1);
+
+    const md = structured(
+      await client.callTool({
+        name: "pptx_get_text",
+        arguments: { handle, format: "markdown", slide: 0 },
+      })
+    );
+    expect((md.content as string).includes("transition")).toBe(true);
+    expect((md.content as string).includes("push")).toBe(true);
   });
 
   it("returns an error for unknown pptx handles", async () => {

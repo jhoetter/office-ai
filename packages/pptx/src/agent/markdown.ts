@@ -38,6 +38,20 @@ function renderSlide(
   const out: string[] = [];
   out.push(`## Slide ${num} — \`${slide.partPath}\` (slideId=${slide.slideId})`);
   out.push("");
+  if (slide.transition) {
+    const speed = slide.transition.speed ? ` (${slide.transition.speed})` : "";
+    out.push(`- _transition_: **${slide.transition.kind}**${speed}`);
+  }
+  if (slide.animations.length > 0) {
+    out.push(`- _animations_:`);
+    for (const a of slide.animations) {
+      const dur = a.durationMs !== undefined ? ` ${a.durationMs}ms` : "";
+      out.push(
+        `  - \`${a.id}\` ${a.order + 1}. **${a.effect}**${dur} → cNvPr=${a.targetCNvPrId}`
+      );
+    }
+  }
+  if (slide.transition || slide.animations.length > 0) out.push("");
   for (const sh of slide.shapes) {
     out.push(...renderShape(sh, 0, charts));
   }

@@ -418,6 +418,19 @@ export function createMcpServer(): McpServer {
             const lines = ["# Presentation"];
             for (const s of proj.slides) {
               lines.push(`## Slide ${s.index + 1} — \`${s.partPath}\` (slideId=${s.slideId})`);
+              if (s.transition) {
+                const speed = s.transition.speed ? ` (${s.transition.speed})` : "";
+                lines.push(`- _transition_: **${s.transition.kind}**${speed}`);
+              }
+              if (s.animations && s.animations.length > 0) {
+                lines.push(`- _animations_:`);
+                for (const a of s.animations) {
+                  const dur = a.durationMs !== undefined ? ` ${a.durationMs}ms` : "";
+                  lines.push(
+                    `  - \`${a.id}\` ${a.order + 1}. **${a.effect}**${dur} → cNvPr=${a.targetCNvPrId}`
+                  );
+                }
+              }
               for (const sh of s.shapes) {
                 if (sh.kind === "text" && sh.text) lines.push(`> ${sh.text.replaceAll("\n", " · ")}`);
                 if (sh.kind === "table" && sh.table) {
@@ -506,7 +519,7 @@ export function createMcpServer(): McpServer {
     "pptx_apply_command",
     {
       description:
-        "Apply a typed pptx command (e.g. `pptx:set-text`, `pptx:add-slide`, `pptx:insert-image`). Pass an arbitrary payload object — schemas live in `@officeai/pptx/commands/payloads`.",
+        "Apply a typed pptx command (e.g. `pptx:set-text`, `pptx:add-slide`, `pptx:insert-image`, `pptx:set-chart-title`, `pptx:set-slide-transition`, `pptx:add-shape-animation`). Pass an arbitrary payload object — schemas live in `@officeai/pptx/commands/payloads`.",
       inputSchema: {
         handle: z.string(),
         type: z.string().describe('Command type, e.g. "pptx:set-text"'),

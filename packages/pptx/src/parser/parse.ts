@@ -369,34 +369,6 @@ function parseSlide(
     if (tag === "p:spTree") break;
     cSldHead.push(captureOpaque(c));
   }
-  // Anything in <p:sld> after <p:cSld> we capture as opaque tail
-  // (e.g. <p:clrMapOvr>, <p:transition>, <p:timing>). F4 promotes
-  // <p:transition> and the typed pieces of <p:timing> into typed
-  // model fields below.
-  const slideOpaqueTail: OpaqueXml[] = [];
-  let transition: SlideTransition | undefined;
-  let timingTailRaw: OpaqueXml | undefined;
-  const animations: EntranceAnimation[] = [];
-  let pastCsld = false;
-  for (const c of elementEntries(sldChildren)) {
-    if (!pastCsld) {
-      if (ooxml.getTag(c) === "p:cSld") pastCsld = true;
-      continue;
-    }
-    const tag = ooxml.getTag(c);
-    if (tag === "p:transition") {
-      transition = parseSlideTransition(c, mintNodeId);
-      continue;
-    }
-    if (tag === "p:timing") {
-      const parsedTiming = parseSlideTiming(c, mintNodeId);
-      animations.push(...parsedTiming.animations);
-      if (parsedTiming.tail) timingTailRaw = parsedTiming.tail;
-      continue;
-    }
-    slideOpaqueTail.push(captureOpaque(c));
-  }
-
   // Slide rels → layout, notes slide. Loaded BEFORE shape parsing so picture
   // rels can be resolved to absolute media part paths in one pass.
   const rels = ooxml.RelationshipGraph.loadFor(container, partPath);
@@ -424,6 +396,36 @@ function parseSlide(
       continue;
     }
     shapes.push(parseShape(c, mintNodeId, partPath, slideRelTargets));
+  }
+
+  // Anything in <p:sld> after <p:cSld> we capture as opaque tail
+  // (e.g. <p:clrMapOvr>, <p:transition>, <p:timing>). F4 promotes
+  // <p:transition> and the typed pieces of <p:timing> into typed
+  // model fields. Done AFTER shape parsing so adding/removing typed
+  // animations doesn't shift shape NodeIds (they would otherwise depend
+  // on whether <p:timing> was present at parse time).
+  const slideOpaqueTail: OpaqueXml[] = [];
+  let transition: SlideTransition | undefined;
+  let timingTailRaw: OpaqueXml | undefined;
+  const animations: EntranceAnimation[] = [];
+  let pastCsld = false;
+  for (const c of elementEntries(sldChildren)) {
+    if (!pastCsld) {
+      if (ooxml.getTag(c) === "p:cSld") pastCsld = true;
+      continue;
+    }
+    const tag = ooxml.getTag(c);
+    if (tag === "p:transition") {
+      transition = parseSlideTransition(c, mintNodeId);
+      continue;
+    }
+    if (tag === "p:timing") {
+      const parsedTiming = parseSlideTiming(c, mintNodeId);
+      animations.push(...parsedTiming.animations);
+      if (parsedTiming.tail) timingTailRaw = parsedTiming.tail;
+      continue;
+    }
+    slideOpaqueTail.push(captureOpaque(c));
   }
 
   return {
