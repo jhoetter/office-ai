@@ -15,18 +15,31 @@ export interface DocumentSnapshot<TRoot = unknown> {
 
 export type DiffPath = ReadonlyArray<string | number>;
 
+/**
+ * Optional structured payload attached to any diff change. Used for
+ * format-specific extras that don't fit the generic
+ * `{kind, nodeId, path, summary}` shape — e.g. `xlsx:set-cell-formula`
+ * surfaces `{ cycle: ["Sheet1!0:0", ...] }` for circular references,
+ * and `xlsx:set-cell-formula` carries before/after value snapshots
+ * for inverse-handler reconstruction. Readers that don't recognise a
+ * `meta` key MUST ignore it.
+ */
+export type DiffMeta = Readonly<Record<string, unknown>>;
+
 export type DiffChange =
   | {
       kind: "node-inserted";
       nodeId: NodeId;
       path: DiffPath;
       summary: string;
+      meta?: DiffMeta;
     }
   | {
       kind: "node-deleted";
       nodeId: NodeId;
       path: DiffPath;
       summary: string;
+      meta?: DiffMeta;
     }
   | {
       kind: "node-updated";
@@ -34,6 +47,7 @@ export type DiffChange =
       path: DiffPath;
       field: string;
       summary: string;
+      meta?: DiffMeta;
     }
   | {
       kind: "node-moved";
@@ -41,6 +55,7 @@ export type DiffChange =
       from: DiffPath;
       to: DiffPath;
       summary: string;
+      meta?: DiffMeta;
     }
   | {
       /**
@@ -57,6 +72,7 @@ export type DiffChange =
       kind: "part-added";
       path: DiffPath;
       summary: string;
+      meta?: DiffMeta;
     };
 
 export interface DocumentDiff {

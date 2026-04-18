@@ -9,6 +9,6 @@ test.describe("editor: open bundled sample", () => {
     await expect(page.getByText("Welcome to officeAI")).toBeVisible();
     // Metadata strip is hidden below md breakpoint; the configured
     // viewport (1280×800) keeps it visible.
-    await expect(page.getByText(/blocks · rev \d+ · \d+ comments/)).toBeVisible();
+    await expect(page.getByText(/paragraphs · rev \d+ · \d+ comments?/)).toBeVisible();
   });
 });

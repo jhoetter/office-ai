@@ -1,4 +1,5 @@
 import type { BlockNode, DocxPosition, DocxSelection, TableProperties } from "../model/types.js";
+import type { NodeId } from "@officeai/core";
 
 export const DOCX_COMMAND_TYPES = [
   "docx:insert-text",
@@ -19,6 +20,17 @@ export const DOCX_COMMAND_TYPES = [
   "docx:reject-change",
   "docx:set-header-text",
   "docx:set-footer-text",
+  "docx:set-paragraph-list",
+  "docx:remove-paragraph-list",
+  "docx:insert-hyperlink",
+  "docx:remove-hyperlink",
+  "docx:set-paragraph-alignment",
+  "docx:set-paragraph-indent",
+  "docx:set-paragraph-spacing",
+  "docx:insert-page-number",
+  "docx:set-section-different-first",
+  "docx:insert-section-break",
+  "docx:insert-page-break",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -161,4 +173,93 @@ export interface SetFooterTextPayload {
   partId: string;
   paragraphIndex: number;
   text: string;
+}
+
+export interface SetParagraphListPayload {
+  /** Stable id of the target paragraph (body or table cell). */
+  paragraphId: NodeId;
+  /** Concrete `<w:num>` instance id from `word/numbering.xml`. */
+  numId: number;
+  /** 0-based level inside the abstract definition. */
+  ilvl: number;
+}
+
+export interface RemoveParagraphListPayload {
+  paragraphId: NodeId;
+}
+
+export interface InsertHyperlinkPayload {
+  paragraphId: NodeId;
+  /** Flat-text byte range inside the paragraph (`start < end`, both inclusive of the paragraph length). */
+  range: { start: number; end: number };
+  /** External URL; mints a fresh `external` rel. Mutually exclusive with `anchor`. */
+  url?: string;
+  /** Internal bookmark name. Mutually exclusive with `url`. */
+  anchor?: string;
+}
+
+export interface RemoveHyperlinkPayload {
+  hyperlinkId: NodeId;
+}
+
+export interface SetParagraphAlignmentPayload {
+  /** Stable id of the paragraph (body or table cell). */
+  paragraphId: NodeId;
+  /**
+   * `null` clears the alignment, falling back to the document/style
+   * default (which Word normally renders as left-to-right left-aligned).
+   */
+  alignment: "left" | "center" | "right" | "justify" | null;
+}
+
+/**
+ * Inserts a `<w:fldSimple w:instr=" PAGE \\* MERGEFORMAT "/>` (or
+ * `NUMPAGES`) into a header / footer paragraph at a flat-text byte
+ * offset. Errors with `unknown-target` if the target paragraph does
+ * not live inside a header or footer part — page-number fields in the
+ * body are valid OOXML but are not yet a P3 surface.
+ */
+export interface InsertPageNumberPayload {
+  /** Stable id of the target paragraph (must be inside a header/footer part). */
+  paragraphId: NodeId;
+  /** Byte offset inside the paragraph's flat-text. Clamped to [0, length]. */
+  offset: number;
+  /** Defaults to "PAGE". */
+  field?: "PAGE" | "NUMPAGES";
+}
+
+/**
+ * Toggle `<w:titlePg/>` on the section containing `paragraphIndex`.
+ * Walks forward from `paragraphIndex` to find the next
+ * {@link SectionBreak}; if none is found, falls back to the trailing
+ * implicit section at the end of the body.
+ */
+export interface SetSectionDifferentFirstPayload {
+  paragraphIndex: number;
+  enabled: boolean;
+}
+
+/**
+ * Insert a fresh {@link SectionBreak} block at `paragraphIndex`,
+ * inheriting the next section's geometry (page size, margins,
+ * header/footer refs). The new break carries `<w:type>` set to
+ * `type`, defaulting to `"nextPage"`.
+ */
+export interface InsertSectionBreakPayload {
+  paragraphIndex: number;
+  type?: "nextPage" | "continuous" | "evenPage" | "oddPage";
+}
+
+export interface SetParagraphIndentPayload {
+  /** Stable id of the paragraph (body or table cell). */
+  paragraphId: NodeId;
+  /**
+   * Signed delta in twips applied to the paragraph's `indentation.left`.
+   * The handler clamps the result to the OOXML legal range
+   * `[0, 31680]` twips (≈ 22 inches).
+   *
+   * Pass a positive delta to "increase indent", negative to "outdent".
+   * Standard Word toolbar steps use ±360 twips (¼ inch).
+   */
+  deltaTwips: number;
 }

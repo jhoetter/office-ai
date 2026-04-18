@@ -28,7 +28,7 @@
  *                          would be validated and which XSD each maps to.
  *                          Used by `tests/scripts/validate-ooxml-schemas.test.ts`
  *                          so the test stays hermetic on a fresh CI runner.
- *   --self-test          : like --dry-run, plus assert that all 6 real-world
+ *   --self-test          : like --dry-run, plus assert that all 7 real-world
  *                          fixtures are present and that every observed part
  *                          maps to either a known XSD or an explicit "skip"
  *                          bucket (OPC parts, w15 extensions). Exit non-zero
@@ -417,9 +417,12 @@ function printFailures(rows) {
 async function runSelfTest({ core }) {
   const fixtures = listFixtures();
   console.log(`self-test: discovered ${fixtures.length} fixture(s) in ${FIXTURE_DIR}`);
-  if (fixtures.length !== 6) {
+  // Corpus grew to 7 in P2.3 with the addition of `07-toc-sdt.docx`,
+  // which exercises the SDT/TOC unwrapping path. The pin is intentional
+  // so a future fixture addition forces an explicit, reviewed bump here.
+  if (fixtures.length !== 7) {
     console.error(
-      `self-test: expected 6 real-world fixtures, found ${fixtures.length}. The brief pins the corpus at 6.`
+      `self-test: expected 7 real-world fixtures, found ${fixtures.length}. The brief pins the corpus at 7.`
     );
     return 1;
   }

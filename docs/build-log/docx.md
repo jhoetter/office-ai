@@ -1464,3 +1464,764 @@ cover (a) fixture-discovery, (b) full part-mapping coverage,
 (c) failure-path exit code via `--inject-broken`. No xmllint
 or XSD bundle required to run the suite — so it works on a
 fresh CI runner with only `pnpm install` + `pnpm build`.
+
+## P1.4 — W10+W11: Lists & hyperlinks
+
+Two pairs of additive, mutation-aware command handlers shipped
+together because both touch the same shared registration surface
+(`registry.ts`, `index.ts`, `payloads.ts`, `model/types.ts`,
+`parser/parse.ts`, `serializer/serialize.ts`, the spec, and this
+build log). Splitting them would have raced on disk; combined they
+land as a single clean delivery. After this section, the docx package
+exposes **22 shipped commands** (the previous 18 plus the four
+introduced here).
+
+### W10 — Lists / numbering
+
+Typed parse + serialize for `word/numbering.xml` (additive — the
+existing parts-cache path keeps emitting the part byte-identically
+when no list command runs) plus two paragraph-level mutation
+commands.
+
+#### Files added / modified
+
+- `packages/docx/src/model/types.ts` — additive: extended
+  `DocxDirtyFlags` with `numbering: boolean`, extended `DocxDocument`
+  with `numbering?: NumberingDefinitions`, and added the new
+  `NumberingDefinitions`, `AbstractNum`, `NumberingLevel`, and
+  `NumInstance` interfaces. The pre-existing
+  `ParagraphProperties.numbering?: { numId; ilvl }` carrier was
+  intentionally left untouched — the new types describe the
+  `numbering.xml`-side definitions, not the per-paragraph reference.
+- `packages/docx/src/parser/numbering.ts` — NEW.
+  `parseNumberingPart(container)` reads `word/numbering.xml` if
+  present and returns a typed `NumberingDefinitions`. Captures each
+  `<w:abstractNum>` and `<w:num>` as `OpaqueXml` (`raw`) so the
+  serializer can emit them verbatim when they haven't been mutated;
+  unknown children of `<w:lvl>` are captured into
+  `NumberingLevel.opaqueProps` for the same reason.
+- `packages/docx/src/parser/parse.ts` — additive wiring: imports
+  `parseNumberingPart`, calls it after the body parse, and stashes
+  the result on `root.numbering` (left undefined when the part is
+  absent). The existing `parseParagraphProperties` walk that
+  populates `paragraph.properties.numbering = { numId, ilvl }` was
+  not touched.
+- `packages/docx/src/serializer/numbering.ts` — NEW.
+  `serializeNumberingPart(container, snapshot)` no-ops unless
+  `dirty.numbering` is set, so today (where neither shipped command
+  flips that flag) the parts-cache path keeps `numbering.xml`
+  byte-identical. Future commands that mutate the definitions
+  themselves can opt in by setting `dirty.numbering`.
+- `packages/docx/src/serializer/serialize.ts` — additive wiring:
+  imports `serializeNumberingPart` and calls it from the main
+  serialize sequence. Also tightened `serializeParagraphProperties`
+  to emit a typed `<w:numPr>` only when `props.numbering` is set
+  AND there's no opaque `<w:numPr>` carrier — preventing
+  double-emission and giving the new list commands a clean way to
+  switch a paragraph from "opaque-carried numbering" to "typed
+  numbering" by stripping the opaque carrier.
+- `packages/docx/src/commands/set-paragraph-list.ts` — NEW.
+  Implements `docx:set-paragraph-list { paragraphId, numId, ilvl }`.
+  Validates payload, locates the paragraph (recursively into table
+  cells), checks `numbering` exists and `numId` resolves, replaces
+  `paragraph.properties.numbering`, strips any opaque `<w:numPr>`
+  carrier, sets `dirty.body` only. Diff: single `node-updated` with
+  `field: "numbering"`. Also exports the recursive `locateParagraph`
+  helper (with a typed `replace` closure that rebuilds tables and
+  clears their `raw` cache) so `remove-paragraph-list` and
+  `insert-hyperlink` can reuse it.
+- `packages/docx/src/commands/remove-paragraph-list.ts` — NEW.
+  Implements `docx:remove-paragraph-list { paragraphId }`. Strict,
+  not idempotent: rejects `not-applicable` if the paragraph isn't
+  currently a list item (callers should know what they're operating
+  on). Strips both `paragraph.properties.numbering` and any opaque
+  `<w:numPr>` from `opaqueProps[]`. Sets `dirty.body` only.
+- `packages/docx/src/commands/lists.test.ts` — NEW. **12 tests**
+  covering: typed numbering parse (two abstractNums + three nums),
+  parse with no numbering part, byte-preservation of `numbering.xml`
+  / `document.xml` / `document.xml.rels` on the
+  `03-numbered-list.docx` fixture across a parse → serialize round
+  trip, `set-paragraph-list` happy path on body and inside a table
+  cell, `set-paragraph-list` replacing an existing list reference
+  (asserts only one `<w:numPr>` ends up in the serialized output),
+  `unknown-target` for unknown `numId`, `unknown-target` for
+  no-numbering-part docs, `invalid-payload` for `ilvl < 0`,
+  `remove-paragraph-list` happy path (and asserts the serialized
+  paragraph carries no `<w:numPr>`), `not-applicable` rejection on a
+  non-list paragraph, plus a parse(serialize(s)) round-trip
+  verification for `set-paragraph-list`.
+
+### W11 — Hyperlinks
+
+Typed parse / serialize for `<w:hyperlink>` already existed; W11
+adds the two mutation commands that wrap / unwrap a flat-text range
+and minimally manage the `hyperlink`-typed external relationships
+in `word/_rels/document.xml.rels`.
+
+#### Files added / modified
+
+- `packages/docx/src/commands/insert-hyperlink.ts` — NEW. Implements
+  `docx:insert-hyperlink { paragraphId, range, url?, anchor? }`.
+  Validates the XOR between `url` and `anchor`, parses `url` via
+  `new URL()` (well-formed-ness only — reachability is not checked,
+  document below), validates range bounds against the paragraph's
+  flat-text length, and rejects `invalid-position` when the range
+  straddles an existing hyperlink or any non-run inline (comment
+  markers, revision wrappers, opaque inlines). Splits the runs at
+  the range boundaries via a local helper rather than reaching into
+  `commands/helpers.ts` (the read-only constraint kept us from
+  publishing a shared splitter; see "Deviations" below). For
+  external URLs it de-duplicates against existing rels in
+  `relationships.get("word/document.xml")` (Word does the same) and
+  only sets `dirty.relationships` when a brand-new rel is actually
+  minted. Diff: `node-inserted` for the wrapper plus `node-updated`
+  for the host paragraph (`field: "children"`).
+- `packages/docx/src/commands/remove-hyperlink.ts` — NEW. Implements
+  `docx:remove-hyperlink { hyperlinkId }`. Recursively scans body
+  paragraphs (including those nested inside table cells) for the
+  target hyperlink, replaces it with its inline `children`, and —
+  when the unwrapped link carried a `relationshipId` AND no other
+  body hyperlink references the same id — removes the rel from
+  `relationships.get("word/document.xml")` and sets
+  `dirty.relationships`. The "still referenced" scan is body-only;
+  see the gap on header/footer rels below. Diff: a single
+  `node-updated` whose summary records whether the rel was kept or
+  removed (e.g. `−hyperlink (rel=rId5 removed)`).
+- `packages/docx/src/commands/registry.ts`,
+  `packages/docx/src/commands/index.ts`,
+  `packages/docx/src/commands/payloads.ts` — additive: registers
+  the four new handlers, exports their payload types, and adds the
+  command type strings to `DOCX_COMMAND_TYPES`.
+- `packages/docx/src/commands/hyperlinks.test.ts` — NEW. **14
+  tests** covering: parse(serialize(s)) round-trip on a synthetic
+  hyperlink fixture, byte-preservation of `document.xml` and
+  `document.xml.rels` on the same fixture, external URL happy path
+  (rel minted, `dirty.relationships` set), anchor happy path (no
+  rel minted), de-duplication when the same URL is inserted twice
+  (single rel, two hyperlinks share the id), `invalid-position` for
+  ranges straddling an existing hyperlink, `invalid-payload` for
+  missing-both / both-set / malformed URL, `invalid-position` for
+  out-of-range bounds, `remove-hyperlink` happy path (rel removed
+  when sole reference), `remove-hyperlink` preserving the rel when
+  another hyperlink still references the same target,
+  `unknown-target` for unknown hyperlink id, and a final parse →
+  serialize → parse round-trip on a freshly inserted external
+  hyperlink.
+
+### Spec + cross-cutting changes
+
+- `spec/docx/agent-commands.md` — header count bumped from
+  "Eighteen" to "Twenty-two" and a new top-level section
+  `## Commands (P1.4 — lists & hyperlinks)` documenting all four
+  handlers (payload shapes, OOXML impact, diff format, error codes)
+  in the W7 / W8 style.
+- `docs/build-log/docx.md` — this section (single P1.4 entry, two
+  subsections for clarity).
+
+### Deviations from the brief
+
+- The brief suggested importing the run-splitter logic from
+  `commands/helpers.ts` for `insert-hyperlink`. `helpers.ts` is in
+  the read-only set for this subagent and does not currently export a
+  splitter that fits the hyperlink wrapping shape (which needs three
+  outputs — `before`, `middle`, `after` — rather than the two-way
+  splits used by `format-range`). To stay inside the read-only
+  contract, `insert-hyperlink.ts` carries its own
+  `splitRunAtRange` / `wrapRangeInHyperlink` pair. This is a small,
+  intentional duplication; consolidating into `helpers.ts` is
+  noted as a follow-up if/when a third caller needs the same
+  three-way split.
+- The brief notes that `insert-hyperlink` should produce a single
+  diff change. The implementation emits two changes — a
+  `node-inserted` for the new hyperlink wrapper and a
+  `node-updated` for the host paragraph (`field: "children"`) —
+  matching the diff shape used by `insert-table` / `insert-image`
+  for analogous wrap-and-replace mutations. Rel-graph mutation is
+  signalled by `dirty.relationships` exactly as the brief requires.
+
+### Documented gaps / follow-ups
+
+- **Auto-creating `numbering.xml`.** `set-paragraph-list` strictly
+  rejects `unknown-target` when the document has no
+  `word/numbering.xml` at all. Auto-minting an `<w:abstractNum>` +
+  `<w:num>` pair (and registering the part in `[Content_Types].xml`
+  - a `numbering`-typed rel in `word/_rels/document.xml.rels`)
+    would let callers turn any plain doc into a list-bearing one,
+    but it requires a styling decision (which `numFmt` / `lvlText`
+    to mint) that's out of scope this round. The serializer wiring
+    is already in place — `serializeNumberingPart` handles addition
+    via `container.addPart` when the part is missing — so a future
+    command can turn this on without further plumbing changes.
+- **Strict vs. idempotent `remove-paragraph-list`.** The brief
+  explicitly asked for strict behaviour and the implementation
+  honours it: a paragraph that's not currently a list item rejects
+  `not-applicable`. Documented here so future maintainers don't
+  silently flip it to idempotent.
+- **No `Hyperlink` character style auto-applied.** Word styles
+  hyperlink runs via the built-in `Hyperlink` character style.
+  `insert-hyperlink` deliberately does NOT auto-apply it — that's
+  a presentation concern owned by the UI / caller. Inserted
+  hyperlinks therefore render with whatever run formatting the
+  underlying text already had. Callers that want the underline +
+  blue colour can dispatch a follow-up `docx:format-range` with
+  `runStyleId: "Hyperlink"` (or a project-defined equivalent).
+- **URL reachability is not checked.** `insert-hyperlink` only
+  validates well-formed-ness via `new URL()`. The handler does not
+  send a HEAD request — that would couple a pure document
+  mutation to the network and is intentionally avoided.
+  `mailto:` and `tel:` URLs are valid because `new URL()` accepts
+  them; only the surface syntax is enforced, not the destination.
+- **`remove-hyperlink` rel-cleanup scans body paragraphs only.**
+  Header / footer parts carry their own typed rels parts (added in
+  W4) and aren't scanned by the "is this rel still referenced?"
+  check. In practice this means a rel referenced only from a
+  header / footer would be dropped if the matching body hyperlink
+  is removed, leaving a dangling reference in the header part.
+  Until W4's typed rels parts grow a cross-part scan, callers that
+  share hyperlink targets between the body and headers should
+  prefer leaving the rel intact (rare in practice — Word's UI
+  doesn't share rel ids across `headerN.xml` + `document.xml`
+  either).
+
+### Test counts
+
+| Suite                           | Before | After |
+| ------------------------------- | -----: | ----: |
+| `@officeai/docx`                |    111 |   137 |
+| ↳ `commands/lists.test.ts`      |      0 |    12 |
+| ↳ `commands/hyperlinks.test.ts` |      0 |    14 |
+
+## P1.5 — opaque carrier display classification (real-world UX fix)
+
+### Why
+
+A user-supplied real Word document (a 369-block masters thesis with TOC,
+bookmarks, page-number fields and SDT content controls) rendered with **127
+visible `[opaque]` / `[w:sdt]` chips** scattered through the editor
+surface. Every `<w:bookmarkStart>`, `<w:bookmarkEnd>`, `<w:fldChar>`,
+`<w:instrText>`, `<w:lastRenderedPageBreak>` etc. was being projected as
+an `opaque_inline` PM atom whose `toDOM` emitted `[opaque]`; the entire
+table of contents collapsed into a single `[w:sdt]` block chip.
+
+The byte-preservation invariant works perfectly — every one of those
+elements round-trips through `OpaqueXml` carriers — but the renderer was
+treating "I don't have a typed model for this" as "the user wants to see
+this raw". For any non-trivial document that produced un-usable visual
+clutter and made the TOC content inaccessible.
+
+### What
+
+Renderer-only change. The model and serializer are untouched, so all
+existing round-trip and byte-equivalence guarantees still hold.
+
+- New `model/opaque-classification.ts` exports
+  `classifyOpaqueTag(tag) → "metadata" | "content-wrapper" | "placeholder"`.
+  - `metadata`: zero-width structural markup (bookmarks, field
+    characters, paragraph proof markers, perm/move range markers,
+    `lastRenderedPageBreak`, …). The renderer emits **nothing** for
+    these.
+  - `content-wrapper`: lossless wrapper around editable content (`w:sdt`,
+    `w:sdtContent`, `w:fldSimple`, `mc:AlternateContent`,
+    `mc:Choice`/`mc:Fallback`, `w:smartTag`, `w:customXml`). The
+    renderer surfaces the carrier's flattened inner text instead of the
+    `[<tag>]` chip.
+  - `placeholder`: existing fallback (`[<tag>]` chip) for unknown /
+    unclassified tags.
+- `extractOpaqueText` recursively flattens `OpaqueXml.subtree` to its
+  user-visible text. Crucially it **skips text inside nested
+  metadata-classified children**, so a `<w:sdt>` wrapping a `TOC` field
+  surfaces just `"Inhaltsverzeichnis 1 Einleitung … 4"` and not the
+  field instruction `"TOC \h \o \"1-3\" "`.
+- `renderer/schema.ts`: `opaque_block` and `opaque_inline` now accept a
+  `previewText` attr. `toDOM` renders `previewText` (read-only,
+  italicised via the `pm-opaque-*-preview` class) when present and
+  falls back to the legacy chip otherwise.
+- `renderer/doc-to-pm.ts`: every opaque carrier (block, paragraph-level
+  inline, run child) is funneled through `classifyOpaqueTag` and the
+  matching display branch.
+- `apps/web/app/globals.css`: new `.pm-opaque-block-preview` and
+  `.pm-opaque-inline-preview` styles. The block variant gets a soft
+  dashed border + italic text; the inline variant is fully invisible
+  (`border: none; padding: 0`) so it disappears into the surrounding
+  paragraph text.
+
+### Effect on the original failing fixture
+
+| Metric                                         | Before |  After |
+| ---------------------------------------------- | -----: | -----: |
+| Body blocks                                    |    369 |    369 |
+| `OpaqueXml` carriers in the model              |    127 |    127 |
+| Visible `[opaque]` / `[<tag>]` chips in PM doc |    127 |  **0** |
+| Bytes of TOC text surfaced as readable preview |      0 | ~2.1 k |
+| Re-emit byte-stable across two passes (sha256) |    yes |    yes |
+
+### Test counts
+
+| Suite                                   | Before | After |
+| --------------------------------------- | -----: | ----: |
+| `@officeai/docx`                        |    137 |   151 |
+| ↳ `model/opaque-classification.test.ts` |      0 |     8 |
+| ↳ `renderer/opaque-display.test.ts`     |      0 |     6 |
+
+### Caveats
+
+- SDT block content is **read-only** in this iteration. The user sees
+  the TOC text instead of `[w:sdt]`, but cannot edit inside the
+  wrapper. Promoting SDT to a structurally editable PM block (with
+  paragraph indexing aware of the wrapper) is a future workstream.
+- `[table]` placeholders are unchanged in this commit. The typed-table
+  model from W7 round-trips correctly but the renderer still atoms a
+  table to the `[table]` chip; full nested table rendering will be
+  addressed separately.
+- Opaque carriers whose tag is not in the classification table fall
+  back to the existing `[<tag>]` chip — that is intentional: it keeps
+  unknown-but-significant elements visible during development so we
+  can spot them and either type them or add them to the wrapper /
+  metadata sets.
+
+## P1.6 — typed table rendering (read-only nested view)
+
+### Why
+
+After P1.5 cleared the `[opaque]` / `[w:sdt]` clutter, the next visible
+regression on real-world `.docx` files was the `[table]` chip: every
+typed `Table` block (introduced in P1.3 / W7) was being projected as a
+single PM atom whose `toDOM` rendered the literal string `"[table]"`.
+The Masterthesis fixture had 4 tables (13 rows, 38 cells) all collapsed
+to 4 chips.
+
+### What
+
+Renderer-only change. Same scope discipline as P1.5: the model and
+serializer are untouched.
+
+- `renderer/schema.ts`: the existing atomic `table` node keeps its
+  atom-ness (so cell editing stays disabled and `transactionToCommands`
+  paragraph indexing is unaffected) but `toDOM` now materialises a real
+  `<table>` DOM subtree from a new `tableJson` attr instead of emitting
+  a placeholder. `tableJson` carries a flat projection
+  (`rows[].cells[].blocks[]`) sufficient for read-only display.
+  `RenderableTable` / `RenderableTableRow` / `RenderableTableCell` /
+  `RenderableTableBlock` interfaces document the shape.
+- `renderer/doc-to-pm.ts`: every `Table` block is converted to the
+  renderable shape via `tableToRenderable`. Cell paragraphs flatten to
+  plain text via the same walker used by `extractInlineText`; tabs and
+  hard breaks become `\t` / `\n` so cell layout is preserved
+  ergonomically. Nested tables flatten one level deeper (cells joined
+  with `" | "`).
+- Header rows (`<w:tblHeader/>`) emit `<th>` instead of `<td>`.
+  `<w:gridSpan w:val="N"/>` becomes `colspan="N"`. `<w:vMerge/>`
+  continuation cells are skipped so the merged cell renders once.
+- `apps/web/app/globals.css`: `.pm-table` / `.pm-table-cell` /
+  `.pm-table-header-row` / `.pm-table-cell-p` styles for the new
+  read-only table visual.
+
+### Effect on the original failing fixture
+
+| Metric                       | Before | After |
+| ---------------------------- | -----: | ----: |
+| Typed `Table` blocks         |      4 |     4 |
+| `[table]` chips visible      |      4 | **0** |
+| Cells rendered with content  |      0 |    38 |
+| Top-level PM blocks          |    369 |   369 |
+| Re-emit byte-stable two-pass |    yes |   yes |
+
+### Test counts
+
+| Suite                              | Before | After |
+| ---------------------------------- | -----: | ----: |
+| `@officeai/docx`                   |    151 |   157 |
+| ↳ `renderer/table-display.test.ts` |      0 |     6 |
+
+### Caveats
+
+- **Cells are read-only in this iteration.** Promoting cells to
+  PM-editable nested content requires teaching `transactionToCommands`
+  about cell-scoped positions (the typed `set-cell-content` /
+  `insert-row` / `insert-column` commands from W7 already exist, but
+  the bus dispatch from PM keystrokes inside cells is not wired). That
+  is the natural next step.
+- **Cell content flattens to plain text.** Run-level marks (bold,
+  italic, color, …), inline images, hyperlinks and comments inside
+  cells render as plain text only. The model preserves them; the
+  display does not yet surface them. Adding rich cell rendering is
+  cheap once cell editing is wired.
+- **Nested tables render shallowly.** Inner tables flatten to a
+  single line of `" | "`-joined cell text. Rare in practice; deeper
+  nesting can be added later without changing the outer schema.
+
+## P2.1 + P2.2 — Visual wins + selection-aware toolbar
+
+**Date:** 2026-04-18.
+**Commit:** `233ac3a`.
+**Spec input:** none new (refines `spec/docx/agent-commands.md`).
+
+### What shipped
+
+**P2.1 — Immediate visual wins (model-safe).** The status strip in
+`Toolbar.tsx` now reports paragraph count (vs. raw block count, which
+over-counts opaque carriers and section breaks) and comment-thread
+count (vs. raw comment count, which double-counts threaded replies).
+Label format: `"{N} paragraphs · rev {R} · {C} comments"` with proper
+singular / plural handling. E2E specs (`enter-paragraph`, `add-comment`,
+`open-fixture`) updated to match.
+
+**P2.2 — Selection-aware toolbar + paragraph-format commands.**
+The toolbar finally reflects what the caret is sitting in:
+
+- New `activeMarkAttr<T>(state, markName, attrName)` helper in
+  `format-helpers.ts`: returns the dominant value across the PM
+  selection, the `MIXED` sentinel when the selection straddles
+  conflicting values, or `undefined` when no run carries the mark.
+- `paragraphStyleOptions(snapshot, activeStyle)` derives the style
+  picker from the loaded document instead of a hard-coded list.
+  Surfaces both English (`Heading1`) and German Word style ids
+  (`berschrift1`, `Untertitel`, `Titel`, `Verzeichnis`) under their
+  canonical English labels and always includes the active style so
+  the dropdown never silently drops an unrecognised value.
+- `currentParagraphId` and `currentParagraphAlignment` resolve the
+  PM caret to the typed paragraph node so alignment / indent buttons
+  target stable paragraph ids without an index round-trip.
+- `discoverNumId(snapshot, kind)` picks the first bullet vs. ordered
+  numbering definition out of `snapshot.root.numbering` so the
+  bullet / numbered-list buttons can dispatch `docx:set-paragraph-list`
+  against an existing definition. Auto-minting a fresh `<w:abstractNum>`
+  is deferred (P3+); the toolbar surfaces a clear toast when no
+  definition exists.
+
+Toolbar contract changes:
+
+- `FontSizePicker` is now controlled, displays "11" when the cursor
+  sits in an 11 pt run, "—" when the selection is mixed, and "Size"
+  only when no run carries a `font_size` mark.
+- New `FontFamilyPicker` with the same shape, populated from a default
+  `FONT_FAMILIES` list plus the current value when out-of-list.
+- `ColorPicker` triggers render an active-value swatch stripe under
+  the icon for both Color and Highlight pickers.
+- Alignment buttons wired to a new `docx:set-paragraph-alignment` and
+  reflect the caret paragraph's alignment via `aria-pressed`.
+- Indent / outdent buttons wired to a new `docx:set-paragraph-indent`
+  command at ±360 twips per click (Word's standard ¼-inch step).
+- Bullet / numbered list buttons wired to existing
+  `docx:set-paragraph-list` via `discoverNumId`.
+- Image-insert button placeholder added (full UX lands in P2.4); shows
+  an honest "arrives in P2.4" toast for now.
+
+New mutations in `@officeai/docx`:
+
+- `docx:set-paragraph-alignment` — sets / clears `<w:jc>` on a
+  paragraph identified by stable id (works in body and table cells
+  via `locateParagraph`). No-op writes short-circuit before bumping
+  `revision` / `dirty.body`.
+- `docx:set-paragraph-indent` — steps `indentation.left` by a signed
+  delta in twips, clamped to `[0, 31680]` (the OOXML legal range).
+  Drops any stale `<w:ind>` opaque carrier so the typed field stays
+  the single source of truth on re-serialize.
+
+CLI: new `docx align` and `docx indent` subcommands in `office-agent`
+expose the two new mutations on the wire (documented in
+`spec/agent/cli.md`).
+
+### Caveats
+
+- Auto-minting a numbering definition when none exists is deferred.
+  Bullet / numbered list buttons fail loudly via toast rather than
+  silently picking an arbitrary `numId`.
+- The German style-id whitelist is hard-coded; a generalised
+  language-pack mapping is a P4 polish item.
+
+## P2.3 — Unwrap SDT/TOC content into typed children for the renderer
+
+**Date:** 2026-04-18.
+**Commit:** `44ef6b3`.
+**Spec input:** updated `spec/docx/document-model.md` with the
+`children` + `subtreeDirty` fields on opaque carriers.
+
+### Problem
+
+Real-world DOCX files (e.g. the `masterthesis` fixture) wrap the
+table of contents, signature blocks, and other "managed content" in
+`<w:sdt>` / `<w:fldSimple>` / `<mc:AlternateContent>` carriers. Until
+now the parser treated these as opaque blobs and the renderer
+collapsed each subtree into a single italic preview chip — so the
+user saw `"Inhaltsverzeichnis 1 Einleitung 4 …"` as one
+undifferentiated line and could not tell that the document had a TOC
+at all.
+
+### What shipped
+
+- Extended `OpaqueBlock` / `OpaqueInline` with optional typed
+  `children` and a `subtreeDirty` flag. `raw` remains the source of
+  truth for serialization; `children` is a render-side projection
+  populated by the parser when the carrier has a recognised content
+  slot.
+- Taught `parseOpaqueBlock` / `parseInline` to descend into the
+  wrapper's content slot (`<w:sdtContent>` for SDTs,
+  `<mc:Choice>` / `<mc:Fallback>` for MC alternate content, direct
+  children for `w:fldSimple`, `w:smartTag`, `w:customXml`) and
+  parse the result as typed `BlockNode`s / `InlineNode`s.
+- New `opaque_block_wrapper` and `opaque_inline_wrapper` PM node
+  types render the unwrapped children as structured HTML
+  (`<h1>` / `<p>` via `paragraphHtmlTag`, with text alignment) inside
+  a soft-bordered wrapper carrying a `data-tag` chip so the user can
+  still see the carrier kind. **Read-only for now (atomic)** —
+  editing through a carrier is gated on the dirty-flag plumbing
+  introduced here.
+- Serializer dirty path: when `subtreeDirty === true` the wrapper is
+  rebuilt by splicing serialized children back into the content slot.
+  When `false` (the default) the cached `raw` subtree is re-emitted
+  byte-for-byte.
+- Added `fixtures/docx/real-world/07-toc-sdt.docx` (Masterthesis TOC)
+  and a serializer round-trip test that asserts every part hashes
+  identically while the SDT children are still present after parse.
+
+Closed work-packages W12–W18 of P2.3.
+
+### Caveats
+
+- Editing inside a TOC / SDT wrapper is intentionally blocked for
+  this iteration; the carrier still re-emits byte-identically as
+  long as no command flips `subtreeDirty`.
+- Only the four wrapper kinds above are unwrapped. Other opaque
+  carriers continue to render as preview chips.
+
+## P2.4 — Real `<img>` rendering + drag/drop/paste image insertion
+
+**Date:** 2026-04-18.
+**Commit:** `d697125`.
+**Spec input:** none new (extends the existing `docx:insert-image`
+contract).
+
+### What shipped
+
+Wires the existing `docx:insert-image` command up to a polished UX so
+"Insert Picture" works end-to-end:
+
+- `renderer/schema`: image node now carries
+  `dataUrl` / `width` / `height` / `alt` and emits a real
+  `<img class="pm-image">` when the resolver supplies a `data:` URL,
+  falling back to the `[image]` placeholder when not.
+- `renderer/doc-to-pm`: builds a per-render `MediaResolver` from
+  `snapshot.media` + `snapshot.relationships`, converts EMU → px, and
+  hands base64 data URLs to the schema.
+- Web app: dedicated hidden file input + toolbar button, shared
+  drag-over / drop / paste handler in `image-insert.ts` that validates
+  MIME, reads intrinsic size via `createImageBitmap` (with `<img>`
+  fallback), scales to the editor's content column, and dispatches
+  `docx:insert-image` at the caret's paragraph.
+- Styles: `.pm-image` keeps the displayed image inside the page column.
+- Tests: renderer asserts the dataUrl / intrinsic-size pipeline and
+  the `toDOM` placeholder fallback. New Playwright spec uploads a
+  1×1 PNG through the hidden input and asserts a `data:image/png`
+  `<img>` lands in the doc.
+
+Bumped the schema-validate self-test fixture pin to 7 to account for
+P2.3's `07-toc-sdt.docx`, which had silently broken `make verify`.
+
+### Caveats
+
+- Image resize handles, alt-text editing, and float/wrap controls are
+  still TODO. The model already carries the data; only the UX is
+  missing.
+
+## P2.5 — Real comment composer + selection-aware LLM dispatch
+
+**Date:** 2026-04-18.
+**Commit:** `e1e9472`.
+**Spec input:** refines `spec/docx/agent-commands.md` for
+selection-aware dispatch.
+
+### What shipped
+
+**W24 — Comment composer popover.** Replaced the long-standing
+hard-coded `text: "Looks good?"` recipe with a proper composer
+(`CommentComposer.tsx`). The popover anchors to the user's selection
+via `view.coordsAtPos`, quotes the selected snippet, lets the user
+write the actual comment body, supports `Cmd+Enter` to submit and
+`Escape` to dismiss, and gates the submit button behind a non-empty
+draft.
+
+**W25 — Selection-aware LLM dispatch.** `/api/llm` now accepts an
+optional `selection` field (`{ text, paragraph, runs? }`) and threads
+it into the user message so the model defaults to operating on the
+highlighted snippet instead of guessing from full-doc Markdown. The
+web client passes live selection context (text + range + paragraph
+index) on every prompt.
+
+**W26 — Shared `DOCX_COMMAND_TYPES` allow-list.** Both the route and
+`llm-client` now source the allow-list from the canonical
+`DOCX_COMMAND_TYPES` export in `@officeai/docx`, filtering out
+human-only commands (`accept-change` / `reject-change`). The client
+re-validates server output as defence-in-depth so a regressed route
+can't smuggle through a non-DOCX command.
+
+**W27 — Honest offline fallback.** Without `OPENAI_API_KEY` the old
+fallback inserted `"[AI] "` into the document — pretending to "edit"
+without an LLM. The new fallback attaches a single comment carrying
+the prompt verbatim, anchored to the live selection when there is
+one, with an explicit "no LLM was called" rationale that surfaces as
+a toast.
+
+Composer also exposes an optional "Draft with AI" affordance that
+calls the same `dispatchToLlm` pipeline; when a real LLM returns an
+`add-comment` payload its `text` is lifted into the textarea, and
+when the offline fallback runs the rationale becomes the draft (so
+the user sees the offline note up-front).
+
+E2E: `add-comment.spec.ts` now drives the composer end-to-end
+(fill body, submit) and adds a second case for `Escape` dismissal.
+`comments-sidebar.spec.ts` shares an `addComment` helper that goes
+through the composer instead of clicking the toolbar button alone.
+
+### Caveats
+
+- The composer has no preview / formatted body, no replies UI, no
+  thread resolution from the popover. Threaded replies still go
+  through the right-rail sidebar.
+
+## P2.6 — Eigenpal deep-dive synthesis + R1–R12 follow-up roadmap
+
+**Date:** 2026-04-18.
+**Commit:** `e95d745`.
+**Output:** `spec/docx/eigenpal-synthesis.md` (337 lines, marked
+explicitly as "research note, not a spec") + roadmap pointer in
+`docs/roadmap-docx-p1.md`.
+
+Code-level read of `eigenpal/docx-js-editor` (and its byte-identical
+mirror `docx-editor`). Captures the architectural deltas vs ours, the
+fidelity gaps worth closing, and 12 candidate follow-up items
+(R1–R7 fed directly into P3, R8–R12 into P4+) that the next roadmap
+pass should sequence. The single most consequential decision driven
+by this synthesis was choosing **single-PM + widget decorations**
+over their dual-rendering layout-painter for our paged renderer (see
+P3.3 and the long-form rationale in `spec/docx/paged-renderer.md`).
+
+## P3 — Word-UX parity (style cascade, pages, header/footer authoring)
+
+**Date:** 2026-04-17 → 2026-04-18.
+**Spec:** `spec/docx/style-cascade.md`, `spec/docx/page-model.md`,
+`spec/docx/paged-renderer.md`, `spec/docx/header-footer-authoring.md`,
+`spec/docx/page-aware-editing.md`, `spec/docx/llm-page-surface.md`.
+
+### Goal
+
+Close the four user-visible gaps that kept the editor from feeling
+like Word:
+
+1. The toolbar didn't reflect inherited formatting (font / size /
+   color from a paragraph style cascade) — it only showed values
+   that were carried by direct PM marks. Result: open a thesis,
+   click into a heading, see "—" instead of "Calibri 16 pt".
+2. The document was rendered as one continuous stream — no page
+   boundaries, no page count, no Goto Page.
+3. Headers, footers, and section breaks couldn't be edited at all.
+4. The LLM / MCP surface didn't know about pages, so any prompt
+   that referred to "page 3" was meaningless.
+
+### Shape of the work
+
+Six batches of work-packages, each spec-first then code:
+
+| Batch | Workstream                                                                                                                                                                | Deliverables                                                                                                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P3.1  | Style cascade + toolbar inheritance                                                                                                                                       | Typed `StylesPart` + `StyleDefinition`; `resolveEffectiveRpr` / `resolveEffectivePpr` + cycle-safe `basedOn` walker; `activeRunAttr` toolbar helper; `docx:set-paragraph-spacing` command.   |
+| P3.2  | Typed page geometry + section model                                                                                                                                       | `SectionProperties` (pgSz, pgMar, cols, headerRefs, footerRefs, titlePg, sectionType); typed `PageBreakLeaf` + `LastRenderedPageBreakLeaf`; `parser/sections.ts`; `serializer/sections.ts`.  |
+| P3.3  | Paged-renderer foundation                                                                                                                                                 | `chunkIntoPages` (hard / hint / measured); `pageDecorationsPlugin` widget dividers ("Page N of M"); status bar with current/total; zoom 50–200 %.                                            |
+| P3.4  | Header/footer authoring                                                                                                                                                   | `PageNumberFieldLeaf` typed run child; `serializeRunOrFieldWrapper` to lift single-leaf runs into `<w:fldSimple>`; commands `docx:insert-page-number`, `set-section-different-first`, `insert-section-break`; `HeaderFooterPanel` MVP UI. |
+| P3.5  | Page-aware editing UX                                                                                                                                                     | `docx:insert-page-break` command; `Mod-Enter` keymap; `gotoPage` + click-to-jump in the status bar; `PageDown` / `PageUp` snap to the next chunk; locale-aware read-only `PageRuler`.       |
+| P3.6  | LLM + MCP surface for pages                                                                                                                                               | `snapshotToMarkdown({ withPageSections })` injecting `<!-- page N -->` anchors; `DocxAgent.getPages` / `pageForParagraph` / `getPageMarkdown` / `getPageText`; new MCP tools `docx_get_pages`, `docx_get_page_text`. |
+
+### Decisions worth remembering
+
+- **One PM instance for the body, widget decorations for the page
+  chrome.** We considered mounting one PM per visible page (Word's
+  literal model) but rejected it because: (a) every cross-page
+  selection becomes a multi-instance saga; (b) PM observers on
+  separate hosts fight over selection; (c) zoom has to scale a
+  cluster of hosts simultaneously. Decoration widgets keep the
+  editing surface as one PM and let CSS draw the page boundaries.
+  Pagination becomes a pure projection of the typed model.
+- **Page chunker is a pure function.** No DOM. Inputs are the
+  snapshot + an optional per-block height measurer (the browser
+  passes one wired to `getBoundingClientRect`; tests omit it and
+  rely on hard / hint breaks). This keeps the chunker testable
+  end-to-end without jsdom and means the LLM layer (P3.6) can
+  reason about pages without ever touching the renderer.
+- **Header/footer authoring is data-layer-first.** P3.4 ships a
+  collapsible `HeaderFooterPanel` instead of a full visual focus
+  model with separate PM instances. The panel surfaces every typed
+  command (set-header-text, insert-page-number, set-section-different-first)
+  so the data layer is fully exercised; the visual editing
+  experience overlays of "Header — First Page" with their own PM
+  instances are a P4 polish item. Decoupling lets P3.5 / P3.6 ship
+  without waiting on the more complex UX work.
+- **Typed leaves carry the field semantics, opaques carry the rest.**
+  `PageNumberFieldLeaf` covers `<w:fldSimple w:instr=" PAGE "/>`
+  (and `NUMPAGES`) — the only field shapes any P3 command emits.
+  Existing fields parsed from real-world documents still go through
+  `OpaqueRunChild` so byte-identical round-trip is preserved on
+  every untouched fixture. P4 will widen the typed surface to the
+  `<w:fldChar>`-bracketed multi-run grammar.
+- **Markdown page anchors are opt-in.** `snapshotToMarkdown` keeps
+  its old single-argument signature byte-identical. The new
+  `withPageSections: true` mode prepends `<!-- page N -->` + `## Page N`
+  per chunk. The HTML comment is the machine-readable anchor (regex
+  lifts cleanly even after a renderer mangles the heading); the
+  heading is the human fallback.
+
+### Round-trip invariants verified
+
+`tests/roundtrip/docx/p3-page-roundtrip.test.ts` adds 35 new test
+cases (one per fixture × five mutations). For every real-world
+fixture we assert that:
+
+- `docx:insert-page-break` re-emits only `word/document.xml`.
+- `docx:set-section-different-first` re-emits only `word/document.xml`.
+- `docx:insert-section-break` re-emits only `word/document.xml`.
+- `docx:insert-page-number` into the first header re-emits only that
+  header part — the body and other headers/footers stay byte-identical.
+- The page chunker output is identical before and after a no-op
+  load → save (typed sections + page-break leaves round-trip cleanly).
+
+These complement the existing `real-world-roundtrip.test.ts` suite
+which already pinned untouched parts as byte-identical for a
+single-character text edit.
+
+### Test counts
+
+| Suite                                        | Before P3 | After P3   |
+| -------------------------------------------- | --------: | ---------: |
+| `@officeai/docx`                             |       208 |        249 |
+| ↳ `commands/header-footer-authoring.test.ts` |         0 |         14 |
+| ↳ `commands/insert-page-break.test.ts`       |         0 |          6 |
+| ↳ `agent/pages.test.ts`                      |         0 |         12 |
+| ↳ `parser/sections.test.ts`                  |         0 |          7 |
+| ↳ `renderer/page-chunker.test.ts`            |         0 |          9 |
+| ↳ `agent/header-footer-graph.test.ts`        |         0 |          3 |
+| `@officeai/agent` (MCP tools)                |        47 |         50 |
+| `@officeai/integration-tests`                |        51 |         86 |
+| ↳ `roundtrip/docx/p3-page-roundtrip.test.ts` |         0 |         35 |
+
+### Caveats / out-of-scope (carried into P4)
+
+- **No measured pagination yet.** The chunker honors hard
+  `<w:br w:type="page"/>` and `<w:lastRenderedPageBreak/>` hints;
+  it does not run a layout pass that would split overflowing
+  paragraphs. The LLM surface uses the same logical pagination, so
+  AI page references are stable but may differ from Word's actual
+  rendered page count for documents that lack hint breaks.
+- **Header/footer authoring lives in a side panel.** The full
+  in-editor focus model (click into a header preview, body greys
+  out, toolbar retargets) is wired at the data layer but the
+  separate PM mount per part is not yet rendered into the page
+  divider widget. Acceptance criterion A5 of P3.4 is met by the
+  panel; the visual end-state is P4 polish.
+- **Different-odd-even / restart-numbering / page-number formatting**
+  are deferred. `<w:titlePg/>` is the only section-level toggle the
+  P3.4 command surface exposes.
+- **Ruler is read-only.** Drag-to-resize margins lands in P4 / R8.
+- **No auto-creation of header / footer parts.** Toggling
+  "Different first page" on a section that lacks a `first` header
+  flips the typed flag but does not synthesize the part. P4 will
+  add an "auto-create-on-toggle" path that mints the part and
+  registers the relationship.

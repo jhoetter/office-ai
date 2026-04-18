@@ -100,3 +100,26 @@ agent test that `import`s the package and runs a round-trip.
 The `office-agent` CLI never re-implements logic; it instantiates the
 appropriate `DocumentAgent`, dispatches commands, and prints
 JSON/markdown/CSV. See [`spec/agent/cli.md`](../agent/cli.md).
+
+## MCP surface
+
+`office-agent mcp` exposes the same agent over the Model Context Protocol
+(stdio transport). Tools registered today:
+
+| Tool                 | Maps to                               |
+| -------------------- | ------------------------------------- |
+| `docx_load`          | `DocxAgent.fromBuffer` + handle mint  |
+| `docx_save`          | `DocxAgent.exportFile` + writeFile    |
+| `docx_inspect`       | structural counts and OPC parts       |
+| `docx_get_text`      | markdown / json / plain text          |
+| `docx_search`        | `DocumentAgent.search`                |
+| `docx_apply_command` | `DocumentAgent.applyCommand`          |
+| `docx_diff`          | `DocumentAgent.getDiff` (two handles) |
+| `docx_list_pending`  | `DocumentAgent.getPendingMutations`   |
+| `docx_approve`       | `DocumentAgent.approveMutation`       |
+| `docx_reject`        | `DocumentAgent.rejectMutation`        |
+
+`docx_apply_command` accepts `auto_approve` (default `true`). Setting it
+`false` is the canonical way for an LLM to stage a write and hand control
+back to a human reviewer who calls `docx_approve` / `docx_reject` after
+inspecting the snapshot diff.

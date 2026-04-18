@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
  * lightweight: it invokes the script in `--self-test` mode (which deliberately
  * skips xmllint) and asserts:
  *
- *   (a) the script discovers all 6 real-world fixtures;
+ *   (a) the script discovers all 7 real-world fixtures;
  *   (b) every part type observed across the fixtures maps to either a known
  *       XSD filename (`wml.xsd`, `dml-main.xsd`, …) or an explicit
  *       `skip:<reason>` bucket — i.e. there are no unrecognised parts;
@@ -38,10 +38,10 @@ function runScript(args: string[]): { code: number; stdout: string; stderr: stri
 }
 
 describe("scripts/validate-ooxml-schemas.mjs", () => {
-  it("--self-test: discovers all 6 real-world fixtures and exits 0", () => {
+  it("--self-test: discovers all 7 real-world fixtures and exits 0", () => {
     const r = runScript(["--self-test"]);
     expect(r.code, `stderr: ${r.stderr}\nstdout: ${r.stdout}`).toBe(0);
-    expect(r.stdout).toMatch(/discovered 6 fixture\(s\)/);
+    expect(r.stdout).toMatch(/discovered 7 fixture\(s\)/);
     expect(r.stdout).toContain("self-test: ✅ all checks passed.");
   });
 

@@ -16,6 +16,16 @@ export async function gotoEditor(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Navigate to the XLSX editor and wait until the synthetic workbook is
+ * mounted. The seeded `Score` header cell only renders once
+ * `XlsxAgent.fromBuffer` has finished and the grid has been projected.
+ */
+export async function gotoXlsxEditor(page: Page): Promise<void> {
+  await page.goto("/xlsx-editor");
+  await expect(page.getByTestId("cell-B1")).toContainText("Score", { timeout: 15_000 });
+}
+
 /** Place caret at the very start of the editable surface. */
 export async function focusEditor(page: Page): Promise<void> {
   const surface = page.locator(".ProseMirror").first();

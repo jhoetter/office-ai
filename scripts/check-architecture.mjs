@@ -36,7 +36,8 @@ const LEAF_DIRS = ["tests"];
  *  - ui                → presentation only; design-tokens.
  *  - docx              → headless model layer; core only.
  *  - xlsx              → headless model layer; core only (mirrors docx).
- *  - agent             → orchestration / CLI; core + docx + xlsx.
+ *  - pptx              → headless model layer; core only (mirrors docx). Optional React renderer entry point under ./renderer/react keeps `react` an OPTIONAL peer dep, guarded by src/headless-invariant.test.ts.
+ *  - agent             → orchestration / CLI; core + docx + xlsx + pptx.
  *  - integration-tests → can depend on anything (it's the consumer).
  *  - web               → top of stack; can depend on anything.
  */

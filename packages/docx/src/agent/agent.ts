@@ -4,7 +4,15 @@ import type { DocxSnapshot, DocxPosition } from "../model/types.js";
 import { paragraphPlainText } from "../commands/helpers.js";
 import { parseDocx, type ParseOptions } from "../parser/parse.js";
 import { serializeDocx } from "../serializer/serialize.js";
-import { snapshotToMarkdown } from "./markdown.js";
+import { snapshotToMarkdown, type SnapshotToMarkdownOptions } from "./markdown.js";
+import { diffDocxSnapshots } from "./diff.js";
+import {
+  getPageInfos,
+  getPageMarkdown,
+  getPagePlainText,
+  pageForParagraph,
+  type PageInfo,
+} from "./pages.js";
 
 export interface DocxAgentOptions extends ParseOptions {
   readonly sessionId?: string;
@@ -44,9 +52,11 @@ export interface DocxSearchResult {
  * described in spec/shared/agent-api.md.
  */
 export class DocxAgent {
-  private readonly bus: CommandBus<DocxSnapshot>;
+  private bus: CommandBus<DocxSnapshot>;
+  private readonly opts: DocxAgentOptions;
 
   private constructor(initial: DocxSnapshot, opts: DocxAgentOptions) {
+    this.opts = opts;
     this.bus = new CommandBus<DocxSnapshot>(initial, {
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.idMinter ? { mintNodeId: opts.idMinter } : {}),
@@ -59,6 +69,20 @@ export class DocxAgent {
     return new DocxAgent(snap, opts);
   }
 
+  /**
+   * Replace the in-memory document with one parsed from a buffer. Drops all
+   * pending mutations and resets the bus history. Spec: `DocumentAgent.importFile`
+   * in `spec/shared/agent-api.md`.
+   */
+  async importFile(buffer: ArrayBuffer | Uint8Array): Promise<void> {
+    const snap = await parseDocx(buffer, this.opts);
+    this.bus = new CommandBus<DocxSnapshot>(snap, {
+      ...(this.opts.sessionId ? { sessionId: this.opts.sessionId } : {}),
+      ...(this.opts.idMinter ? { mintNodeId: this.opts.idMinter } : {}),
+    });
+    this.bus.registerAll(allDocxHandlers);
+  }
+
   // ── Read ───────────────────────────────────────────────────────────────
   getSnapshot(): DocxSnapshot {
     return this.bus.getSnapshot();
@@ -68,8 +92,38 @@ export class DocxAgent {
     return this.bus.getApproved();
   }
 
-  toMarkdown(): string {
-    return snapshotToMarkdown(this.getSnapshot());
+  toMarkdown(options?: SnapshotToMarkdownOptions): string {
+    return snapshotToMarkdown(this.getSnapshot(), options);
+  }
+
+  // ── Pages (P3.6 / W22-W24) ────────────────────────────────────────────
+  /**
+   * All page chunks for the current snapshot, including the trigger
+   * that started each page (hard break, hint break, section break,
+   * etc.) and a short preview snippet. Backed by the same
+   * `chunkIntoPages` helper the editor uses, so editor and agent
+   * always agree on the page count.
+   */
+  getPages(): ReadonlyArray<PageInfo> {
+    return getPageInfos(this.getSnapshot());
+  }
+
+  /**
+   * 1-based page number containing the body block at `paragraphIndex`,
+   * or `null` when the index is out of range.
+   */
+  pageForParagraph(paragraphIndex: number): number | null {
+    return pageForParagraph(this.getSnapshot(), paragraphIndex);
+  }
+
+  /** Markdown projection of a single page, or `null` when out of range. */
+  getPageMarkdown(pageNumber: number): string | null {
+    return getPageMarkdown(this.getSnapshot(), pageNumber);
+  }
+
+  /** Plain-text projection of a single page, or `null` when out of range. */
+  getPageText(pageNumber: number): string | null {
+    return getPagePlainText(this.getSnapshot(), pageNumber);
   }
 
   getRange(req: DocxRangeRequest): DocxRangeSnapshot {
@@ -126,21 +180,14 @@ export class DocxAgent {
   }
 
   // ── Diff & Review ──────────────────────────────────────────────────────
+  /**
+   * Structural diff between two snapshots. Covers paragraph
+   * insert/delete/update/move (matched by stable id), comment add /
+   * delete / resolve / reopen / text edit, and OPC part add / drop.
+   * See `agent/diff.ts` for the algorithm.
+   */
   getDiff(from: DocxSnapshot, to: DocxSnapshot): DocumentDiff {
-    return {
-      format: "docx",
-      fromRevision: from.revision,
-      toRevision: to.revision,
-      changes: [
-        {
-          kind: "node-updated",
-          nodeId: from.root.id,
-          path: ["root"],
-          field: "snapshot",
-          summary: `revision ${from.revision} → ${to.revision}`,
-        },
-      ],
-    };
+    return diffDocxSnapshots(from, to);
   }
 
   getPendingMutations(): ReadonlyArray<Mutation<DocxSnapshot>> {

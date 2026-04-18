@@ -1,5 +1,18 @@
 import type { BlockNode, DocxComment, DocxSnapshot, Paragraph, Table } from "../model/types.js";
 import { paragraphPlainText } from "../commands/helpers.js";
+import { chunkIntoPages } from "../renderer/page-chunker.js";
+
+export interface SnapshotToMarkdownOptions {
+  /**
+   * P3.6 / W22 — when true, segment the markdown output by page chunk
+   * so LLMs can cite "page 3" without having to count themselves.
+   * Each page is preceded by an HTML comment anchor
+   * (`<!-- page N -->`) plus a `## Page N` heading; both are absent
+   * when the option is false (default), preserving byte-identical
+   * output for every existing CLI / MCP consumer.
+   */
+  readonly withPageSections?: boolean;
+}
 
 const HEADING_STYLES: Record<string, number> = {
   Title: 1,
@@ -28,11 +41,29 @@ const HEADING_STYLES: Record<string, number> = {
  *
  * Pure: no I/O, no mutation. Safe to call from any context.
  */
-export function snapshotToMarkdown(snapshot: DocxSnapshot): string {
+export function snapshotToMarkdown(
+  snapshot: DocxSnapshot,
+  options?: SnapshotToMarkdownOptions
+): string {
   const lines: string[] = [];
   const commentParents = buildCommentParentIndex(snapshot.root.body);
 
-  for (const block of snapshot.root.body) {
+  // P3.6 / W22 — when page sections are requested, build a map from
+  // body block index to the 1-based page number that block opens.
+  // The map is sparse (one entry per chunk's `startBlock`) so the
+  // emitter only injects a header at the start of each page.
+  const pageStarts = options?.withPageSections ? buildPageStartIndex(snapshot) : null;
+
+  for (let i = 0; i < snapshot.root.body.length; i++) {
+    const block = snapshot.root.body[i];
+    if (pageStarts) {
+      const startPage = pageStarts.get(i);
+      if (startPage !== undefined) {
+        lines.push(`<!-- page ${startPage} -->`);
+        lines.push(`## Page ${startPage}`);
+        lines.push("");
+      }
+    }
     switch (block.kind) {
       case "paragraph":
         lines.push(paragraphToMarkdown(block));
@@ -75,6 +106,18 @@ export function snapshotToMarkdown(snapshot: DocxSnapshot): string {
     }
   }
 
+  // Trailing empty page (e.g. a section break with no content after
+  // it) — emit its header so the page count in the markdown matches
+  // the chunker's view.
+  if (pageStarts) {
+    const trailingPage = pageStarts.get(snapshot.root.body.length);
+    if (trailingPage !== undefined) {
+      lines.push(`<!-- page ${trailingPage} -->`);
+      lines.push(`## Page ${trailingPage}`);
+      lines.push("");
+    }
+  }
+
   appendCommentsSection(lines, snapshot.root.comments, commentParents);
 
   return (
@@ -83,6 +126,21 @@ export function snapshotToMarkdown(snapshot: DocxSnapshot): string {
       .replace(/\n{3,}/g, "\n\n")
       .trimEnd() + "\n"
   );
+}
+
+/**
+ * Map of body-block-index → 1-based page number for any block that
+ * opens a new page. Empty pages (chunks whose `startBlock === endBlock`)
+ * are recorded under that boundary index so the emitter still surfaces
+ * a page header for them.
+ */
+function buildPageStartIndex(snapshot: DocxSnapshot): Map<number, number> {
+  const out = new Map<number, number>();
+  const chunks = chunkIntoPages(snapshot);
+  for (const chunk of chunks) {
+    out.set(chunk.startBlock, chunk.pageNumber);
+  }
+  return out;
 }
 
 function paragraphToMarkdown(p: Paragraph): string {

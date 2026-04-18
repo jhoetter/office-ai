@@ -161,3 +161,16 @@ disjoint workstreams per batch, dispatched in parallel).
 - Page-by-page paginated rendering (C6 — explicit P2).
 - XLSX and PPTX (deferred per session-zero choice; the same architecture applies once DOCX is in P1.4).
 - VBA macros and OLE — `prompt.md` §"Out of scope" makes these permanent.
+
+---
+
+## Follow-up roadmap inputs (post-P2)
+
+P2.6 produced [`spec/docx/eigenpal-synthesis.md`](../spec/docx/eigenpal-synthesis.md),
+a code-level read of `eigenpal/docx-js-editor` that translates the
+delta with our codebase into 12 candidate items (R1–R12). R1–R7
+are the P3 candidates (LLM-text projection, substring-anchored
+comments, propose-\* tracked-change commands, default-author setter,
+MCP doc-handle session model, selective save, run consolidator).
+R8–R12 are P4+ (footnotes/bookmarks/fields, plugin surface, theme/
+style parsers, i18n, paged WYSIWYG).

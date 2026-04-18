@@ -1,0 +1,347 @@
+# XLSX architectural deltas vs DOCX
+
+> Companion to [`session-summary-xlsx.md`](session-summary-xlsx.md)
+> and [`build-log/xlsx.md`](build-log/xlsx.md). The build log is
+> chronological; this doc is *spatial* — it explains the cross-cutting
+> shape of the XLSX product against the DOCX baseline so a new
+> contributor (or a future LLM agent) does not have to derive these
+> by reading both stacks side-by-side.
+
+The two products share the same headless-first chassis (typed
+`CommandBus` from `@officeai/core`, `OoxmlContainer` for byte-
+preserving I/O, `DocumentAgent` interface, MCP transport, CLI
+shell, Next.js host), but the file formats themselves push against
+different architectural axes. The list below is what XLSX did
+*differently* and *why*.
+
+---
+
+## 1. Renderer: hand-rolled grid vs ProseMirror
+
+| | DOCX | XLSX |
+|---|---|---|
+| Renderer | `prosemirror-view` + `prosemirror-state` | hand-rolled virtualized grid in `apps/web/app/xlsx-editor/Grid.tsx` |
+| Document-model bridge | bidirectional (PM doc ↔ our model via `doc-to-pm.ts`) | unidirectional (our model → grid; mutations go through the bus) |
+| Selection | PM `Selection` (positions in a tree) | `{ anchor: {r,c}; focus: {r,c} }` (single rectangle) |
+| Input handling | PM transactions intercepted in plugins | DOM event handlers dispatch typed commands directly |
+
+**Why**: ProseMirror is purpose-built for rich text. A spreadsheet
+grid is two-dimensional, sparse, has its own selection algebra,
+needs viewport-bounded virtualization, and never needs collaborative
+text-flow. Bringing PM along would require modeling cells as
+inline atoms — fightable but pointless.
+
+**Cost**: we own input handling (keyboard, mouse, drag, focus
+management), virtualization, and selection rendering. **Benefit**:
+zero impedance mismatch — every render reads `XlsxSnapshot`
+directly; no second source of truth to keep in sync.
+
+## 2. The formula engine: a subsystem that has no DOCX analogue
+
+`packages/xlsx/src/formula/` is a complete five-stage pipeline:
+
+```
+lexer  →  parser (precedence-climbing)  →  AST  →  evaluator  →  recalc orchestrator
+                                                        ↑                ↑
+                                               function registry   dependency graph
+                                                                   (Tarjan SCC for cycles)
+```
+
+DOCX has nothing comparable. Architectural notes worth the
+documentation budget:
+
+- **Synchronous evaluation**. No promises in the hot path — Excel
+  semantics treat formula evaluation as a synchronous fixpoint.
+  Async I/O (e.g. for an LLM-backed function) would be modeled as a
+  separate command, never inside the evaluator.
+- **`Value` is closed**. The evaluator sees only
+  `number | string | boolean | { error: CellErrorCode }` — there is
+  no `null` (empty cells coerce per Excel rules) and no
+  `undefined`. This makes every operator's truth table a finite
+  table.
+- **Tarjan strongly-connected components for cycle detection**.
+  Cycles within a SCC produce `#REF!` for every cell in the
+  cycle; the rest of the dep graph evaluates in topological order
+  around the cycle. This is the textbook approach but worth
+  flagging because a naive depth-first recursion would either
+  miss cycles or stack-overflow on real workbooks.
+- **Volatile functions (NOW, RAND, …) are tagged on registration**.
+  Any volatile cell re-fires on every `recalcAll`, even if its
+  inputs are unchanged. This is the dependency-graph machinery
+  earning its keep — a non-volatile cell with the same inputs
+  short-circuits.
+- **`listRegisteredFunctions`** exists so the formula autocomplete
+  popover (Phase 11d) is sourced from the same registry the
+  evaluator reads. Single source of truth — the popover *cannot*
+  advertise a function the engine cannot evaluate.
+
+## 3. Style table with content-hash deduplication
+
+DOCX runs each carry their own font / colour / underline props
+inline. XLSX has a single workbook-level **style table**:
+
+- One entry per *unique combination* of font / fill / border /
+  alignment / numberFormat (the `<cellXfs>` shape from OOXML).
+- Cells reference styles by index (`Cell.styleId: number`).
+- `xlsx:set-cell-format` computes a content hash of the resulting
+  format and **dedups** — applying Bold twice anywhere in the
+  workbook produces zero new style entries on the second call.
+- The renderer flattens style indices into CSS via
+  `flattenCellXf` + `styleForCell` (web-side helpers exported
+  from `@officeai/xlsx`).
+
+**Implication**: the patch payload is patch-style — `{ font: { bold: true } }` —
+and the handler is responsible for "find or create" semantics.
+DOCX's `set-text-format` writes properties directly onto runs; no
+dedup table required.
+
+## 4. Pixels in the model, character widths at the OOXML boundary
+
+OOXML's `cols/@width` is in *character units* (font-dependent).
+Storing widths in the model in those units would force every
+renderer to know the workbook's default font.
+
+**Decision**: `Sheet.columnWidths` and `Sheet.rowHeights` store
+**CSS pixels** (Phase 11g). The renderer is the source of truth;
+the serializer is responsible for the back-conversion at the
+OOXML boundary.
+
+**Known caveat (documented in the Phase 11g build-log entry)**:
+the back-conversion is currently lossy in one direction — a
+foreign reader (Excel desktop) opening a workbook we resized
+will see the default column width until a follow-up writer maps
+pixels → characters. We accept this for the editor-first MVP
+because it keeps the renderer trivial and the resize UX
+millisecond-responsive.
+
+## 5. Variable geometry via prefix sums + binary search
+
+DOCX's paged renderer can address the scrollable surface with
+page-level offsets — pages are a coarse-grained unit. XLSX cells
+have variable column widths and row heights, and the visible
+window can fall anywhere.
+
+**Mechanism**:
+
+```ts
+const colXs = [0, w0, w0+w1, w0+w1+w2, ...];   // prefix sums
+const rowYs = [0, h0, h0+h1, h0+h1+h2, ...];
+
+// visible window:
+const startCol = lower_bound(colXs, scroll.left);
+const endCol   = lower_bound(colXs, scroll.left + viewport.width);
+```
+
+Memoised on `sheet.columnWidths`, `sheet.rowHeights`, and the
+transient `colDrag` / `rowDrag` state, so unchanged sheets reuse
+the prefix arrays. Visible-window math is `O(log n)` per scroll
+event regardless of sheet size.
+
+## 6. Two-surface focus model (cell ↔ formula bar)
+
+DOCX has one focusable editing surface (the PM view). XLSX has
+two — the focused cell **and** the formula bar — and Excel users
+expect them to behave as a single editing context:
+
+- **Type-to-edit**: a printable key on a focused cell redirects
+  the keystroke into the formula bar and parks the caret at the
+  end. Implemented as a top-level keyboard handler in
+  `XlsxEditor.tsx` that detects the "not yet editing" state and
+  forwards to a programmatic focus + value mutation on the formula
+  bar.
+- **Click-to-insert-ref**: while the formula bar is editing a
+  `=`-prefixed expression, clicking another cell appends its A1
+  ref at the formula bar's caret position instead of moving the
+  selection. Requires `formulaCaretRef` to survive React renders
+  (a ref, not state, so render-time reads don't trigger effects)
+  and `e.preventDefault()` on the cell click so DOM focus does
+  not leave the formula bar before the insertion runs.
+
+**Why a ref instead of state**: caret position changes on every
+keystroke. Storing it in state would cascade re-renders into the
+suggestions popover (which depends on prefix-at-caret). The ref +
+imperative-position pattern keeps render cost flat in the typing
+hot path.
+
+## 7. Diff vocabulary is XLSX-specific
+
+DOCX diffs are mostly text-shaped: `text-inserted`, `text-deleted`,
+`style-updated`, `paragraph-inserted`, etc. XLSX adds:
+
+| Diff kind | Used by |
+|---|---|
+| `cell-updated` | every command that mutates values, including recalc cascade entries |
+| `formula-updated` | `set-cell-formula`, insert/delete-row/column (formula text rewrite) |
+| `format-updated` | `set-cell-format` |
+| `style-added` | `set-cell-format` when a new `xfId` is appended |
+| `rows-inserted` / `rows-deleted` | structural ops |
+| `columns-inserted` / `columns-deleted` | structural ops |
+| `referenced-cell-deleted` | `delete-row` / `delete-column` per `EC-R2` / `EC-F4` |
+| `merge-added` / `merge-removed` | merge / unmerge |
+| `sheet-added` | `add-sheet` |
+| `sheet-renamed` | `rename-sheet` |
+| `comment-added` | `add-comment` |
+| `node-updated` (with `meta.kind`) | sizing commands (Phase 11g) |
+
+Recalc side-effects show up as `cell-updated` entries with a
+`source: "recalc"` marker — the diff log distinguishes "the user
+set B2 = 5" from "B4's =SUM(B2:B3) re-fired because B2 changed".
+
+## 8. Drag interactions: command on `mouseup`, transient preview locally
+
+DOCX has nothing comparable. Header drag-to-resize (Phase 11g)
+needs to feel rubber-band responsive without saturating the
+command bus.
+
+**Approach**: the Grid keeps `colDrag` / `rowDrag` *local* state
+that follows every `mousemove`. The visible width / height
+during drag is read from this transient state, not from the
+agent snapshot. **One** command (`xlsx:set-column-width` or
+`xlsx:set-row-height`) is dispatched on `mouseup` with the final
+value. The diff log stays usable, undo restores the pre-drag
+state in one step, and the grid stays at 60 fps during drag.
+
+The same pattern is the right answer for any future continuous
+input (range fill handles, drag-to-move selection, conditional
+formatting paint brush): preview locally, commit one command
+on commit gesture.
+
+## 9. Replace-agent on file open
+
+DOCX presumably hot-swaps documents into the existing PM view.
+XLSX (Phase 11a) takes a different stance: opening a `.xlsx` from
+disk **constructs a fresh `XlsxAgent`** via `fromBuffer` and
+swaps the React agent prop. Reasoning:
+
+- A new file means a new `partHashes` baseline. Mutating the
+  existing agent in place would either drop the old baseline
+  (corrupting the byte-equality oracle for the new file) or
+  carry it over (silently invalidating it).
+- A new file means a new undo history. Carrying the old
+  command stream would let `Cmd-Z` resurrect deleted cells from
+  the previous file — uniformly bad UX.
+- Snapshot subscription is rewired in one render pass; the
+  revision counter resets to 0.
+
+The drag-and-drop overlay uses the same code path — drop is
+just an alternate file picker.
+
+## 10. Phase 7e parallel-agent function-library build
+
+Worth documenting as a **methodology** because we'll do it again
+when we add the next 60 functions.
+
+The 89 P0 functions span five categories (math, logic, info,
+lookup, text). Building them sequentially would have been ~5
+days of typing tests. Instead, Phase 7e launched **5 sub-agents
+in parallel**, each owning one category, with these
+preconditions:
+
+1. The function registry interface (Phase 7c) was frozen —
+   sub-agents could not modify it.
+2. The `Value` union and error model (Phase 7a) were frozen —
+   no agent could invent a new error code.
+3. Each sub-agent owned its own `*-functions.ts` file plus its
+   own `*-functions.test.ts`, so there was zero file conflict.
+4. The integration step (a single barrel `index.ts` listing all
+   five modules) was reserved for the parent agent.
+
+Result: 89 functions + 302 tests landed in one phase, integrated
+in a single follow-up commit. The pattern generalises to any
+work that decomposes into independent leaves with a frozen
+contract.
+
+## 11. Number-format presets are a UX layer over OOXML built-ins
+
+Excel's number formatting is keyed by `numFmtId`: 0–49 are
+built-in, 164+ are custom format strings. The full vocabulary is
+overwhelming for a toolbar dropdown.
+
+**Layer**: `apps/web/app/xlsx-editor/styles.ts` defines a small
+preset list (General, Number, Currency €, Currency $, Percent,
+Date) and `presetNumFmtId(presetKey)` maps each to the
+underlying built-in `numFmtId`. The dropdown speaks human; the
+command speaks OOXML.
+
+**Render path**: `formatCellValue(value, numFmtId)` applies the
+format code to the raw value at render time. The model always
+stores raw values (numbers as numbers, dates as Excel serials).
+This keeps formula evaluation working on the raw value while the
+display shows the formatted string — exactly Excel's discipline.
+
+## 12. Merge rendering: oversized top-left + covered set
+
+Merge regions are stored as `{ r1, c1, r2, c2 }` rectangles. The
+renderer cannot simply "draw the same content in every covered
+cell" — it has to draw a single oversized cell at `(r1, c1)`
+spanning the rectangle, and not draw the covered cells at all.
+
+**Mechanism** (`mergeIndex` in `Grid.tsx`):
+
+```ts
+const topLeft  = new Map<key, MergedRect>();   // (r1,c1) → rect
+const covered  = new Set<key>();               // every (r,c) inside the rect except (r1,c1)
+```
+
+Per-cell loop:
+
+```ts
+if (covered.has(key))   continue;          // skip
+if (topLeft.has(key))   span = lookup;    // draw oversized
+else                    span = 1×1;        // normal cell
+```
+
+Merged-cell width / height is computed via the same prefix-sum
+arithmetic (item 5) so a merge across resized columns lays out
+correctly without special-casing.
+
+## 13. Selection model: single rectangle, intentionally
+
+XLSX selection is `{ anchor, focus }` and represents *exactly one*
+rectangle. Excel supports multi-rectangle selection (Ctrl-click
+to add disjoint areas), and it's intentionally **not** in scope.
+
+**Why single-rectangle**: 90% of toolbar operations apply uniformly
+to a rectangular range. Multi-rectangle adds significant
+complexity to the selection algebra (intersect/union, marquee
+rendering, merge interactions, range-aware command fan-out) for
+the long-tail of UX. Listed in `feature-scope.md` as deferred.
+
+**Implication**: every command that operates on a "selection"
+in the web layer fans out one command per cell or operates on
+the single `selectionToRange()` rectangle. There is no
+multi-range plumbing to bypass when the time comes — the
+selection type is the bottleneck, not the command shape.
+
+## 14. Test pyramid is shaped differently
+
+| Layer | DOCX | XLSX |
+|---|---|---|
+| Unit | model / serializer / handlers | model / serializer / handlers + **formula engine (475 tests)** + style-table dedup |
+| Integration | round-trip oracle on real-world fixtures | round-trip oracle + **per-command property tests for the inverse mutation** |
+| E2E (Playwright) | editor smoke against bundled DOCX | editor smoke + **drag interactions** (resize, drag-extend selection) + **caret-aware formula bar tests** (autocomplete acceptance, click-to-insert-ref) |
+
+**Why drag-aware e2e is XLSX-specific**: nothing in the DOCX UX
+depends on a `mousedown → mousemove → mouseup` sequence with a
+specific commit point. XLSX has three (drag-extend selection,
+column resize, row resize) and they all test the
+local-preview / commit-on-up architecture from item 8.
+
+**Why caret-aware e2e is XLSX-specific**: the formula bar is the
+only place in either product where caret position has *semantic*
+significance (clicking a cell appends an A1 ref at the caret).
+
+---
+
+## When this doc should be updated
+
+- A new editor surface lands and shares non-trivial machinery
+  with one of the existing two — the contrast table grows a
+  PPTX column, or a row collapses if XLSX/DOCX converge.
+- A subsystem here is replaced (e.g. the hand-rolled grid is
+  swapped for `react-virtualized` or a competitor) — bump the
+  relevant section with the new substrate and the migration
+  rationale.
+- The deferred items in items 4 (OOXML char-width round-trip)
+  or 13 (multi-rectangle selection) are picked up — strike the
+  caveat and link to the closing build-log entry.

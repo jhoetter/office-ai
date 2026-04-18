@@ -1,11 +1,12 @@
 # DOCX — Agent Commands
 
-> Complete typed list. Eighteen commands are implemented today
+> Complete typed list. Twenty-two commands are implemented today
 > ("**P0**" + the three comment-lifecycle commands + the two
 > header/footer-text commands + the two tracked-change resolution
 > commands + the four typed-table commands shipped in P1.3 / W7 + the
-> typed inline-image command shipped in P1.3 / W8). No commands remain
-> stubbed at the close of P1.3.
+> typed inline-image command shipped in P1.3 / W8 + the two
+> list/numbering commands and two hyperlink commands shipped in P1.4 /
+> W10+W11). No commands remain stubbed at the close of P1.4.
 
 ## Common types
 
@@ -412,6 +413,177 @@ Errors:
 - `invalid-position` — `at.paragraph` outside `[0, body.length)`.
 - `not-paragraph` — `at.paragraph` resolves to a non-paragraph block
   (table, section break, opaque block, …).
+
+## Commands (P1.4 — lists & hyperlinks)
+
+Two pairs of mutation-aware commands shipped together: list/numbering
+mutation (W10) reuses the typed `NumberingDefinitions` carrier added to
+`DocxDocument` and rewires `<w:numPr>` on a paragraph; hyperlink
+mutation (W11) wraps/unwraps a flat-text range and mints or reaps an
+external `hyperlink`-typed relationship in `word/_rels/document.xml.rels`.
+
+### `docx:set-paragraph-list`
+
+```typescript
+type SetParagraphListPayload = {
+  paragraphId: NodeId;
+  /** Concrete numbering instance id (matches `<w:num w:numId>`). */
+  numId: number;
+  /** 0-based level within the abstract numbering definition. */
+  ilvl: number;
+};
+```
+
+Set or replace the numbering reference on a paragraph. The handler:
+
+1. Validates `numId > 0` and `ilvl >= 0`.
+2. Resolves the paragraph (recursively — paragraphs nested inside table
+   cells are valid targets).
+3. Looks up `numId` in `snapshot.root.numbering.nums`. If the doc has no
+   `numbering.xml` at all, or `numId` is unknown, the handler rejects
+   `unknown-target`.
+4. If the resolved `AbstractNum` declares `levels` and `ilvl` exceeds
+   `levels.length - 1`, the handler rejects `invalid-payload`. Empty
+   `levels` is tolerated — many docs declare numbering by reference only
+   and rely on the renderer to default-format unknown levels.
+5. Replaces `paragraph.properties.numbering` with `{ numId, ilvl }` and
+   strips any opaque `<w:numPr>` carrier from `paragraph.properties.opaqueProps`
+   so the serializer emits exactly one `<w:numPr>` from the typed model.
+6. Sets `dirty.body` only — `numbering.xml` itself is untouched, so
+   `dirty.numbering` stays false and the part round-trips byte-identically
+   from the parts cache.
+
+OOXML impact: rewrites `<w:numPr>` inside the paragraph's `<w:pPr>`
+(creating `<w:pPr>` if missing). No other parts change.
+
+Diff: `node-updated` for the paragraph with `field: "numbering"` and a
+summary like `set list numId=1 ilvl=0`.
+
+Errors:
+
+- `invalid-payload` — `numId <= 0`, `ilvl < 0`, non-integer values, or
+  `ilvl` outside the abstract num's declared levels.
+- `unknown-target` — paragraph not found, doc has no `numbering.xml`, or
+  `numId` not present in `snapshot.root.numbering.nums`.
+
+### `docx:remove-paragraph-list`
+
+```typescript
+type RemoveParagraphListPayload = { paragraphId: NodeId };
+```
+
+Clear numbering from a paragraph: drops `paragraph.properties.numbering`
+and strips any opaque `<w:numPr>` carrier. Sets `dirty.body`.
+
+The handler is **strict**, not idempotent: a paragraph that has no
+numbering today rejects `not-applicable`. This forces callers to confirm
+that the target was a list item (commands are typed mutations, not
+queries) and prevents silent no-ops from masking buggy callers.
+
+Diff: `node-updated` for the paragraph with `field: "numbering"` and
+summary `remove list`.
+
+Errors:
+
+- `invalid-payload` — missing `paragraphId`.
+- `unknown-target` — paragraph not found.
+- `not-applicable` — paragraph is not currently a list item.
+
+### `docx:insert-hyperlink`
+
+```typescript
+type InsertHyperlinkPayload = {
+  paragraphId: NodeId;
+  /** Flat-text range within the paragraph. `start < end`, both in [0, paragraphLength]. */
+  range: { start: number; end: number };
+  /** External target. Mutually exclusive with `anchor`. */
+  url?: string;
+  /** Internal bookmark name. Mutually exclusive with `url`. */
+  anchor?: string;
+};
+```
+
+Wrap a contiguous flat-text range in a typed `Hyperlink`. Either `url`
+(external) or `anchor` (internal/bookmark) must be set, not both. The
+handler:
+
+1. Validates the payload (XOR on `url` / `anchor`, `new URL(url)` parses
+   when `url` is set, `range.start < range.end`, both inside the
+   paragraph's flat-text length).
+2. Resolves the paragraph; rejects `unknown-target` on miss.
+3. Rejects `invalid-position` if the range straddles or overlaps an
+   existing hyperlink (nested / overlapping hyperlinks are not legal in
+   OOXML and Word doesn't render them either) or if the range crosses a
+   non-run inline (comment markers, revision wrappers, opaque inlines).
+4. Splits the runs at the range boundaries so the captured span is a
+   contiguous sequence of `Run` nodes, each retaining its original
+   `properties` (bold / italic / colour all survive the wrap). Word's
+   `Hyperlink` character style is intentionally **not** applied — that's
+   a styling concern handled by callers / UI layers.
+5. When `url` is set: searches existing rels in
+   `relationships.get("word/document.xml")` for an entry with
+   `type === ".../hyperlink"`, `target === url`, and `targetMode === "External"`.
+   Reuses the matching `id` if found; otherwise mints a fresh
+   `rId{N}` and appends the new relationship. Sets
+   `dirty.relationships` only when a brand-new rel was actually minted.
+6. Wraps the captured runs in a `Hyperlink` node with either
+   `relationshipId` (external) or `anchor` (internal) and splices it
+   back into the paragraph at the original position.
+7. Sets `dirty.body`. URL reachability is **not** validated; the
+   handler only checks well-formed-ness via `new URL()`.
+
+OOXML impact: emits `<w:hyperlink r:id="rIdN">…</w:hyperlink>` (or
+`<w:hyperlink w:anchor="…">…</w:hyperlink>` for anchor links) inside
+the targeted paragraph; appends a `hyperlink`-typed relationship to
+`word/_rels/document.xml.rels` only when a new external target is
+introduced.
+
+Diff: emits two changes — a `node-inserted` for the wrapper and a
+`node-updated` for the host paragraph (`field: "children"`). Rel
+mutation is signalled by `dirty.relationships`, not by a separate
+change kind (we don't have a typed `rel-added` change today).
+
+Errors:
+
+- `invalid-payload` — missing `paragraphId`, both or neither of
+  `url`/`anchor`, malformed URL, non-integer or non-monotonic range.
+- `unknown-target` — paragraph not found.
+- `invalid-position` — range outside paragraph length, range straddles
+  an existing hyperlink, or range crosses a non-run inline.
+
+### `docx:remove-hyperlink`
+
+```typescript
+type RemoveHyperlinkPayload = { hyperlinkId: NodeId };
+```
+
+Unwrap a hyperlink: replaces the `<w:hyperlink>` node with its inline
+`children` (the runs spread back into the paragraph). The handler:
+
+1. Locates the hyperlink by id, recursively scanning paragraphs in the
+   body and inside table cells.
+2. Rejects `unknown-target` on miss.
+3. After unwrapping, if the hyperlink had a `relationshipId` AND no
+   other body hyperlink references the same id, the rel is removed
+   from `relationships.get("word/document.xml")` and
+   `dirty.relationships` is set. Otherwise the rel is left intact so
+   sibling hyperlinks keep their target. The "still referenced" scan
+   covers body paragraphs only — header / footer parts carry their own
+   typed rels parts (W4) and aren't included this round.
+4. Sets `dirty.body`.
+
+OOXML impact: removes the `<w:hyperlink>` wrapper element while
+preserving its child `<w:r>` runs. Removes the rel entry from
+`word/_rels/document.xml.rels` only when no other body hyperlink uses
+it; the rels graph is otherwise untouched.
+
+Diff: a single `node-updated` for the host paragraph (`field: "children"`)
+with a summary like `−hyperlink (rel=rId5 removed)` or `−hyperlink (rel=rId5 kept)`.
+
+Errors:
+
+- `invalid-payload` — missing `hyperlinkId`.
+- `unknown-target` — no hyperlink with that id in the body.
 
 ## Diff format per command
 

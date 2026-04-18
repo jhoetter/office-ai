@@ -48,6 +48,22 @@ export interface DocxDirtyFlags {
    * round-trip byte-identical. Added in P1.3 / W8.
    */
   relationships: ReadonlySet<string>;
+  /**
+   * Whether `word/numbering.xml` itself has been mutated and must be
+   * re-emitted on save. Added in P1.4 / W10. The flag is intentionally
+   * scoped to changes in the typed `NumberingDefinitions` carrier
+   * (`DocxDocument.numbering`); a paragraph swapping its `numId` /
+   * `ilvl` lives in `word/document.xml` and only dirties `body`.
+   */
+  numbering: boolean;
+  /**
+   * Whether `word/styles.xml` itself has been mutated and must be
+   * re-emitted on save. Added in P3.1 / W1 alongside the typed
+   * `StylesPart`. P3 ships only a read-only cascade resolver, so the
+   * flag is always `false` in this milestone; mutating commands that
+   * write to `StylesPart` (R10 / P4) would flip it.
+   */
+  styles: boolean;
 }
 
 export interface DocxDocument {
@@ -85,7 +101,107 @@ export interface DocxDocument {
    * round-trip exactly.
    */
   readonly relationships: ReadonlyMap<string, ReadonlyArray<Relationship>>;
+  /**
+   * Typed numbering definitions parsed from `word/numbering.xml`.
+   * `undefined` when the part is absent (which is the common case — a
+   * doc that contains no list paragraphs has no `numbering.xml` at
+   * all). Added in P1.4 / W10.
+   */
+  readonly numbering?: NumberingDefinitions;
+  /**
+   * Typed `word/styles.xml` projection (P3.1 / W1). `undefined` when the
+   * part is absent (synthetic test fixtures usually omit it).
+   *
+   * The cascade resolver in `agent/style-resolver.ts` walks
+   * `docDefaults.rPrDefault` → the paragraph's `styleId` chain
+   * (basedOn) → the paragraph's own `pPr.rPr` → the run's `rPr` to
+   * compute the effective formatting at any selection. The toolbar
+   * dropdowns read this so that "Heading 1" text shows `16` / `Calibri`
+   * even when the run carries no direct `<w:rPr>` of its own.
+   */
+  readonly styles?: StylesPart;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+}
+
+/* ── Styles part (P3.1) ──────────────────────────────────────────────────── */
+
+/**
+ * Typed projection of `word/styles.xml`. Mirrors the OOXML
+ * `<w:styles>` shape: a flat collection of style definitions plus the
+ * `<w:docDefaults>` root that supplies the bottom of the cascade.
+ *
+ * Round-trip contract: `raw` is the original `<w:styles>` subtree at
+ * load time. The serializer emits `raw` verbatim while `dirty.styles
+ * === false`. P3 ships read-only style cascade — no mutation commands
+ * for styles — so `dirty.styles` is always `false` and the part
+ * round-trips byte-identical.
+ */
+export interface StylesPart {
+  readonly docDefaults: {
+    readonly rPrDefault?: RunProperties;
+    readonly pPrDefault?: ParagraphProperties;
+  };
+  /** Keyed by styleId. Iteration order matches load order. */
+  readonly styles: ReadonlyMap<string, StyleDefinition>;
+  /** Captured but not modeled bits (latentStyles, doc parts, etc.). */
+  readonly raw?: OpaqueXml;
+}
+
+export interface StyleDefinition {
+  readonly id: string;
+  readonly type: "paragraph" | "character" | "table" | "numbering";
+  readonly name?: string;
+  readonly basedOn?: string;
+  readonly next?: string;
+  readonly link?: string;
+  readonly hidden?: boolean;
+  readonly default?: boolean;
+  readonly rPr?: RunProperties;
+  readonly pPr?: ParagraphProperties;
+  /** Anything we don't model on this `<w:style>` (uiPriority, qFormat, …). */
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+/**
+ * Typed projection of `word/numbering.xml`. Mirrors the OOXML
+ * `<w:numbering>` shape: a flat collection of abstract numbering
+ * definitions (the templates, keyed by string id) plus a flat
+ * collection of concrete `<w:num>` instances (keyed by integer numId)
+ * pointing at one of those abstracts.
+ *
+ * Untouched documents ride the container's part cache; we only emit
+ * `numbering.xml` from this typed carrier when `dirty.numbering` is
+ * set. Unknown children of `<w:abstractNum>` and `<w:num>` are
+ * captured as `OpaqueXml` so the round-trip stays lossless when (a
+ * future workstream) does mutate the part. Added in P1.4 / W10.
+ */
+export interface NumberingDefinitions {
+  readonly abstractNums: ReadonlyMap<string, AbstractNum>;
+  readonly nums: ReadonlyMap<number, NumInstance>;
+}
+
+export interface AbstractNum {
+  readonly id: string;
+  readonly multiLevelType?: "singleLevel" | "multilevel" | "hybridMultilevel";
+  readonly levels: ReadonlyArray<NumberingLevel>;
+  readonly raw?: OpaqueXml;
+}
+
+export interface NumberingLevel {
+  readonly ilvl: number;
+  readonly numFmt?: string;
+  readonly lvlText?: string;
+  readonly start?: number;
+  readonly pPr?: ParagraphProperties;
+  readonly rPr?: RunProperties;
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
+export interface NumInstance {
+  readonly numId: number;
+  readonly abstractNumId: string;
+  readonly lvlOverrides?: ReadonlyArray<{ readonly ilvl: number; readonly startOverride?: number }>;
+  readonly raw?: OpaqueXml;
 }
 
 /**
@@ -232,16 +348,131 @@ export interface TableCellProperties {
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
+/* ── Page geometry / section properties (P3.2) ───────────────────────────── */
+
+/** OOXML twips (1/20 pt). Used for page sizes, margins, indents, etc. */
+export type Twips = number;
+
+/**
+ * Typed projection of `<w:pgSz>`. `w` and `h` are page width/height in
+ * twips. `orient` is the explicit `w:orient` attribute when present;
+ * Word will also write `w:code` (size enum) which we don't model — it
+ * round-trips through the parent section's `opaqueProps`.
+ */
+export interface PageSize {
+  readonly w: Twips;
+  readonly h: Twips;
+  readonly orient?: "portrait" | "landscape";
+}
+
+/** Typed projection of `<w:pgMar>`. */
+export interface PageMargins {
+  readonly top: Twips;
+  readonly right: Twips;
+  readonly bottom: Twips;
+  readonly left: Twips;
+  readonly header: Twips;
+  readonly footer: Twips;
+  readonly gutter?: Twips;
+}
+
+/** Typed projection of `<w:cols>` (multi-column body layout). */
+export interface PageColumns {
+  readonly num: number;
+  readonly sep?: boolean;
+  readonly equalWidth?: boolean;
+  readonly space?: Twips;
+}
+
+/**
+ * Typed projection of `<w:headerReference>` / `<w:footerReference>`.
+ * `relationshipId` resolves through `word/_rels/document.xml.rels` to a
+ * concrete header/footer part stored in `DocxDocument.headersAndFooters`.
+ */
+export interface HeaderFooterRef {
+  readonly type: "default" | "first" | "even";
+  readonly relationshipId: string;
+}
+
+/**
+ * Typed projection of `<w:sectPr>`. The renderer reads this to draw page
+ * frames at the correct size, margins, and to pick the right
+ * header/footer slot per page. Mutating commands (P3.4 / P3.6) edit
+ * these fields in place; untouched sections re-emit `SectionBreak.raw`
+ * verbatim for byte-identical round-trip.
+ */
+export interface SectionProperties {
+  readonly pgSz?: PageSize;
+  readonly pgMar?: PageMargins;
+  readonly cols?: PageColumns;
+  readonly headerRefs: ReadonlyArray<HeaderFooterRef>;
+  readonly footerRefs: ReadonlyArray<HeaderFooterRef>;
+  /** `<w:titlePg/>` — section uses the `first` header/footer on page 1. */
+  readonly titlePg?: boolean;
+  /**
+   * `<w:type w:val>`. Drives Word's flow at the section boundary:
+   * `continuous` keeps text on the same page; `nextPage` (default) starts
+   * a fresh page; `oddPage`/`evenPage` skip to the next odd/even page.
+   */
+  readonly sectionType?: "continuous" | "nextPage" | "oddPage" | "evenPage" | "nextColumn";
+  /**
+   * Catch-all for `<w:sectPr>` children we don't model yet
+   * (`<w:lineNumType>`, `<w:pgNumType>`, `<w:formProt>`, `<w:vAlign>`,
+   * `<w:rtlGutter>`, `<w:docGrid>`, `<w:bidi>`, …). Captured in original
+   * order so the serializer rebuild path preserves them.
+   */
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
 export interface SectionBreak {
   readonly kind: "section-break";
   readonly id: NodeId;
-  readonly raw: OpaqueXml;
+  /**
+   * Typed projection of the `<w:sectPr>`. Always present from P3.2
+   * onwards; synthetic snapshots constructed without a `sectPr` set
+   * `headerRefs`/`footerRefs` to `[]` and leave the geometry fields
+   * undefined.
+   */
+  readonly properties: SectionProperties;
+  /**
+   * Original `<w:sectPr>` subtree captured at parse time. When present
+   * AND no field of `properties` has been mutated, the serializer
+   * re-emits `raw` verbatim (byte-preservation fast path, mirrors
+   * `Table.raw` / `InlineImageDrawing.raw`). Mutating commands MUST
+   * drop `raw` on the new `SectionBreak` they produce.
+   */
+  readonly raw?: OpaqueXml;
 }
 
+/**
+ * A `<w:sdt>` / `<w:fldSimple>` / `<mc:AlternateContent>` / `<w:smartTag>` /
+ * `<w:customXml>` wrapper at the body level. The wrapper itself is preserved
+ * verbatim through `raw` (so byte-identical round-trip is unaffected), but
+ * its inner content is **also** parsed into typed `children` so the
+ * renderer can surface the underlying paragraphs as real
+ * `<h1>`/`<p>` nodes instead of a single italic preview chip.
+ *
+ * Dirty-tracking contract (P2.3 / W15):
+ *
+ *   - `subtreeDirty === false` (default) → serializer re-emits `raw`
+ *     verbatim. `children` is purely a render-side projection.
+ *   - `subtreeDirty === true` → serializer reconstructs the wrapper by
+ *     splicing serialized `children` into the wrapper's content slot
+ *     (e.g. `<w:sdtContent>`). Mutations that touch a child of an
+ *     opaque carrier MUST flip this flag and clear `raw` derivatives.
+ *
+ * No mutating command currently writes through an opaque carrier, so
+ * `subtreeDirty` is always `false` in this iteration. The flag and the
+ * dirty serializer path are introduced now so that a future "edit
+ * inside an SDT" mutation can flip them without changing the carrier
+ * shape again.
+ */
 export interface OpaqueBlock {
   readonly kind: "opaque-block";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+  readonly children?: ReadonlyArray<BlockNode>;
+  readonly subtreeDirty?: boolean;
 }
 
 /* ── Inline ──────────────────────────────────────────────────────────────── */
@@ -274,7 +505,49 @@ export interface RunProperties {
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
-export type RunChild = TextLeaf | BreakLeaf | TabLeaf | DrawingLeaf | OpaqueRunChild;
+export type RunChild =
+  | TextLeaf
+  | BreakLeaf
+  | TabLeaf
+  | DrawingLeaf
+  | PageBreakLeaf
+  | LastRenderedPageBreakLeaf
+  | PageNumberFieldLeaf
+  | OpaqueRunChild;
+
+/**
+ * `<w:fldSimple w:instr=" PAGE \* MERGEFORMAT "/>` and the equivalent
+ * `<w:fldSimple w:instr=" NUMPAGES "/>`. Promoted to a typed leaf in
+ * P3.4 / W15 so the toolbar can produce page-number fields and the
+ * paged-renderer can render the live page index.
+ *
+ * The complex `<w:fldChar>`-bracketed multi-run form stays as
+ * {@link OpaqueRunChild} for now; it requires multi-run reassembly
+ * across siblings that the parser does not yet do.
+ *
+ * Round-trip invariant: parse → serialize → parse produces the same
+ * `instr` string (including switches like `\* MERGEFORMAT`).
+ */
+export interface PageNumberFieldLeaf {
+  readonly kind: "page-number-field";
+  readonly id: NodeId;
+  /** Variant of the field. Determines what the renderer substitutes. */
+  readonly field: "PAGE" | "NUMPAGES";
+  /**
+   * The literal `w:instr` attribute as it appeared in the source XML
+   * (e.g. `" PAGE \\* MERGEFORMAT "`). Captured verbatim so the
+   * serializer can re-emit byte-identical bytes when the leaf is
+   * untouched.
+   */
+  readonly instr: string;
+  /**
+   * Optional cached display value Word writes inside the field
+   * (`<w:t>3</w:t>`). Carried through for byte round-trip. The
+   * runtime renderer ignores this and substitutes the live page
+   * index from the page chunker.
+   */
+  readonly cachedText?: string;
+}
 
 export interface TextLeaf {
   readonly kind: "text";
@@ -288,7 +561,35 @@ export interface TextLeaf {
 export interface BreakLeaf {
   readonly kind: "break";
   readonly id: NodeId;
-  readonly breakType?: "page" | "column" | "textWrapping";
+  /**
+   * `column` and `textWrapping` are kept on this legacy leaf. The page
+   * break case (`<w:br w:type="page"/>`) is promoted to the typed
+   * {@link PageBreakLeaf} at parse time so the page chunker can switch
+   * on `kind` directly.
+   */
+  readonly breakType?: "column" | "textWrapping";
+}
+
+/**
+ * A `<w:br w:type="page"/>` inside a run. Promoted to a typed leaf in
+ * P3.2 / W6 so the page-chunker can split the body without reaching into
+ * opaque carriers. Round-trips back to `<w:br w:type="page"/>`.
+ */
+export interface PageBreakLeaf {
+  readonly kind: "page-break";
+  readonly id: NodeId;
+}
+
+/**
+ * `<w:lastRenderedPageBreak/>`. Word writes this hint at the position
+ * where pagination broke during the last save. Layout-only — no
+ * formatting, no content. The page chunker uses it as a cheap heuristic
+ * for picking initial page breaks but never treats it as authoritative
+ * (Word may not have written it; the geometry may have changed since).
+ */
+export interface LastRenderedPageBreakLeaf {
+  readonly kind: "last-rendered-page-break";
+  readonly id: NodeId;
 }
 
 export interface TabLeaf {
@@ -401,10 +702,17 @@ export interface RevisionWrapper {
   readonly children: ReadonlyArray<InlineNode>;
 }
 
+/**
+ * Inline analogue of `OpaqueBlock`. See that type for the dirty-tracking
+ * contract; the same rules apply for inline carriers (mostly `<w:sdt>`,
+ * `<w:fldSimple>`, `<w:smartTag>` appearing inside a paragraph).
+ */
 export interface OpaqueInline {
   readonly kind: "opaque-inline";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+  readonly children?: ReadonlyArray<InlineNode>;
+  readonly subtreeDirty?: boolean;
 }
 
 /* ── Header / footer parts ───────────────────────────────────────────────── */

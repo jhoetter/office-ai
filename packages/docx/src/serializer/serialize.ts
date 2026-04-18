@@ -6,6 +6,7 @@ import type {
   DocxSnapshot,
   Hyperlink,
   InlineNode,
+  OpaqueXml,
   Paragraph,
   ParagraphProperties,
   RevisionWrapper,
@@ -13,12 +14,14 @@ import type {
   RunChild,
   RunProperties,
 } from "../model/types.js";
-import { opaqueToEntry } from "../parser/xml-helpers.js";
+import { ATTR_KEY, opaqueToEntry } from "../parser/xml-helpers.js";
 import { DocxSerializeError } from "./errors.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
 import { serializeInlineImageDrawing } from "./images.js";
 import { serializeMediaParts } from "./media.js";
+import { serializeNumberingPart } from "./numbering.js";
 import { serializeRelationshipsParts } from "./relationships.js";
+import { serializeSectionProperties } from "./sections.js";
 import { serializeTable, serializeTableFromRaw } from "./tables.js";
 
 const MAIN_PART = "word/document.xml";
@@ -110,6 +113,20 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
     throw new DocxSerializeError("rels-failed", "Failed to write relationships parts", { cause: err });
   }
 
+  // Numbering definitions (`word/numbering.xml`). Skipped unless
+  // `dirty.numbering` is set, so the part round-trips byte-identical
+  // when no command has touched its definitions. P1.4 / W10 only
+  // emits this when a future workstream mutates the typed
+  // `NumberingDefinitions`; today's `set-paragraph-list` /
+  // `remove-paragraph-list` only touch `<w:numPr>` pointers in
+  // `word/document.xml` and never set this flag.
+  try {
+    serializeNumberingPart(container, snapshot);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("numbering-failed", "Failed to write numbering.xml", { cause: err });
+  }
+
   // [Content_Types].xml. We update this when the caller has set the
   // contentTypes dirty flag (currently driven by `docx:insert-image` when
   // it adds a new image MIME type or registers a new override). The typed
@@ -190,7 +207,21 @@ function serializeBlock(block: BlockNode): unknown {
       if (block.raw) return serializeTableFromRaw(block.raw);
       return serializeTable(block, serializeBlock);
     case "section-break":
+      // P3.2: byte-preservation fast path. `raw` is dropped by mutating
+      // commands (none in P3.2 itself) so its presence is the signal
+      // that this section has not been touched since parse.
+      if (block.raw) return opaqueToEntry(block.raw);
+      return serializeSectionProperties(block.properties);
     case "opaque-block":
+      // P2.3: when a content-wrapper carrier (SDT / fldSimple / mc:* /
+      // smartTag / customXml) was unwrapped at parse time and a mutation
+      // later flipped `subtreeDirty`, splice the typed `children` back into
+      // the carrier's content slot. Otherwise re-emit the cached subtree
+      // verbatim — that is what preserves byte-identical round-trip for
+      // documents whose SDTs are read but never edited.
+      if (block.subtreeDirty === true && block.children) {
+        return reemitOpaqueBlockWithChildren(block.raw, block.children);
+      }
       return opaqueToEntry(block.raw);
     default: {
       const _exhaustive: never = block;
@@ -215,8 +246,20 @@ function serializeParagraphProperties(props: ParagraphProperties): unknown | nul
     out.push(makeEl("w:pStyle", { "w:val": props.styleId }));
   }
   if (props.numbering) {
-    // Numbering is also represented in opaqueProps to preserve full attrs;
-    // we do NOT emit a typed numPr here to avoid duplication.
+    // The typed `<w:numPr>` is only emitted when no opaque carrier
+    // exists for it (see check below). Untouched paragraphs round-trip
+    // through the opaqueProps blob byte-equivalent; paragraphs touched
+    // by `docx:set-paragraph-list` / `docx:remove-paragraph-list`
+    // strip that blob so this typed branch kicks in.
+    const carryOpaqueNumPr = props.opaqueProps?.some((o) => o.tag === "w:numPr") === true;
+    if (!carryOpaqueNumPr) {
+      out.push({
+        "w:numPr": [
+          { "w:ilvl": [], ":@": { "@_w:val": String(props.numbering.ilvl) } },
+          { "w:numId": [], ":@": { "@_w:val": String(props.numbering.numId) } },
+        ],
+      });
+    }
   }
   if (props.indentation) {
     const ind: Record<string, string> = {};
@@ -255,7 +298,7 @@ function serializeParagraphProperties(props: ParagraphProperties): unknown | nul
 function serializeInline(node: InlineNode): unknown {
   switch (node.kind) {
     case "run":
-      return serializeRun(node);
+      return serializeRunOrFieldWrapper(node);
     case "hyperlink":
       return serializeHyperlink(node);
     case "comment-range-start":
@@ -267,6 +310,9 @@ function serializeInline(node: InlineNode): unknown {
     case "revision":
       return serializeRevisionWrapper(node);
     case "opaque-inline":
+      if (node.subtreeDirty === true && node.children) {
+        return reemitOpaqueInlineWithChildren(node.raw, node.children);
+      }
       return opaqueToEntry(node.raw);
     default: {
       const _exhaustive: never = node;
@@ -283,6 +329,39 @@ function serializeRun(r: Run): unknown {
     children.push(serializeRunChild(c));
   }
   return { "w:r": children };
+}
+
+/**
+ * P3.4 / W15 — runs that contain exactly one {@link PageNumberFieldLeaf}
+ * round-trip as `<w:fldSimple w:instr="…"><w:r>…</w:r></w:fldSimple>`
+ * because that is the OOXML idiom Word writes (and the form the
+ * parser detects). Mixed runs (text + field) fall back to the plain
+ * `<w:r>` serialization — those don't exist when the leaf was
+ * produced via `docx:insert-page-number`, but a future
+ * AI-stitched mutation could create one and we'd rather degrade
+ * gracefully than throw.
+ */
+function serializeRunOrFieldWrapper(r: Run): unknown {
+  if (r.children.length !== 1) return serializeRun(r);
+  const only = r.children[0];
+  if (only.kind !== "page-number-field") return serializeRun(r);
+
+  const innerRunChildren: unknown[] = [];
+  const rPr = serializeRunProperties(r.properties);
+  if (rPr) innerRunChildren.push(rPr);
+  // Word always writes an inner `<w:t>` with the cached display
+  // value. Use the captured cachedText when round-tripping a parsed
+  // field, otherwise emit the field name as a sentinel placeholder
+  // (Word will recompute on open).
+  const display = only.cachedText ?? "#";
+  innerRunChildren.push({
+    "w:t": [{ "#text": display }],
+    ":@": { "@_xml:space": "preserve" },
+  });
+  return {
+    "w:fldSimple": [{ "w:r": innerRunChildren }],
+    ":@": { "@_w:instr": only.instr },
+  };
 }
 
 function serializeRunProperties(props: RunProperties): unknown | null {
@@ -344,6 +423,25 @@ function serializeRunChild(c: RunChild): unknown {
     }
     case "break":
       return c.breakType ? makeEl("w:br", { "w:type": c.breakType }) : { "w:br": [] };
+    case "page-break":
+      return makeEl("w:br", { "w:type": "page" });
+    case "last-rendered-page-break":
+      return { "w:lastRenderedPageBreak": [] };
+    case "page-number-field": {
+      // Defensive path: page-number leaves should be lifted to a
+      // `<w:fldSimple>` wrapper at the inline level by
+      // `serializeRunOrFieldWrapper`. If the leaf reaches here it
+      // means a *mixed* run snuck through; emit a `<w:fldSimple>`
+      // anyway so the field semantics survive, even though the
+      // surrounding text in the same run will end up grouped under
+      // a sibling `<w:r>` by the caller.
+      return {
+        "w:fldSimple": [
+          { "w:r": [{ "w:t": [{ "#text": c.cachedText ?? "#" }], ":@": { "@_xml:space": "preserve" } }] },
+        ],
+        ":@": { "@_w:instr": c.instr },
+      };
+    }
     case "tab":
       return { "w:tab": [] };
     case "drawing": {
@@ -393,6 +491,90 @@ function serializeRevisionWrapper(rev: RevisionWrapper): unknown {
     "w:date": rev.date,
   };
   return makeEntry(tag, children, attrs);
+}
+
+/**
+ * Serialize an `OpaqueBlock` whose `subtreeDirty` flag was flipped by a
+ * mutation: walk the cached `raw` subtree, locate the wrapper's content
+ * slot (e.g. `<w:sdtContent>` for `<w:sdt>`), and replace its element
+ * children with freshly-serialized typed `BlockNode` children. Non-element
+ * markup (comments, processing instructions, attributes) inside the slot
+ * is preserved.
+ *
+ * Tags whose direct children are the content slot (e.g. `<w:fldSimple>`,
+ * `<w:smartTag>`) get their own children replaced. For wrappers that
+ * carry siblings adjacent to the content slot (`<w:sdt>` has `<w:sdtPr>`
+ * + `<w:sdtEndPr>` + `<w:sdtContent>`), only the slot is rewritten.
+ */
+function reemitOpaqueBlockWithChildren(raw: OpaqueXml, children: ReadonlyArray<BlockNode>): unknown {
+  const newChildren: unknown[] = children.map((c) => serializeBlock(c));
+  const rewritten = rewriteContentSlot(raw, newChildren);
+  return rewritten;
+}
+
+function reemitOpaqueInlineWithChildren(raw: OpaqueXml, children: ReadonlyArray<InlineNode>): unknown {
+  const newChildren: unknown[] = children.map((c) => serializeInline(c));
+  return rewriteContentSlot(raw, newChildren);
+}
+
+function rewriteContentSlot(raw: OpaqueXml, newChildren: unknown[]): unknown {
+  const tag = raw.tag;
+  switch (tag) {
+    case "w:sdt": {
+      // Walk the subtree array, replace `<w:sdtContent>`'s inner children.
+      const subtree = raw.subtree.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+        const obj = entry as Record<string, unknown>;
+        const keys = Object.keys(obj).filter((k) => k !== ATTR_KEY);
+        if (keys.length === 1 && keys[0] === "w:sdtContent") {
+          const next: Record<string, unknown> = { "w:sdtContent": newChildren };
+          if (obj[ATTR_KEY]) next[ATTR_KEY] = obj[ATTR_KEY];
+          return next;
+        }
+        return entry;
+      });
+      const out: Record<string, unknown> = { [tag]: subtree };
+      if (Object.keys(raw.rawAttrs).length > 0) out[ATTR_KEY] = { ...raw.rawAttrs };
+      return out;
+    }
+    case "mc:AlternateContent": {
+      // Rewrite the first <mc:Choice> (or <mc:Fallback>) we find.
+      let replaced = false;
+      const subtree = raw.subtree.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+        const obj = entry as Record<string, unknown>;
+        const keys = Object.keys(obj).filter((k) => k !== ATTR_KEY);
+        if (keys.length !== 1) return entry;
+        const childTag = keys[0];
+        if (replaced) return entry;
+        if (childTag === "mc:Choice" || childTag === "mc:Fallback") {
+          replaced = true;
+          const next: Record<string, unknown> = { [childTag]: newChildren };
+          if (obj[ATTR_KEY]) next[ATTR_KEY] = obj[ATTR_KEY];
+          return next;
+        }
+        return entry;
+      });
+      const out: Record<string, unknown> = { [tag]: subtree };
+      if (Object.keys(raw.rawAttrs).length > 0) out[ATTR_KEY] = { ...raw.rawAttrs };
+      return out;
+    }
+    case "w:sdtContent":
+    case "mc:Choice":
+    case "mc:Fallback":
+    case "w:fldSimple":
+    case "w:smartTag":
+    case "w:customXml": {
+      const out: Record<string, unknown> = { [tag]: newChildren };
+      if (Object.keys(raw.rawAttrs).length > 0) out[ATTR_KEY] = { ...raw.rawAttrs };
+      return out;
+    }
+    default:
+      // No known content slot for this tag — fall back to the cached subtree
+      // verbatim. This shouldn't happen in practice because the parser only
+      // attaches `children` when `blockContentSlot` returned non-null.
+      return opaqueToEntry(raw);
+  }
 }
 
 function serializeCommentsXml(comments: ReadonlyArray<DocxComment>): string {

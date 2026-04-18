@@ -24,7 +24,10 @@ import { DocxParseError } from "./errors.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
 import { parseDrawing } from "./images.js";
 import { parseMediaParts } from "./media.js";
+import { parseNumberingPart } from "./numbering.js";
 import { parseRelationshipsParts } from "./relationships.js";
+import { parseSectionProperties } from "./sections.js";
+import { parseStylesPart } from "./styles.js";
 import { parseTable as parseTableTyped } from "./tables.js";
 import {
   attrOf,
@@ -134,6 +137,8 @@ export async function parseDocx(
 
   const media = parseMediaParts(container);
   const relationships = parseRelationshipsParts(container);
+  const numbering = parseNumberingPart(container);
+  const styles = parseStylesPart(container);
 
   const root: DocxDocument = {
     id: mintNodeId(),
@@ -142,6 +147,8 @@ export async function parseDocx(
     headersAndFooters,
     media,
     relationships,
+    ...(numbering ? { numbering } : {}),
+    ...(styles ? { styles } : {}),
     documentRootAttrs,
   };
 
@@ -159,6 +166,8 @@ export async function parseDocx(
     headersAndFooters: new Set<string>(),
     media: new Set<string>(),
     relationships: new Set<string>(),
+    numbering: false,
+    styles: false,
   };
 
   return {
@@ -211,11 +220,96 @@ function parseBody(bodyEntry: Record<string, unknown>, mintNodeId: IdMinter): Bl
 }
 
 function parseSectionBreak(entry: Record<string, unknown>, mintNodeId: IdMinter): SectionBreak {
-  return { kind: "section-break", id: mintNodeId(), raw: captureOpaque(entry) };
+  const properties = parseSectionProperties(entry);
+  return {
+    kind: "section-break",
+    id: mintNodeId(),
+    properties,
+    raw: captureOpaque(entry),
+  };
+}
+
+/**
+ * Tags whose inner content (or the content of a designated child slot) is
+ * regular block-level OOXML and can be parsed as typed `BlockNode`s. The
+ * wrapper itself is still preserved verbatim through `OpaqueBlock.raw`; we
+ * only attach the typed projection so the renderer can show the wrapped
+ * paragraphs as real headings/paragraphs instead of an opaque chip.
+ *
+ * Returns `null` when the entry is not an unwrappable carrier (so the
+ * caller falls back to the legacy "no children" path).
+ */
+function blockContentSlot(entry: Record<string, unknown>): Array<Record<string, unknown>> | null {
+  const tag = ooxml.getTag(entry);
+  const children = (entry[tag] as unknown[] | undefined) ?? [];
+  switch (tag) {
+    case "w:sdt": {
+      const content = findElementEntry(children, "w:sdtContent");
+      if (!content) return null;
+      return elementEntries((content["w:sdtContent"] as unknown[] | undefined) ?? []);
+    }
+    case "mc:AlternateContent": {
+      const choice = findElementEntry(children, "mc:Choice") ?? findElementEntry(children, "mc:Fallback");
+      if (!choice) return null;
+      const choiceTag = ooxml.getTag(choice);
+      return elementEntries((choice[choiceTag] as unknown[] | undefined) ?? []);
+    }
+    case "w:sdtContent":
+    case "mc:Choice":
+    case "mc:Fallback":
+    case "w:fldSimple":
+    case "w:smartTag":
+    case "w:customXml":
+      return elementEntries(children);
+    default:
+      return null;
+  }
 }
 
 function parseOpaqueBlock(entry: Record<string, unknown>, mintNodeId: IdMinter): OpaqueBlock {
-  return { kind: "opaque-block", id: mintNodeId(), raw: captureOpaque(entry) };
+  const raw = captureOpaque(entry);
+  const slot = blockContentSlot(entry);
+  if (slot === null || slot.length === 0) {
+    return { kind: "opaque-block", id: mintNodeId(), raw };
+  }
+  const children: BlockNode[] = [];
+  for (const child of slot) {
+    const childTag = ooxml.getTag(child);
+    switch (childTag) {
+      case "w:p":
+        children.push(parseParagraph(child, mintNodeId));
+        break;
+      case "w:tbl":
+        children.push(parseTableTyped(child, mintNodeId, parseParagraph));
+        break;
+      case "w:sectPr":
+        children.push(parseSectionBreak(child, mintNodeId));
+        break;
+      default:
+        children.push(parseOpaqueBlock(child, mintNodeId));
+        break;
+    }
+  }
+  if (children.length === 0) {
+    return { kind: "opaque-block", id: mintNodeId(), raw };
+  }
+  return { kind: "opaque-block", id: mintNodeId(), raw, children };
+}
+
+function parseOpaqueInline(entry: Record<string, unknown>, mintNodeId: IdMinter): OpaqueInline {
+  const raw = captureOpaque(entry);
+  const slot = blockContentSlot(entry);
+  if (slot === null || slot.length === 0) {
+    return { kind: "opaque-inline", id: mintNodeId(), raw };
+  }
+  const children: InlineNode[] = [];
+  for (const child of slot) {
+    children.push(parseInline(child, mintNodeId));
+  }
+  if (children.length === 0) {
+    return { kind: "opaque-inline", id: mintNodeId(), raw };
+  }
+  return { kind: "opaque-inline", id: mintNodeId(), raw, children };
 }
 
 function parseParagraph(entry: Record<string, unknown>, mintNodeId: IdMinter): Paragraph {
@@ -236,7 +330,13 @@ function parseParagraph(entry: Record<string, unknown>, mintNodeId: IdMinter): P
   };
 }
 
-function parseParagraphProperties(entry: Record<string, unknown>): ParagraphProperties {
+/**
+ * Parse a `<w:pPr>` entry into typed paragraph properties. Exported
+ * (alongside `parseRunProperties`) so the styles parser can reuse the
+ * same OOXML → typed shape — the cascade resolver expects identical
+ * shapes for `docDefaults.pPrDefault`, `style.pPr`, and `paragraph.pPr`.
+ */
+export function parseParagraphProperties(entry: Record<string, unknown>): ParagraphProperties {
   const children = (entry["w:pPr"] as unknown[] | undefined) ?? [];
   const props: {
     -readonly [K in keyof ParagraphProperties]: ParagraphProperties[K];
@@ -336,11 +436,7 @@ function parseInline(entry: Record<string, unknown>, mintNodeId: IdMinter): Inli
         commentId: attrOf(entry, "w:id") ?? "",
       } satisfies CommentRangeEnd;
     default:
-      return {
-        kind: "opaque-inline",
-        id: mintNodeId(),
-        raw: captureOpaque(entry),
-      } satisfies OpaqueInline;
+      return parseOpaqueInline(entry, mintNodeId);
   }
 }
 
@@ -357,7 +453,8 @@ function parseRun(entry: Record<string, unknown>, mintNodeId: IdMinter): Run {
   return { kind: "run", id: mintNodeId(), properties, children: runChildren };
 }
 
-function parseRunProperties(entry: Record<string, unknown>): RunProperties {
+/** See `parseParagraphProperties` for why this is exported. */
+export function parseRunProperties(entry: Record<string, unknown>): RunProperties {
   const children = (entry["w:rPr"] as unknown[] | undefined) ?? [];
   const props: { -readonly [K in keyof RunProperties]: RunProperties[K] } = {};
   const opaqueProps: ReturnType<typeof captureOpaque>[] = [];
@@ -426,9 +523,14 @@ function parseRunChild(entry: Record<string, unknown>, mintNodeId: IdMinter): Ru
     }
     case "w:br": {
       const t = attrOf(entry, "w:type");
-      const breakType = t === "page" || t === "column" || t === "textWrapping" ? t : undefined;
+      if (t === "page") {
+        return { kind: "page-break", id: mintNodeId() };
+      }
+      const breakType = t === "column" || t === "textWrapping" ? t : undefined;
       return { kind: "break", id: mintNodeId(), ...(breakType ? { breakType } : {}) };
     }
+    case "w:lastRenderedPageBreak":
+      return { kind: "last-rendered-page-break", id: mintNodeId() };
     case "w:tab":
       return { kind: "tab", id: mintNodeId() };
     case "w:drawing":

@@ -269,24 +269,111 @@ textarea::placeholder {
   margin: 0 0 0.75rem 0;
 }
 
+/*
+ * Heading typography. The renderer's `paragraph.toDOM` (in
+ * `packages/docx/src/renderer/schema.ts`) emits `<h1>`-`<h6>` for
+ * paragraphs whose `styleId` matches a known heading style. We also
+ * keep `data-style` selectors so the legacy `<p data-style="Heading1">`
+ * path (and the German `berschrift1`-`berschrift9` aliases that fall
+ * through to a generic <p>) still pick up the right typography.
+ */
+.prose-pm .ProseMirror h1,
+.prose-pm .ProseMirror p[data-style="Title"],
+.prose-pm .ProseMirror p[data-style="Titel"],
 .prose-pm .ProseMirror p[data-style="Heading1"],
-.prose-pm .ProseMirror p[data-style="Title"] {
+.prose-pm .ProseMirror p[data-style="berschrift1"] {
   font-size: 1.875rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
+  margin: 1.5rem 0 0.5rem;
+  line-height: 1.25;
 }
 
-.prose-pm .ProseMirror p[data-style="Heading2"] {
+.prose-pm .ProseMirror h2,
+.prose-pm .ProseMirror p[data-style="Subtitle"],
+.prose-pm .ProseMirror p[data-style="Untertitel"],
+.prose-pm .ProseMirror p[data-style="Heading2"],
+.prose-pm .ProseMirror p[data-style="berschrift2"] {
   font-size: 1.5rem;
   font-weight: 600;
-  margin-top: 1rem;
+  margin: 1.25rem 0 0.5rem;
+  line-height: 1.3;
 }
 
-.prose-pm .ProseMirror p[data-style="Heading3"] {
+.prose-pm .ProseMirror h3,
+.prose-pm .ProseMirror p[data-style="Heading3"],
+.prose-pm .ProseMirror p[data-style="berschrift3"] {
   font-size: 1.25rem;
   font-weight: 600;
+  margin: 1rem 0 0.4rem;
+  line-height: 1.35;
+}
+
+.prose-pm .ProseMirror h4,
+.prose-pm .ProseMirror p[data-style="Heading4"],
+.prose-pm .ProseMirror p[data-style="berschrift4"] {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0.875rem 0 0.35rem;
+  line-height: 1.4;
+}
+
+.prose-pm .ProseMirror h5,
+.prose-pm .ProseMirror p[data-style="Heading5"],
+.prose-pm .ProseMirror p[data-style="berschrift5"] {
+  font-size: 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.75rem 0 0.3rem;
+}
+
+.prose-pm .ProseMirror h6,
+.prose-pm .ProseMirror p[data-style="Heading6"],
+.prose-pm .ProseMirror p[data-style="berschrift6"],
+.prose-pm .ProseMirror p[data-style="Heading7"],
+.prose-pm .ProseMirror p[data-style="berschrift7"],
+.prose-pm .ProseMirror p[data-style="Heading8"],
+.prose-pm .ProseMirror p[data-style="berschrift8"],
+.prose-pm .ProseMirror p[data-style="Heading9"],
+.prose-pm .ProseMirror p[data-style="berschrift9"] {
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-style: italic;
+  margin: 0.625rem 0 0.25rem;
+}
+
+.prose-pm .ProseMirror p[data-style="TOCHeading"],
+.prose-pm .ProseMirror p[data-style="Verzeichnis"],
+.prose-pm .ProseMirror p[data-style="Inhaltsverzeichnisberschrift"] {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.75rem;
+  letter-spacing: -0.005em;
+}
+
+.prose-pm .ProseMirror p[data-style^="Quote"],
+.prose-pm .ProseMirror p[data-style^="IntenseQuote"] {
+  border-left: 3px solid var(--divider);
+  padding-left: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--secondary);
+  font-style: italic;
+}
+
+.prose-pm .ProseMirror p[data-style^="Caption"],
+.prose-pm .ProseMirror p[data-style^="Beschriftung"] {
+  font-size: 0.85rem;
+  color: var(--secondary);
+  margin: 0.25rem 0 0.75rem;
+}
+
+/* TOC entries — Word's TOC1/TOC2/... styles. Keep them tight so a long
+ * table of contents stays scannable. */
+.prose-pm .ProseMirror p[data-style^="TOC"],
+.prose-pm .ProseMirror p[data-style^="Verzeichnis"] {
+  margin: 0.1rem 0;
+  line-height: 1.4;
 }
 
 .prose-pm .ProseMirror .pm-comment-mark {
@@ -332,10 +419,150 @@ textarea::placeholder {
   font-family: var(--font-mono);
 }
 
+/*
+ * Real <img> rendering for inline images. The `image` PM node carries a
+ * data: URL built from `snapshot.media` + `snapshot.relationships` and
+ * the intrinsic pixel dimensions converted from EMU. We constrain the
+ * displayed width to the editor's content column so a freshly inserted
+ * full-resolution photo doesn't blow past the page margins.
+ */
+.prose-pm .ProseMirror .pm-image {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.25rem 0;
+  vertical-align: baseline;
+  border-radius: 2px;
+}
+
 .prose-pm .ProseMirror .pm-table-placeholder,
 .prose-pm .ProseMirror .pm-opaque-block,
 .prose-pm .ProseMirror .pm-section-break {
   display: block;
+}
+
+/*
+ * "Preview" variants for opaque carriers whose tag is classified as a
+ * content-wrapper (SDT, fldSimple, MC fallback, ...). The wrapper is
+ * read-only (round-tripped via the OpaqueXml carrier on the model side),
+ * but we surface its inner text instead of an "[opaque]" chip so the user
+ * sees readable content (e.g. a Table-of-Contents listing).
+ */
+.prose-pm .ProseMirror .pm-opaque-block-preview,
+.prose-pm .ProseMirror .pm-opaque-inline-preview {
+  /*
+   * Inherit the surrounding typography so an SDT-wrapped TOC entry or
+   * title-page name reads like normal body text. Italic was previously
+   * forced here as a "this content is not yet typed" hint, but it
+   * misrepresents real `.docx` content (e.g. the German thesis title
+   * page), so we drop it now and rely on `data-tag` for tooling/debug.
+   */
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+.prose-pm .ProseMirror .pm-opaque-block-preview {
+  margin: 0.5rem 0;
+}
+
+.prose-pm .ProseMirror .pm-opaque-inline-preview {
+  display: inline;
+  padding: 0;
+  border: none;
+}
+
+/*
+ * Unwrapped content-wrapper carriers (SDT / fldSimple / mc:AlternateContent
+ * / smartTag / customXml). The carrier is preserved verbatim through the
+ * model's `OpaqueXml.raw`, but the PM renderer surfaces the *children* as
+ * structured HTML so the user sees the underlying TOC / signature block /
+ * title page as real headings & paragraphs instead of one italic chip.
+ *
+ * The wrapper itself gets a soft border + a top-right tag chip so it's
+ * still discoverable as "managed content" — and editable text inside it
+ * is read-only in this iteration (the PM node is `atom: true`).
+ */
+.prose-pm .ProseMirror .pm-opaque-wrapper-block {
+  position: relative;
+  margin: 0.75rem 0;
+  padding: 0.625rem 0.75rem 0.5rem 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+
+.prose-pm .ProseMirror .pm-opaque-wrapper-block::before {
+  content: attr(data-tag);
+  position: absolute;
+  top: -0.5rem;
+  right: 0.5rem;
+  padding: 0 0.375rem;
+  font-size: 0.625rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted-foreground);
+  background: var(--background);
+  border-radius: 3px;
+  text-transform: lowercase;
+}
+
+.prose-pm .ProseMirror .pm-opaque-wrapper-block .pm-opaque-wrapper-p {
+  margin: 0.25rem 0;
+}
+
+.prose-pm .ProseMirror .pm-opaque-wrapper-block .pm-opaque-wrapper-empty {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.prose-pm .ProseMirror .pm-opaque-wrapper-inline {
+  display: inline;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px dotted var(--border);
+}
+
+/*
+ * Typed-table read-only rendering. The model is fully typed (rows /
+ * cells / cell-body) but the PM atom embeds a baked HTML table built
+ * from a flattened plain-text projection of every cell, so the user
+ * sees the actual table content instead of a `[table]` chip. Editing
+ * inside cells is intentionally not enabled — that requires teaching
+ * `transactionToCommands` about cell-scoped positions and is a future
+ * workstream.
+ */
+.prose-pm .ProseMirror .pm-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+  background: var(--background);
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-cell {
+  border: 1px solid var(--divider);
+  padding: 0.375rem 0.625rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-header-row .pm-table-cell {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-cell-p {
+  margin: 0;
+}
+
+.prose-pm .ProseMirror .pm-table .pm-table-cell-p + .pm-table-cell-p {
+  margin-top: 0.25rem;
 }
 
 /* ── P1.2 / W5: highlight / color marks in the editor surface ── */
@@ -391,4 +618,31 @@ textarea::placeholder {
 
 .docx-editor .side-panel {
   font-size: 0.8125rem;
+}
+
+/* P3.3 / W11-W12 — page-divider widget rendered between page chunks
+ * by `pageDecorationsPlugin`. The widget is a `contenteditable=false`
+ * block so PM treats it as inert chrome; the dashed rule + tabular
+ * label intentionally mirror Word's "Page break" indicator without
+ * pretending to be a true paginated viewport. */
+.prose-pm .ProseMirror .pm-page-divider {
+  position: relative;
+  margin: 1.5rem -0.5rem;
+  border-top: 1px dashed var(--divider);
+  text-align: center;
+  user-select: none;
+  pointer-events: none;
+}
+
+.prose-pm .ProseMirror .pm-page-divider__label {
+  position: relative;
+  top: -0.6rem;
+  display: inline-block;
+  padding: 0 0.5rem;
+  background: var(--background);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
 }

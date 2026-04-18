@@ -13,7 +13,8 @@
   "dependencies": {
     "@officeai/core": "workspace:*",
     "@officeai/docx": "workspace:*",
-    "@officeai/pptx": "workspace:*"
+    "@officeai/pptx": "workspace:*",
+    "@officeai/xlsx": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22",

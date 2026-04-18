@@ -7,3 +7,10 @@ export {
   type UnsupportedTx,
 } from "./transaction-to-commands.js";
 export { mountDocxEditor, type MountOptions, type MountResult } from "./mount.js";
+export {
+  chunkIntoPages,
+  geometryFromProperties,
+  type PageChunk,
+  type PageGeometry,
+  type Measure,
+} from "./page-chunker.js";

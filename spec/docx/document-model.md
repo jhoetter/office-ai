@@ -81,10 +81,29 @@ export interface SectionBreak {
   readonly raw: OpaqueXml;
 }
 
+/**
+ * A "content-wrapper" carrier (SDT / simple field / MC alternate
+ * content / smart tag / custom XML) at the body level. The wrapper
+ * itself is preserved verbatim through `raw`, and its inner content
+ * is also parsed into typed `children` so the renderer can surface
+ * the wrapped paragraphs as real headings/paragraphs instead of
+ * collapsing the whole subtree into an opaque preview chip.
+ *
+ * Dirty-tracking contract:
+ *
+ *   - `subtreeDirty === false` (default) → serializer re-emits `raw`
+ *     verbatim. `children` is purely a render-side projection.
+ *   - `subtreeDirty === true` → serializer reconstructs the wrapper
+ *     by splicing serialized `children` into the wrapper's content
+ *     slot (e.g. `<w:sdtContent>`). Mutations that touch a child of
+ *     an opaque carrier MUST flip this flag.
+ */
 export interface OpaqueBlock {
   readonly kind: "opaque-block";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+  readonly children?: ReadonlyArray<BlockNode>;
+  readonly subtreeDirty?: boolean;
 }
 ```
 
@@ -162,10 +181,15 @@ export interface RevisionWrapper {
   readonly children: ReadonlyArray<InlineNode>;
 }
 
+/**
+ * Inline analogue of `OpaqueBlock`. Same dirty-tracking contract.
+ */
 export interface OpaqueInline {
   readonly kind: "opaque-inline";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+  readonly children?: ReadonlyArray<InlineNode>;
+  readonly subtreeDirty?: boolean;
 }
 ```
 

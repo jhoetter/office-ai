@@ -3,23 +3,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
-import { DocxAgent, mountDocxEditor, docxSchema } from "@officeai/docx";
-import type { MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
+import { DocxAgent, chunkIntoPages, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
+import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
+import { getPageChunks, gotoPage, pageDecorationsPlugin, pageNumberForPos } from "@/lib/page-decorations";
+import { pageKeymapPlugin } from "@/lib/page-keymap";
 import type { EditorView } from "prosemirror-view";
 import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
 import {
+  activeMarkAttr,
   activeMarks as computeActiveMarks,
+  activeRunAttr,
   commentParagraphIndex,
+  commentThreads,
+  currentParagraphAlignment,
+  currentParagraphId,
   currentParagraphIndex,
+  discoverNumId,
   paragraphStyle,
+  paragraphStyleOptions,
   pmSelectionToRange,
 } from "@/lib/format-helpers";
-import { Toolbar } from "./Toolbar";
+import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
+import { HeaderFooterPanel } from "./HeaderFooterPanel";
+import { PageRuler } from "./PageRuler";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
-import { dispatchToLlm } from "@/lib/llm-client";
+import { CommentComposer } from "./CommentComposer";
+import { dispatchToLlm, type DispatchSelectionContext } from "@/lib/llm-client";
+import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
 
 interface ToastMessage {
   id: number;
@@ -61,6 +74,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   // directly during render trips `react-hooks/refs`.
   const [hostEl, setHostEl] = useState<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   // `agentRef` / `mountRef` are kept in addition to the React state
   // mirrors below so that long-lived callbacks (file open, accept
   // change, …) capture a stable reference without re-binding on
@@ -73,7 +87,13 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const [pending, setPending] = useState<Mutation[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [docName, setDocName] = useState("welcome.docx");
-  const [docInfo, setDocInfo] = useState<{ blocks: number; revision: number; comments: number } | null>(null);
+  const [docInfo, setDocInfo] = useState<{
+    paragraphs: number;
+    revision: number;
+    commentThreads: number;
+    pageCount: number;
+  } | null>(null);
+  const [zoom, setZoom] = useState<number>(1);
   // Bumped to force re-derivation of toolbar state (active marks /
   // active style) without keeping a redundant copy of the snapshot.
   const [uiTick, setUiTick] = useState(0);
@@ -110,10 +130,12 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
       const refreshState = () => {
         setPending([...agentInstance.getPendingMutations()]);
         const snap = agentInstance.getSnapshot();
+        const paragraphs = snap.root.body.reduce((n, b) => (b.kind === "paragraph" ? n + 1 : n), 0);
         setDocInfo({
-          blocks: snap.root.body.length,
+          paragraphs,
           revision: snap.revision,
-          comments: snap.root.comments.length,
+          commentThreads: commentThreads(snap).length,
+          pageCount: chunkIntoPages(snap).length,
         });
         setUiTick((t) => t + 1);
       };
@@ -124,6 +146,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
         source: "human",
         onUnsupported,
         onError,
+        extraPlugins: [pageDecorationsPlugin(agentInstance), pageKeymapPlugin(agentInstance)],
       });
       mountRef.current = mount;
       setView(mount.view);
@@ -276,7 +299,26 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     [pushToast]
   );
 
-  const insertCommentDemo = useCallback(async () => {
+  /**
+   * Comment composer state (P2.5 / W24).
+   *
+   * `composer` is null when the popover is hidden. When the user clicks
+   * "Add comment" with a non-empty selection we capture the selection
+   * range + plain text + an anchor coordinate (via `view.coordsAtPos`)
+   * and surface the popover. Submission funnels through the shared
+   * `add-comment` command so existing tests, the comments sidebar, and
+   * the OOXML round-trip all stay correct.
+   */
+  const [composer, setComposer] = useState<{
+    range: {
+      start: { paragraph: number; run: number; offset: number };
+      end: { paragraph: number; run: number; offset: number };
+    };
+    selectionText: string;
+    anchor: { left: number; top: number; bottom: number } | null;
+  } | null>(null);
+
+  const openCommentComposer = useCallback(() => {
     const agent = agentRef.current;
     const mount = mountRef.current;
     if (!agent || !mount) return;
@@ -286,22 +328,74 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
       return;
     }
     const range = pmSelectionToRange(view.state);
+    const selectionText = view.state.doc.textBetween(
+      view.state.selection.from,
+      view.state.selection.to,
+      " ",
+      " "
+    );
+    let anchor: { left: number; top: number; bottom: number } | null = null;
     try {
-      await agent.applyCommand({
-        type: "docx:add-comment",
-        payload: {
-          range,
-          text: "Looks good?",
-          author: "You",
-          initials: "Y",
-        },
-        source: "human",
-      });
-      pushToast("info", "Comment added.");
-    } catch (err) {
-      pushToast("error", err instanceof Error ? err.message : String(err));
+      const coords = view.coordsAtPos(view.state.selection.from);
+      anchor = { left: coords.left, top: coords.top, bottom: coords.bottom };
+    } catch {
+      anchor = null;
     }
+    setComposer({ range, selectionText, anchor });
   }, [pushToast]);
+
+  const submitComment = useCallback(
+    async (text: string) => {
+      const agent = agentRef.current;
+      if (!agent || !composer) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:add-comment",
+          payload: {
+            range: composer.range,
+            text,
+            author: "You",
+            initials: "Y",
+          },
+          source: "human",
+        });
+        pushToast("info", "Comment added.");
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      } finally {
+        setComposer(null);
+      }
+    },
+    [composer, pushToast]
+  );
+
+  const draftCommentWithAi = useCallback(
+    async (currentDraft: string, selectionText: string): Promise<string> => {
+      const agent = agentRef.current;
+      if (!agent) return currentDraft;
+      const promptParts = [
+        currentDraft.trim().length > 0
+          ? `Refine the following draft comment so it is concise, specific, and constructive: "${currentDraft.trim()}"`
+          : "Draft a short, specific, constructive comment about the highlighted text.",
+        "Reply with ONLY the comment body — no quotes, no preamble.",
+      ];
+      const ctx: DispatchSelectionContext | undefined = selectionText
+        ? { text: selectionText, paragraph: composer?.range.start.paragraph ?? 0, range: composer?.range }
+        : undefined;
+      const result = await dispatchToLlm(promptParts.join("\n\n"), agent, ctx);
+      if (result.note) pushToast("warn", result.note);
+      // The LLM returns commands; for the composer we only care about
+      // the rationale (or, in the offline case, the prompt text). When
+      // the LLM produced an `add-comment` we lift its `text`.
+      const addComment = result.commands.find((c) => c.type === "docx:add-comment");
+      if (addComment) {
+        const payload = addComment.payload as { text?: unknown };
+        if (typeof payload?.text === "string" && payload.text.length > 0) return payload.text;
+      }
+      return result.rationale || currentDraft;
+    },
+    [composer, pushToast]
+  );
 
   const surfaceUnsupported = useCallback(
     (label: string) => {
@@ -309,6 +403,174 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     },
     [pushToast]
   );
+
+  const setAlignment = useCallback(
+    async (alignment: AlignmentValue) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-alignment",
+          payload: { paragraphId, alignment },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const adjustIndent = useCallback(
+    async (deltaTwips: number) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-indent",
+          payload: { paragraphId, deltaTwips },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const setParagraphSpacing = useCallback(
+    async (patch: {
+      line?: number | null;
+      lineRule?: "auto" | "exact" | "atLeast" | null;
+      before?: number | null;
+      after?: number | null;
+    }) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-spacing",
+          payload: { paragraphId, ...patch },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const toggleList = useCallback(
+    async (kind: "bullet" | "ordered") => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      const snap = agent.getSnapshot();
+      const target = discoverNumId(snap, kind);
+      if (!target) {
+        pushToast(
+          "warn",
+          `This document has no ${kind === "bullet" ? "bullet" : "numbered"} list definition. Auto-creation is not yet supported in this build.`
+        );
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-list",
+          payload: { paragraphId, numId: target.numId, ilvl: target.ilvl },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const insertImageFromFile = useCallback(() => {
+    imageInputRef.current?.click();
+  }, []);
+
+  const handleImageFile = useCallback(
+    async (file: File) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent) {
+        pushToast("warn", "Document is still loading.");
+        return;
+      }
+      try {
+        await insertImageIntoDocx(agent, file, mount?.view.state ?? null);
+        pushToast("info", `Inserted ${file.name || "image"}.`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  // Drag-drop + paste handlers for image files. We intercept the events
+  // at the host DOM level *before* ProseMirror sees them so that:
+  //   - a dropped file lands as a typed `docx:insert-image` instead of
+  //     PM's default "paste as text" behaviour;
+  //   - a pasted screenshot (clipboard image) gets inserted at the
+  //     caret instead of being silently dropped on the floor.
+  // Non-file drops (text, regular HTML pastes) fall through to PM.
+  useEffect(() => {
+    if (!hostEl) return;
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      const hasFile = Array.from(e.dataTransfer.items ?? []).some((it) => it.kind === "file");
+      if (hasFile) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      const file = pickImageFile(e.dataTransfer?.files);
+      if (!file) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void handleImageFile(file);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      const file = pickImageFile(e.clipboardData?.files);
+      if (!file) return;
+      e.preventDefault();
+      void handleImageFile(file);
+    };
+    hostEl.addEventListener("dragover", onDragOver);
+    hostEl.addEventListener("drop", onDrop);
+    hostEl.addEventListener("paste", onPaste);
+    return () => {
+      hostEl.removeEventListener("dragover", onDragOver);
+      hostEl.removeEventListener("drop", onDrop);
+      hostEl.removeEventListener("paste", onPaste);
+    };
+  }, [hostEl, handleImageFile]);
 
   const scrollToComment = useCallback(
     (commentId: string) => {
@@ -444,18 +706,49 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const activeMarks = view ? computeActiveMarks(view.state) : new Set<string>();
   const currentParaIndex = view ? currentParagraphIndex(view.state) : 0;
   const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
+  // P3.1 / W3 — toolbar dropdowns fall back through the typed style
+  // cascade when no direct PM mark carries the attribute. Without this,
+  // selecting a Heading1 paragraph showed "Size" / "Font" placeholders
+  // instead of the inherited 16pt / Calibri.
+  const activeFontSize = view
+    ? activeRunAttr<number>(view.state, "font_size", "halfPoints", snapshot, (rPr) => rPr.fontSize)
+    : undefined;
+  const activeFontFamily = view
+    ? activeRunAttr<string>(view.state, "font_family", "family", snapshot, (rPr) => rPr.fontFamily)
+    : undefined;
+  const activeColor = view
+    ? activeRunAttr<string>(view.state, "color", "rgb", snapshot, (rPr) => rPr.color)
+    : undefined;
+  const activeHighlight = view
+    ? activeRunAttr<string>(view.state, "highlight", "name", snapshot, (rPr) => rPr.highlight)
+    : undefined;
+  const activeAlignment = view ? currentParagraphAlignment(view.state) : null;
+  const activeParagraphIndex = view ? currentParagraphIndex(view.state) : -1;
+  const activeSpacing = computeActiveSpacing(snapshot, activeParagraphIndex);
+  const activeIndentLeft = computeActiveIndentLeft(snapshot, activeParagraphIndex);
+  const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   void commentParagraphIndex;
 
   // Default dispatch routes through the LLM bridge (`/api/llm`). When the
-  // server has no `OPENAI_API_KEY` configured, the helper transparently
-  // falls back to the same `[AI] ` + `add-comment` recipe the editor used
-  // before W6, so the existing e2e flow keeps working with no env vars.
+  // server has no `OPENAI_API_KEY` configured, the helper falls back to
+  // the honest offline recipe (P2.5/W27): a single comment carrying the
+  // user's prompt, anchored to the live selection when there is one.
   const { agentPromptDispatch: agentPromptDispatchProp } = props;
   const promptDispatch: AgentPromptDispatch = (() => {
     if (!agent) return async () => undefined;
     if (agentPromptDispatchProp) return agentPromptDispatchProp(agent);
     return async (text: string) => {
-      const result = await dispatchToLlm(text, agent);
+      const liveView = mountRef.current?.view;
+      const ctx: DispatchSelectionContext | undefined = (() => {
+        if (!liveView) return undefined;
+        const { state } = liveView;
+        if (state.selection.empty) return undefined;
+        const range = pmSelectionToRange(state);
+        const selectedText = state.doc.textBetween(state.selection.from, state.selection.to, " ", " ");
+        if (!selectedText) return undefined;
+        return { text: selectedText, paragraph: range.start.paragraph, range };
+      })();
+      const result = await dispatchToLlm(text, agent, ctx);
       if (result.note) pushToast("warn", result.note);
       if (result.commands.length > 0) await agent.applyCommands(result.commands);
     };
@@ -469,12 +762,25 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           docInfo={docInfo}
           activeStyle={activeStyle}
           activeMarks={activeMarks}
+          activeFontSize={activeFontSize}
+          activeFontFamily={activeFontFamily}
+          activeColor={activeColor}
+          activeHighlight={activeHighlight}
+          activeAlignment={activeAlignment}
+          activeSpacing={activeSpacing}
+          activeIndentLeft={activeIndentLeft}
+          styleOptions={styleOptions}
           onOpenFile={() => fileInputRef.current?.click()}
+          onInsertImage={insertImageFromFile}
           onExport={() => void handleExport()}
           onSetParagraphStyle={(s) => void setParagraphStyle(s)}
           onApplyFormat={(f) => void applyFormat(f)}
           onToggleMark={toggleMark}
-          onAddComment={() => void insertCommentDemo()}
+          onSetAlignment={(a) => void setAlignment(a)}
+          onAdjustIndent={(d) => void adjustIndent(d)}
+          onSetParagraphSpacing={(patch) => void setParagraphSpacing(patch)}
+          onToggleList={(k) => void toggleList(k)}
+          onAddComment={openCommentComposer}
           onUnsupported={surfaceUnsupported}
         />
         <input
@@ -488,18 +794,61 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
             e.target.value = "";
           }}
         />
+        <input
+          ref={imageInputRef}
+          data-testid="image-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void handleImageFile(f);
+            e.target.value = "";
+          }}
+        />
+        <HeaderFooterPanel
+          agent={agent}
+          snapshot={snapshot}
+          onError={(msg) => pushToast("error", msg)}
+          onInfo={(msg) => pushToast("info", msg)}
+        />
         <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
           <div
-            ref={setHostEl}
-            className="prose-pm mx-auto min-h-[60vh] w-full max-w-[720px] px-8 py-12 outline-none"
-          />
+            className="mx-auto"
+            style={{
+              width: `${720 * zoom}px`,
+              transform: `scale(${zoom})`,
+              transformOrigin: "top center",
+            }}
+          >
+            <PageRuler snapshot={snapshot} />
+            <div
+              ref={setHostEl}
+              className="prose-pm min-h-[60vh] w-[720px] px-8 py-12 outline-none"
+            />
+          </div>
           {!agentReady && (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
               <Loader2 className="mr-2 animate-spin" size={14} />
               Loading…
             </div>
           )}
+          {composer && (
+            <CommentComposer
+              selectionText={composer.selectionText}
+              anchor={composer.anchor}
+              onSubmit={(t) => void submitComment(t)}
+              onCancel={() => setComposer(null)}
+              onDraftWithAi={(draft, sel) => draftCommentWithAi(draft, sel)}
+            />
+          )}
         </div>
+        <PageStatusBar
+          view={view}
+          totalPages={docInfo?.pageCount ?? 1}
+          zoom={zoom}
+          onZoomChange={setZoom}
+        />
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
           {toasts.map((t) => (
             <div
@@ -591,4 +940,155 @@ void Button;
 function cssEscape(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
   return value.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
+function pickImageFile(files: FileList | null | undefined): File | null {
+  if (!files || files.length === 0) return null;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const mime = (f.type || "").toLowerCase();
+    if (SUPPORTED_IMAGE_MIME.has(mime)) return f;
+    if (mime.startsWith("image/")) return f;
+  }
+  return null;
+}
+
+/**
+ * P3.1 / W4 — derive the effective spacing for the paragraph at the
+ * caret. Reads the resolved cascade so an inherited "Heading1 → 1.5
+ * line" surfaces in the toolbar even when the paragraph has no direct
+ * `<w:spacing>`.
+ */
+function computeActiveSpacing(
+  snapshot: DocxSnapshot | null,
+  paragraphIndex: number
+): ResolvedSpacingDisplay | null {
+  if (!snapshot || paragraphIndex < 0) return null;
+  const block = snapshot.root.body[paragraphIndex];
+  if (!block || block.kind !== "paragraph") return null;
+  const resolved = resolveEffectivePpr(snapshot, paragraphIndex);
+  const s = resolved.spacing;
+  if (!s) return {};
+  const out: ResolvedSpacingDisplay = {};
+  if (s.line !== undefined) (out as { line: number }).line = s.line;
+  if (s.lineRule !== undefined) {
+    (out as { lineRule: ResolvedSpacingDisplay["lineRule"] }).lineRule = s.lineRule;
+  }
+  if (s.before !== undefined) (out as { before: number }).before = s.before;
+  if (s.after !== undefined) (out as { after: number }).after = s.after;
+  return out;
+}
+
+function computeActiveIndentLeft(snapshot: DocxSnapshot | null, paragraphIndex: number): number | null {
+  if (!snapshot || paragraphIndex < 0) return null;
+  const block = snapshot.root.body[paragraphIndex];
+  if (!block || block.kind !== "paragraph") return null;
+  const resolved = resolveEffectivePpr(snapshot, paragraphIndex);
+  return resolved.indentation?.left ?? 0;
+}
+
+/**
+ * P3.3 / W12-W13 — bottom status bar for the editor pane.
+ *
+ * Shows `Page X of N` based on the live caret position (resolved via
+ * the page-decorations plugin's chunk array) and exposes a zoom
+ * slider (50–200 %). Both are read-only against the snapshot — zoom
+ * is purely a CSS transform on the editor surface, never written
+ * back into the document model.
+ */
+function PageStatusBar(props: {
+  view: EditorView | null;
+  totalPages: number;
+  zoom: number;
+  onZoomChange: (z: number) => void;
+}) {
+  const { view, totalPages, zoom, onZoomChange } = props;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const currentPage = (() => {
+    if (!view) return 1;
+    const chunks = getPageChunks(view.state);
+    if (chunks.length === 0) return 1;
+    return pageNumberForPos(chunks, view.state, view.state.selection.from);
+  })();
+
+  const submitGoto = () => {
+    if (!view) {
+      setEditing(false);
+      return;
+    }
+    const n = Number.parseInt(draft, 10);
+    if (Number.isFinite(n) && n >= 1) {
+      gotoPage(view, n, getPageChunks(view.state));
+    }
+    setEditing(false);
+  };
+
+  return (
+    <div className="mt-2 flex items-center justify-between gap-3 px-1 text-xs text-secondary">
+      {editing ? (
+        <span className="inline-flex items-center gap-1 tabular-nums">
+          <span>Page</span>
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitGoto();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            onBlur={submitGoto}
+            className="w-12 rounded border border-divider bg-background px-1 py-0.5 text-xs"
+            data-testid="page-goto-input"
+          />
+          <span>of {totalPages}</span>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(String(currentPage));
+            setEditing(true);
+          }}
+          className="rounded px-1 py-0.5 tabular-nums hover:bg-hover"
+          title="Go to page"
+          data-testid="page-status"
+        >
+          Page {currentPage} of {totalPages}
+        </button>
+      )}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onZoomChange(Math.max(0.5, Math.round((zoom - 0.1) * 10) / 10))}
+          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+        <span className="tabular-nums" data-testid="zoom-percent">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={() => onZoomChange(Math.min(2, Math.round((zoom + 0.1) * 10) / 10))}
+          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => onZoomChange(1)}
+          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+  );
 }
