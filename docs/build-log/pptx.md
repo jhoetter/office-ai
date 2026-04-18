@@ -97,11 +97,85 @@ Final test/build totals at the close of P10:
 - ~~The `/pptx-editor` agent panel uses an in-process intent parser only.~~
   Resolved in F1.1: routes through `/api/llm` with `format: "pptx"`. The
   in-process intent parser is the offline fallback when no API key is set.
-- `dpi` is hard-coded to 96 in the renderer's pixel conversions; an
-  override hook is exported (`emuToPx(emu, dpi)`) but unused. Will
-  matter once we expose a zoom slider.
+- ~~`dpi` is hard-coded to 96 in the renderer's pixel conversions.~~
+  Resolved in F1.5: `SlideCanvas` accepts `zoom` + `dpi`; the toolbar
+  exposes a zoom slider with a 100 % reset.
 - ~~Browser smoke tests for `/pptx-editor` are manual via the
   `cursor-ide-browser` MCP; an automated Playwright pass mirroring
   `tests/e2e/docx-editor.spec.ts` is queued.~~ Resolved in F1.3:
   `apps/web/e2e/pptx-editor.spec.ts` covers mount + toolbar + agent
   panel via the existing Playwright config.
+- Editing typed entrance animations on a slide drops `Slide.timingTailRaw`
+  and rebuilds `<p:timing>` from the typed `Slide.animations` array. Any
+  unmodeled timing children on that slide (exit animations, motion paths,
+  emphasis effects, complex sequences) are lost on save. Slides whose
+  animations are *not* edited continue to round-trip the original
+  `<p:timing>` blob byte-for-byte.
+
+## Session summary (2026-04-19, "follow-up shift")
+
+After P10 closed, a follow-up shift landed five P0/P1 polish items
+(F1.1–F1.5), three typed-model phases (Tables F2, Charts F3,
+Animations F4 — SmartArt explicitly out of scope), and a final
+validation pass:
+
+| Commit  | Phase | Summary                                                                                  |
+| ------- | ----- | ---------------------------------------------------------------------------------------- |
+| 6f25a09 | F1.1  | `/pptx-editor` agent panel routes through `/api/llm` (`format: "pptx"`, allow-list)      |
+| 7fa2591 | F1.2  | Theme-color resolution: parse `theme1.xml` → `themeDefault`; renderer resolves `schemeClr` |
+| 773222e | F1.3  | Playwright smoke for `/pptx-editor` (mount, toolbar, agent panel via LLM offline fallback) |
+| 6cf9098 | F1.3  | Ignore Playwright `test-results/` + `playwright-report/`                                  |
+| 06e66cf | F1.4  | Real-world fixtures (`fixtures/pptx/real/`) + integration roundtrip test (≥95 % byte-identity) |
+| 8fa9013 | F1.5  | Renderer DPI/zoom hook + toolbar zoom slider (clamped 0.25×–3×, 100 % reset)              |
+| e404485 | F2.1–F2.4 | Typed Tables: `TableShape` parser + dirty serializer + 5 commands + `tableToSvg` renderer |
+| c494e6b | F2.5  | Tables: CLI subcommands (`set-table-cell-text`, `add/delete-table-row/-column`), MCP visibility, projection |
+| 95f278b | F3.0+F4.0 | Spec amendments for Charts + Animations (with explicit non-goals)                       |
+| 795d1aa | F3.1+F3.2 | Typed `ChartShape` + `ChartPart` parser + dirty `ppt/charts/chart{N}.xml` serializer |
+| 28588b1 | F3.3+F3.4 | Chart commands (`set-chart-title`, `set-chart-data`, `set-chart-type`) + native bar/line/pie/area SVG renderer |
+| 48e411d | F3.5  | Charts: CLI + MCP + projection + tests + `09-with-chart.pptx` fixture                     |
+| f585f0d | F4.1+F4.2 | Typed `SlideTransition` + entrance `EntranceAnimation` parser/serializer (model-driven `<p:timing>` rebuild) |
+| b55f28e | F4.3+F4.4 | Animation commands (`set-slide-transition`, `add/remove/reorder-shape-animation`) + canvas badge overlay |
+| 090445a | F4.5  | Animations: CLI + MCP + projection + tests + `10-with-anim.pptx` fixture                  |
+
+Final test/build totals at the close of this follow-up shift:
+
+- `@officeai/pptx`: **94 tests** in 14 files (parser, serializer, agent,
+  P0/P1 commands, table commands, chart commands, animation commands,
+  renderer layout/SVG, theme resolver, headless invariant).
+- `@officeai/agent`: **58 tests** in 3 files (15 docx CLI + 18 MCP +
+  25 pptx CLI).
+- `@officeai/integration-tests`: **38 tests** in 6 files (license scan,
+  OOXML schema validation, docx agent roundtrip, docx fixtures
+  roundtrip, docx real-world roundtrip, **pptx real-world roundtrip**).
+- `@officeai/web`: `pnpm build` succeeds; `/pptx-editor` ships at
+  ~739 B page bundle / 119 kB First Load JS; **6/6 PPTX Playwright e2e
+  tests pass** (`apps/web/e2e/pptx-editor.spec.ts`: route mount, Add
+  slide, Text box, Bold toggle, zoom slider, agent panel via LLM bridge
+  offline fallback).
+- Architecture check: green (`scripts/check-architecture.mjs`).
+- Browser smoke (cursor-ide-browser MCP): `/pptx-editor` mounts the
+  toolbar (Open / Export / Add slide / Duplicate / Delete / Text box /
+  Bold / Italic / Underline / Zoom out / Zoom slider / Zoom in / 100 %
+  reset), the slides sidebar (sample-deck thumbnail), the canvas, and
+  the Agent panel.
+
+Resolved deviations recorded above:
+
+- F1.1 (LLM bridge), F1.2 (theme colors), F1.3 (Playwright e2e),
+  F1.4 (real-world fixtures + integration roundtrip), F1.5 (zoom/DPI).
+- F2 promotes Tables out of `OpaqueShape` into a typed `TableShape`
+  with five commands, a native SVG renderer, CLI subcommands, MCP
+  visibility, and a byte-roundtrip test against `06-with-table.pptx`.
+- F3 promotes Charts out of `OpaqueShape` into a typed `ChartShape` +
+  `ChartPart`, with three commands, a minimal native bar/line/pie/area
+  SVG renderer (placeholder for unsupported variants), CLI subcommands,
+  MCP visibility, and a `09-with-chart.pptx` fixture.
+- F4 promotes slide transitions and simple entrance animations out of
+  the opaque tail into typed `Slide.transition` + `Slide.animations`,
+  with four commands, a numbered-badge canvas overlay, CLI subcommands,
+  MCP visibility, and a `10-with-anim.pptx` fixture. Untouched slides
+  re-emit the original `<p:timing>` blob byte-for-byte; edited slides
+  rebuild it from the typed model (with the loss caveat noted under
+  *Known issues*).
+
+SmartArt remains out of scope per the explicit non-goal in F4.0.
