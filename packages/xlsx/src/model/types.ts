@@ -123,6 +123,26 @@ export interface Sheet {
   readonly cells: ReadonlyMap<string, Cell>;
   /** Merged regions (rectangular). 0-based inclusive bounds. */
   readonly merges: ReadonlyArray<MergedCell>;
+  /**
+   * Classic notes anchored to single cells (Phase 7j). Threaded
+   * comments (Excel "modern" comments living in
+   * `xl/threadedComments/`) remain opaque in P0.
+   */
+  readonly comments: ReadonlyArray<Comment>;
+  /** Path of `xl/comments{N}.xml` if any comments exist. */
+  readonly commentsPartPath?: string;
+  /** Authors list referenced by classic comments (preserves order). */
+  readonly commentAuthors: ReadonlyArray<string>;
+}
+
+export interface Comment {
+  readonly id: string;
+  /** A1 single-cell ref. */
+  readonly ref: string;
+  readonly author: string;
+  readonly text: string;
+  /** Reserved for P1 threaded-comment replies. */
+  readonly parentId?: string;
 }
 
 export interface Cell {

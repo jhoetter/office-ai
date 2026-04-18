@@ -155,3 +155,13 @@ export interface DeleteColumnPayload {
   /** Number of columns to drop. Removes columns `at..at+count-1`. */
   readonly count: number;
 }
+
+/** `xlsx:add-comment` */
+export interface AddCommentPayload {
+  readonly sheet: string;
+  /** A1 single-cell ref, e.g. `"B7"`. Range refs are rejected. */
+  readonly ref: string;
+  /** Comment body. Plain text in P0 (rich-text formatting deferred). */
+  readonly text: string;
+  readonly author: string;
+}

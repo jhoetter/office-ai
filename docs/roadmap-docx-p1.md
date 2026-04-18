@@ -170,7 +170,7 @@ P2.6 produced [`spec/docx/eigenpal-synthesis.md`](../spec/docx/eigenpal-synthesi
 a code-level read of `eigenpal/docx-js-editor` that translates the
 delta with our codebase into 12 candidate items (R1–R12). R1–R7
 are the P3 candidates (LLM-text projection, substring-anchored
-comments, propose-* tracked-change commands, default-author setter,
+comments, propose-\* tracked-change commands, default-author setter,
 MCP doc-handle session model, selective save, run consolidator).
 R8–R12 are P4+ (footnotes/bookmarks/fields, plugin surface, theme/
 style parsers, i18n, paged WYSIWYG).

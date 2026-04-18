@@ -42,6 +42,7 @@ export {
   rangesOverlap,
   type Cell,
   type CellAddress,
+  type Comment,
   type CellErrorCode,
   type CellErrorValue,
   type CellRange,
@@ -70,6 +71,7 @@ export {
   insertColumnHandler,
   deleteRowHandler,
   deleteColumnHandler,
+  addCommentHandler,
   type SetCellValuePayload,
   type SetCellFormulaPayload,
   type SetCellFormatPayload,
@@ -84,6 +86,7 @@ export {
   type InsertColumnPayload,
   type DeleteRowPayload,
   type DeleteColumnPayload,
+  type AddCommentPayload,
 } from "./commands/index.js";
 
 export {

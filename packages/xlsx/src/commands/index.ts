@@ -12,5 +12,6 @@ export { insertRowHandler } from "./insert-row.js";
 export { insertColumnHandler } from "./insert-column.js";
 export { deleteRowHandler } from "./delete-row.js";
 export { deleteColumnHandler } from "./delete-column.js";
+export { addCommentHandler } from "./add-comment.js";
 export { evolveSnapshot, mergeDirty, findSheet, replaceSheet, buildDiff } from "./helpers.js";
 export { resolveSheet, parseCellRef, parseRangeRef, validateSheetName } from "./validation.js";

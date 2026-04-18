@@ -1388,3 +1388,187 @@ workbook, not just the targeted sheet.
   hyperlinks (they live in opaque parts), so this phase
   doesn't adjust them. When those models land we'll thread
   the same `adjust` functions through their rewriters.
+
+### Phase 7j — `xlsx:add-comment` (2026-04-18)
+
+**Goal**
+
+Land the final P0 command (13/13). Attach a classic note to a
+single cell, minting `xl/comments{N}.xml` and the matching
+per-sheet rels + content-types overrides on the first comment
+per sheet.
+
+**Code landed**
+
+- `packages/xlsx/src/model/types.ts` — added a typed
+  `Comment` interface (`id`, `ref`, `author`, `text`, optional
+  `parentId` reserved for P1 threaded replies) plus three
+  fields on `Sheet`: `comments`, `commentsPartPath?`, and
+  `commentAuthors`. The authors array preserves insertion order
+  so `authorId` indices remain stable across the
+  parse → mutate → serialize → re-parse cycle.
+- `packages/xlsx/src/parser/comments.ts` — `parseCommentsPart`
+  reads `<authors>` and `<commentList>` from a comments part,
+  flattens `<r><t>` runs into a single plain-text `text` per
+  comment (rich-text formatting collapses by design in P0),
+  and mints positional `comment-N` ids.
+- `packages/xlsx/src/parser/parse.ts` — every worksheet now
+  loads its rels graph (when present), resolves any
+  `…/relationships/comments` rel via `resolveTargetPath`, and
+  attaches the parsed `comments` + `commentAuthors` +
+  `commentsPartPath` to the typed `Sheet`. Sheets without a
+  comments rel default to empty arrays. `xl/comments*.xml`
+  parts are now modeled (removed from `opaqueParts` like
+  `xl/styles.xml` was); `xl/threadedComments/*` was demoted
+  out of `MODELED_PREFIXES` so it surfaces in `opaqueParts`
+  again — matching the "opaque, byte-preserved" P0 contract
+  for threaded comments.
+- `packages/xlsx/src/serializer/comments.ts` —
+  `serializeCommentsPart(authors, comments)` emits a canonical
+  `<comments xmlns=…><authors>…</authors><commentList>…</commentList></comments>`,
+  XML-escaping author names + text bodies and tagging text
+  runs with `xml:space="preserve"` so leading/trailing
+  whitespace round-trips.
+- `packages/xlsx/src/serializer/serialize.ts` — dropped
+  `comments` and `sheetRels` from the `unsupportedDirty`
+  guard, then added two rewrite paths:
+  1. `rewriteDirtyComments` looks up each dirty comments path
+     by `sheet.commentsPartPath` and writes the canonical XML.
+  2. `rewriteDirtySheetRels` matches each dirty rels path to
+     its owning sheet via `RelationshipGraph.relsPathFor(sheet.partPath) === relsPath`,
+     loads the existing rels (preserving any pre-existing
+     hyperlink / vmlDrawing / drawing rels verbatim), drops
+     all `…/relationships/comments` entries, then re-adds a
+     single comments rel pointing at `sheet.commentsPartPath`
+     using a `relsRelativeTarget` helper that emits Excel's
+     canonical `../comments1.xml` form.
+     `rewriteContentTypes` was extended to also ensure an
+     `application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml`
+     override exists for every sheet's `commentsPartPath`.
+- `packages/xlsx/src/commands/add-comment.ts` — handler:
+  resolve sheet → reject ranges via `payload.ref.includes(":")`
+  - parse single-cell ref → reject `empty-text` / `empty-author`
+    → reject `comment-exists` if the cell already has a comment
+    → de-dupe author append → mint `comment-N` id → if first
+    comment for the sheet, mint a fresh `xl/comments{N}.xml`
+    path that doesn't collide with any other sheet's
+    `commentsPartPath` or any container key, and dirty
+    `sheetRels` + `contentTypes` in addition to `comments`. The
+    diff is one `node-inserted` for the comment plus, on first
+    comment, a second `node-inserted` for the new part.
+- `packages/xlsx/src/commands/payloads.ts` — added
+  `AddCommentPayload { sheet, ref, text, author }`.
+- `packages/xlsx/src/commands/registry.ts` — re-ordered the
+  handler list to match the spec's §1–§13 sequence and wired
+  in `addCommentHandler`. Comment in the file is now
+  "13/13 P0 commands shipped"; the deferred section is gone.
+- `packages/xlsx/src/commands/index.ts` and
+  `packages/xlsx/src/index.ts` — re-exported the new handler,
+  payload, and `Comment` type.
+- `packages/xlsx/src/commands/add-sheet.ts` — fresh sheets now
+  initialize `comments: []` and `commentAuthors: []` so the
+  typed surface stays exhaustive.
+
+**Tests landed**
+
+- `packages/xlsx/src/parser/__tests__/comments.test.ts`
+  — **6 tests** covering (a) extraction of authors + comments
+  with stable `comment-N` ids and `<r><t>` run concatenation,
+  (b) empty `<authors/><commentList/>` shape, (c) out-of-range
+  `authorId` falling back to empty author, (d) round-trip
+  parse → serialize → parse equivalence on the typed tuple,
+  (e) XML escaping of `& < > "` in both authors and bodies,
+  (f) `xml:space="preserve"` retention of leading/trailing
+  whitespace.
+- `packages/xlsx/src/commands/add-comment.test.ts` —
+  **11 tests**: first-comment path mints a new
+  `xl/commentsN.xml`, dirties sheet-rels + content-types,
+  attaches the typed `Comment`, and emits two `node-inserted`
+  changes; second comment on the same sheet reuses the same
+  part path and emits exactly one diff change; same-author
+  dedupe; rejection of `comment-exists`, `empty-text`,
+  `empty-author`, `unknown-sheet`, and two flavours of
+  `invalid-ref` (range and malformed); round-trip on a clean
+  fixture preserving all original cell values; round-trip on
+  the `05-comments-hyperlinks.xlsx` fixture preserving every
+  pre-existing comment + author and surfacing the new entry
+  with the right ref / author / text.
+
+**Decisions**
+
+- **Threaded comments stay opaque.** The "modern" comments
+  rewrite (`xl/threadedComments/*` plus the `personList.xml`
+  metadata) layers GUIDs, reply chains, and author personas
+  on top of the classic `<comment>` shape. P0's mandate is to
+  ship the 13 named commands, not the surface they live on,
+  so we keep those parts byte-preserved via `opaqueParts` and
+  defer threaded reply / resolve / unresolve to P1's
+  `xlsx:reply-comment` / `xlsx:resolve-comment` lineup.
+- **VML drawings (`xl/drawings/vmlDrawing*.vml`) deferred.**
+  Excel anchors classic comments visually with a sibling
+  `<v:shape>` document referenced via a `…/vmlDrawing` rel and
+  a `<legacyDrawing>` element on the worksheet. Without it,
+  a freshly added comment round-trips through the data layer
+  but isn't pinned to a screen position when Excel renders the
+  workbook. Acceptable for the headless P0 surface (whose
+  consumers are agents, not human Excel users) and avoids
+  modeling VML — a pre-OOXML markup that would otherwise
+  spread its own parser / serializer through the codebase. P1
+  will add the VML emission alongside `xlsx:edit-comment`.
+- **Plain-text body in P0.** `<text>` can carry rich-text
+  runs (`<r><rPr/><t/></r>` chains). Modeling rich text would
+  duplicate work already lined up for the formatting layer
+  (`xlsx:set-cell-format` already owns the typed style
+  surface). For P0 we flatten incoming runs to a single
+  `text: string` and re-emit a single `<r><t xml:space="preserve">`
+  on serialize. Round-trip on the synthetic fixture is exact;
+  on a workbook with hand-formatted comments the text content
+  is preserved but in-comment formatting (bold spans, colour
+  runs) collapses to plain text.
+- **Author indices via insertion order, not by reference.**
+  `commentAuthors` is appended in command-call order, so the
+  index that `<comment authorId="N">` points at stays stable
+  across mutations. We never re-sort or compact the authors
+  array; deletion of a comment is a P1 concern and will keep
+  the rule even when a referenced author is left dangling.
+- **`relsRelativeTarget` over hard-coded `../comments1.xml`.**
+  The helper computes the rel target the way Excel does: walk
+  up from the owning rels file's directory until the path
+  shares a prefix with the target, then descend. Today every
+  sheet lives in `xl/worksheets/` and every comments part in
+  `xl/`, so we always emit `../commentsN.xml` — but the
+  helper is correct under any future layout (e.g. nested
+  workbooks) without rework.
+
+### Phase 7 — closure (2026-04-18)
+
+All 13 P0 commands now ship through the bus:
+
+| §   | Command                 | Phase | Notes                                                                 |
+| --- | ----------------------- | ----- | --------------------------------------------------------------------- |
+| 1   | `xlsx:set-cell-value`   | 5     | Inline-string emission keeps `xl/sharedStrings.xml` byte-stable.      |
+| 2   | `xlsx:set-cell-formula` | 7f    | Full workbook recalc + cached writebacks; `EC-F1` cycle reporting.    |
+| 3   | `xlsx:set-range-values` | 5     | Row-major matrix; rectangular dimension enforcement.                  |
+| 4   | `xlsx:set-cell-format`  | 7g    | Typed `StyleTable` + content-hash dedupe; semantic styles round-trip. |
+| 5   | `xlsx:insert-row`       | 7i    | Cell shift + workbook-wide formula rewrite + recalc.                  |
+| 6   | `xlsx:insert-column`    | 7i    | Same pipeline, column axis.                                           |
+| 7   | `xlsx:delete-row`       | 7i    | Surfaces `#REF!` casualties via `referenced-cell-deleted`.            |
+| 8   | `xlsx:delete-column`    | 7i    | Same surfacing, column axis.                                          |
+| 9   | `xlsx:merge-cells`      | 5     | 0-based inclusive `MergedCell` regions.                               |
+| 10  | `xlsx:unmerge-cells`    | 5     | Exact range match required.                                           |
+| 11  | `xlsx:add-sheet`        | 7h    | Workbook + content-types + rels rewrite; SheetJS sync.                |
+| 12  | `xlsx:rename-sheet`     | 5     | Cross-sheet formula rewriting deferred to P1.                         |
+| 13  | `xlsx:add-comment`      | 7j    | Classic notes; threaded comments + VML deferred to P1.                |
+
+`@officeai/xlsx` unit tests: **613 passing** (+17 over Phase 7i).
+Workspace integration tests: **53 passing** (incl. xlsx
+roundtrip + agent-edits roundtrip). `pnpm --filter @officeai/xlsx
+test`, `lint`, `build`, and `pnpm format:check` all green.
+
+P1 surface (out of scope for this build):
+`xlsx:edit-comment`, `xlsx:delete-comment`,
+`xlsx:reply-comment`, `xlsx:resolve-comment`,
+`xlsx:reorder-sheet`, `xlsx:delete-sheet`,
+`xlsx:hide-sheet`, `xlsx:set-defined-name`,
+`xlsx:set-hyperlink`, plus the VML drawing emission needed for
+visual comment anchoring in Excel proper.

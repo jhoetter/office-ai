@@ -7,6 +7,7 @@ import {
   type Cell,
   type CellErrorCode,
   type CellValue,
+  type Comment,
   type Formula,
   type MergedCell,
   type OpaquePart,
@@ -14,6 +15,7 @@ import {
   type XlsxSnapshot,
   type XlsxWorkbook,
 } from "../model/types.js";
+import { parseCommentsPart } from "./comments.js";
 import { XlsxParseError } from "./errors.js";
 import { parseStylesXml } from "./styles.js";
 
@@ -26,6 +28,8 @@ const DOC_REL_TYPES = {
   chartsheet: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet",
   dialogsheet: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/dialogsheet",
 } as const;
+
+const COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 
 const WORKBOOK_ROOT_ATTR_PREFIXES = ["xmlns", "xmlns:", "mc:Ignorable", "xml:space"];
 
@@ -43,7 +47,7 @@ const MODELED_EXACT_PATHS = new Set<string>([
   "xl/styles.xml",
 ]);
 
-const MODELED_PREFIXES = ["xl/worksheets/", "xl/_rels/", "xl/comments", "xl/threadedComments/"];
+const MODELED_PREFIXES = ["xl/worksheets/", "xl/_rels/", "xl/comments"];
 
 function isModeledPath(path: string): boolean {
   if (MODELED_EXACT_PATHS.has(path)) return true;
@@ -261,6 +265,8 @@ function resolveSheet(
   const { cells, merges } =
     kind === "worksheet" && ws ? extractCellsAndMerges(ws, styleIdByRef) : EMPTY_CELL_DATA;
 
+  const { commentsPartPath, comments, commentAuthors } = resolveComments(container, partPath);
+
   return {
     id: mintNodeId(),
     sheetId: entry.sheetId,
@@ -272,7 +278,33 @@ function resolveSheet(
     ...(relsPartPath ? { relsPartPath } : {}),
     cells,
     merges,
+    comments,
+    commentAuthors,
+    ...(commentsPartPath ? { commentsPartPath } : {}),
   };
+}
+
+function resolveComments(
+  container: ooxml.OoxmlContainer,
+  sheetPartPath: string
+): {
+  commentsPartPath?: string;
+  comments: ReadonlyArray<Comment>;
+  commentAuthors: ReadonlyArray<string>;
+} {
+  const relsPath = ooxml.RelationshipGraph.relsPathFor(sheetPartPath);
+  if (!container.has(relsPath)) return { comments: [], commentAuthors: [] };
+
+  const rels = ooxml.RelationshipGraph.loadFor(container, sheetPartPath);
+  const commentRel = rels.relationships.find((r) => r.type === COMMENTS_REL_TYPE);
+  if (!commentRel) return { comments: [], commentAuthors: [] };
+
+  const commentsPartPath = resolveTargetPath(sheetPartPath, commentRel.target);
+  if (!container.has(commentsPartPath)) return { comments: [], commentAuthors: [] };
+
+  const xml = container.readText(commentsPartPath);
+  const { authors, comments } = parseCommentsPart(xml, commentsPartPath);
+  return { commentsPartPath, comments, commentAuthors: authors };
 }
 
 const EMPTY_CELL_DATA: { cells: ReadonlyMap<string, Cell>; merges: ReadonlyArray<MergedCell> } = {

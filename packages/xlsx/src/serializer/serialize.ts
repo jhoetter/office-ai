@@ -2,6 +2,7 @@ import { ooxml } from "@officeai/core";
 import * as XLSX from "xlsx";
 import { formatA1 } from "../model/refs.js";
 import type { Cell, Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
+import { serializeCommentsPart } from "./comments.js";
 import { XlsxSerializeError } from "./errors.js";
 import { syncSheetToSheetJS } from "./sheet-sync.js";
 import { serializeStylesXml } from "./styles.js";
@@ -10,6 +11,8 @@ const WORKBOOK_PART = "xl/workbook.xml";
 const STYLES_PART = "xl/styles.xml";
 const WORKSHEET_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
 const WORKSHEET_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+const COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const COMMENTS_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
 
 /**
  * Serialize an `XlsxSnapshot` back to bytes.
@@ -45,21 +48,25 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
 
   const dirty = snapshot.dirty;
   const dirtySheetPaths = dirty.sheets;
-  const unsupportedDirty =
-    dirty.sharedStrings ||
-    dirty.comments.size > 0 ||
-    dirty.threadedComments.size > 0 ||
-    dirty.sheetRels.size > 0;
+  const unsupportedDirty = dirty.sharedStrings || dirty.threadedComments.size > 0;
 
   if (unsupportedDirty) {
     throw new XlsxSerializeError(
       "container-failed",
-      "Serializer supports `sheets` + `workbook` + `styles` + `rels` + `contentTypes`; sst/comments/sheet-rels rewrites land in later phases"
+      "Serializer supports `sheets` + `workbook` + `styles` + `rels` + `contentTypes` + `comments` + `sheetRels`; sst/threadedComments rewrites land in later phases"
     );
   }
 
   if (dirtySheetPaths.size > 0) {
     await rewriteDirtySheets(snapshot, container, dirtySheetPaths);
+  }
+
+  if (dirty.comments.size > 0) {
+    rewriteDirtyComments(snapshot.root, container, dirty.comments);
+  }
+
+  if (dirty.sheetRels.size > 0) {
+    rewriteDirtySheetRels(snapshot.root, container, dirty.sheetRels);
   }
 
   if (dirty.contentTypes) {
@@ -205,8 +212,103 @@ function rewriteContentTypes(workbook: XlsxWorkbook, container: ooxml.OoxmlConta
       ct.addOverride(partName, WORKSHEET_CONTENT_TYPE);
       mutated = true;
     }
+    if (sheet.commentsPartPath) {
+      const commentsPartName = `/${sheet.commentsPartPath}`;
+      if (!ct.hasOverride(commentsPartName)) {
+        ct.addOverride(commentsPartName, COMMENTS_CONTENT_TYPE);
+        mutated = true;
+      }
+    }
   }
   if (mutated) ct.writeBack(container);
+}
+
+/**
+ * Re-emit `xl/comments{N}.xml` for every dirty comments part. The
+ * owning sheet is found by matching `commentsPartPath`. Brand-new
+ * comments parts (the first comment on a sheet) reach this path
+ * because the handler set `commentsPartPath` and dirtied it before
+ * serialize ran.
+ */
+function rewriteDirtyComments(
+  workbook: XlsxWorkbook,
+  container: ooxml.OoxmlContainer,
+  paths: ReadonlySet<string>
+): void {
+  for (const path of paths) {
+    const sheet = workbook.sheets.find((s) => s.commentsPartPath === path);
+    if (!sheet) {
+      throw new XlsxSerializeError("container-failed", `dirty comments path ${path} not owned by any sheet`, {
+        partPath: path,
+      });
+    }
+    const xml = serializeCommentsPart(sheet.commentAuthors, sheet.comments);
+    container.writeText(path, xml);
+  }
+}
+
+/**
+ * Rewrite per-sheet rels parts (`xl/worksheets/_rels/sheetN.xml.rels`)
+ * that have been dirtied — currently this is exclusively driven by
+ * `xlsx:add-comment`, which needs to add a `comments` relationship.
+ *
+ * Strategy: load the existing rels (so any pre-existing hyperlink /
+ * vmlDrawing / drawing rels are preserved verbatim), drop any
+ * relationship typed `…/relationships/comments`, then re-add a single
+ * comments relationship pointing at the sheet's `commentsPartPath`.
+ *
+ * VML drawings — the legacy `<v:shape>` markup that anchors classic
+ * notes visually in Excel — are deferred to P1. Without VML the
+ * comment round-trips in the data layer but won't render with a
+ * pinned position in Excel; the headless P0 surface accepts that.
+ */
+function rewriteDirtySheetRels(
+  workbook: XlsxWorkbook,
+  container: ooxml.OoxmlContainer,
+  paths: ReadonlySet<string>
+): void {
+  for (const relsPath of paths) {
+    const sheet = workbook.sheets.find((s) => ooxml.RelationshipGraph.relsPathFor(s.partPath) === relsPath);
+    if (!sheet) {
+      throw new XlsxSerializeError(
+        "container-failed",
+        `dirty sheet rels path ${relsPath} not owned by any sheet`,
+        { partPath: relsPath }
+      );
+    }
+    const graph = ooxml.RelationshipGraph.loadFor(container, sheet.partPath);
+    for (const r of [...graph.relationships]) {
+      if (r.type === COMMENTS_REL_TYPE) graph.remove(r.id);
+    }
+    if (sheet.commentsPartPath) {
+      const target = relsRelativeTarget(sheet.partPath, sheet.commentsPartPath);
+      graph.add({ type: COMMENTS_REL_TYPE, target });
+    }
+    graph.writeBack(container);
+  }
+}
+
+/**
+ * Compute a rels `Target` from `sheet.partPath` to `commentsPartPath`,
+ * matching how Excel writes the relationship: `../comments1.xml` when
+ * the sheet lives under `xl/worksheets/`.
+ */
+function relsRelativeTarget(ownerPartPath: string, targetPath: string): string {
+  const ownerDir = ownerPartPath.includes("/") ? ownerPartPath.slice(0, ownerPartPath.lastIndexOf("/")) : "";
+  const ownerSegs = ownerDir ? ownerDir.split("/") : [];
+  const targetSegs = targetPath.split("/");
+
+  let common = 0;
+  while (
+    common < ownerSegs.length &&
+    common < targetSegs.length &&
+    ownerSegs[common] === targetSegs[common]
+  ) {
+    common++;
+  }
+  const ups = ownerSegs.length - common;
+  const rest = targetSegs.slice(common).join("/");
+  return ups > 0 ? `${"../".repeat(ups)}${rest}` : rest;
 }
 
 /**

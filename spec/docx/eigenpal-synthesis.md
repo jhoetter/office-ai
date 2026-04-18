@@ -26,12 +26,12 @@ below refers to the active codebase.
 
 Bun + Vite + Playwright monorepo with four workspace packages:
 
-| Package                      | Role                                                                              |
-| ---------------------------- | --------------------------------------------------------------------------------- |
-| `@eigenpal/docx-core`        | Headless OOXML parse / serialize / mutate. No React, no DOM.                      |
-| `@eigenpal/docx-js-editor`   | React UI: paged editor, toolbar, plugins, sidebars.                               |
-| `@eigenpal/docx-editor-vue`  | Empty Vue scaffold ("contributions welcome").                                     |
-| `@eigenpal/docx-editor-agents` (`packages/agent-use`) | Word-like high-level wrapper aimed specifically at LLM use. |
+| Package                                               | Role                                                         |
+| ----------------------------------------------------- | ------------------------------------------------------------ |
+| `@eigenpal/docx-core`                                 | Headless OOXML parse / serialize / mutate. No React, no DOM. |
+| `@eigenpal/docx-js-editor`                            | React UI: paged editor, toolbar, plugins, sidebars.          |
+| `@eigenpal/docx-editor-vue`                           | Empty Vue scaffold ("contributions welcome").                |
+| `@eigenpal/docx-editor-agents` (`packages/agent-use`) | Word-like high-level wrapper aimed specifically at LLM use.  |
 
 Reference materials they ship in-tree (we don't):
 
@@ -103,12 +103,12 @@ AgentCommand union: insertText | replaceText | deleteText | formatText |
 This is more conservative than our `Command<T,P> → Mutation → Diff`
 pipeline. The trade-offs we observed:
 
-| Their model                                          | Ours                                                  |
-| ---------------------------------------------------- | ----------------------------------------------------- |
-| Pure functions, easy to reason about per-command     | Bus + middleware, easier to layer policy / staging    |
-| No structured diff per mutation                      | `DocumentDiff` per mutation, agents can introspect    |
-| LLM dispatcher must replay commands serially         | LLM dispatcher can stage a batch in `pending`         |
-| Built-in "applyReview" batch helper hides errors     | Per-command `Mutation.status` (approved/rejected)     |
+| Their model                                      | Ours                                               |
+| ------------------------------------------------ | -------------------------------------------------- |
+| Pure functions, easy to reason about per-command | Bus + middleware, easier to layer policy / staging |
+| No structured diff per mutation                  | `DocumentDiff` per mutation, agents can introspect |
+| LLM dispatcher must replay commands serially     | LLM dispatcher can stage a batch in `pending`      |
+| Built-in "applyReview" batch helper hides errors | Per-command `Mutation.status` (approved/rejected)  |
 
 Net: our model is right for "AI proposes, human approves" because the
 diff and the staging area are first-class. Theirs is right for "LLM
@@ -155,18 +155,18 @@ Worth stealing in spirit:
 - **Tracked-change-as-proposal API** (`replace`, `proposeInsertion`,
   `proposeDeletion`). This packages "find-and-replace as a tracked
   change" instead of asking the agent to compose `delete-range +
-  insert-text`. Less surface, harder to drift.
+insert-text`. Less surface, harder to drift.
   - We have `accept-change` / `reject-change` on existing tracked
-    revisions but no commands that *create* a tracked change. The
+    revisions but no commands that _create_ a tracked change. The
     agent currently has to insert text plain and then mark it
     manually if it wants the change to be tracked.
     **Action:** add `docx:propose-replacement`, `docx:propose-insertion`,
     `docx:propose-deletion` commands that emit revisions instead of
     plain mutations.
 - **Honest batch API**: `applyReview({ accept, reject, comments,
-  replies, proposals })` collects per-operation errors instead of
+replies, proposals })` collects per-operation errors instead of
   throwing. The return shape is `{ accepted, rejected, commentsAdded,
-  ..., errors: [{ operation, id, error }] }`.
+..., errors: [{ operation, id, error }] }`.
   - Our `applyCommands()` already returns one `Mutation` per command
     with `status: "approved" | "rejected" | "pending"` and a
     `rejection` field — equivalent semantics, slightly more verbose.
@@ -242,20 +242,20 @@ candidate.
 Reading `core/src/docx/` revealed parsers / serializers we don't yet
 have. Ordered by perceived value for our 80% scope:
 
-| Feature                | Their file                            | Our gap                                                  |
-| ---------------------- | ------------------------------------- | -------------------------------------------------------- |
-| Footnotes / endnotes   | `footnoteParser.ts`                   | No model, no parser. Currently re-emitted opaque-only.   |
-| Bookmarks              | `bookmarkParser.ts`                   | No model. Re-emitted opaque.                             |
-| Field codes (`fldChar` / `instrText`) | `fieldParser.ts`     | We unwrap `w:fldSimple` for SDT (P2.3) but not field-code pairs. |
-| Text boxes / shapes    | `textBoxParser.ts`, `shapeParser.ts`  | Treated as opaque. Mostly fine; not editable in 80%.    |
-| Theme parser           | `themeParser.ts`                      | We have nothing. Theme colour resolution is missing.     |
-| Style parser           | `styleParser.ts`                      | We do not parse `word/styles.xml`; toolbar dropdown      |
-|                        |                                       | derives style ids dynamically (good enough for now).     |
-| Selective XML patch    | `selectiveXmlPatch.ts`                | They diff only mutated paragraphs back into the original |
-|                        |                                       | `document.xml` byte stream as a fast-path save. We always|
-|                        |                                       | re-serialize the full body unless `dirty.body === false`.|
-| Run consolidation      | `runConsolidator.ts`                  | We do not collapse adjacent runs with identical rPr.    |
-|                        |                                       | Drift over many edits inflates the doc.                 |
+| Feature                               | Their file                           | Our gap                                                          |
+| ------------------------------------- | ------------------------------------ | ---------------------------------------------------------------- |
+| Footnotes / endnotes                  | `footnoteParser.ts`                  | No model, no parser. Currently re-emitted opaque-only.           |
+| Bookmarks                             | `bookmarkParser.ts`                  | No model. Re-emitted opaque.                                     |
+| Field codes (`fldChar` / `instrText`) | `fieldParser.ts`                     | We unwrap `w:fldSimple` for SDT (P2.3) but not field-code pairs. |
+| Text boxes / shapes                   | `textBoxParser.ts`, `shapeParser.ts` | Treated as opaque. Mostly fine; not editable in 80%.             |
+| Theme parser                          | `themeParser.ts`                     | We have nothing. Theme colour resolution is missing.             |
+| Style parser                          | `styleParser.ts`                     | We do not parse `word/styles.xml`; toolbar dropdown              |
+|                                       |                                      | derives style ids dynamically (good enough for now).             |
+| Selective XML patch                   | `selectiveXmlPatch.ts`               | They diff only mutated paragraphs back into the original         |
+|                                       |                                      | `document.xml` byte stream as a fast-path save. We always        |
+|                                       |                                      | re-serialize the full body unless `dirty.body === false`.        |
+| Run consolidation                     | `runConsolidator.ts`                 | We do not collapse adjacent runs with identical rPr.             |
+|                                       |                                      | Drift over many edits inflates the doc.                          |
 
 Of these, **selective XML patch** is the highest-leverage idea. Their
 `attemptSelectiveSave()` rewrites only the paragraphs that actually
@@ -289,20 +289,20 @@ between a 3 ms save and a 300 ms save.
 
 Sorted by ROI (impact × proximity to the 80% goal):
 
-| ID    | Item                                                              | Phase |
-| ----- | ----------------------------------------------------------------- | ----- |
-| **R1**| `agent.toLlmText()` projection: `[N]`-prefixed paragraphs incl. table cells, with inline tracked-change + comment anchor markers | P3 |
-| **R2**| Optional `search?: string` on `docx:add-comment` for substring-anchored comments | P3 |
-| **R3**| `docx:propose-replacement` / `docx:propose-insertion` / `docx:propose-deletion` commands that emit tracked revisions | P3 |
-| **R4**| `agent.defaultAuthor` setter so commands can omit author per-call | P3 |
-| **R5**| MCP doc-handle session model (`docx:open` → `docId`, `docx:close`) so multi-step LLM flows reuse one parse | P3 |
-| **R6**| Selective save: serialise only dirty paragraphs back into the original `document.xml` bytes | P3 |
-| **R7**| Run consolidator: collapse adjacent runs with identical `rPr` after every commit to avoid drift | P3 |
-| **R8**| Footnotes / endnotes / bookmarks / field codes — typed parsers + serializers | P4 |
-| **R9**| Plugin surface: registry that owns command handlers + MCP tools + ProseMirror extensions from one definition | P4 |
-| **R10**| Theme + style parsers (`themeParser.ts` / `styleParser.ts`) so paragraph-style dropdown stops being heuristic | P4 |
-| **R11**| i18n hooks across toolbar and sidebars                            | P4 |
-| **R12**| Paged WYSIWYG renderer (layout-painter equivalent)                | P5 |
+| ID      | Item                                                                                                                             | Phase |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| **R1**  | `agent.toLlmText()` projection: `[N]`-prefixed paragraphs incl. table cells, with inline tracked-change + comment anchor markers | P3    |
+| **R2**  | Optional `search?: string` on `docx:add-comment` for substring-anchored comments                                                 | P3    |
+| **R3**  | `docx:propose-replacement` / `docx:propose-insertion` / `docx:propose-deletion` commands that emit tracked revisions             | P3    |
+| **R4**  | `agent.defaultAuthor` setter so commands can omit author per-call                                                                | P3    |
+| **R5**  | MCP doc-handle session model (`docx:open` → `docId`, `docx:close`) so multi-step LLM flows reuse one parse                       | P3    |
+| **R6**  | Selective save: serialise only dirty paragraphs back into the original `document.xml` bytes                                      | P3    |
+| **R7**  | Run consolidator: collapse adjacent runs with identical `rPr` after every commit to avoid drift                                  | P3    |
+| **R8**  | Footnotes / endnotes / bookmarks / field codes — typed parsers + serializers                                                     | P4    |
+| **R9**  | Plugin surface: registry that owns command handlers + MCP tools + ProseMirror extensions from one definition                     | P4    |
+| **R10** | Theme + style parsers (`themeParser.ts` / `styleParser.ts`) so paragraph-style dropdown stops being heuristic                    | P4    |
+| **R11** | i18n hooks across toolbar and sidebars                                                                                           | P4    |
+| **R12** | Paged WYSIWYG renderer (layout-painter equivalent)                                                                               | P5    |
 
 R1–R7 are the right shape for a P3 roadmap. R8 onwards is
 post-80% polish.
