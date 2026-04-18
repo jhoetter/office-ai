@@ -9,6 +9,7 @@ import {
   cellKey,
   colToLetter,
   formatA1,
+  formatRange,
   type CellValue,
   type Sheet,
   type XlsxSnapshot,
@@ -17,6 +18,8 @@ import { buildSampleXlsx } from "@/lib/sample-xlsx";
 import { Grid } from "./Grid";
 import {
   formatSelection,
+  isSingle,
+  selectionToRange,
   singleSelection,
   type CellPos,
   type Selection,
@@ -179,19 +182,6 @@ export function XlsxEditor(): ReactNode {
 
   const selectedRef = selection ? formatSelection(selection) : "";
 
-  const handleGridSelect = useCallback(
-    (pos: CellPos, opts?: { extend?: boolean }) => {
-      if (opts?.extend) {
-        setSelection((prev) =>
-          prev ? { anchor: prev.anchor, focus: pos } : singleSelection(pos)
-        );
-      } else {
-        setSelection(singleSelection(pos));
-      }
-    },
-    []
-  );
-
   // Derived display for the formula bar when the user is NOT actively
   // editing it. While the input has focus we surface `formulaDraft`
   // (uncommitted user keystrokes) instead so the snapshot subscription
@@ -202,6 +192,193 @@ export function XlsxEditor(): ReactNode {
     return formatCellValue(selectedCell.value);
   })();
   const formulaValue = formulaFocused ? formulaDraft : derivedFormulaDisplay;
+
+  // Caret offset inside the formula-bar input. We snapshot it on every
+  // selectionchange / keystroke so click-to-insert-ref knows where to
+  // splice the picked cell reference. Stored in a ref (not state) so
+  // touching it doesn't re-render the formula bar mid-keystroke.
+  const formulaCaretRef = useRef<number>(0);
+  const captureCaret = useCallback(() => {
+    const el = formulaInputRef.current;
+    if (!el) return;
+    formulaCaretRef.current = el.selectionStart ?? el.value.length;
+  }, []);
+
+  // We're in "formula edit mode" (Excel's "point mode") whenever the
+  // formula bar is focused AND the draft starts with `=`. Cell clicks
+  // in this mode insert the ref at the caret instead of moving the
+  // selection.
+  const formulaEditing = formulaFocused && formulaDraft.startsWith("=");
+
+  // Pending range we're rendering inside the formula draft as the user
+  // hovers over a cell after Shift+click. While `pendingRefSpan` is
+  // non-null, the slice [from..to] of `formulaDraft` is the live cell
+  // reference text being extended.
+  const pendingRefSpanRef = useRef<{ from: number; to: number } | null>(null);
+  // Anchor cell of the in-progress "point mode" range — captured on
+  // the first cell mousedown after entering formula edit mode so a
+  // subsequent Shift-click / drag can extend the ref into A1:C3.
+  const pendingRefAnchorRef = useRef<CellPos | null>(null);
+
+  const insertRefAtCaret = useCallback(
+    (ref: string) => {
+      const span = pendingRefSpanRef.current;
+      const draft = formulaDraft;
+      let next: string;
+      let nextCaret: number;
+      if (span) {
+        next = draft.slice(0, span.from) + ref + draft.slice(span.to);
+        nextCaret = span.from + ref.length;
+      } else {
+        const caret = formulaCaretRef.current;
+        next = draft.slice(0, caret) + ref + draft.slice(caret);
+        nextCaret = caret + ref.length;
+      }
+      pendingRefSpanRef.current = { from: nextCaret - ref.length, to: nextCaret };
+      formulaCaretRef.current = nextCaret;
+      setFormulaDraft(next);
+      // Re-focus + place caret at the end of the inserted ref so
+      // subsequent typing continues the formula.
+      requestAnimationFrame(() => {
+        const el = formulaInputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [formulaDraft]
+  );
+
+  const handleGridSelect = useCallback(
+    (pos: CellPos, opts?: { extend?: boolean }) => {
+      // Click-to-insert-ref: while the formula bar is in point mode,
+      // a plain click inserts the cell ref at the caret; a drag /
+      // Shift-click extends the previously inserted ref into a range.
+      // The active selection (and therefore the formula's *target*
+      // cell) is intentionally NOT moved here — Excel keeps the
+      // original cell as the destination while the user picks refs.
+      if (formulaEditing) {
+        if (opts?.extend && pendingRefSpanRef.current) {
+          // Build "anchor:focus" from the *first* clicked ref (stored
+          // implicitly in pendingRefAnchorRef) and the new pos.
+          const anchor = pendingRefAnchorRef.current ?? pos;
+          const sel: Selection = {
+            anchor,
+            focus: pos,
+          };
+          const ref =
+            isSingle(sel) ? formatA1(sel.anchor) : formatRange(selectionToRange(sel));
+          insertRefAtCaret(ref);
+        } else {
+          pendingRefSpanRef.current = null;
+          pendingRefAnchorRef.current = pos;
+          insertRefAtCaret(formatA1(pos));
+        }
+        return;
+      }
+
+      // Normal (non-formula) selection behaviour.
+      if (opts?.extend) {
+        setSelection((prev) =>
+          prev ? { anchor: prev.anchor, focus: pos } : singleSelection(pos)
+        );
+      } else {
+        setSelection(singleSelection(pos));
+      }
+      // Pull keyboard focus back to the surface so the next printable
+      // key starts type-to-edit on the new anchor. Focus synchronously
+      // so the active element is already the surface by the time the
+      // user's mouseup completes.
+      surfaceRef.current?.focus({ preventScroll: true });
+    },
+    [formulaEditing, insertRefAtCaret]
+  );
+
+  // Grid-level keyboard handler: when nothing else has focus, a
+  // printable key starts in-formula-bar editing for the active
+  // single-cell anchor. F2 enters with the existing value; Backspace /
+  // Delete clears the cell.
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const onSurfaceKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      // Don't steal keys destined for inputs / buttons / the formula
+      // bar — they have their own onKeyDown.
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "BUTTON" || target.isContentEditable) {
+        return;
+      }
+      if (!selection || !isSingle(selection)) {
+        // Multi-cell selections defer to dedicated commands later
+        // (Delete is the one exception we want to keep).
+        if (e.key !== "Backspace" && e.key !== "Delete") return;
+      }
+
+      if (e.key === "F2") {
+        e.preventDefault();
+        const fi = formulaInputRef.current;
+        if (!fi) return;
+        setFormulaDraft(derivedFormulaDisplay);
+        setFormulaFocused(true);
+        requestAnimationFrame(() => {
+          fi.focus();
+          const len = fi.value.length;
+          fi.setSelectionRange(len, len);
+        });
+        return;
+      }
+
+      if (e.key === "Backspace" || e.key === "Delete") {
+        if (!activeSheet || !selection) return;
+        e.preventDefault();
+        const a = agentRef.current;
+        if (!a) return;
+        // Range-aware clear: dispatch one set-cell-value over each
+        // cell in the normalized selection. Simple loop is fine for
+        // the in-app sizes we expect; a true range-clear command is a
+        // future optimisation.
+        const range = selectionToRange(selection);
+        for (let r = range.start.row; r <= range.end.row; r++) {
+          for (let c = range.start.col; c <= range.end.col; c++) {
+            void a
+              .applyCommand({
+                type: "xlsx:set-cell-value",
+                payload: {
+                  sheet: activeSheet.name,
+                  ref: formatA1({ row: r, col: c }),
+                  value: null,
+                },
+                source: "human",
+              })
+              .catch((err: unknown) => {
+                pushToast("error", err instanceof Error ? err.message : String(err));
+              });
+          }
+        }
+        return;
+      }
+
+      // Type-to-edit: a single printable key starts edit mode and
+      // pre-fills the formula bar with that key.
+      const isPrintable =
+        e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " " ||
+        // Treat Space as an explicit edit-start (replaces existing
+        // contents), since that matches Excel's behaviour.
+        (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey);
+      if (!isPrintable) return;
+      if (!selection || !isSingle(selection)) return;
+      e.preventDefault();
+      setFormulaDraft(e.key === " " ? "" : e.key);
+      setFormulaFocused(true);
+      requestAnimationFrame(() => {
+        const fi = formulaInputRef.current;
+        if (!fi) return;
+        fi.focus();
+        const len = fi.value.length;
+        fi.setSelectionRange(len, len);
+      });
+    },
+    [activeSheet, derivedFormulaDisplay, pushToast, selection]
+  );
 
   const dispatchCellEdit = useCallback(
     async (sheetName: string, ref: string, raw: string) => {
@@ -304,8 +481,11 @@ export function XlsxEditor(): ReactNode {
 
   return (
     <div
+      ref={surfaceRef}
+      tabIndex={0}
+      onKeyDown={onSurfaceKeyDown}
       className={cn(
-        "xlsx-editor relative flex h-full min-h-0 flex-col gap-3",
+        "xlsx-editor relative flex h-full min-h-0 flex-col gap-3 outline-none",
         dragOver && "ring-2 ring-[var(--ai-violet)] ring-offset-2"
       )}
       onDragOver={onDragOver}
@@ -390,14 +570,32 @@ export function XlsxEditor(): ReactNode {
           data-testid="formula-input"
           aria-label="Formula bar"
           value={formulaValue}
-          onChange={(e) => setFormulaDraft(e.target.value)}
+          onChange={(e) => {
+            // A user keystroke invalidates the click-to-insert pending
+            // span — anything they type from here adds to / replaces
+            // the formula instead of extending the picked ref.
+            pendingRefSpanRef.current = null;
+            pendingRefAnchorRef.current = null;
+            setFormulaDraft(e.target.value);
+            captureCaret();
+          }}
+          onSelect={captureCaret}
+          onClick={captureCaret}
           onFocus={() => {
-            setFormulaDraft(derivedFormulaDisplay);
+            // Only seed the draft from the resolved cell value when the
+            // user is focusing the bar fresh (mouse click, Tab). When
+            // type-to-edit has already pre-filled `formulaDraft`, leave
+            // it alone — otherwise the just-typed character would be
+            // clobbered by the cell's prior value.
+            if (formulaDraft === "") setFormulaDraft(derivedFormulaDisplay);
             setFormulaFocused(true);
+            requestAnimationFrame(captureCaret);
           }}
           onBlur={() => {
             setFormulaFocused(false);
             setFormulaDraft("");
+            pendingRefSpanRef.current = null;
+            pendingRefAnchorRef.current = null;
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -407,7 +605,14 @@ export function XlsxEditor(): ReactNode {
               e.preventDefault();
               setFormulaFocused(false);
               setFormulaDraft("");
+              pendingRefSpanRef.current = null;
+              pendingRefAnchorRef.current = null;
               formulaInputRef.current?.blur();
+              // Hand keyboard focus back to the surface so the next
+              // keystroke is "type-to-edit" again.
+              surfaceRef.current?.focus();
+            } else {
+              captureCaret();
             }
           }}
           placeholder={selection ? "Type a value or =formula" : "Select a cell to edit"}

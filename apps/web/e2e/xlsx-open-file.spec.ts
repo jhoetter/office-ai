@@ -1,12 +1,14 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { gotoXlsxEditor } from "./_helpers";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const FIXTURE = path.resolve(__dirname, "../../../fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx");
+// Resolve the fixture relative to the spec's working directory
+// (apps/web). Playwright runs specs from the package root so this is
+// stable across local + CI invocations.
+const FIXTURE = path.resolve(
+  process.cwd(),
+  "../../fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx"
+);
 
 test.describe("xlsx editor: open .xlsx from disk", () => {
   test("loading a fixture replaces the seeded sample workbook", async ({ page }) => {

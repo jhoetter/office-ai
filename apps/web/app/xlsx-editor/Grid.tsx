@@ -132,6 +132,12 @@ export function Grid(props: GridProps): ReactNode {
             aria-selected={inSel || undefined}
             onMouseDown={(e) => {
               if (isEditing) return;
+              // Suppress the browser's default focus shuffle on
+              // mousedown — the parent owns focus management. Without
+              // this, clicking a body cell while the formula bar is in
+              // point mode steals focus away from the input and the
+              // click-to-insert-ref handler never sees `formulaEditing`.
+              e.preventDefault();
               draggingRef.current = true;
               onSelect({ row: r, col: c }, { extend: e.shiftKey });
             }}
