@@ -771,6 +771,12 @@ function serializeCommentsXml(part: import("../model/types.js").PptxCommentsPart
         ":@": { "@_uri": "officeai:resolved", "@_value": c.resolved ? "1" : "0" },
       });
     }
+    if (c.shapeId) {
+      ext.push({
+        "p:ext": [],
+        ":@": { "@_uri": "officeai:shapeAnchor", "@_id": c.shapeId },
+      });
+    }
     if (ext.length > 0) cmChildren.push({ "p:extLst": ext });
     cmEntries.push({ "p:cm": cmChildren, ":@": attrs });
   }

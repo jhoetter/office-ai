@@ -1,6 +1,10 @@
 import type { InlineImageDrawing, OpaqueXml } from "../model/types.js";
 import { opaqueToEntry } from "../parser/xml-helpers.js";
 
+const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+
 /**
  * Serialize an `InlineImageDrawing` back to a fast-xml-parser preserveOrder
  * entry suitable for embedding inside a `<w:r>`.
@@ -15,6 +19,14 @@ import { opaqueToEntry } from "../parser/xml-helpers.js";
  * The emitted shape mirrors what Word writes: a `<w:drawing>` containing a
  * `<wp:inline>` whose graphic data uri is the drawingml/picture URI, with
  * a single `<pic:pic>` referencing the embedded media via `r:embed`.
+ *
+ * Namespaces — `xmlns:wp` is declared locally on `<wp:inline>` (and
+ * `xmlns:a` / `xmlns:pic` on `<a:graphic>` / `<pic:pic>` respectively)
+ * because the document root attrs (`documentRootAttrs`) capture only the
+ * namespaces that were declared by the original author. Synthetic docs
+ * created in-app declare just `xmlns:w` / `xmlns:r`, so without a local
+ * declaration here Word rejects the file with "namespace prefix wp is not
+ * defined" and treats the package as corrupted.
  */
 export function serializeInlineImageDrawing(leaf: InlineImageDrawing): unknown {
   const inlineChildren: unknown[] = [];
@@ -82,16 +94,16 @@ export function serializeInlineImageDrawing(leaf: InlineImageDrawing): unknown {
 
   const pic: Record<string, unknown> = {
     "pic:pic": [nvPicPr, blipFill, spPr],
-    ":@": { "@_xmlns:pic": "http://schemas.openxmlformats.org/drawingml/2006/picture" },
+    ":@": { "@_xmlns:pic": PIC_NS },
   };
 
   const graphicData: Record<string, unknown> = {
     "a:graphicData": [pic],
-    ":@": { "@_uri": "http://schemas.openxmlformats.org/drawingml/2006/picture" },
+    ":@": { "@_uri": PIC_NS },
   };
   const graphic: Record<string, unknown> = {
     "a:graphic": [graphicData],
-    ":@": { "@_xmlns:a": "http://schemas.openxmlformats.org/drawingml/2006/main" },
+    ":@": { "@_xmlns:a": A_NS },
   };
   inlineChildren.push(graphic);
 
@@ -101,14 +113,16 @@ export function serializeInlineImageDrawing(leaf: InlineImageDrawing): unknown {
     }
   }
 
-  const inlineAttrs: Record<string, string> = {};
+  // `xmlns:wp` MUST be declared at or above `<wp:inline>`; we declare it
+  // locally because the document root attrs may not include it (see
+  // function-level comment above).
+  const inlineAttrs: Record<string, string> = { "@_xmlns:wp": WP_NS };
   if (leaf.properties?.distT !== undefined) inlineAttrs["@_distT"] = String(leaf.properties.distT);
   if (leaf.properties?.distB !== undefined) inlineAttrs["@_distB"] = String(leaf.properties.distB);
   if (leaf.properties?.distL !== undefined) inlineAttrs["@_distL"] = String(leaf.properties.distL);
   if (leaf.properties?.distR !== undefined) inlineAttrs["@_distR"] = String(leaf.properties.distR);
 
-  const wpInline: Record<string, unknown> = { "wp:inline": inlineChildren };
-  if (Object.keys(inlineAttrs).length > 0) wpInline[":@"] = inlineAttrs;
+  const wpInline: Record<string, unknown> = { "wp:inline": inlineChildren, ":@": inlineAttrs };
 
   return { "w:drawing": [wpInline] };
 }

@@ -12,6 +12,7 @@ import {
   Redo2,
   TableProperties,
   Keyboard,
+  MessageSquarePlus,
 } from "lucide-react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
@@ -66,6 +67,11 @@ export interface ToolbarProps {
   readonly canTextToColumns: boolean;
   /** Open the keyboard-shortcuts help dialog. */
   readonly onOpenShortcuts: () => void;
+  /**
+   * Focus the comments composer for the active cell. Disabled when
+   * there is no selection (the composer needs an A1 anchor).
+   */
+  readonly onAddComment: () => void;
 }
 
 /**
@@ -103,6 +109,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     onTextToColumns,
     canTextToColumns,
     onOpenShortcuts,
+    onAddComment,
   } = props;
 
   const effective: EffectiveStyle = useMemo(
@@ -215,6 +222,16 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         testId="data-text-to-columns"
         disabled={disabled || !canTextToColumns}
         onClick={onTextToColumns}
+      />
+
+      <Divider />
+
+      <ActionBtn
+        icon={<MessageSquarePlus size={14} />}
+        label="Add comment"
+        testId="action-add-comment"
+        disabled={disabled || !selection}
+        onClick={onAddComment}
       />
 
       <Divider />

@@ -1677,6 +1677,7 @@ function parseCommentsPart(
     let text = "";
     let parentId: string | undefined;
     let resolved: boolean | undefined;
+    let shapeId: string | undefined;
     for (const ch of elementEntries(cmChildren)) {
       const t = ooxml.getTag(ch);
       if (t === "p:pos") {
@@ -1705,6 +1706,9 @@ function parseCommentsPart(
             if (pid) parentId = pid;
           } else if (uri === "officeai:resolved") {
             resolved = attrOf(ext, "value") === "1";
+          } else if (uri === "officeai:shapeAnchor") {
+            const sid = attrOf(ext, "id");
+            if (sid) shapeId = sid;
           }
         }
       }
@@ -1719,6 +1723,7 @@ function parseCommentsPart(
       text,
       ...(parentId ? { parentId } : {}),
       ...(resolved !== undefined ? { resolved } : {}),
+      ...(shapeId ? { shapeId } : {}),
     });
   }
   return { partPath, comments: out };

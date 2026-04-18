@@ -96,6 +96,14 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
   // `applyCommands`, so subscribe fires once per command.
   let pendingFunnelCount = 0;
   let isProjecting = false;
+  // When the funnel routes input through the tracked-changes commands
+  // (`<w:ins>`/`<w:del>` wrappers) we deliberately skip PM's optimistic
+  // apply and let the snapshot-driven re-projection paint the
+  // `revision_mark` spans. This holds the desired post-input selection
+  // (computed from the pre-input doc plus the change delta) so the
+  // re-projection can clamp to the correct cursor instead of falling
+  // back to the stale optimistic position.
+  let pendingTrackedSelection: number | null = null;
 
   // Live-mutable mode + author state. Captured by closure so
   // `dispatchTransaction` always sees the latest values without
@@ -114,11 +122,13 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       }
 
       const before = view.state;
-      // Apply the user's transaction immediately. This is what keeps the
-      // cursor where the user expects it and what makes typing feel native.
-      view.updateState(before.apply(tx));
 
-      if (tx.steps.length === 0) return;
+      if (tx.steps.length === 0) {
+        // Selection-only / metadata transactions: apply locally and
+        // return. There's nothing to mirror to the bus.
+        view.updateState(before.apply(tx));
+        return;
+      }
 
       const result = transactionToCommands(tx, before, {
         ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
@@ -127,18 +137,60 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
         author: trackedAuthor,
       });
       if (result.unsupported.length > 0) opts.onUnsupported?.(result.unsupported);
-      if (result.commands.length === 0) return;
 
-      // Mark these as "self-originated" so the subscribe callback below
-      // does not echo them back as a re-projection (which would clobber
-      // the selection we just preserved).
+      const isTracked =
+        result.commands.length > 0 &&
+        result.commands.some(
+          (c) =>
+            c.type === "docx:insert-text-tracked" ||
+            c.type === "docx:delete-range-tracked"
+        );
+
+      if (isTracked) {
+        // Tracked-changes path: PM's optimistic apply would land the
+        // user's text as PLAIN inline content (no `revision_mark`).
+        // We deliberately skip the optimistic apply and instead let
+        // the bus subscribe callback re-project the snapshot — that
+        // pulls the `<w:ins>`/`<w:del>` wrappers (rendered as
+        // `pm-revision-{ins,del}` spans) into the DOM so the
+        // underline + margin balloons surface immediately.
+        //
+        // We DO need to compute where the cursor should land after
+        // re-projection. PM's selection in `before.apply(tx)` already
+        // reflects the post-input cursor in a hypothetical "plain
+        // text" world; that maps 1:1 onto the snapshot doc because
+        // `revision_mark` is a Mark (not a Node) and adds no
+        // structural offset. We stash that target so the subscribe
+        // re-projection clamps to it instead of the stale `before`
+        // selection.
+        const optimisticState = before.apply(tx);
+        pendingTrackedSelection = optimisticState.selection.from;
+        // Don't call view.updateState — we want PM's DOM to wait for
+        // the snapshot-driven re-projection so the marks land in one
+        // step. Otherwise the user briefly sees plain text, then the
+        // re-projection swaps it for the marked variant.
+        void agent.applyCommands(result.commands).catch((err) => {
+          pendingTrackedSelection = null;
+          opts.onError?.(err);
+        });
+        return;
+      }
+
+      // Edit mode (the historical fast path): apply optimistically
+      // and mark the resulting bus mutations as "self-originated"
+      // so the subscribe callback does not echo them back as a
+      // re-projection (which would clobber the selection we just
+      // preserved).
+      view.updateState(before.apply(tx));
+      if (result.commands.length === 0) return;
       pendingFunnelCount += result.commands.length;
       void agent.applyCommands(result.commands).catch((err) => {
-        // Make sure we don't leak the suppression count if the bus
-        // rejected our commands. Subscribe will not have fired for
-        // rejected commands (handler errors emit an internal mutation
-        // but still call notify), so treat this as a hard reset.
-        pendingFunnelCount = Math.max(0, pendingFunnelCount - result.commands.length);
+        // Make sure we don't leak the suppression count if the
+        // bus rejected our commands.
+        pendingFunnelCount = Math.max(
+          0,
+          pendingFunnelCount - result.commands.length
+        );
         opts.onError?.(err);
       });
     },
@@ -151,18 +203,28 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
     }
 
     // External mutation (e.g. agent prompt, direct agent.applyCommand from
-    // the host UI). Re-project the snapshot and map the selection through
+    // the host UI, or — most commonly — a tracked-changes mutation that
+    // dispatchTransaction routed through the bus without an optimistic
+    // PM apply). Re-project the snapshot and map the selection through
     // the structural change so the cursor doesn't jump to position 0.
+    //
+    // For the tracked-changes path, dispatchTransaction stashed the
+    // intended post-input cursor in `pendingTrackedSelection`; we
+    // consume that here so the cursor lands AFTER the inserted text
+    // (or at the start of a tracked deletion) instead of at the
+    // pre-input position.
     isProjecting = true;
     try {
-      const oldSelectionAnchor = view.state.selection.from;
-      const oldSelectionHead = view.state.selection.to;
+      const trackedTarget = pendingTrackedSelection;
+      pendingTrackedSelection = null;
+      const desiredAnchor = trackedTarget ?? view.state.selection.from;
+      const desiredHead = trackedTarget ?? view.state.selection.to;
+      const oldDocSize = view.state.doc.content.size;
       const pm = docToPM(agent.getSnapshot());
-      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, pm.content);
-      // Best-effort: clamp the previous selection into the new doc.
+      const tr = view.state.tr.replaceWith(0, oldDocSize, pm.content);
       const docSize = tr.doc.content.size;
-      const anchor = clampSelection(tr.doc, Math.min(oldSelectionAnchor, docSize));
-      const head = clampSelection(tr.doc, Math.min(oldSelectionHead, docSize));
+      const anchor = clampSelection(tr.doc, Math.min(desiredAnchor, docSize));
+      const head = clampSelection(tr.doc, Math.min(desiredHead, docSize));
       try {
         tr.setSelection(TextSelection.create(tr.doc, anchor, head));
       } catch {

@@ -4,10 +4,10 @@
  * what the editor actually does.
  *
  * Cross-references:
- *   - DOCX: `apps/web/app/lib/word-shortcuts-keymap.ts`,
- *     `apps/web/app/lib/page-keymap.ts`,
- *     `packages/docx/src/renderer/mount.ts` (PM `baseKeymap` covers
- *     `Mod+B/I` and `Mod+Z/Y` undo/redo).
+ *   - DOCX: `apps/web/app/lib/word-shortcuts-keymap.ts` (inline marks,
+ *     paragraph + list shortcuts), `apps/web/app/lib/page-keymap.ts`
+ *     (Mod+Enter page break), `packages/docx/src/renderer/mount.ts`
+ *     (PM history covers `Mod+Z`/`Mod+Y`/`Mod+Shift+Z`).
  *   - XLSX: `apps/web/app/xlsx-editor/XlsxEditor.tsx` `onSurfaceKeyDown`.
  *   - PPTX: `apps/web/app/lib/pptx-shortcuts.ts`.
  *

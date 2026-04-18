@@ -262,6 +262,13 @@ export interface PptxComment {
   readonly text: string;
   /** Reply-to id (top-level comments leave this undefined). */
   readonly parentId?: string;
+  /**
+   * Optional anchored shape id. When set, the comment is conceptually
+   * attached to that shape (the canvas paints a yellow indicator over
+   * it). Persisted via an `officeai:shapeAnchor` extension on `<p:cm>`
+   * so it round-trips through PowerPoint without losing data.
+   */
+  readonly shapeId?: string;
   /** Synthetic resolved flag — round-tripped via an extLst extension. */
   readonly resolved?: boolean;
 }

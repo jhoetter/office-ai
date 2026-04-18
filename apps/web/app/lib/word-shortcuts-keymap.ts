@@ -19,7 +19,9 @@ import {
  *
  * Bindings (Ctrl on Win/Linux, Cmd on macOS):
  *
- *   Inline marks (PM `baseKeymap` already covers `Mod-B`/`Mod-I`):
+ *   Inline marks:
+ *     Mod-B                  → toggle bold
+ *     Mod-I                  → toggle italic
  *     Mod-U                  → toggle underline
  *     Mod-Shift-X            → toggle strikethrough
  *
@@ -101,7 +103,17 @@ export function dispatchShortcut(
   const code = event.code;
 
   // Inline marks ------------------------------------------------------
-  if (key === "u" && !shift && !alt) {
+  // PM's `baseKeymap` (registered in mountDocxEditor) does NOT include
+  // Mod-B/Mod-I/Mod-U — only structural keys like Enter / Backspace /
+  // Mod-Z. We bind the four core toggles ourselves so muscle memory
+  // works out of the box.
+  if ((key === "b" || key === "B") && !shift && !alt) {
+    return toggleMark(view, agent, "bold");
+  }
+  if ((key === "i" || key === "I") && !shift && !alt) {
+    return toggleMark(view, agent, "italic");
+  }
+  if ((key === "u" || key === "U") && !shift && !alt) {
     return toggleMark(view, agent, "underline");
   }
   if ((key === "x" || key === "X") && shift && !alt) {
@@ -173,10 +185,12 @@ export function dispatchShortcut(
   return false;
 }
 
+type ToggleableMark = "bold" | "italic" | "underline" | "strike";
+
 function toggleMark(
   view: EditorView,
   agent: DocxAgent,
-  mark: "underline" | "strike"
+  mark: ToggleableMark
 ): boolean {
   if (view.state.selection.empty) return false;
   const range = pmSelectionToRange(view.state);
@@ -189,7 +203,15 @@ function toggleMark(
   const currentlyOn = isMarkActiveAt(snap, range.start.paragraph, range.start.offset, mark);
   void agent.applyCommand({
     type: "docx:format-range",
-    payload: { range, format: { [mark]: !currentlyOn } as { underline?: boolean; strike?: boolean } },
+    payload: {
+      range,
+      format: { [mark]: !currentlyOn } as {
+        bold?: boolean;
+        italic?: boolean;
+        underline?: boolean;
+        strike?: boolean;
+      },
+    },
     source: "human",
   });
   return true;
@@ -320,7 +342,7 @@ function isMarkActiveAt(
   snap: DocxSnapshot,
   paragraphIndex: number,
   offset: number,
-  mark: "underline" | "strike"
+  mark: ToggleableMark
 ): boolean {
   const blocks = snap.root.body;
   let pIdx = -1;
@@ -335,12 +357,18 @@ function isMarkActiveAt(
       const next = cursor + text.length;
       if (offset >= cursor && offset <= next) {
         const rpr = child.properties ?? {};
-        if (mark === "underline") {
-          // `underline` is `boolean | string` in the model — both
-          // truthy variants count as "on" for toggle purposes.
-          return rpr.underline !== undefined && rpr.underline !== false;
+        switch (mark) {
+          case "bold":
+            return Boolean(rpr.bold);
+          case "italic":
+            return Boolean(rpr.italic);
+          case "underline":
+            // `underline` is `boolean | string` in the model — both
+            // truthy variants count as "on" for toggle purposes.
+            return rpr.underline !== undefined && rpr.underline !== false;
+          case "strike":
+            return Boolean(rpr.strike);
         }
-        if (mark === "strike") return Boolean(rpr.strike);
       }
       cursor = next;
     }

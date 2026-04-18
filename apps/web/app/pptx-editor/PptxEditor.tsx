@@ -58,6 +58,11 @@ export function PptxEditor(): React.ReactNode {
   const selectedShapeIdRef = useRef<string | null>(null);
   const pushToastRef = useRef<((kind: ToastMessage["kind"], text: string) => void) | null>(null);
   const slideSurfaceRef = useRef<HTMLElement | null>(null);
+  const commentsAsideRef = useRef<HTMLElement | null>(null);
+  // Forces the comments rail visible on narrow screens (it's `lg:block`
+  // by default so it's hidden on tablets/phones). The toolbar "Add
+  // comment" button flips this so the composer is always reachable.
+  const [commentsForceOpen, setCommentsForceOpen] = useState(false);
   const shortcutsDialog = useShortcutsDialog();
 
   const onZoomChange = useCallback((next: number) => {
@@ -173,6 +178,23 @@ export function PptxEditor(): React.ReactNode {
     if (!slide || !selectedShapeId) return null;
     return findShape(slide.shapes, selectedShapeId);
   }, [slide, selectedShapeId]);
+
+  // Shape ids that have an unresolved comment thread on the active
+  // slide. Reply comments and resolved threads are filtered out so the
+  // yellow indicator reads "open conversation".
+  const commentedShapeIds = useMemo<ReadonlyArray<string>>(() => {
+    if (!snap || !slide || !slide.commentsPartPath) return [];
+    const part = snap.root.commentsByPart.get(slide.commentsPartPath);
+    if (!part) return [];
+    const ids = new Set<string>();
+    for (const c of part.comments) {
+      if (c.parentId) continue;
+      if (c.resolved) continue;
+      if (!c.shapeId) continue;
+      ids.add(c.shapeId);
+    }
+    return [...ids];
+  }, [snap, slide]);
 
   const currentFill = useMemo(() => {
     if (!selectedShape || selectedShape.kind !== "text") return null;
@@ -502,6 +524,26 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, onError, selectedShapeId]
   );
 
+  // Toolbar "Add comment" entry point. Force-opens the comments rail
+  // (so it's visible on narrow screens) and focuses the composer
+  // textarea. The composer's own anchor prop reads `selectedShapeId`
+  // synchronously on submit, so shape-anchored vs. free-pin is decided
+  // at the moment the user clicks "Comment", not now.
+  const focusCommentComposer = useCallback(() => {
+    setCommentsForceOpen(true);
+    requestAnimationFrame(() => {
+      const root = commentsAsideRef.current;
+      if (!root) return;
+      const textarea = root.querySelector<HTMLTextAreaElement>(
+        '[data-testid="comment-composer"] textarea'
+      );
+      if (textarea) {
+        textarea.focus();
+        root.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }, []);
+
   usePptxShortcuts({
     surfaceRef: slideSurfaceRef,
     agentRef,
@@ -560,6 +602,7 @@ export function PptxEditor(): React.ReactNode {
         onAlign={(mode) => void alignSelected(mode)}
         onDistribute={(axis) => void distributeSelected(axis)}
         onChangeFill={(h) => void changeFill(h)}
+        onAddComment={focusCommentComposer}
         zoom={zoom}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
@@ -578,7 +621,7 @@ export function PptxEditor(): React.ReactNode {
           e.target.value = "";
         }}
       />
-      <div className="flex min-h-0 flex-1 gap-3">
+      <div className="relative flex min-h-0 flex-1 gap-3">
         <aside
           data-testid="pptx-sidebar"
           className="hidden w-[200px] shrink-0 overflow-y-auto rounded-md border border-divider bg-surface md:block"
@@ -612,6 +655,7 @@ export function PptxEditor(): React.ReactNode {
                 onSelectionChange={setSelectedShapeIds}
                 onTextSelectionChange={setTextSelection}
                 selectedShapeIds={selectedShapeIds}
+                commentedShapeIds={commentedShapeIds}
               />
             </div>
           ) : null}
@@ -622,27 +666,58 @@ export function PptxEditor(): React.ReactNode {
             </div>
           ) : null}
         </section>
-        {snap && agent ? (
+        {snap && agent && commentsForceOpen ? (
           <aside
+            ref={commentsAsideRef}
             data-testid="pptx-comments-sidebar"
-            className="hidden w-[260px] shrink-0 overflow-y-auto rounded-md border border-divider bg-surface p-2 lg:block"
+            className="absolute right-0 top-0 bottom-0 z-30 w-[280px] overflow-y-auto rounded-md border border-divider bg-surface p-2 shadow-lg"
           >
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-secondary">Comments</span>
+              <button
+                type="button"
+                onClick={() => setCommentsForceOpen(false)}
+                title="Hide comments"
+                aria-label="Hide comments"
+                className="rounded px-1 text-xs text-secondary hover:bg-hover"
+              >
+                ×
+              </button>
+            </div>
             <CommentsSidebar
               key={`comments-${activeIndex}-${tick}`}
               provider={createPptxCommentsProvider({ agent, slideIndex: activeIndex })}
               author="You"
-              emptyHint="No comments on this slide yet."
+              emptyHint="No comments on this slide yet. Select a shape and press Add comment, or comment on the slide as a whole."
             />
             <div className="mt-2">
               <CommentComposer
                 provider={createPptxCommentsProvider({ agent, slideIndex: activeIndex })}
-                anchor={{
-                  kind: "pptx-pin",
-                  slideIndex: activeIndex,
-                  xEmu: Math.round(slideSize.cxEmu / 2),
-                  yEmu: Math.round(slideSize.cyEmu / 2),
-                }}
-                placeholder="Add a comment to this slide…"
+                anchor={
+                  selectedShape && selectedShape.position
+                    ? {
+                        kind: "pptx-pin",
+                        slideIndex: activeIndex,
+                        xEmu:
+                          selectedShape.position.xEmu +
+                          Math.round((selectedShape.size?.cxEmu ?? 0) / 2),
+                        yEmu:
+                          selectedShape.position.yEmu +
+                          Math.round((selectedShape.size?.cyEmu ?? 0) / 2),
+                        shapeId: selectedShape.id,
+                      }
+                    : {
+                        kind: "pptx-pin",
+                        slideIndex: activeIndex,
+                        xEmu: Math.round(slideSize.cxEmu / 2),
+                        yEmu: Math.round(slideSize.cyEmu / 2),
+                      }
+                }
+                placeholder={
+                  selectedShape
+                    ? `Comment on ${selectedShape.name || "selected shape"}…`
+                    : "Add a comment to this slide…"
+                }
               />
             </div>
           </aside>

@@ -162,14 +162,39 @@ function readActive(
   const italic = collapse(props.map((p) => p.italic === true));
   const underline = collapse(props.map((p) => p.underline === true || typeof p.underline === "string"));
   const strike = collapse(props.map((p) => p.strike === true));
-  const fontFamily = collapse(props.map((p) => p.fontFamily));
-  const fontSizePt = collapse(
-    props.map((p) => (p.fontSizeHundredths !== undefined ? hundredthsOfPtToPt(p.fontSizeHundredths) : undefined))
+  // PowerPoint defaults: when the runs don't carry an explicit
+  // `latin@typeface` / `sz` / `solidFill` we fall back to the
+  // theme-equivalent defaults the SVG renderer effectively shows
+  // (Calibri 18pt black). Showing concrete values in the dropdowns —
+  // rather than the placeholder "Font" / "Size" — matches PowerPoint
+  // and makes the toolbar feel "live" the moment a shape is selected,
+  // even before the user enters edit mode.
+  const fontFamily = collapseWithDefault(props.map((p) => p.fontFamily), DEFAULT_FONT_FAMILY);
+  const fontSizePt = collapseWithDefault(
+    props.map((p) => (p.fontSizeHundredths !== undefined ? hundredthsOfPtToPt(p.fontSizeHundredths) : undefined)),
+    DEFAULT_FONT_SIZE_PT
   );
-  const color = collapse(props.map((p) => normalizeColor(p.color)));
+  const color = collapseWithDefault(props.map((p) => normalizeColor(p.color)), DEFAULT_COLOR);
   const highlight = collapse(props.map((p) => normalizeColor(p.highlight)));
 
   return { bold, italic, underline, strike, fontFamily, fontSizePt, color, highlight };
+}
+
+const DEFAULT_FONT_FAMILY = "Calibri";
+const DEFAULT_FONT_SIZE_PT = 18;
+const DEFAULT_COLOR = "000000";
+
+/**
+ * Like `collapse` but substitutes `defaultValue` for `undefined` entries
+ * before collapsing. Lets us treat "no explicit run-level value" as
+ * the PowerPoint default so the toolbar always reflects something —
+ * while still surfacing MIXED when a real conflict exists.
+ */
+function collapseWithDefault<T>(
+  values: ReadonlyArray<T | undefined>,
+  defaultValue: T
+): MaybeMixed<T> {
+  return collapse(values.map((v) => (v === undefined ? defaultValue : v)));
 }
 
 function collectAllRuns(shape: TextShape): TextRun[] {

@@ -111,7 +111,12 @@ export function KeyboardShortcutsDialog(props: KeyboardShortcutsDialogProps) {
                 <ul className="flex flex-col gap-1">
                   {group.entries.map((entry) => (
                     <li
-                      key={`${group.category}-${entry.label}`}
+                      // Some labels are intentionally shared across
+                      // multiple bindings (e.g. Backspace + Delete both
+                      // map to "Delete selected shape(s)") — include the
+                      // key combo in the React key so siblings stay
+                      // unique.
+                      key={`${group.category}-${entry.label}-${entry.keys.join("+")}`}
                       className={`flex items-center justify-between gap-3 rounded px-2 py-1.5 ${
                         entry.status === "planned"
                           ? "text-secondary opacity-60"

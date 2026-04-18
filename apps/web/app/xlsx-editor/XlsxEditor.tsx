@@ -12,6 +12,7 @@ import {
   flattenCellXf,
   formatA1,
   formatRange,
+  parseA1,
   tokenizeForDisplay,
   type CellFormatPatch,
   type CellValue,
@@ -23,7 +24,13 @@ import {
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import { computeXlsxActive, createXlsxFormatProvider } from "./xlsxFormatProvider";
 import { buildSampleXlsx } from "@/lib/sample-xlsx";
-import { Grid, type RefRect, type GridContextTarget, type MarchingAntsRect } from "./Grid";
+import {
+  Grid,
+  type CommentMarker,
+  type GridContextTarget,
+  type MarchingAntsRect,
+  type RefRect,
+} from "./Grid";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { FormulaHighlight } from "./FormulaHighlight";
 import {
@@ -270,6 +277,28 @@ export function XlsxEditor(): ReactNode {
   }, [formulaValue]);
   const refColors = useMemo(() => assignRefColors(formulaTokens), [formulaTokens]);
 
+  // Cells that carry an unresolved (top-level) comment. Walks the
+  // active sheet's comments — replies and resolved threads are
+  // skipped so the yellow marker reads "open conversation here".
+  const commentMarkers: ReadonlyArray<CommentMarker> = useMemo(() => {
+    if (!activeSheet) return [];
+    const out: CommentMarker[] = [];
+    const seen = new Set<string>();
+    for (const c of activeSheet.comments) {
+      if (c.parentId) continue;
+      if (c.resolved) continue;
+      if (seen.has(c.ref)) continue;
+      seen.add(c.ref);
+      try {
+        const addr = parseA1(c.ref);
+        out.push({ row: addr.row, col: addr.col });
+      } catch {
+        // Malformed ref — skip silently rather than break the grid.
+      }
+    }
+    return out;
+  }, [activeSheet]);
+
   const refRects: ReadonlyArray<RefRect> = useMemo(() => {
     if (formulaTokens.length === 0) return [];
     if (!activeSheet) return [];
@@ -442,6 +471,22 @@ export function XlsxEditor(): ReactNode {
   // single-cell anchor. F2 enters with the existing value; Backspace /
   // Delete clears the cell.
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const commentsAsideRef = useRef<HTMLElement | null>(null);
+  const [commentsForceOpen, setCommentsForceOpen] = useState(false);
+  const focusCommentComposer = useCallback(() => {
+    setCommentsForceOpen(true);
+    requestAnimationFrame(() => {
+      const root = commentsAsideRef.current;
+      if (!root) return;
+      const textarea = root.querySelector<HTMLTextAreaElement>(
+        '[data-testid="comment-composer"] textarea'
+      );
+      if (textarea) {
+        textarea.focus();
+        root.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }, []);
   // Move the active selection one cell in the given direction, with
   // optional Shift-extend. Pure helper — no side effects beyond
   // calling setSelection.
@@ -1694,6 +1739,7 @@ export function XlsxEditor(): ReactNode {
           canTextToColumns={canTextToColumns}
           onTextToColumns={onTextToColumns}
           onOpenShortcuts={() => shortcutsDialog.setOpen(true)}
+          onAddComment={focusCommentComposer}
         />
       ) : null}
 
@@ -1819,7 +1865,7 @@ export function XlsxEditor(): ReactNode {
         </div>
       </div>
 
-      <div className="relative flex flex-1 min-h-0 gap-2">
+      <div className="relative flex flex-1 min-h-0">
         <div className="relative flex-1 min-h-0">
         {activeSheet && snapshot ? (
           <Grid
@@ -1831,6 +1877,7 @@ export function XlsxEditor(): ReactNode {
             onResizeColumn={onResizeColumn}
             onResizeRow={onResizeRow}
             refRects={refRects}
+            commentMarkers={commentMarkers}
             onSelectAxis={handleAxisSelect}
             onContextMenu={onContextMenuOpen}
             marchingAnts={
@@ -1862,16 +1909,29 @@ export function XlsxEditor(): ReactNode {
           </div>
         )}
         </div>
-        {agent && activeSheet ? (
+        {agent && activeSheet && commentsForceOpen ? (
           <aside
+            ref={commentsAsideRef}
             data-testid="xlsx-comments-sidebar"
-            className="hidden w-[260px] shrink-0 flex-col gap-2 overflow-y-auto rounded-md border border-divider bg-surface p-2 lg:flex"
+            className="absolute right-0 top-0 bottom-0 z-30 flex w-[280px] flex-col gap-2 overflow-y-auto rounded-md border border-divider bg-surface p-2 shadow-lg"
           >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-secondary">Comments</span>
+              <button
+                type="button"
+                onClick={() => setCommentsForceOpen(false)}
+                title="Hide comments"
+                aria-label="Hide comments"
+                className="rounded px-1 text-xs text-secondary hover:bg-hover"
+              >
+                ×
+              </button>
+            </div>
             <CommentsSidebar
               key={`xlsx-comments-${activeSheet.name}-${revision}`}
               provider={createXlsxCommentsProvider({ agent, sheetName: activeSheet.name })}
               author="You"
-              emptyHint="No comments on this sheet yet."
+              emptyHint="No comments on this sheet yet. Select a cell and press Add comment in the toolbar."
             />
             {selection ? (
               <CommentComposer

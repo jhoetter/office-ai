@@ -19,6 +19,7 @@ import {
   FileUp,
   Image as ImageIcon,
   Keyboard,
+  MessageSquarePlus,
   Minus,
   MoveRight,
   Plus,
@@ -60,6 +61,12 @@ export interface PptxToolbarProps {
   readonly onAlign: (mode: AlignMode) => void;
   readonly onDistribute: (axis: "horizontal" | "vertical") => void;
   readonly onChangeFill: (hex: string | null) => void;
+  /**
+   * Open the comments composer. The editor decides where the new pin
+   * lands: shape-anchored when a shape is selected, free-pin centred
+   * on the slide otherwise.
+   */
+  readonly onAddComment: () => void;
   readonly zoom: number;
   readonly minZoom: number;
   readonly maxZoom: number;
@@ -241,6 +248,14 @@ export function PptxToolbar(props: PptxToolbarProps) {
         disabled={disabled || !hasSelection}
         onChange={(hex) => props.onChangeFill(hex)}
         onClear={() => props.onChangeFill(null)}
+      />
+      <Sep />
+      <ToolbarButton
+        onClick={props.onAddComment}
+        icon={<MessageSquarePlus size={14} />}
+        label={hasSelection ? "Comment on selected shape" : "Add comment to slide"}
+        disabled={disabled}
+        testId="pptx-add-comment"
       />
       <Sep />
       <div className="ml-auto flex items-center gap-2 text-xs text-secondary">

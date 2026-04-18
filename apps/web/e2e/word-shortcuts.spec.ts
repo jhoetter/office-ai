@@ -13,6 +13,27 @@ import { focusEditor, gotoEditor, selectAll, selectParagraphContaining } from ".
  * keystroke is wired up and lands in the right command.
  */
 test.describe("editor: Word keyboard shortcuts", () => {
+  test("Mod+B on a selection wraps it in <strong> (bold)", async ({ page }) => {
+    await gotoEditor(page);
+    await selectAll(page);
+
+    await page.keyboard.press("ControlOrMeta+b");
+
+    // The PM `bold` mark serialises to <strong> in the renderer.
+    const strongs = page.locator(".ProseMirror strong");
+    await expect(strongs.first()).toBeVisible();
+  });
+
+  test("Mod+I on a selection wraps it in <em> (italic)", async ({ page }) => {
+    await gotoEditor(page);
+    await selectAll(page);
+
+    await page.keyboard.press("ControlOrMeta+i");
+
+    const ems = page.locator(".ProseMirror em");
+    await expect(ems.first()).toBeVisible();
+  });
+
   test("Mod+U on a selection wraps it in <u> (underline)", async ({ page }) => {
     await gotoEditor(page);
     await selectAll(page);

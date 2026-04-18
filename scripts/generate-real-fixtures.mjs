@@ -19,9 +19,10 @@
 //
 // All fixtures stay below 50 KB (verified at write time).
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import JSZip from "jszip";
 import {
   AlignmentType,
   CommentRangeEnd,
@@ -36,8 +37,10 @@ import {
   InsertedTextRun,
   LevelFormat,
   PageBreak,
+  PageOrientation,
   Packer,
   Paragraph,
+  ShadingType,
   Table,
   TableCell,
   TableRow,
@@ -373,11 +376,209 @@ async function commentsAndChanges() {
   );
 }
 
+// ── 08 — shaded callout (single-cell table with fill + bold colored text) ──
+//
+// Mirrors the "Theoretische Grundlage" / "Definition" callouts in the DSR
+// thesis chapter: a 1×1 table whose cell carries `<w:shd w:fill="…"/>`
+// plus a paragraph with a colored bold run. Exercises Phase 2 (typed table
+// shading + run-mark fidelity).
+async function shadedCalloutTable() {
+  const filledCell = new TableCell({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    shading: { fill: "DDEBF7", type: ShadingType.CLEAR, color: "auto" },
+    children: [
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Theoretical foundation:", bold: true, color: "1B3A5C" }),
+        ],
+      }),
+      new Paragraph({
+        children: [
+          new TextRun(
+            "Design Science Research is a research paradigm that focuses on "
+              + "creating innovative artifacts that solve real-world problems."
+          ),
+        ],
+      }),
+    ],
+  });
+  await write(
+    "08-shaded-callout-table",
+    new Document({
+      creator: "officeAI",
+      sections: [
+        {
+          properties: {},
+          children: [
+            new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("Methodology")] }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [new TableRow({ children: [filledCell] })],
+            }),
+            new Paragraph({
+              children: [
+                new TextRun(
+                  "The callout above is a 1×1 table with cell shading. Word and the DSR "
+                    + "thesis use this pattern for definition / aside boxes."
+                ),
+              ],
+            }),
+          ],
+        },
+      ],
+    })
+  );
+}
+
+// ── 09 — multi-column section ───────────────────────────────────────────
+//
+// One section configured for two equal-width columns with column spacing.
+// Exercises Phase 5 (per-section <w:cols> projection + page-decoration grid).
+async function multiColumnSection() {
+  const para = (text) => new Paragraph({ children: [new TextRun(text)] });
+  await write(
+    "09-multi-column-section",
+    new Document({
+      creator: "officeAI",
+      sections: [
+        {
+          properties: {
+            column: { count: 2, space: 720, equalWidth: true },
+          },
+          children: [
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun("Newsletter")],
+            }),
+            para(
+              "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus sit amet "
+                + "quam laoreet, vehicula odio in, viverra elit. Suspendisse potenti."
+            ),
+            para(
+              "Vivamus rutrum tincidunt nibh, vitae ullamcorper magna pharetra eget. Nulla "
+                + "facilisi. Aliquam erat volutpat. Donec quis arcu dapibus nibh."
+            ),
+            para(
+              "Pellentesque habitant morbi tristique senectus et netus et malesuada fames "
+                + "ac turpis egestas. Curabitur vitae ipsum nec turpis tristique."
+            ),
+            para(
+              "Nullam id orci eget mauris malesuada feugiat ut ut leo. Etiam suscipit purus "
+                + "id ipsum aliquet, vitae bibendum risus accumsan."
+            ),
+            para(
+              "Suspendisse potenti. Aenean rhoncus malesuada ipsum, eget viverra justo "
+                + "vehicula nec. Praesent volutpat sapien at quam laoreet eleifend."
+            ),
+          ],
+        },
+      ],
+    })
+  );
+}
+
+// ── 10 — landscape section break ────────────────────────────────────────
+//
+// Two sections: the first portrait, the second landscape. Exercises Phase 5
+// (per-section page-geometry switching) and Phase 1's per-chunk filler.
+async function landscapeSection() {
+  const para = (text) => new Paragraph({ children: [new TextRun(text)] });
+  await write(
+    "10-landscape-section",
+    new Document({
+      creator: "officeAI",
+      sections: [
+        {
+          properties: {
+            page: { size: { orientation: PageOrientation.PORTRAIT } },
+          },
+          children: [
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun("Portrait page")],
+            }),
+            para("Body content sized for portrait (8.5\" × 11\")."),
+            para("More portrait body content."),
+          ],
+        },
+        {
+          properties: {
+            page: { size: { orientation: PageOrientation.LANDSCAPE } },
+          },
+          children: [
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun("Landscape page")],
+            }),
+            para("Body content sized for landscape (11\" × 8.5\")."),
+            para("Used for wide tables, charts, screenshots."),
+          ],
+        },
+      ],
+    })
+  );
+}
+
+// ── 11 — anchored textbox (mc:AlternateContent + wps:txbx) ─────────────
+//
+// Word's high-level API in the `docx` npm package does not emit textboxes,
+// but real Word/LibreOffice docs use them constantly. We hand-craft this
+// fixture by re-using the styled-letter as a chassis (so it carries
+// styles.xml, theme1.xml, fontTable.xml, settings.xml, etc.) and replacing
+// `word/document.xml` with a body that contains a `mc:AlternateContent`
+// drawing wrapping a `wps:wsp` shape with `wps:txbx` inner content.
+//
+// The textbox carries a small fill, a black stroke, and one paragraph of
+// inner text. Round-trip is byte-equal because the parser keeps the full
+// `mc:AlternateContent` subtree in its `raw` cache (see Phase 4 plan).
+const TEXTBOX_DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document
+    xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
+    xmlns:v="urn:schemas-microsoft-com:vml"
+    xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+    xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    xmlns:w10="urn:schemas-microsoft-com:office:word"
+    xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+    xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"
+    xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+    xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk"
+    xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"
+    xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+    xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+    xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+    mc:Ignorable="w14 w15 wp14"><w:body><w:p><w:r><w:t xml:space="preserve">Body paragraph before the textbox.</w:t></w:r></w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="45720" distB="45720" distL="114300" distR="114300" simplePos="0" relativeHeight="251659264" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:posOffset>1828800</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2743200" cy="914400"/><wp:effectExtent l="0" t="0" r="19050" b="19050"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Text Box 1"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></wps:spPr><wps:txbx><w:txbxContent><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Note:</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">This is a floating textbox anchored to the page margin.</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr rot="0" spcFirstLastPara="0" vertOverflow="overflow" horzOverflow="overflow" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" numCol="1" spcCol="0" rtlCol="0" fromWordArt="0" anchor="t" anchorCtr="0" forceAA="0" compatLnSpc="1"><a:prstTxWarp prst="textNoShape"><a:avLst/></a:prstTxWarp><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="Text Box 1" o:spid="_x0000_s1026" type="#_x0000_t202" style="position:absolute;margin-left:144pt;margin-top:0;width:216pt;height:72pt;z-index:251659264;mso-wrap-distance-left:9pt;mso-wrap-distance-top:3.6pt;mso-wrap-distance-right:9pt;mso-wrap-distance-bottom:3.6pt;mso-position-horizontal-relative:margin;mso-position-vertical-relative:text" fillcolor="#fff2cc" strokecolor="black" strokeweight=".75pt"><v:textbox><w:txbxContent><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Note:</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">This is a floating textbox anchored to the page margin.</w:t></w:r></w:p></w:txbxContent></v:textbox><w10:wrap type="square" anchorx="margin"/></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t xml:space="preserve">Inline text continuing after the anchor.</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Body paragraph after the textbox.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:cols w:space="720"/><w:docGrid w:linePitch="360"/></w:sectPr></w:body></w:document>`;
+
+async function textboxFixture() {
+  // Use the styled-letter as a chassis: it ships styles.xml, theme1.xml,
+  // fontTable.xml, settings.xml, etc. Replace document.xml with our
+  // hand-rolled textbox-bearing body.
+  const chassisPath = resolve(outRoot, "01-styled-letter.docx");
+  const chassisBytes = await readFile(chassisPath);
+  const zip = await JSZip.loadAsync(chassisBytes);
+  zip.file("word/document.xml", TEXTBOX_DOCUMENT_XML);
+  const buf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  if (buf.length > MAX_SIZE) {
+    throw new Error(`11-textbox.docx exceeded size budget: ${buf.length} > ${MAX_SIZE} bytes`);
+  }
+  const path = resolve(outRoot, "11-textbox.docx");
+  await writeFile(path, buf);
+  console.log(`✓ wrote ${path} (${buf.length} bytes)`);
+}
+
 await styledLetter();
 await reportWithHeadersFooters();
 await numberedList();
 await tableGrid();
 await inlineImage();
 await commentsAndChanges();
+await shadedCalloutTable();
+await multiColumnSection();
+await landscapeSection();
+await textboxFixture();
 
 console.log("\nDone. See fixtures/docx/MANIFEST.md.");

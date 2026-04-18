@@ -68,9 +68,11 @@ export interface AddCommentPayload {
   readonly xEmu?: number;
   readonly yEmu?: number;
   /**
-   * Optional anchored shape id; reserved for future "shape-pinned"
-   * comments. Currently informational; the comment still persists at
-   * the supplied pin coordinates.
+   * Optional anchored shape id. When set, the comment is pinned at
+   * `(xEmu, yEmu)` *and* tagged with the shape id; the editor uses
+   * this to paint a yellow indicator over the anchored shape until
+   * the thread is resolved. Persisted via the
+   * `officeai:shapeAnchor` extension on `<p:cm>` so it round-trips.
    */
   readonly shapeId?: string;
 }

@@ -63,6 +63,14 @@ export interface SlideCanvasProps {
    * MIXED-state pickers and the `pptx:format-text` dispatch range.
    */
   readonly onTextSelectionChange?: (sel: PptxTextSelection | null) => void;
+  /**
+   * Shape ids that carry an unresolved comment thread. The canvas
+   * paints a soft yellow outline + corner badge over each matching
+   * shape so the user can spot anchored conversations at a glance.
+   * The parent owns the resolved/unresolved logic; the canvas just
+   * draws what it's told.
+   */
+  readonly commentedShapeIds?: ReadonlyArray<string>;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
@@ -558,12 +566,20 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           snapped={preview.anchorSnap}
         />
       ) : null}
+      {props.commentedShapeIds && props.commentedShapeIds.length > 0 ? (
+        <CommentMarkerOverlay
+          slide={slide}
+          slideSize={slideSize}
+          shapeIds={props.commentedShapeIds}
+        />
+      ) : null}
       <SelectionOverlaySvg
         slide={slide}
         slideSize={slideSize}
         selectedIds={selectedIds}
         previewBoxes={preview?.boxes ?? null}
         dragMode={drag?.mode ?? null}
+        editingId={editingId}
       />
       {marquee && containerRef.current ? (
         <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
@@ -996,6 +1012,14 @@ interface SelectionOverlayProps {
   readonly selectedIds: ReadonlyArray<string>;
   readonly previewBoxes: ReadonlyMap<string, BoundingBox> | null;
   readonly dragMode: DragMode | null;
+  /**
+   * The shape currently being text-edited, if any. The TextEditOverlay
+   * draws its own dashed border in the same purple, so duplicating it
+   * here (plus the 8 resize handles) creates the "chunky textarea"
+   * look we explicitly want to avoid — PowerPoint suppresses the
+   * shape chrome while the caret is in the text body.
+   */
+  readonly editingId: string | null;
 }
 
 /**
@@ -1013,10 +1037,18 @@ function SelectionOverlaySvg({
   selectedIds,
   previewBoxes,
   dragMode,
+  editingId,
 }: SelectionOverlayProps): React.ReactElement | null {
   if (selectedIds.length === 0) return null;
+  // Suppress chrome (outline + handles + move zone) for the shape being
+  // text-edited. The TextEditOverlay paints a dashed border itself and
+  // the contenteditable owns hit-testing, so any extra rect here would
+  // either visually double the border or steal pointer events away
+  // from the caret.
+  const visibleIds = editingId ? selectedIds.filter((id) => id !== editingId) : selectedIds;
+  if (visibleIds.length === 0) return null;
   const entries: { id: string; box: BoundingBox }[] = [];
-  for (const id of selectedIds) {
+  for (const id of visibleIds) {
     const sh = findShape(slide.shapes, id);
     if (!sh) continue;
     const base = shapeBoundingBox(sh);
@@ -1367,6 +1399,77 @@ function escAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
+interface CommentMarkerOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly shapeIds: ReadonlyArray<string>;
+}
+
+/**
+ * SVG overlay that paints a soft yellow outline + corner badge over
+ * every shape that carries an unresolved comment. Drawn behind the
+ * selection chrome so a selected commented shape still reads as
+ * "selected"; the yellow border bleeds out from underneath.
+ */
+function CommentMarkerOverlay({
+  slide,
+  slideSize,
+  shapeIds,
+}: CommentMarkerOverlayProps): React.ReactElement | null {
+  const boxes: { id: string; box: BoundingBox }[] = [];
+  for (const id of shapeIds) {
+    const sh = findShape(slide.shapes, id);
+    if (!sh) continue;
+    const box = shapeBoundingBox(sh);
+    if (!box) continue;
+    boxes.push({ id, box });
+  }
+  if (boxes.length === 0) return null;
+  const badgeR = 8;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      {boxes.map(({ id, box }) => {
+        const x = px(box.x);
+        const y = px(box.y);
+        const w = px(box.cx);
+        const h = px(box.cy);
+        return (
+          <g key={`comment-marker-${id}`}>
+            <rect
+              x={x}
+              y={y}
+              width={w}
+              height={h}
+              fill="rgba(250, 204, 21, 0.12)"
+              stroke="#f59e0b"
+              strokeWidth={2}
+              strokeOpacity={0.85}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+            <circle
+              cx={x + w}
+              cy={y}
+              r={badgeR}
+              fill="#f59e0b"
+              stroke="white"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function renderEditingOverlay(
   slide: Slide,
   shapeId: string,
@@ -1379,30 +1482,13 @@ function renderEditingOverlay(
   if (!shape || shape.kind !== "text") return null;
   const box = shapeBoundingBox(shape);
   if (!box) return null;
-  const leftPct = (box.x / slideSize.cxEmu) * 100;
-  const topPct = (box.y / slideSize.cyEmu) * 100;
-  const widthPct = (box.cx / slideSize.cxEmu) * 100;
-  const heightPct = (box.cy / slideSize.cyEmu) * 100;
-  const fontPx = estimateFontPx(shape, dpi);
   return (
     <TextEditOverlay
       key={shapeId}
       shape={shape as TextShape}
-      style={{
-        position: "absolute",
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        width: `${widthPct}%`,
-        height: `${heightPct}%`,
-        padding: 4,
-        boxSizing: "border-box",
-        outline: "2px solid #7c3aed",
-        background: "rgba(255,255,255,0.95)",
-        fontSize: fontPx,
-        fontFamily: "sans-serif",
-        whiteSpace: "pre-wrap",
-        overflow: "auto",
-      }}
+      box={box}
+      slideSize={slideSize}
+      dpi={dpi}
       onCommit={(t) => onCommit(shape as TextShape, t)}
       onSelectionChange={onTextSelectionChange}
     />
@@ -1411,7 +1497,9 @@ function renderEditingOverlay(
 
 interface TextEditOverlayProps {
   readonly shape: TextShape;
-  readonly style: React.CSSProperties;
+  readonly box: BoundingBox;
+  readonly slideSize: SlideSize;
+  readonly dpi: number;
   readonly onCommit: (text: string) => void;
   readonly onSelectionChange?: (sel: PptxTextSelection | null) => void;
 }
@@ -1433,12 +1521,40 @@ interface TextEditOverlayProps {
  */
 function TextEditOverlay({
   shape,
-  style,
+  box,
+  slideSize,
+  dpi,
   onCommit,
   onSelectionChange,
 }: TextEditOverlayProps): React.ReactElement {
   const ref = React.useRef<HTMLDivElement>(null);
   const initialPlain = React.useMemo(() => textShapePlain(shape), [shape]);
+
+  // The SVG renders at 1 SVG-unit = 1 CSS px at 96 DPI, then the
+  // browser scales the SVG to fit its container. Our HTML overlay
+  // lives in the same container but receives raw CSS px, so we have
+  // to multiply font sizes / insets by the same scale factor or the
+  // overlay text appears noticeably larger than the underlying
+  // rendered shape (and the user perceives it as "the font changed
+  // when I clicked to edit").
+  const [scale, setScale] = React.useState(1);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const parent = node.parentElement as HTMLDivElement | null;
+    containerRef.current = parent;
+    if (!parent || typeof ResizeObserver === "undefined") return;
+    const slideNativeWidth = slideSize.cxEmu / EMU_PER_PX_AT_96DPI;
+    const update = (): void => {
+      const w = parent.getBoundingClientRect().width;
+      if (w > 0 && slideNativeWidth > 0) setScale(w / slideNativeWidth);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [slideSize.cxEmu]);
 
   React.useEffect(() => {
     const node = ref.current;
@@ -1495,13 +1611,62 @@ function TextEditOverlay({
     return () => document.removeEventListener("selectionchange", handler);
   }, [onSelectionChange, shape.id]);
 
+  const leftPct = (box.x / slideSize.cxEmu) * 100;
+  const topPct = (box.y / slideSize.cyEmu) * 100;
+  const widthPct = (box.cx / slideSize.cxEmu) * 100;
+  const heightPct = (box.cy / slideSize.cyEmu) * 100;
+  const insetsEmu = readBodyInsetsFromShape(shape);
+  const anchor = readBodyAnchorFromShape(shape);
+  const baseFontPx = (estimateFontPtFromShape(shape) * dpi) / 72;
+  // Pick the same default font the SVG renderer uses so the text
+  // doesn't visibly switch to the system sans-serif when the caret
+  // enters the shape. We prefer an explicit run-level font (the most
+  // accurate signal), then fall back to PowerPoint's default body
+  // typeface (Calibri) — only finally to "sans-serif" if a browser
+  // doesn't have Calibri installed.
+  const baseFontFamily = estimateFontFamilyFromShape(shape);
+  const justifyContent =
+    anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
+  const padTop = (insetsEmu.t / EMU_PER_PX_AT_96DPI) * scale;
+  const padRight = (insetsEmu.r / EMU_PER_PX_AT_96DPI) * scale;
+  const padBottom = (insetsEmu.b / EMU_PER_PX_AT_96DPI) * scale;
+  const padLeft = (insetsEmu.l / EMU_PER_PX_AT_96DPI) * scale;
+
   return (
     <div
       ref={ref}
       contentEditable
       suppressContentEditableWarning
       data-testid="pptx-text-overlay"
-      style={style}
+      style={{
+        position: "absolute",
+        left: `${leftPct}%`,
+        top: `${topPct}%`,
+        width: `${widthPct}%`,
+        height: `${heightPct}%`,
+        boxSizing: "border-box",
+        // Match the visual idiom of the dashed selection rectangle
+        // shown in shape-select mode — never the heavy solid frame
+        // that made the overlay read as a chunky textarea instead of
+        // a still-selected shape.
+        outline: "1.5px dashed #7c3aed",
+        outlineOffset: 0,
+        background: "transparent",
+        caretColor: "#7c3aed",
+        paddingTop: padTop,
+        paddingRight: padRight,
+        paddingBottom: padBottom,
+        paddingLeft: padLeft,
+        fontSize: baseFontPx * scale,
+        fontFamily: baseFontFamily,
+        lineHeight: 1.2,
+        whiteSpace: "pre-wrap",
+        wordWrap: "break-word",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent,
+      }}
       onBlur={(e) => {
         // Don't commit when focus moves to a sibling we explicitly
         // marked as "keep editing focus" (the format toolbar). The
@@ -1525,17 +1690,33 @@ function TextEditOverlay({
       }}
     >
       {shape.txBody.paragraphs.map((p, pi) => (
-        <div key={pi} data-paragraph={pi}>
-          {paragraphToReact(p, pi)}
+        <div key={pi} data-paragraph={pi} style={paragraphStyle(p)}>
+          {paragraphToReact(p, pi, scale, dpi)}
         </div>
       ))}
     </div>
   );
 }
 
+function paragraphStyle(
+  p: TextShape["txBody"]["paragraphs"][number]
+): React.CSSProperties {
+  const align =
+    p.properties.alignment === "center"
+      ? "center"
+      : p.properties.alignment === "right"
+        ? "right"
+        : p.properties.alignment === "justify"
+          ? "justify"
+          : "left";
+  return { textAlign: align };
+}
+
 function paragraphToReact(
   p: TextShape["txBody"]["paragraphs"][number],
-  paragraphIndex: number
+  paragraphIndex: number,
+  scale: number,
+  dpi: number
 ): React.ReactNode {
   const flatLen = p.runs.reduce((acc, r) => acc + (r.isLineBreak ? 0 : r.text.length), 0);
   if (flatLen === 0) {
@@ -1546,14 +1727,18 @@ function paragraphToReact(
   return p.runs.map((r, ri) => {
     if (r.isLineBreak) return <br key={ri} data-run={ri} />;
     return (
-      <span key={ri} data-run={ri} style={runStyle(r.properties)}>
+      <span key={ri} data-run={ri} style={runStyle(r.properties, scale, dpi)}>
         {r.text}
       </span>
     );
   });
 }
 
-function runStyle(props: TextShape["txBody"]["paragraphs"][number]["runs"][number]["properties"]): React.CSSProperties {
+function runStyle(
+  props: TextShape["txBody"]["paragraphs"][number]["runs"][number]["properties"],
+  scale: number,
+  dpi: number
+): React.CSSProperties {
   const out: React.CSSProperties = {};
   if (props.bold) out.fontWeight = 700;
   if (props.italic) out.fontStyle = "italic";
@@ -1566,9 +1751,53 @@ function runStyle(props: TextShape["txBody"]["paragraphs"][number]["runs"][numbe
   if (props.fontFamily) out.fontFamily = props.fontFamily;
   if (props.fontSizeHundredths !== undefined) {
     const pt = props.fontSizeHundredths / 100;
-    out.fontSize = `${pt}pt`;
+    out.fontSize = `${(pt * dpi * scale) / 72}px`;
   }
   return out;
+}
+
+function readBodyAnchorFromShape(shape: TextShape): "t" | "ctr" | "b" {
+  const bodyPr = shape.txBody.bodyPrRaw;
+  const v = bodyPr?.attrs?.anchor ?? bodyPr?.rawAttrs?.["@_anchor"];
+  if (v === "ctr") return "ctr";
+  if (v === "b") return "b";
+  return "t";
+}
+
+function readBodyInsetsFromShape(
+  shape: TextShape
+): { l: number; r: number; t: number; b: number } {
+  const bodyPr = shape.txBody.bodyPrRaw;
+  const get = (key: string, dflt: number): number => {
+    const raw = bodyPr?.attrs?.[key] ?? bodyPr?.rawAttrs?.[`@_${key}`];
+    if (typeof raw !== "string") return dflt;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : dflt;
+  };
+  return {
+    l: get("lIns", 91440),
+    r: get("rIns", 91440),
+    t: get("tIns", 45720),
+    b: get("bIns", 45720),
+  };
+}
+
+function estimateFontPtFromShape(shape: TextShape): number {
+  const r = shape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak);
+  if (r?.properties.fontSizeHundredths !== undefined) {
+    return r.properties.fontSizeHundredths / 100;
+  }
+  return 18;
+}
+
+function estimateFontFamilyFromShape(shape: TextShape): string {
+  for (const para of shape.txBody.paragraphs) {
+    for (const r of para.runs) {
+      if (r.isLineBreak) continue;
+      if (r.properties.fontFamily) return `${r.properties.fontFamily}, sans-serif`;
+    }
+  }
+  return "Calibri, sans-serif";
 }
 
 function domPointToCharOffset(
@@ -1636,11 +1865,3 @@ function textShapePlain(shape: TextShape): string {
     .join("\n");
 }
 
-function estimateFontPx(shape: TextShape, dpi: number = DEFAULT_DPI): number {
-  const r = shape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak);
-  if (r?.properties.fontSizeHundredths !== undefined) {
-    const pt = r.properties.fontSizeHundredths / 100;
-    return (pt * dpi) / 72;
-  }
-  return (18 * dpi) / 72; // default 18pt
-}

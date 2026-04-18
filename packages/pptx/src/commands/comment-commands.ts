@@ -60,6 +60,7 @@ export const addCommentHandler: CommandHandler<AddCommentPayload, PptxSnapshot> 
       text: payload.text,
       xEmu: payload.xEmu ?? Math.round(snapshot.root.slideSize.cxEmu / 2),
       yEmu: payload.yEmu ?? Math.round(snapshot.root.slideSize.cyEmu / 2),
+      ...(payload.shapeId ? { shapeId: payload.shapeId } : {}),
     });
   },
 };
@@ -182,6 +183,7 @@ interface NewCommentInput {
   readonly xEmu: number;
   readonly yEmu: number;
   readonly parentId?: string;
+  readonly shapeId?: string;
 }
 
 function commitNewComment(ctx: CommentMutation, input: NewCommentInput) {
@@ -214,6 +216,7 @@ function commitNewComment(ctx: CommentMutation, input: NewCommentInput) {
     yEmu: input.yEmu,
     text: input.text,
     ...(input.parentId ? { parentId: input.parentId } : {}),
+    ...(input.shapeId ? { shapeId: input.shapeId } : {}),
   };
   const updatedCommentsPart: PptxCommentsPart = {
     ...existingPart,

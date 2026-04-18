@@ -119,6 +119,17 @@ export interface GridProps {
    * its own `<input>` runs the show.
    */
   readonly liveEditDraft?: { readonly row: number; readonly col: number; readonly draft: string } | null;
+  /**
+   * Cells that carry an unresolved comment thread. Rendered with a
+   * yellow border + soft fill behind the cell content (Word/Excel
+   * convention) so the user can spot commented anchors at a glance.
+   */
+  readonly commentMarkers?: ReadonlyArray<CommentMarker>;
+}
+
+export interface CommentMarker {
+  readonly row: number;
+  readonly col: number;
 }
 
 export interface MarchingAntsRect {
@@ -172,6 +183,7 @@ export function Grid(props: GridProps): ReactNode {
     marchingAnts,
     onFill,
     liveEditDraft,
+    commentMarkers,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -647,6 +659,59 @@ export function Grid(props: GridProps): ReactNode {
     }
   }
 
+  // Unresolved-comment markers. Rendered behind the selection marquee
+  // so the marquee always wins on overlap, but in front of cell content
+  // so the soft yellow fill reads through to the user. We also render a
+  // tiny triangular tag at the top-right of the cell — Excel parity.
+  const commentOverlays: ReactNode[] = [];
+  if (commentMarkers && commentMarkers.length > 0) {
+    for (let i = 0; i < commentMarkers.length; i++) {
+      const m = commentMarkers[i]!;
+      if (m.row < 0 || m.row >= TOTAL_ROWS) continue;
+      if (m.col < 0 || m.col >= TOTAL_COLS) continue;
+      const top = HEADER_ROW_HEIGHT + rowYs[m.row]!;
+      const left = HEADER_COL_WIDTH + colXs[m.col]!;
+      const width = colXs[m.col + 1]! - colXs[m.col]!;
+      const height = rowYs[m.row + 1]! - rowYs[m.row]!;
+      commentOverlays.push(
+        <div
+          key={`comment-cell-${m.row}-${m.col}`}
+          data-testid={`comment-marker-${m.row}-${m.col}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            top,
+            left,
+            width,
+            height,
+            border: "1.5px solid #f59e0b",
+            background: "rgba(250, 204, 21, 0.18)",
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 3,
+          }}
+        />
+      );
+      commentOverlays.push(
+        <div
+          key={`comment-tag-${m.row}-${m.col}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            top,
+            left: left + width - 7,
+            width: 0,
+            height: 0,
+            borderTop: "7px solid #f59e0b",
+            borderLeft: "7px solid transparent",
+            pointerEvents: "none",
+            zIndex: 3,
+          }}
+        />
+      );
+    }
+  }
+
   // Marching-ants clipboard source overlay (Phase 13d). Drawn behind
   // the active selection marquee so the user can still see what's
   // currently selected; the dashed border keeps moving until the user
@@ -948,6 +1013,7 @@ export function Grid(props: GridProps): ReactNode {
         {rowHeaders}
         {cellList}
         {refHighlights}
+        {commentOverlays}
         {antsOverlay}
         {fillPreviewOverlay}
         {marquee}

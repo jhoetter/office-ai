@@ -339,6 +339,33 @@ describe("docx images — parser, serializer, insert-image (P1.3 / W8)", () => {
     expect(docRels.find((r) => r.id === img.relId)?.type).toMatch(/\/relationships\/image$/);
   });
 
+  // Regression: inserting an image into a doc whose <w:document> root only
+  // declares xmlns:w / xmlns:r used to emit <wp:inline> without a wp:
+  // namespace declaration anywhere in scope, which makes Word reject the
+  // file as corrupt ("namespace prefix wp on inline is not defined"). The
+  // serializer now declares xmlns:wp locally on the <wp:inline> element.
+  it("declares xmlns:wp on <wp:inline> so Word can parse the drawing", async () => {
+    const agent = await loadAgent(["x"]);
+    await agent.applyCommand({
+      type: "docx:insert-image",
+      payload: {
+        at: { paragraph: 0 },
+        data: PNG_1x1,
+        mimeType: "image/png",
+        width: 16,
+        height: 16,
+      },
+      source: "human",
+    });
+    const snap = agent.getSnapshot();
+    const buf = await serializeDocx(snap);
+    const reloaded = await ooxml.OoxmlContainer.load(buf);
+    const docXml = reloaded.readText("word/document.xml");
+    expect(docXml).toMatch(
+      /<wp:inline[^>]*xmlns:wp="http:\/\/schemas\.openxmlformats\.org\/drawingml\/2006\/wordprocessingDrawing"/
+    );
+  });
+
   it("does not dirty media/rels/contentTypes when inserting bytes that match an existing media digest", async () => {
     const agent = await loadAgent(["one", "two"]);
     await agent.applyCommand({
