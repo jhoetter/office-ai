@@ -9,6 +9,7 @@ import type {
   RelationshipsSnap,
   Shape,
   Slide,
+  TableShape,
   TextBody,
   TextParagraph,
   TextRun,
@@ -127,6 +128,8 @@ function shapeToEntry(shape: Shape): Record<string, unknown> {
       return pictureToEntry(shape);
     case "group":
       return groupShapeToEntry(shape);
+    case "table":
+      return tableShapeToEntry(shape);
     case "opaque":
       return opaqueShapeToEntry(shape);
   }
@@ -270,6 +273,78 @@ function opaqueShapeToEntry(shape: OpaqueShape): Record<string, unknown> {
   return opaqueToEntry(shape.raw);
 }
 
+function tableShapeToEntry(shape: TableShape): Record<string, unknown> {
+  const nvChildren: unknown[] = [];
+  let emittedCNvPr = false;
+  for (const o of shape.nvGraphicFramePrTail) {
+    if (o.tag === "p:cNvPr" && !emittedCNvPr) {
+      nvChildren.push(rebuildCNvPr(shape.cNvPrId, shape.name, o));
+      emittedCNvPr = true;
+    } else {
+      nvChildren.push(opaqueToEntry(o));
+    }
+  }
+  if (!emittedCNvPr) {
+    nvChildren.unshift(
+      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
+    );
+  }
+  const nvGraphicFramePr = makeEntry("p:nvGraphicFramePr", nvChildren);
+
+  const xfrmChildren: unknown[] = [];
+  if (shape.position) {
+    xfrmChildren.push(
+      makeEntry("a:off", [], {
+        x: String(shape.position.xEmu),
+        y: String(shape.position.yEmu),
+      })
+    );
+  }
+  if (shape.size) {
+    xfrmChildren.push(
+      makeEntry("a:ext", [], {
+        cx: String(shape.size.cxEmu),
+        cy: String(shape.size.cyEmu),
+      })
+    );
+  }
+  const xfrm = makeEntry("p:xfrm", xfrmChildren);
+
+  // <a:tbl>
+  const tblChildren: unknown[] = [];
+  if (shape.tblPrRaw) tblChildren.push(opaqueToEntry(shape.tblPrRaw));
+  else tblChildren.push(makeEntry("a:tblPr", []));
+
+  const gridChildren: unknown[] = shape.columnWidths.map((w) =>
+    makeEntry("a:gridCol", [], { w: String(w) })
+  );
+  tblChildren.push(makeEntry("a:tblGrid", gridChildren));
+
+  for (const row of shape.rows) {
+    const trChildrenOut: unknown[] = [];
+    for (const cell of row.cells) {
+      const tcChildrenOut: unknown[] = [];
+      tcChildrenOut.push(textBodyToEntryWith("a:txBody", cell.txBody));
+      if (cell.tcPrRaw) tcChildrenOut.push(opaqueToEntry(cell.tcPrRaw));
+      const tcEntry: Record<string, unknown> = { "a:tc": tcChildrenOut };
+      if (Object.keys(cell.tcAttrs).length > 0) {
+        tcEntry[ATTR_KEY] = makeRawAttrs(cell.tcAttrs);
+      }
+      trChildrenOut.push(tcEntry);
+    }
+    const trAttrs: Record<string, string> = { ...row.trAttrs, h: String(row.height) };
+    const trEntry: Record<string, unknown> = { "a:tr": trChildrenOut };
+    trEntry[ATTR_KEY] = makeRawAttrs(trAttrs);
+    tblChildren.push(trEntry);
+  }
+  const tbl = makeEntry("a:tbl", tblChildren);
+
+  const graphicData = makeEntry("a:graphicData", [tbl], { uri: shape.graphicDataUri });
+  const graphic = makeEntry("a:graphic", [graphicData]);
+
+  return makeEntry("p:graphicFrame", [nvGraphicFramePr, xfrm, graphic]);
+}
+
 function rebuildCNvPr(id: number, name: string, captured: OpaqueXml): Record<string, unknown> {
   // Preserve any sub-children of the original p:cNvPr (e.g. <a:hlinkClick>).
   const attrs: Record<string, string> = { ...captured.attrs };
@@ -338,13 +413,17 @@ function buildGroupXfrm(
 // ─── Text body serialization ──────────────────────────────────────────────
 
 function textBodyToEntry(body: TextBody): Record<string, unknown> {
+  return textBodyToEntryWith("p:txBody", body);
+}
+
+function textBodyToEntryWith(tag: "p:txBody" | "a:txBody", body: TextBody): Record<string, unknown> {
   const children: unknown[] = [];
   if (body.bodyPrRaw) children.push(opaqueToEntry(body.bodyPrRaw));
   else children.push(makeEntry("a:bodyPr", []));
   if (body.lstStyleRaw) children.push(opaqueToEntry(body.lstStyleRaw));
   else children.push(makeEntry("a:lstStyle", []));
   for (const p of body.paragraphs) children.push(paragraphToEntry(p));
-  return makeEntry("p:txBody", children);
+  return makeEntry(tag, children);
 }
 
 function paragraphToEntry(p: TextParagraph): Record<string, unknown> {

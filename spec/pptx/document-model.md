@@ -143,7 +143,7 @@ export interface Slide {
 ## Shapes
 
 ```typescript
-export type Shape = TextShape | Picture | GroupShape | OpaqueShape;
+export type Shape = TextShape | Picture | TableShape | GroupShape | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 
@@ -206,6 +206,56 @@ export interface Picture extends ShapeBase {
   readonly blipFillTail: ReadonlyArray<OpaqueXml>;
   readonly spPrTail: ReadonlyArray<OpaqueXml>;
   readonly styleRaw?: OpaqueXml;
+}
+
+/**
+ * A `<p:graphicFrame>` whose `<a:graphicData>` hosts an `<a:tbl>`
+ * (the only `graphicFrame` payload typed in F2 — charts and SmartArt
+ * stay `OpaqueShape`).
+ *
+ * Cell text is fully typed (paragraphs → runs) so `set-cell-text` can
+ * roundtrip cleanly. Cell visual properties (`<a:tcPr>`, fills, borders)
+ * stay opaque, mirroring the conservative posture taken for picture
+ * `<p:blipFill>` tails.
+ */
+export interface TableShape extends ShapeBase {
+  readonly kind: "table";
+  /** `<a:tblGrid>` column widths (EMU). One entry per column. */
+  readonly columnWidths: ReadonlyArray<number>;
+  /** Row data; rows[i].cells.length === columnWidths.length. */
+  readonly rows: ReadonlyArray<TableRow>;
+  /** `<a:tblPr>` — visual style ref, fills, banded settings. Verbatim. */
+  readonly tblPrRaw?: OpaqueXml;
+  /**
+   * `<p:nvGraphicFramePr>` and `<p:graphicFramePr>` heads — verbatim
+   * (cNvPr id+name are the only fields typed via `ShapeBase`).
+   */
+  readonly nvGraphicFramePrTail: ReadonlyArray<OpaqueXml>;
+  /** `<a:graphicData @uri>` — always `"…/drawingml/2006/table"` for tables. */
+  readonly graphicDataUri: string;
+}
+
+export interface TableRow {
+  readonly id: NodeId;
+  /** Row height (EMU). `<a:tr @h>`. */
+  readonly height: number;
+  readonly cells: ReadonlyArray<TableCell>;
+  /** Anything on `<a:tr>` we don't model (e.g. `@thStr`). Verbatim. */
+  readonly trAttrs: Readonly<Record<string, string>>;
+}
+
+export interface TableCell {
+  readonly id: NodeId;
+  /** Typed cell text body. Same shape as `TextShape.txBody`. */
+  readonly txBody: TextBody;
+  /** `<a:tcPr>` — borders, fill, anchor. Verbatim. */
+  readonly tcPrRaw?: OpaqueXml;
+  /**
+   * `<a:tc>` attributes (`@gridSpan`, `@rowSpan`, `@hMerge`, `@vMerge`).
+   * Re-emitted verbatim. F2 commands do NOT model merges yet — splits/
+   * merges raise `not-applicable`.
+   */
+  readonly tcAttrs: Readonly<Record<string, string>>;
 }
 
 /** A `<p:grpSp>` group. Children are typed but P0 only moves the group as a unit. */

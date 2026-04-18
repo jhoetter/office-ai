@@ -155,7 +155,7 @@ export interface Slide {
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-export type Shape = TextShape | Picture | GroupShape | OpaqueShape;
+export type Shape = TextShape | Picture | TableShape | GroupShape | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 
@@ -195,6 +195,44 @@ export interface Picture extends ShapeBase {
   readonly blipFillTail: ReadonlyArray<OpaqueXml>;
   readonly spPrTail: ReadonlyArray<OpaqueXml>;
   readonly styleRaw?: OpaqueXml;
+}
+
+/**
+ * `<p:graphicFrame>` whose `<a:graphicData>` hosts an `<a:tbl>`.
+ * The only typed `graphicFrame` payload — chart and SmartArt frames
+ * remain `OpaqueShape`. Cell text is fully typed; cell visual properties
+ * (`<a:tcPr>`) and the surrounding `<a:tblPr>` stay opaque.
+ */
+export interface TableShape extends ShapeBase {
+  readonly kind: "table";
+  /** Per-column widths in EMU. `<a:tblGrid> <a:gridCol w=…>`. */
+  readonly columnWidths: ReadonlyArray<number>;
+  /** Row data; rows[i].cells.length === columnWidths.length. */
+  readonly rows: ReadonlyArray<TableRow>;
+  /** `<a:tblPr>` — verbatim. */
+  readonly tblPrRaw?: OpaqueXml;
+  /** `<p:nvGraphicFramePr>` tail (sans `<p:cNvPr>` we typed). Verbatim. */
+  readonly nvGraphicFramePrTail: ReadonlyArray<OpaqueXml>;
+  /** `<a:graphicData @uri>`. Always the table URI for a TableShape. */
+  readonly graphicDataUri: string;
+}
+
+export interface TableRow {
+  readonly id: NodeId;
+  /** Row height (EMU). `<a:tr @h>`. */
+  readonly height: number;
+  readonly cells: ReadonlyArray<TableCell>;
+  /** Other `<a:tr>` attributes (e.g. `@thStr`). Verbatim. */
+  readonly trAttrs: Readonly<Record<string, string>>;
+}
+
+export interface TableCell {
+  readonly id: NodeId;
+  readonly txBody: TextBody;
+  /** `<a:tcPr>`. Verbatim. */
+  readonly tcPrRaw?: OpaqueXml;
+  /** `<a:tc>` attrs (gridSpan, hMerge, vMerge, …). Verbatim. */
+  readonly tcAttrs: Readonly<Record<string, string>>;
 }
 
 export interface GroupShape extends ShapeBase {

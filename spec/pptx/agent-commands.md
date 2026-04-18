@@ -348,6 +348,116 @@ Errors:
 
 Diff: `{ kind: "node-inserted", path: ["slides", slideIndex, "shapes", newIdx], summary: "text-box" }`.
 
+## Commands (F2 — Tables)
+
+> All five table commands operate on a `TableShape` resolved by
+> `(slideIndex, shapeId)`. They reject `not-applicable` for any other
+> shape kind. Cell coordinates are 0-based row/column indexes into
+> `rows[]` / `rows[r].cells[]`.
+
+### `pptx:table-set-cell-text`
+
+```typescript
+type TableSetCellTextPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  row: number;
+  column: number;
+  /** Plain text. "\n" splits paragraphs (mirrors `pptx:set-text`). */
+  text: string;
+};
+```
+
+Replace the targeted cell's `txBody.paragraphs` with a single new
+paragraph per `\n`-split chunk (a single empty paragraph if `text === ""`).
+Run properties default to the empty `TextRunProperties` so the existing
+cell `<a:tcPr>` continues to drive styling.
+
+Errors:
+
+- `unknown-target` — slide / shape / cell coordinates out of bounds.
+- `not-applicable` — shape is not a `TableShape`.
+
+Diff: `{ kind: "node-updated", path: ["slides", N, "shapes", M, "rows", row, "cells", column, "txBody"], field: "text", summary: "…" }`.
+
+### `pptx:table-add-row`
+
+```typescript
+type TableAddRowPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  /** 0-based insert position. Defaults to `rows.length` (append). */
+  at?: number;
+  /** Row height in EMU. Defaults to the median of existing rows. */
+  height?: number;
+};
+```
+
+Mint a fresh row with `columnWidths.length` empty cells (each cell's
+`txBody` carries one empty paragraph). Cell `tcPrRaw` defaults to
+`undefined` and `tcAttrs = {}`.
+
+Errors:
+
+- `invalid-position` — `at < 0 || at > rows.length`.
+- `unknown-target` — slide / shape not found.
+- `not-applicable` — shape is not a `TableShape`.
+
+Diff: `{ kind: "node-inserted", path: ["slides", N, "shapes", M, "rows", at], summary: "row" }`.
+
+### `pptx:table-delete-row`
+
+```typescript
+type TableDeleteRowPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  row: number;
+};
+```
+
+Drop `rows[row]`. Rejects `invalid-payload` if the table has only one
+row (PowerPoint refuses to render zero-row tables).
+
+Diff: `{ kind: "node-removed", path: ["slides", N, "shapes", M, "rows", row], summary: "row" }`.
+
+### `pptx:table-add-column`
+
+```typescript
+type TableAddColumnPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  /** 0-based insert position. Defaults to `columnWidths.length` (append). */
+  at?: number;
+  /** Column width (EMU). Defaults to `Math.round(totalWidth / oldCount)`. */
+  width?: number;
+};
+```
+
+Append/insert into `columnWidths` AND into every row's `cells[]`. New
+cells are empty (one empty paragraph), `tcPrRaw=undefined`, `tcAttrs={}`.
+
+Errors:
+
+- `invalid-position` — `at < 0 || at > columnWidths.length`.
+- `not-applicable` — shape is not a `TableShape`.
+
+Diff: `{ kind: "node-inserted", path: ["slides", N, "shapes", M, "columnWidths", at], summary: "column" }`.
+
+### `pptx:table-delete-column`
+
+```typescript
+type TableDeleteColumnPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  column: number;
+};
+```
+
+Symmetrical to `delete-row`: drop entry `column` from `columnWidths`
+AND from every row's `cells`. Rejects if the table only has one column.
+
+Diff: `{ kind: "node-removed", path: ["slides", N, "shapes", M, "columnWidths", column], summary: "column" }`.
+
 ## Diff format per command
 
 Each handler returns a `DocumentDiff` whose `changes` describe what

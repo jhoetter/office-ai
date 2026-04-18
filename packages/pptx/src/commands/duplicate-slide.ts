@@ -191,6 +191,50 @@ function deepCloneShape(
       };
       return c;
     }
+    case "table": {
+      const c: Shape = {
+        ...s,
+        id,
+        cNvPrId,
+        nvGraphicFramePrTail: s.nvGraphicFramePrTail.map(cloneOpaque),
+        ...(s.tblPrRaw ? { tblPrRaw: cloneOpaque(s.tblPrRaw) } : {}),
+        columnWidths: [...s.columnWidths],
+        rows: s.rows.map((r) => ({
+          ...r,
+          id: mintNodeId(),
+          trAttrs: { ...r.trAttrs },
+          cells: r.cells.map((cell) => ({
+            ...cell,
+            id: mintNodeId(),
+            tcAttrs: { ...cell.tcAttrs },
+            ...(cell.tcPrRaw ? { tcPrRaw: cloneOpaque(cell.tcPrRaw) } : {}),
+            txBody: {
+              ...cell.txBody,
+              ...(cell.txBody.bodyPrRaw
+                ? { bodyPrRaw: cloneOpaque(cell.txBody.bodyPrRaw) }
+                : {}),
+              ...(cell.txBody.lstStyleRaw
+                ? { lstStyleRaw: cloneOpaque(cell.txBody.lstStyleRaw) }
+                : {}),
+              paragraphs: cell.txBody.paragraphs.map((p) => ({
+                ...p,
+                id: mintNodeId(),
+                properties: { ...p.properties },
+                runs: p.runs.map((r2) => ({
+                  ...r2,
+                  id: mintNodeId(),
+                  properties: { ...r2.properties },
+                })),
+                ...(p.endParaRPrRaw
+                  ? { endParaRPrRaw: cloneOpaque(p.endParaRPrRaw) }
+                  : {}),
+              })),
+            },
+          })),
+        })),
+      };
+      return c;
+    }
     case "opaque": {
       const c: OpaqueShape = { ...s, id, cNvPrId, raw: cloneOpaque(s.raw) };
       return c;

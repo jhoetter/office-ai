@@ -16,6 +16,9 @@ import type {
   Shape,
   Slide,
   SlideSize,
+  TableCell,
+  TableRow,
+  TableShape,
   TextBody,
   TextParagraph,
   TextParagraphProperties,
@@ -409,9 +412,146 @@ function parseShape(
       return parsePic(entry, mintNodeId, partPath, slideRelTargets);
     case "p:grpSp":
       return parseGrpSp(entry, mintNodeId, partPath, slideRelTargets);
+    case "p:graphicFrame": {
+      const typed = parseGraphicFrameTable(entry, mintNodeId);
+      if (typed) return typed;
+      return parseOpaqueShape(entry, mintNodeId);
+    }
     default:
       return parseOpaqueShape(entry, mintNodeId);
   }
+}
+
+const TABLE_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006/table";
+
+/**
+ * Parse `<p:graphicFrame>` ⇒ `TableShape` if and only if its
+ * `<a:graphicData @uri>` is the table URI. Returns `null` otherwise so
+ * the caller can fall back to `OpaqueShape` for charts / SmartArt.
+ */
+function parseGraphicFrameTable(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter
+): TableShape | null {
+  const children = (entry["p:graphicFrame"] as unknown[] | undefined) ?? [];
+  const nvGFPr = findElementEntry(children, "p:nvGraphicFramePr");
+  const xfrm = findElementEntry(children, "p:xfrm");
+  const graphic = findElementEntry(children, "a:graphic");
+  if (!graphic) return null;
+  const graphicData = findElementEntry(
+    (graphic["a:graphic"] as unknown[] | undefined) ?? [],
+    "a:graphicData"
+  );
+  if (!graphicData) return null;
+  const uri = attrOf(graphicData, "uri") ?? "";
+  if (uri !== TABLE_GRAPHIC_DATA_URI) return null;
+  const tbl = findElementEntry(
+    (graphicData["a:graphicData"] as unknown[] | undefined) ?? [],
+    "a:tbl"
+  );
+  if (!tbl) return null;
+
+  let cNvPrId = 0;
+  let name = "";
+  const nvGFPrTail: OpaqueXml[] = [];
+  if (nvGFPr) {
+    for (const c of elementEntries(
+      (nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? []
+    )) {
+      const tag = ooxml.getTag(c);
+      if (tag === "p:cNvPr") {
+        cNvPrId = Number(attrOf(c, "id") ?? "0");
+        name = attrOf(c, "name") ?? "";
+      }
+      nvGFPrTail.push(captureOpaque(c));
+    }
+  }
+
+  let position: { xEmu: number; yEmu: number } | undefined;
+  let size: { cxEmu: number; cyEmu: number } | undefined;
+  if (xfrm) {
+    const xfrmChildren = (xfrm["p:xfrm"] as unknown[] | undefined) ?? [];
+    const off = findElementEntry(xfrmChildren, "a:off");
+    const ext = findElementEntry(xfrmChildren, "a:ext");
+    if (off) {
+      position = {
+        xEmu: Number(attrOf(off, "x") ?? "0"),
+        yEmu: Number(attrOf(off, "y") ?? "0"),
+      };
+    }
+    if (ext) {
+      size = {
+        cxEmu: Number(attrOf(ext, "cx") ?? "0"),
+        cyEmu: Number(attrOf(ext, "cy") ?? "0"),
+      };
+    }
+  }
+
+  const tblChildren = (tbl["a:tbl"] as unknown[] | undefined) ?? [];
+  const tblPr = findElementEntry(tblChildren, "a:tblPr");
+  const tblGrid = findElementEntry(tblChildren, "a:tblGrid");
+
+  const columnWidths: number[] = [];
+  if (tblGrid) {
+    for (const c of elementEntries(
+      (tblGrid["a:tblGrid"] as unknown[] | undefined) ?? []
+    )) {
+      if (ooxml.getTag(c) !== "a:gridCol") continue;
+      columnWidths.push(Number(attrOf(c, "w") ?? "0"));
+    }
+  }
+
+  const rows: TableRow[] = [];
+  for (const tr of elementEntries(tblChildren)) {
+    if (ooxml.getTag(tr) !== "a:tr") continue;
+    const trAttrs = readRootAttrs(tr);
+    const heightStr = trAttrs["h"];
+    const height = heightStr !== undefined ? Number(heightStr) : 0;
+    const trAttrsRest: Record<string, string> = { ...trAttrs };
+    delete trAttrsRest["h"];
+
+    const cells: TableCell[] = [];
+    for (const tc of elementEntries((tr["a:tr"] as unknown[] | undefined) ?? [])) {
+      if (ooxml.getTag(tc) !== "a:tc") continue;
+      const tcAttrs = readRootAttrs(tc);
+      const tcChildren = (tc["a:tc"] as unknown[] | undefined) ?? [];
+      const txBodyEntry = findElementEntry(tcChildren, "a:txBody");
+      const tcPr = findElementEntry(tcChildren, "a:tcPr");
+      const txBody: TextBody = txBodyEntry
+        ? parseTextBodyChildren(
+            (txBodyEntry["a:txBody"] as unknown[] | undefined) ?? [],
+            mintNodeId
+          )
+        : emptyTextBody();
+      cells.push({
+        id: mintNodeId(),
+        txBody,
+        ...(tcPr ? { tcPrRaw: captureOpaque(tcPr) } : {}),
+        tcAttrs,
+      });
+    }
+
+    rows.push({
+      id: mintNodeId(),
+      height,
+      cells,
+      trAttrs: trAttrsRest,
+    });
+  }
+
+  return {
+    kind: "table",
+    id: mintNodeId(),
+    cNvPrId,
+    name,
+    ...(position ? { position } : {}),
+    ...(size ? { size } : {}),
+    columnWidths,
+    rows,
+    ...(tblPr ? { tblPrRaw: captureOpaque(tblPr) } : {}),
+    nvGraphicFramePrTail: nvGFPrTail,
+    graphicDataUri: uri,
+  };
 }
 
 function parseSp(entry: Record<string, unknown>, mintNodeId: IdMinter): TextShape {
@@ -674,6 +814,18 @@ function emptyTextBody(): TextBody {
 
 function parseTextBody(entry: Record<string, unknown>, mintNodeId: IdMinter): TextBody {
   const children = (entry["p:txBody"] as unknown[] | undefined) ?? [];
+  return parseTextBodyChildren(children, mintNodeId);
+}
+
+/**
+ * Parse a text-body's children. Used both for `<p:txBody>` (inside `<p:sp>`)
+ * and `<a:txBody>` (inside table `<a:tc>`); the children themselves are
+ * always in the `a:` namespace so the wrapper tag doesn't matter.
+ */
+function parseTextBodyChildren(
+  children: ReadonlyArray<unknown>,
+  mintNodeId: IdMinter
+): TextBody {
   const bodyPr = findElementEntry(children, "a:bodyPr");
   const lstStyle = findElementEntry(children, "a:lstStyle");
   const paragraphs: TextParagraph[] = [];

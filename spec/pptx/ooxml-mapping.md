@@ -64,7 +64,8 @@
 | `<p:pic>`            | `Picture`                 | media-backed                                                |
 | `<p:grpSp>`          | `GroupShape`              | recursive; children parsed                                  |
 | `<p:cxnSp>`          | `OpaqueShape`             | connector                                                   |
-| `<p:graphicFrame>`   | `OpaqueShape`             | host for `a:tbl` / `c:chart` / `dgm:relIds` (SmartArt)      |
+| `<p:graphicFrame>` (table) | `TableShape`        | `<a:graphicData @uri="…/drawingml/2006/table">` → typed (F2) |
+| `<p:graphicFrame>` (other) | `OpaqueShape`       | host for `c:chart` / `dgm:relIds` (SmartArt)                |
 | `<mc:AlternateContent>` | `OpaqueShape`          | mc-wrapped content                                          |
 | anything else        | `OpaqueShape`             | catch-all                                                   |
 

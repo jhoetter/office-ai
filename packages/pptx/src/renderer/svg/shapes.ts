@@ -5,6 +5,7 @@ import type {
   Picture,
   Shape,
   SlideSize,
+  TableShape,
   TextParagraph,
   TextRun,
   TextShape,
@@ -28,6 +29,8 @@ export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
       return pictureToSvg(shape, ctx);
     case "group":
       return groupShapeToSvg(shape, ctx);
+    case "table":
+      return tableToSvg(shape, ctx);
     case "opaque":
       return opaqueShapeToSvg(shape);
   }
@@ -191,6 +194,80 @@ function groupShapeToSvg(shape: GroupShape, ctx: SvgRenderCtx): string {
     inner,
     groupClose(),
   ].join("");
+}
+
+/**
+ * Render a `TableShape` as an SVG `<g>` containing per-cell rectangles
+ * and centered text. Width per column comes from `columnWidths`; row
+ * heights distribute the table-bbox height equally if the row's stored
+ * height is `0` (typical when authoring tools leave layout to the
+ * renderer). Visual fidelity is intentionally simple — borders and fills
+ * are not rendered yet (P2 work). The point of F2.4 is that the
+ * renderer never crashes on table shapes and shows the cell text.
+ */
+function tableToSvg(shape: TableShape, ctx: SvgRenderCtx): string {
+  const box = shapeBoundingBox(shape);
+  if (!box) return groupOpen("table", shape.id) + groupClose();
+  const theme = ctx.theme ?? DEFAULT_THEME;
+
+  const colCount = shape.columnWidths.length;
+  const totalColWidth = shape.columnWidths.reduce((a, b) => a + b, 0) || box.cx;
+  const colXs: number[] = [];
+  let acc = 0;
+  for (const w of shape.columnWidths) {
+    colXs.push(acc);
+    acc += w;
+  }
+
+  // Determine per-row heights: prefer stored height, fall back to even split.
+  const storedTotal = shape.rows.reduce((a, r) => a + r.height, 0);
+  const rowHeights = shape.rows.map((r) =>
+    storedTotal > 0 ? r.height : Math.floor(box.cy / Math.max(1, shape.rows.length))
+  );
+
+  const parts: string[] = [];
+  parts.push(groupOpen("table", shape.id, { transform: `translate(${box.x} ${box.y})` }));
+  // Optional outer outline for visual hint.
+  parts.push(
+    `<rect x="0" y="0" width="${box.cx}" height="${box.cy}" fill="white" stroke="#9CA3AF"/>`
+  );
+
+  let yAcc = 0;
+  for (let r = 0; r < shape.rows.length; r++) {
+    const row = shape.rows[r]!;
+    const rowH = rowHeights[r]!;
+    for (let c = 0; c < Math.min(row.cells.length, colCount); c++) {
+      const cell = row.cells[c]!;
+      const cx = colXs[c]!;
+      const cw = shape.columnWidths[c]!;
+      // Cell border.
+      parts.push(
+        `<rect x="${cx}" y="${yAcc}" width="${cw}" height="${rowH}" fill="transparent" stroke="#9CA3AF"/>`
+      );
+      // Cell text — first paragraph only, rendered as one centered line.
+      const text = cellToFlatText(cell.txBody.paragraphs);
+      if (text.length > 0) {
+        const fontSize = estimateFontSizeEmu(cell.txBody.paragraphs[0]);
+        // Scale total column width to keep cell rendering within plausible bounds.
+        const fillColor = theme.tx1;
+        parts.push(
+          `<text x="${cx + cw / 2}" y="${yAcc + rowH / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${fontSize}" fill="#${fillColor}" xml:space="preserve">${escXml(text)}</text>`
+        );
+      }
+    }
+    yAcc += rowH;
+  }
+  parts.push(groupClose());
+  // Suppress unused-variable warning when columnWidths sum != box.cx.
+  void totalColWidth;
+  return parts.join("");
+}
+
+function cellToFlatText(paragraphs: ReadonlyArray<TextParagraph>): string {
+  const lines = paragraphs.map((p) =>
+    p.runs.filter((r) => !r.isLineBreak).map((r) => r.text).join("")
+  );
+  return lines.filter((s) => s.length > 0).join(" / ");
 }
 
 function opaqueShapeToSvg(shape: OpaqueShape): string {

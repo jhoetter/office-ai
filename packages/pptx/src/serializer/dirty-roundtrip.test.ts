@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ooxml, sha256Hex } from "@officeai/core";
 import { parsePptx } from "../parser/parse.js";
 import { serializePptx } from "./serialize.js";
-import type { PptxSnapshot, TextShape } from "../model/types.js";
+import type { PptxSnapshot, TableShape, TextShape } from "../model/types.js";
 
 const FIXTURES_DIR = new URL("../../../../fixtures/pptx/synthetic/", import.meta.url);
 
@@ -69,6 +69,57 @@ describe("targeted-edit roundtrip", () => {
       expect(sb.name).toBe(sa.name);
       expect(sb.position).toEqual(sa.position);
       expect(sb.size).toEqual(sa.size);
+    }
+  });
+
+  it("rebuilds a typed TableShape and survives parse → serialize → parse", async () => {
+    const path = join(FIXTURES_DIR.pathname, "06-with-table.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+
+    const slide = snap.root.slides[0];
+    const tableA = slide.shapes.find((s): s is TableShape => s.kind === "table");
+    expect(tableA).toBeDefined();
+    if (!tableA) return;
+
+    const dirtied: PptxSnapshot = {
+      ...snap,
+      dirty: { ...snap.dirty, slides: new Set([slide.partPath]) },
+    };
+    const out = await serializePptx(dirtied);
+    const snap2 = await parsePptx(out);
+    const slide2 = snap2.root.slides[0];
+    const tableB = slide2.shapes.find((s): s is TableShape => s.kind === "table");
+    expect(tableB).toBeDefined();
+    if (!tableB) return;
+
+    expect(tableB.columnWidths).toEqual(tableA.columnWidths);
+    expect(tableB.rows.length).toBe(tableA.rows.length);
+    for (let r = 0; r < tableA.rows.length; r++) {
+      const ra = tableA.rows[r]!;
+      const rb = tableB.rows[r]!;
+      expect(rb.cells.length).toBe(ra.cells.length);
+      for (let c = 0; c < ra.cells.length; c++) {
+        const a = ra.cells[c]!;
+        const b = rb.cells[c]!;
+        const at = a.txBody.paragraphs.flatMap((p) =>
+          p.runs.filter((r2) => !r2.isLineBreak).map((r2) => r2.text)
+        ).join("");
+        const bt = b.txBody.paragraphs.flatMap((p) =>
+          p.runs.filter((r2) => !r2.isLineBreak).map((r2) => r2.text)
+        ).join("");
+        expect(bt).toBe(at);
+      }
+    }
+
+    // Non-touched parts (everything except the rebuilt slide) stay byte-identical.
+    const reload = await ooxml.OoxmlContainer.load(out);
+    for (const partPath of snap.container.parts.keys()) {
+      if (partPath === slide.partPath) continue;
+      const before = sha256Hex(snap.container.readBytes(partPath));
+      expect(reload.has(partPath), `part missing: ${partPath}`).toBe(true);
+      const after = sha256Hex(reload.readBytes(partPath));
+      expect(after, `${partPath} changed unexpectedly`).toBe(before);
     }
   });
 

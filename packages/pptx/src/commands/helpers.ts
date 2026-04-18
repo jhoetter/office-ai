@@ -7,6 +7,7 @@ import type {
   RelationshipsSnap,
   Shape,
   Slide,
+  TableShape,
   TextShape,
 } from "../model/types.js";
 
@@ -171,6 +172,10 @@ function walk(shapes: ReadonlyArray<Shape>, fn: (s: Shape) => void): void {
 
 export function isTextShape(s: Shape): s is TextShape {
   return s.kind === "text";
+}
+
+export function isTableShape(s: Shape): s is TableShape {
+  return s.kind === "table";
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────

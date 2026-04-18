@@ -89,6 +89,42 @@ export interface AddTextBoxPayload {
   readonly name?: string;
 }
 
+// ─── F2 (Tables) payloads ─────────────────────────────────────────────────
+
+export interface TableSetCellTextPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly row: number;
+  readonly column: number;
+  readonly text: string;
+}
+
+export interface TableAddRowPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly at?: number;
+  readonly height?: number;
+}
+
+export interface TableDeleteRowPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly row: number;
+}
+
+export interface TableAddColumnPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly at?: number;
+  readonly width?: number;
+}
+
+export interface TableDeleteColumnPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly column: number;
+}
+
 // ─── Type tags ────────────────────────────────────────────────────────────
 
 export const PPTX_COMMAND_TYPES = {
@@ -102,6 +138,11 @@ export const PPTX_COMMAND_TYPES = {
   formatText: "pptx:format-text",
   insertImage: "pptx:insert-image",
   addTextBox: "pptx:add-text-box",
+  tableSetCellText: "pptx:table-set-cell-text",
+  tableAddRow: "pptx:table-add-row",
+  tableDeleteRow: "pptx:table-delete-row",
+  tableAddColumn: "pptx:table-add-column",
+  tableDeleteColumn: "pptx:table-delete-column",
 } as const;
 
 export type PptxCommandType = (typeof PPTX_COMMAND_TYPES)[keyof typeof PPTX_COMMAND_TYPES];

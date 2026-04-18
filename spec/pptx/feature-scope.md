@@ -31,7 +31,7 @@
 | SmartArt graphics                                                                        |  ✓   |  —   |     ✓     | **P0** (preserve as `Opaque*`)  |
 | Animations & transitions                                                                 |  ✓   |  —   |     ✓     | **P0** (preserve as raw blocks) |
 | Embedded charts (`graphicFrame` referencing `ppt/charts/`)                               |  ✓   |  —   |     ✓     |     **P0** (preserve only)      |
-| In-slide tables (`graphicFrame` referencing `a:tbl`)                                     |  ✓   |  —   |     ✓     |     **P0** (preserve only)      |
+| In-slide tables (`graphicFrame` referencing `a:tbl`)                                     |  ✓   |  ✓   |     ✓     | **F2** (typed model + 5 commands) |
 | Embedded videos / audio                                                                  |  ✓   |  —   |     ✓     |     **P0** (preserve only)      |
 | Connectors (`p:cxnSp`) — render bounding box only; preserve geometry verbatim            |  ✓   |  —   |     ✓     |     **P0** (preserve only)      |
 | Group shapes (`p:grpSp`) — group bounding box typed; children preserved verbatim         |  ✓   |  —   |     ✓     |          **P0** (move)          |
@@ -48,7 +48,7 @@ Per [`prompt.md`](../../prompt.md) lines 291–298:
 | Chart editing within slides (preserve only)            | **OUT** (chart parts preserved opaque)  |
 | Master / layout **editing** (preserve only)            | **OUT** (master & layout parts opaque)  |
 | Notes-pages **editing** (preserve only)                | **OUT** (notes parts preserved opaque)  |
-| Table **editing** within slides (render + preserve)    | **OUT** (table `graphicFrame` opaque)   |
+| ~~Table **editing** within slides (render + preserve)~~ | **F2** — typed `TableShape`; cell-text + add/delete row/column edits. Visual styling stays opaque (re-emit `<a:tblPr>` verbatim). |
 
 ## Roundtrip-integrity bar
 

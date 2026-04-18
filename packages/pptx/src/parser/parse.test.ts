@@ -56,6 +56,36 @@ describe("parsePptx", () => {
     }
   });
 
+  it("parses tables in p:graphicFrame as typed TableShape", async () => {
+    const path = join(FIXTURES_DIR.pathname, "06-with-table.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+    const slide = snap.root.slides[0];
+    const table = slide.shapes.find((s) => s.kind === "table");
+    expect(table).toBeDefined();
+    if (!table || table.kind !== "table") return;
+    expect(table.graphicDataUri).toBe(
+      "http://schemas.openxmlformats.org/drawingml/2006/table"
+    );
+    expect(table.columnWidths.length).toBe(3);
+    for (const w of table.columnWidths) expect(w).toBeGreaterThan(0);
+    expect(table.rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of table.rows) {
+      expect(row.cells.length).toBe(table.columnWidths.length);
+      for (const cell of row.cells) {
+        expect(cell.txBody.paragraphs.length).toBeGreaterThanOrEqual(1);
+      }
+    }
+    // First row, first cell should hold "Quarter" (header).
+    const headerText = table.rows[0]!.cells[0]!.txBody.paragraphs
+      .flatMap((p) => p.runs.filter((r) => !r.isLineBreak).map((r) => r.text))
+      .join("");
+    expect(headerText).toBe("Quarter");
+    // Position/size are present (typed).
+    expect(table.position?.xEmu).toBeGreaterThan(0);
+    expect(table.size?.cxEmu).toBeGreaterThan(0);
+  });
+
   it("captures multiple slides in order", async () => {
     const path = join(FIXTURES_DIR.pathname, "07-multi-slide.pptx");
     const buf = await readFile(path);

@@ -10,6 +10,13 @@ import { moveSlideHandler } from "./move-slide.js";
 import { setPositionHandler } from "./set-position.js";
 import { setSizeHandler } from "./set-size.js";
 import { setTextHandler } from "./set-text.js";
+import {
+  tableAddColumnHandler,
+  tableAddRowHandler,
+  tableDeleteColumnHandler,
+  tableDeleteRowHandler,
+  tableSetCellTextHandler,
+} from "./table-commands.js";
 
 export * from "./payloads.js";
 export { addSlideHandler } from "./add-slide.js";
@@ -22,6 +29,13 @@ export { moveSlideHandler } from "./move-slide.js";
 export { setPositionHandler } from "./set-position.js";
 export { setSizeHandler } from "./set-size.js";
 export { setTextHandler } from "./set-text.js";
+export {
+  tableAddColumnHandler,
+  tableAddRowHandler,
+  tableDeleteColumnHandler,
+  tableDeleteRowHandler,
+  tableSetCellTextHandler,
+} from "./table-commands.js";
 
 export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot>> = [
   addSlideHandler,
@@ -34,6 +48,11 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   formatTextHandler,
   insertImageHandler,
   addTextBoxHandler,
+  tableSetCellTextHandler,
+  tableAddRowHandler,
+  tableDeleteRowHandler,
+  tableAddColumnHandler,
+  tableDeleteColumnHandler,
 ] as ReadonlyArray<CommandHandler<unknown, PptxSnapshot>>;
 
 export const pptxHandlersById: ReadonlyMap<string, CommandHandler<unknown, PptxSnapshot>> =
