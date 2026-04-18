@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import { Loader2, Sparkles, Download } from "lucide-react";
+import type { DragEvent, ReactNode } from "react";
+import { FolderOpen, Loader2, Sparkles, Download } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import {
   XlsxAgent,
@@ -23,6 +23,8 @@ interface ToastMessage {
 }
 
 const SAMPLE_NAME = "sample.xlsx";
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
  * Top-level XLSX editor surface for /xlsx-editor.
@@ -50,6 +52,9 @@ export function XlsxEditor(): ReactNode {
   const [formulaDraft, setFormulaDraft] = useState("");
   const [formulaFocused, setFormulaFocused] = useState(false);
   const formulaInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [filename, setFilename] = useState<string>(SAMPLE_NAME);
+  const [dragOver, setDragOver] = useState(false);
 
   const toastIdRef = useRef(0);
   const pushToast = useCallback((kind: ToastMessage["kind"], text: string) => {
@@ -58,36 +63,101 @@ export function XlsxEditor(): ReactNode {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }, []);
 
+  // Holds the unsubscribe handle for the active agent's `subscribe()`
+  // callback so we can swap agents (Open file) without leaking listeners.
+  const offRef = useRef<(() => void) | null>(null);
+
+  const mountAgent = useCallback(
+    (a: XlsxAgent, name: string) => {
+      offRef.current?.();
+      agentRef.current = a;
+      setAgent(a);
+      setFilename(name);
+      const snap = a.getSnapshot();
+      setSnapshot(snap);
+      setActiveSheetName(snap.root.sheets[0]?.name ?? null);
+      setSelection({ row: 0, col: 0 });
+      setPendingCount(a.getPendingMutations().length);
+      offRef.current = a.subscribe((s) => {
+        setSnapshot(s);
+        setPendingCount(a.getPendingMutations().length);
+      });
+    },
+    [setAgent, setSnapshot, setActiveSheetName, setSelection, setPendingCount]
+  );
+
   useEffect(() => {
     let cancelled = false;
-    let off: (() => void) | undefined;
     void (async () => {
       try {
         const buf = await buildSampleXlsx();
         if (cancelled) return;
         const a = await XlsxAgent.fromBuffer(buf);
         if (cancelled) return;
-        agentRef.current = a;
-        setAgent(a);
-        const snap = a.getSnapshot();
-        setSnapshot(snap);
-        setActiveSheetName(snap.root.sheets[0]?.name ?? null);
-        setPendingCount(a.getPendingMutations().length);
-        off = a.subscribe((s) => {
-          setSnapshot(s);
-          setPendingCount(a.getPendingMutations().length);
-        });
+        mountAgent(a, SAMPLE_NAME);
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     })();
     return () => {
       cancelled = true;
-      off?.();
+      offRef.current?.();
+      offRef.current = null;
       agentRef.current = null;
       setAgent(null);
     };
-  }, [pushToast]);
+  }, [pushToast, mountAgent]);
+
+  const openFile = useCallback(
+    async (file: File) => {
+      const lower = file.name.toLowerCase();
+      if (!lower.endsWith(".xlsx")) {
+        pushToast("error", `Unsupported file: ${file.name} (only .xlsx)`);
+        return;
+      }
+      try {
+        const buf = await file.arrayBuffer();
+        const a = await XlsxAgent.fromBuffer(buf);
+        mountAgent(a, file.name);
+        pushToast("info", `Opened ${file.name}`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [mountAgent, pushToast]
+  );
+
+  const onPickFile = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const onFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) void openFile(file);
+      e.target.value = "";
+    },
+    [openFile]
+  );
+
+  const onDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    if (Array.from(e.dataTransfer.items).some((it) => it.kind === "file")) {
+      e.preventDefault();
+      setDragOver(true);
+    }
+  }, []);
+  const onDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
+    if (e.currentTarget === e.target) setDragOver(false);
+  }, []);
+  const onDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) void openFile(file);
+    },
+    [openFile]
+  );
 
   const activeSheet: Sheet | null = useMemo(() => {
     if (!snapshot || !activeSheetName) return null;
@@ -161,20 +231,18 @@ export function XlsxEditor(): ReactNode {
     if (!a) return;
     try {
       const buf = await a.exportFile();
-      const blob = new Blob([buf], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
+      const blob = new Blob([buf], { type: XLSX_MIME });
       const url = URL.createObjectURL(blob);
       const a2 = document.createElement("a");
       a2.href = url;
-      a2.download = SAMPLE_NAME;
+      a2.download = filename;
       a2.click();
       URL.revokeObjectURL(url);
-      pushToast("info", `Exported ${SAMPLE_NAME}`);
+      pushToast("info", `Exported ${filename}`);
     } catch (err) {
       pushToast("error", err instanceof Error ? err.message : String(err));
     }
-  }, [pushToast]);
+  }, [filename, pushToast]);
 
   const onAgentRun = useCallback(async () => {
     const a = agentRef.current;
@@ -212,10 +280,28 @@ export function XlsxEditor(): ReactNode {
   const revision = snapshot?.revision ?? 0;
 
   return (
-    <div className="xlsx-editor flex h-full min-h-0 flex-col gap-3">
+    <div
+      className={cn(
+        "xlsx-editor relative flex h-full min-h-0 flex-col gap-3",
+        dragOver && "ring-2 ring-[var(--ai-violet)] ring-offset-2"
+      )}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx"
+        data-testid="open-xlsx-input"
+        className="sr-only"
+        onChange={onFileInputChange}
+      />
       <header className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-divider bg-surface px-3 py-2">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-foreground">{SAMPLE_NAME}</span>
+          <span data-testid="filename" className="text-sm font-medium text-foreground">
+            {filename}
+          </span>
           <span
             data-testid="revision-badge"
             className="rounded-full border border-divider bg-background px-2 py-0.5 text-[10px] font-medium text-secondary"
@@ -237,6 +323,16 @@ export function XlsxEditor(): ReactNode {
         <div className="flex items-center gap-2">
           <Button
             size="sm"
+            variant="ghost"
+            onClick={onPickFile}
+            data-testid="open-xlsx"
+            title="Open .xlsx from disk"
+          >
+            <FolderOpen size={14} />
+            Open
+          </Button>
+          <Button
+            size="sm"
             variant="primary"
             onClick={() => void onSave()}
             disabled={!agent}
@@ -247,6 +343,16 @@ export function XlsxEditor(): ReactNode {
           </Button>
         </div>
       </header>
+      {dragOver ? (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-[var(--ai-violet)]/10"
+        >
+          <div className="rounded-lg border border-[var(--ai-violet)] bg-surface px-4 py-2 text-sm text-foreground shadow-md">
+            Drop a .xlsx file to open
+          </div>
+        </div>
+      ) : null}
 
       <div className="formula-bar flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
         <span
