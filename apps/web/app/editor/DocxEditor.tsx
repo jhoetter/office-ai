@@ -25,7 +25,8 @@ import { Toolbar, type AlignmentValue } from "./Toolbar";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
-import { dispatchToLlm } from "@/lib/llm-client";
+import { CommentComposer } from "./CommentComposer";
+import { dispatchToLlm, type DispatchSelectionContext } from "@/lib/llm-client";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
 
 interface ToastMessage {
@@ -289,7 +290,26 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     [pushToast]
   );
 
-  const insertCommentDemo = useCallback(async () => {
+  /**
+   * Comment composer state (P2.5 / W24).
+   *
+   * `composer` is null when the popover is hidden. When the user clicks
+   * "Add comment" with a non-empty selection we capture the selection
+   * range + plain text + an anchor coordinate (via `view.coordsAtPos`)
+   * and surface the popover. Submission funnels through the shared
+   * `add-comment` command so existing tests, the comments sidebar, and
+   * the OOXML round-trip all stay correct.
+   */
+  const [composer, setComposer] = useState<{
+    range: {
+      start: { paragraph: number; run: number; offset: number };
+      end: { paragraph: number; run: number; offset: number };
+    };
+    selectionText: string;
+    anchor: { left: number; top: number; bottom: number } | null;
+  } | null>(null);
+
+  const openCommentComposer = useCallback(() => {
     const agent = agentRef.current;
     const mount = mountRef.current;
     if (!agent || !mount) return;
@@ -299,22 +319,74 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
       return;
     }
     const range = pmSelectionToRange(view.state);
+    const selectionText = view.state.doc.textBetween(
+      view.state.selection.from,
+      view.state.selection.to,
+      " ",
+      " "
+    );
+    let anchor: { left: number; top: number; bottom: number } | null = null;
     try {
-      await agent.applyCommand({
-        type: "docx:add-comment",
-        payload: {
-          range,
-          text: "Looks good?",
-          author: "You",
-          initials: "Y",
-        },
-        source: "human",
-      });
-      pushToast("info", "Comment added.");
-    } catch (err) {
-      pushToast("error", err instanceof Error ? err.message : String(err));
+      const coords = view.coordsAtPos(view.state.selection.from);
+      anchor = { left: coords.left, top: coords.top, bottom: coords.bottom };
+    } catch {
+      anchor = null;
     }
+    setComposer({ range, selectionText, anchor });
   }, [pushToast]);
+
+  const submitComment = useCallback(
+    async (text: string) => {
+      const agent = agentRef.current;
+      if (!agent || !composer) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:add-comment",
+          payload: {
+            range: composer.range,
+            text,
+            author: "You",
+            initials: "Y",
+          },
+          source: "human",
+        });
+        pushToast("info", "Comment added.");
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      } finally {
+        setComposer(null);
+      }
+    },
+    [composer, pushToast]
+  );
+
+  const draftCommentWithAi = useCallback(
+    async (currentDraft: string, selectionText: string): Promise<string> => {
+      const agent = agentRef.current;
+      if (!agent) return currentDraft;
+      const promptParts = [
+        currentDraft.trim().length > 0
+          ? `Refine the following draft comment so it is concise, specific, and constructive: "${currentDraft.trim()}"`
+          : "Draft a short, specific, constructive comment about the highlighted text.",
+        "Reply with ONLY the comment body — no quotes, no preamble.",
+      ];
+      const ctx: DispatchSelectionContext | undefined = selectionText
+        ? { text: selectionText, paragraph: composer?.range.start.paragraph ?? 0, range: composer?.range }
+        : undefined;
+      const result = await dispatchToLlm(promptParts.join("\n\n"), agent, ctx);
+      if (result.note) pushToast("warn", result.note);
+      // The LLM returns commands; for the composer we only care about
+      // the rationale (or, in the offline case, the prompt text). When
+      // the LLM produced an `add-comment` we lift its `text`.
+      const addComment = result.commands.find((c) => c.type === "docx:add-comment");
+      if (addComment) {
+        const payload = addComment.payload as { text?: unknown };
+        if (typeof payload?.text === "string" && payload.text.length > 0) return payload.text;
+      }
+      return result.rationale || currentDraft;
+    },
+    [composer, pushToast]
+  );
 
   const surfaceUnsupported = useCallback(
     (label: string) => {
@@ -606,15 +678,25 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   void commentParagraphIndex;
 
   // Default dispatch routes through the LLM bridge (`/api/llm`). When the
-  // server has no `OPENAI_API_KEY` configured, the helper transparently
-  // falls back to the same `[AI] ` + `add-comment` recipe the editor used
-  // before W6, so the existing e2e flow keeps working with no env vars.
+  // server has no `OPENAI_API_KEY` configured, the helper falls back to
+  // the honest offline recipe (P2.5/W27): a single comment carrying the
+  // user's prompt, anchored to the live selection when there is one.
   const { agentPromptDispatch: agentPromptDispatchProp } = props;
   const promptDispatch: AgentPromptDispatch = (() => {
     if (!agent) return async () => undefined;
     if (agentPromptDispatchProp) return agentPromptDispatchProp(agent);
     return async (text: string) => {
-      const result = await dispatchToLlm(text, agent);
+      const liveView = mountRef.current?.view;
+      const ctx: DispatchSelectionContext | undefined = (() => {
+        if (!liveView) return undefined;
+        const { state } = liveView;
+        if (state.selection.empty) return undefined;
+        const range = pmSelectionToRange(state);
+        const selectedText = state.doc.textBetween(state.selection.from, state.selection.to, " ", " ");
+        if (!selectedText) return undefined;
+        return { text: selectedText, paragraph: range.start.paragraph, range };
+      })();
+      const result = await dispatchToLlm(text, agent, ctx);
       if (result.note) pushToast("warn", result.note);
       if (result.commands.length > 0) await agent.applyCommands(result.commands);
     };
@@ -643,7 +725,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           onSetAlignment={(a) => void setAlignment(a)}
           onAdjustIndent={(d) => void adjustIndent(d)}
           onToggleList={(k) => void toggleList(k)}
-          onAddComment={() => void insertCommentDemo()}
+          onAddComment={openCommentComposer}
           onUnsupported={surfaceUnsupported}
         />
         <input
@@ -679,6 +761,15 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
               <Loader2 className="mr-2 animate-spin" size={14} />
               Loading…
             </div>
+          )}
+          {composer && (
+            <CommentComposer
+              selectionText={composer.selectionText}
+              anchor={composer.anchor}
+              onSubmit={(t) => void submitComment(t)}
+              onCancel={() => setComposer(null)}
+              onDraftWithAi={(draft, sel) => draftCommentWithAi(draft, sel)}
+            />
           )}
         </div>
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">

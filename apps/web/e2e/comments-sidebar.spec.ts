@@ -4,16 +4,24 @@ import { gotoEditor, selectParagraphContaining } from "./_helpers";
 /**
  * P1.2 / W5: comments sidebar.
  *
- * Each test seeds a comment via the existing P1.1 "Add comment" toolbar
- * button (so we don't depend on any new setup not exercised elsewhere)
- * and then exercises one of the new sidebar affordances.
+ * Each test seeds a comment via the toolbar's "Add comment" composer
+ * (P2.5/W24 replaced the old hard-coded "Looks good?" recipe with a
+ * real popover) and then exercises one of the sidebar affordances.
  */
+async function addComment(page: import("@playwright/test").Page, body: string): Promise<void> {
+  await selectParagraphContaining(page, "Welcome");
+  await page.getByTitle("Add comment").click();
+  const composer = page.getByTestId("comment-composer");
+  await expect(composer).toBeVisible();
+  await page.getByTestId("comment-composer-text").fill(body);
+  await page.getByTestId("comment-composer-submit").click();
+  await expect(page.getByText(/Comment added\./)).toBeVisible({ timeout: 7_500 });
+}
+
 test.describe("editor: comments sidebar", () => {
   test("adding a comment via the toolbar surfaces it as a thread in the sidebar", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome");
-    await page.getByTitle("Add comment").click();
-    await expect(page.getByText(/Comment added\./)).toBeVisible({ timeout: 7_500 });
+    await addComment(page, "Looks good?");
 
     const sidebar = page.getByTestId("comments-sidebar");
     await expect(sidebar).toBeVisible();
@@ -31,9 +39,7 @@ test.describe("editor: comments sidebar", () => {
 
   test("replying to a comment dispatches docx:reply-comment and renders the reply", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome");
-    await page.getByTitle("Add comment").click();
-    await expect(page.getByText(/Comment added\./)).toBeVisible({ timeout: 7_500 });
+    await addComment(page, "Looks good?");
 
     const thread = page.getByTestId("comments-sidebar").locator("[data-testid='comment-thread']").first();
     await thread.getByLabel("Reply").fill("Sounds great");
@@ -45,9 +51,7 @@ test.describe("editor: comments sidebar", () => {
 
   test("resolving a comment marks the thread resolved and shows the badge", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome");
-    await page.getByTitle("Add comment").click();
-    await expect(page.getByText(/Comment added\./)).toBeVisible({ timeout: 7_500 });
+    await addComment(page, "Looks good?");
 
     const thread = page.getByTestId("comments-sidebar").locator("[data-testid='comment-thread']").first();
     await thread.getByLabel("Resolve comment").click();
