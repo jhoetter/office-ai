@@ -5,8 +5,16 @@ import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import { DocxAgent, chunkIntoPages, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
 import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
-import { getPageChunks, gotoPage, pageDecorationsPlugin, pageNumberForPos } from "@/lib/page-decorations";
+import {
+  getPageChunks,
+  gotoPage,
+  pageDecorationsPlugin,
+  pageNumberForPos,
+  PAGE_ZONE_EDIT_EVENT,
+  type PageZoneEditDetail,
+} from "@/lib/page-decorations";
 import { pageKeymapPlugin } from "@/lib/page-keymap";
+import { PageZoneEditor } from "./PageZoneEditor";
 import type { EditorView } from "prosemirror-view";
 import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
@@ -318,6 +326,17 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     anchor: { left: number; top: number; bottom: number } | null;
   } | null>(null);
 
+  // P3.8 — Word-like in-page header/footer authoring. Populated when
+  // the page-decorations plugin fires a `pm-page-zone-edit` event
+  // (double-click on a header / footer zone). The popover commits
+  // back via `docx:set-header-text` / `docx:set-footer-text` and
+  // `docx:insert-page-number` so existing tests + OOXML round-trip
+  // stay correct.
+  const [zoneEditor, setZoneEditor] = useState<{
+    detail: PageZoneEditDetail;
+    rect: { left: number; top: number; bottom: number; width: number };
+  } | null>(null);
+
   const openCommentComposer = useCallback(() => {
     const agent = agentRef.current;
     const mount = mountRef.current;
@@ -368,6 +387,95 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     },
     [composer, pushToast]
   );
+
+  useEffect(() => {
+    if (!hostEl) return;
+    const onZoneEdit = (event: Event) => {
+      const ce = event as CustomEvent<PageZoneEditDetail>;
+      const detail = ce.detail;
+      if (!detail) return;
+      const target = event.target as HTMLElement | null;
+      const rect = target?.getBoundingClientRect();
+      if (!rect) return;
+      setZoneEditor({
+        detail,
+        rect: { left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width },
+      });
+    };
+    hostEl.addEventListener(PAGE_ZONE_EDIT_EVENT, onZoneEdit as EventListener);
+    return () => hostEl.removeEventListener(PAGE_ZONE_EDIT_EVENT, onZoneEdit as EventListener);
+  }, [hostEl]);
+
+  // Mirror the active zone-edit state onto the host element via a
+  // `data-zone-editing` attribute so the page-sheets CSS can dim the
+  // body and label the active zone (Word's Header & Footer mode).
+  useEffect(() => {
+    if (!hostEl) return;
+    if (zoneEditor) hostEl.setAttribute("data-zone-editing", zoneEditor.detail.slot);
+    else hostEl.removeAttribute("data-zone-editing");
+    return () => hostEl.removeAttribute("data-zone-editing");
+  }, [hostEl, zoneEditor]);
+
+  const submitZoneEdit = useCallback(
+    async (text: string) => {
+      const agent = agentRef.current;
+      if (!agent || !zoneEditor) return;
+      const { detail } = zoneEditor;
+      if (!detail.partPath) {
+        pushToast(
+          "warn",
+          `This document has no ${detail.slot} part. Add one in Word, then re-open the file.`
+        );
+        setZoneEditor(null);
+        return;
+      }
+      const cmdType =
+        detail.slot === "header" ? "docx:set-header-text" : "docx:set-footer-text";
+      try {
+        await agent.applyCommand({
+          type: cmdType,
+          payload: { partId: detail.partPath, paragraphIndex: 0, text },
+          source: "human",
+        });
+        pushToast("info", `${detail.slot === "header" ? "Header" : "Footer"} updated.`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      } finally {
+        setZoneEditor(null);
+      }
+    },
+    [pushToast, zoneEditor]
+  );
+
+  const insertZonePageNumber = useCallback(async () => {
+    const agent = agentRef.current;
+    if (!agent || !zoneEditor) return;
+    const { detail } = zoneEditor;
+    if (!detail.partPath) {
+      setZoneEditor(null);
+      return;
+    }
+    const snap = agent.getSnapshot();
+    const part = snap.root.headersAndFooters.find((p) => p.partPath === detail.partPath);
+    const firstPara = part?.body[0];
+    const paragraphId = firstPara && firstPara.kind === "paragraph" ? firstPara.id : null;
+    if (!paragraphId) {
+      pushToast("warn", `Part has no paragraph to insert into.`);
+      return;
+    }
+    try {
+      await agent.applyCommand({
+        type: "docx:insert-page-number",
+        payload: { paragraphId, offset: Number.MAX_SAFE_INTEGER },
+        source: "human",
+      });
+      pushToast("info", "Page number inserted.");
+    } catch (err) {
+      pushToast("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setZoneEditor(null);
+    }
+  }, [pushToast, zoneEditor]);
 
   const draftCommentWithAi = useCallback(
     async (currentDraft: string, selectionText: string): Promise<string> => {
@@ -812,9 +920,9 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           onError={(msg) => pushToast("error", msg)}
           onInfo={(msg) => pushToast("info", msg)}
         />
-        <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
+        <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-[color-mix(in_srgb,var(--divider)_25%,var(--surface))] dark:bg-[#0e0e0e]">
           <div
-            className="mx-auto"
+            className="mx-auto py-6"
             style={{
               width: `${720 * zoom}px`,
               transform: `scale(${zoom})`,
@@ -824,7 +932,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
             <PageRuler snapshot={snapshot} />
             <div
               ref={setHostEl}
-              className="prose-pm min-h-[60vh] w-[720px] px-8 py-12 outline-none"
+              className="prose-pm min-h-[60vh] w-[720px] outline-none"
             />
           </div>
           {!agentReady && (
@@ -840,6 +948,18 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
               onSubmit={(t) => void submitComment(t)}
               onCancel={() => setComposer(null)}
               onDraftWithAi={(draft, sel) => draftCommentWithAi(draft, sel)}
+            />
+          )}
+          {zoneEditor && (
+            <PageZoneEditor
+              slot={zoneEditor.detail.slot}
+              partPath={zoneEditor.detail.partPath}
+              pageNumber={zoneEditor.detail.pageNumber}
+              initialText={zoneEditor.detail.text}
+              anchorRect={zoneEditor.rect}
+              onSubmit={(t) => void submitZoneEdit(t)}
+              onInsertPageNumber={() => void insertZonePageNumber()}
+              onCancel={() => setZoneEditor(null)}
             />
           )}
         </div>

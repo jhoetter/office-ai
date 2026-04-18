@@ -31,12 +31,12 @@ The DOCX track now has:
 
 ## Phase map
 
-| Phase | Theme                                         | Build-log section                                                                       | Highlights                                                                                                                                                                                                                                                                              |
-| ----- | --------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0    | "Walking skeleton" of the AI-native editor    | `## Decisions` → `## Validation summary (2026-04-17)`                                   | Monorepo restructure, OOXML I/O with byte-preservation, command bus with approve/reject/rollback, six P0 commands, headless `DocxAgent`, ProseMirror renderer, `office-agent` CLI, web editor surface.                                                                                  |
-| P1    | Real-world coverage + tables / images / lists | `## P1.1 — W1` → `## P1.6 — typed table rendering`                                      | Real-world fixtures + LibreOffice CI smoke, multi-paragraph range edits, MCP server, typed headers/footers + tracked-change resolution, web toolbar / sidebar parity, perf + license CI gates, typed tables, image insertion, OOXML XSD validation gate, lists + hyperlinks.            |
-| P2    | Polish + LLM dispatch + research synthesis    | `## P2.1 + P2.2` → `## P2.6 — Eigenpal deep-dive synthesis`                             | Selection-aware toolbar (font / size / colour / alignment / indent / list buttons reflect the caret), TOC / SDT unwrap so real-world docs render structurally, real `<img>` rendering with drag/drop/paste, comment composer + selection-aware LLM dispatch, eigenpal architecture deep-dive driving the P3 plan. |
-| P3    | Word-UX parity                                | `## P3 — Word-UX parity`                                                                | Style cascade + toolbar inheritance, typed page geometry + section model, paged renderer, header/footer authoring (commands + side panel), page-aware editing UX (`Mod-Enter`, goto-page, ruler, `PageUp` / `PageDown`), LLM/MCP page surface (`docx_get_pages`, `docx_get_page_text`).  |
+| Phase | Theme                                         | Build-log section                                           | Highlights                                                                                                                                                                                                                                                                                                        |
+| ----- | --------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0    | "Walking skeleton" of the AI-native editor    | `## Decisions` → `## Validation summary (2026-04-17)`       | Monorepo restructure, OOXML I/O with byte-preservation, command bus with approve/reject/rollback, six P0 commands, headless `DocxAgent`, ProseMirror renderer, `office-agent` CLI, web editor surface.                                                                                                            |
+| P1    | Real-world coverage + tables / images / lists | `## P1.1 — W1` → `## P1.6 — typed table rendering`          | Real-world fixtures + LibreOffice CI smoke, multi-paragraph range edits, MCP server, typed headers/footers + tracked-change resolution, web toolbar / sidebar parity, perf + license CI gates, typed tables, image insertion, OOXML XSD validation gate, lists + hyperlinks.                                      |
+| P2    | Polish + LLM dispatch + research synthesis    | `## P2.1 + P2.2` → `## P2.6 — Eigenpal deep-dive synthesis` | Selection-aware toolbar (font / size / colour / alignment / indent / list buttons reflect the caret), TOC / SDT unwrap so real-world docs render structurally, real `<img>` rendering with drag/drop/paste, comment composer + selection-aware LLM dispatch, eigenpal architecture deep-dive driving the P3 plan. |
+| P3    | Word-UX parity                                | `## P3 — Word-UX parity`                                    | Style cascade + toolbar inheritance, typed page geometry + section model, paged renderer, header/footer authoring (commands + side panel), page-aware editing UX (`Mod-Enter`, goto-page, ruler, `PageUp` / `PageDown`), LLM/MCP page surface (`docx_get_pages`, `docx_get_page_text`).                           |
 
 The full per-batch log lives in
 [`docs/build-log/docx.md`](build-log/docx.md). Each section follows
@@ -44,7 +44,7 @@ the same shape: **what shipped → decisions → caveats**.
 
 ## Test counts (2026-04-18)
 
-| Package                       | Tests   |
+| Package                       |   Tests |
 | ----------------------------- | ------: |
 | `@officeai/core`              |      12 |
 | `@officeai/docx`              |     249 |
@@ -99,9 +99,15 @@ fed by `spec/docx/eigenpal-synthesis.md` R8–R12 and the P3 caveats):
    `llm-page-surface.md`).
 4. [`docs/build-log/docx.md`](build-log/docx.md) — what actually
    shipped, in order, with caveats.
-5. [`spec/docx/eigenpal-synthesis.md`](../spec/docx/eigenpal-synthesis.md)
+5. [`docs/architecture-docx-deltas.md`](architecture-docx-deltas.md)
+   — cross-cutting architectural choices that distinguish the DOCX
+   product from the XLSX baseline (PM bridge + two-clock loop,
+   style cascade, opaque-blob classifier, comments lifecycle,
+   tracked changes, header/footer parts, page chunker, real-world
+   fixtures + LibreOffice CI, OOXML XSD gate).
+6. [`spec/docx/eigenpal-synthesis.md`](../spec/docx/eigenpal-synthesis.md)
    — research note used as input for the P3 roadmap.
-6. [`docs/roadmap-docx-p1.md`](roadmap-docx-p1.md) — historical (P1
+7. [`docs/roadmap-docx-p1.md`](roadmap-docx-p1.md) — historical (P1
    roadmap; superseded by what shipped, kept for context).
 
 ## How to run
@@ -143,7 +149,7 @@ deferred at the time. The P0 deliverables were:
   six P0 command handlers, a headless `DocxAgent`, and a ProseMirror
   renderer that funnels every edit through the bus.
 - **`@officeai/agent`** — an `office-agent` CLI: `read | search |
-  insert-text | comment | apply` that uses the same headless agent.
+insert-text | comment | apply` that uses the same headless agent.
 - **`apps/web`** — a Notion-flavored DOCX editor surface.
 - **`tests/`** — integration suite that round-trips five synthetic
   fixtures and verifies untouched parts stay byte-identical.

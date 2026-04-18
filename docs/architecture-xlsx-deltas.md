@@ -2,28 +2,32 @@
 
 > Companion to [`session-summary-xlsx.md`](session-summary-xlsx.md)
 > and [`build-log/xlsx.md`](build-log/xlsx.md). The build log is
-> chronological; this doc is *spatial* — it explains the cross-cutting
+> chronological; this doc is _spatial_ — it explains the cross-cutting
 > shape of the XLSX product against the DOCX baseline so a new
 > contributor (or a future LLM agent) does not have to derive these
 > by reading both stacks side-by-side.
+>
+> The mirror in the other direction — what DOCX did differently from
+> XLSX — lives in
+> [`architecture-docx-deltas.md`](architecture-docx-deltas.md).
 
 The two products share the same headless-first chassis (typed
 `CommandBus` from `@officeai/core`, `OoxmlContainer` for byte-
 preserving I/O, `DocumentAgent` interface, MCP transport, CLI
 shell, Next.js host), but the file formats themselves push against
 different architectural axes. The list below is what XLSX did
-*differently* and *why*.
+_differently_ and _why_.
 
 ---
 
 ## 1. Renderer: hand-rolled grid vs ProseMirror
 
-| | DOCX | XLSX |
-|---|---|---|
-| Renderer | `prosemirror-view` + `prosemirror-state` | hand-rolled virtualized grid in `apps/web/app/xlsx-editor/Grid.tsx` |
-| Document-model bridge | bidirectional (PM doc ↔ our model via `doc-to-pm.ts`) | unidirectional (our model → grid; mutations go through the bus) |
-| Selection | PM `Selection` (positions in a tree) | `{ anchor: {r,c}; focus: {r,c} }` (single rectangle) |
-| Input handling | PM transactions intercepted in plugins | DOM event handlers dispatch typed commands directly |
+|                       | DOCX                                                  | XLSX                                                                |
+| --------------------- | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| Renderer              | `prosemirror-view` + `prosemirror-state`              | hand-rolled virtualized grid in `apps/web/app/xlsx-editor/Grid.tsx` |
+| Document-model bridge | bidirectional (PM doc ↔ our model via `doc-to-pm.ts`) | unidirectional (our model → grid; mutations go through the bus)     |
+| Selection             | PM `Selection` (positions in a tree)                  | `{ anchor: {r,c}; focus: {r,c} }` (single rectangle)                |
+| Input handling        | PM transactions intercepted in plugins                | DOM event handlers dispatch typed commands directly                 |
 
 **Why**: ProseMirror is purpose-built for rich text. A spreadsheet
 grid is two-dimensional, sparse, has its own selection algebra,
@@ -72,7 +76,7 @@ documentation budget:
   short-circuits.
 - **`listRegisteredFunctions`** exists so the formula autocomplete
   popover (Phase 11d) is sourced from the same registry the
-  evaluator reads. Single source of truth — the popover *cannot*
+  evaluator reads. Single source of truth — the popover _cannot_
   advertise a function the engine cannot evaluate.
 
 ## 3. Style table with content-hash deduplication
@@ -80,7 +84,7 @@ documentation budget:
 DOCX runs each carry their own font / colour / underline props
 inline. XLSX has a single workbook-level **style table**:
 
-- One entry per *unique combination* of font / fill / border /
+- One entry per _unique combination_ of font / fill / border /
   alignment / numberFormat (the `<cellXfs>` shape from OOXML).
 - Cells reference styles by index (`Cell.styleId: number`).
 - `xlsx:set-cell-format` computes a content hash of the resulting
@@ -97,7 +101,7 @@ dedup table required.
 
 ## 4. Pixels in the model, character widths at the OOXML boundary
 
-OOXML's `cols/@width` is in *character units* (font-dependent).
+OOXML's `cols/@width` is in _character units_ (font-dependent).
 Storing widths in the model in those units would force every
 renderer to know the workbook's default font.
 
@@ -168,20 +172,20 @@ hot path.
 DOCX diffs are mostly text-shaped: `text-inserted`, `text-deleted`,
 `style-updated`, `paragraph-inserted`, etc. XLSX adds:
 
-| Diff kind | Used by |
-|---|---|
-| `cell-updated` | every command that mutates values, including recalc cascade entries |
-| `formula-updated` | `set-cell-formula`, insert/delete-row/column (formula text rewrite) |
-| `format-updated` | `set-cell-format` |
-| `style-added` | `set-cell-format` when a new `xfId` is appended |
-| `rows-inserted` / `rows-deleted` | structural ops |
-| `columns-inserted` / `columns-deleted` | structural ops |
-| `referenced-cell-deleted` | `delete-row` / `delete-column` per `EC-R2` / `EC-F4` |
-| `merge-added` / `merge-removed` | merge / unmerge |
-| `sheet-added` | `add-sheet` |
-| `sheet-renamed` | `rename-sheet` |
-| `comment-added` | `add-comment` |
-| `node-updated` (with `meta.kind`) | sizing commands (Phase 11g) |
+| Diff kind                              | Used by                                                             |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| `cell-updated`                         | every command that mutates values, including recalc cascade entries |
+| `formula-updated`                      | `set-cell-formula`, insert/delete-row/column (formula text rewrite) |
+| `format-updated`                       | `set-cell-format`                                                   |
+| `style-added`                          | `set-cell-format` when a new `xfId` is appended                     |
+| `rows-inserted` / `rows-deleted`       | structural ops                                                      |
+| `columns-inserted` / `columns-deleted` | structural ops                                                      |
+| `referenced-cell-deleted`              | `delete-row` / `delete-column` per `EC-R2` / `EC-F4`                |
+| `merge-added` / `merge-removed`        | merge / unmerge                                                     |
+| `sheet-added`                          | `add-sheet`                                                         |
+| `sheet-renamed`                        | `rename-sheet`                                                      |
+| `comment-added`                        | `add-comment`                                                       |
+| `node-updated` (with `meta.kind`)      | sizing commands (Phase 11g)                                         |
 
 Recalc side-effects show up as `cell-updated` entries with a
 `source: "recalc"` marker — the diff log distinguishes "the user
@@ -193,7 +197,7 @@ DOCX has nothing comparable. Header drag-to-resize (Phase 11g)
 needs to feel rubber-band responsive without saturating the
 command bus.
 
-**Approach**: the Grid keeps `colDrag` / `rowDrag` *local* state
+**Approach**: the Grid keeps `colDrag` / `rowDrag` _local_ state
 that follows every `mousemove`. The visible width / height
 during drag is read from this transient state, not from the
 agent snapshot. **One** command (`xlsx:set-column-width` or
@@ -279,8 +283,8 @@ spanning the rectangle, and not draw the covered cells at all.
 **Mechanism** (`mergeIndex` in `Grid.tsx`):
 
 ```ts
-const topLeft  = new Map<key, MergedRect>();   // (r1,c1) → rect
-const covered  = new Set<key>();               // every (r,c) inside the rect except (r1,c1)
+const topLeft = new Map<key, MergedRect>(); // (r1,c1) → rect
+const covered = new Set<key>(); // every (r,c) inside the rect except (r1,c1)
 ```
 
 Per-cell loop:
@@ -297,7 +301,7 @@ correctly without special-casing.
 
 ## 13. Selection model: single rectangle, intentionally
 
-XLSX selection is `{ anchor, focus }` and represents *exactly one*
+XLSX selection is `{ anchor, focus }` and represents _exactly one_
 rectangle. Excel supports multi-rectangle selection (Ctrl-click
 to add disjoint areas), and it's intentionally **not** in scope.
 
@@ -315,11 +319,11 @@ selection type is the bottleneck, not the command shape.
 
 ## 14. Test pyramid is shaped differently
 
-| Layer | DOCX | XLSX |
-|---|---|---|
-| Unit | model / serializer / handlers | model / serializer / handlers + **formula engine (475 tests)** + style-table dedup |
-| Integration | round-trip oracle on real-world fixtures | round-trip oracle + **per-command property tests for the inverse mutation** |
-| E2E (Playwright) | editor smoke against bundled DOCX | editor smoke + **drag interactions** (resize, drag-extend selection) + **caret-aware formula bar tests** (autocomplete acceptance, click-to-insert-ref) |
+| Layer            | DOCX                                     | XLSX                                                                                                                                                    |
+| ---------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit             | model / serializer / handlers            | model / serializer / handlers + **formula engine (475 tests)** + style-table dedup                                                                      |
+| Integration      | round-trip oracle on real-world fixtures | round-trip oracle + **per-command property tests for the inverse mutation**                                                                             |
+| E2E (Playwright) | editor smoke against bundled DOCX        | editor smoke + **drag interactions** (resize, drag-extend selection) + **caret-aware formula bar tests** (autocomplete acceptance, click-to-insert-ref) |
 
 **Why drag-aware e2e is XLSX-specific**: nothing in the DOCX UX
 depends on a `mousedown → mousemove → mouseup` sequence with a
@@ -328,7 +332,7 @@ column resize, row resize) and they all test the
 local-preview / commit-on-up architecture from item 8.
 
 **Why caret-aware e2e is XLSX-specific**: the formula bar is the
-only place in either product where caret position has *semantic*
+only place in either product where caret position has _semantic_
 significance (clicking a cell appends an A1 ref at the caret).
 
 ---

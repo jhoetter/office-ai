@@ -620,29 +620,283 @@ textarea::placeholder {
   font-size: 0.8125rem;
 }
 
-/* P3.3 / W11-W12 — page-divider widget rendered between page chunks
- * by `pageDecorationsPlugin`. The widget is a `contenteditable=false`
- * block so PM treats it as inert chrome; the dashed rule + tabular
- * label intentionally mirror Word's "Page break" indicator without
- * pretending to be a true paginated viewport. */
-.prose-pm .ProseMirror .pm-page-divider {
+/* ──────────────────────────────────────────────────────────────────
+ * P3.8 — Word-flavoured page sheets.
+ *
+ * Goal: make every page chunk read as a discrete sheet of paper
+ * resting on a grey desk, with header / footer zones at the top and
+ * bottom of each sheet. Double-clicking a zone enters Word-style
+ * edit mode (body dims, the active zone gets a labelled chrome).
+ *
+ * Implementation:
+ *  - The host (`.prose-pm`) paints the grey desk.
+ *  - The `.ProseMirror` itself paints WHITE, and its width is
+ *    constrained to a 720px column so the desk shows on either
+ *    side. *Every* direct child gets the same horizontal margin via
+ *    a universal selector — that way trailing section-break HRs (or
+ *    any future block kind we add) never tear a hole in the page.
+ *  - `.pm-page-cap-top` / `.pm-page-cap-bottom` widgets supply the
+ *    rounded corners + drop shadow on the first / last sheet.
+ *  - `.pm-page-edge` widgets between chunks paint the visible grey
+ *    gap + the footer zone of the previous page + the header zone
+ *    of the next page.
+ *  - `.pm-page-zone` is the actual interactive header / footer
+ *    surface. It double-clicks to fire the `pm-page-zone-edit`
+ *    event that DocxEditor catches; while editing, the page gets
+ *    `.pm-zone-editing` so we can dim the body and label the zone.
+ * ────────────────────────────────────────────────────────────── */
+
+/* The host (`.prose-pm`) is a transparent shell — the OUTER scroll
+ * container in DocxEditor.tsx already paints the grey "desk" colour,
+ * so layering another bg here would just stack greys. */
+.prose-pm {
+  background: transparent;
   position: relative;
-  margin: 1.5rem -0.5rem;
-  border-top: 1px dashed var(--divider);
-  text-align: center;
-  user-select: none;
-  pointer-events: none;
 }
 
-.prose-pm .ProseMirror .pm-page-divider__label {
-  position: relative;
-  top: -0.6rem;
-  display: inline-block;
-  padding: 0 0.5rem;
+/* The PM editor itself is the page card — white, rounded, with a
+ * subtle drop shadow so it reads as a single sheet of paper resting
+ * on the desk. */
+.prose-pm .ProseMirror {
   background: var(--background);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
+  border-radius: 4px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 8px 24px -10px rgba(0, 0, 0, 0.10);
+  padding: 0;
+  min-height: 60vh;
+}
+
+.dark .prose-pm .ProseMirror,
+html.dark .prose-pm .ProseMirror {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 8px 24px -10px rgba(0, 0, 0, 0.5);
+}
+
+/* Every direct child of the editor — body block, section-break HR,
+ * page cap, page edge, anything — gets the same horizontal padding
+ * so the column reads as a single page. The page-edge widget opts
+ * out (its `padding: 0` rule wins later) because the gap inside a
+ * page-edge needs to span edge-to-edge to reveal the grey desk. */
+.prose-pm .ProseMirror > * {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 72px;
+  padding-right: 72px;
+}
+
+/* Page cap (top): the white header strip above the very first page.
+ * Pads top so the sheet has visible top margin. */
+.prose-pm .ProseMirror > .pm-page-cap-top {
+  padding-top: 28px;
+  padding-bottom: 4px;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+}
+
+/* Page cap (bottom): the white footer strip below the very last
+ * page. Pads bottom so the sheet has visible bottom margin. */
+.prose-pm .ProseMirror > .pm-page-cap-bottom {
+  padding-top: 4px;
+  padding-bottom: 28px;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+/* First / last body block in a chunk — keep the body comfortably
+ * inset from the cap so the dashed zone separator has breathing
+ * room. */
+.prose-pm .ProseMirror > .pm-page-block.pm-page-first {
+  padding-top: 4px;
+}
+
+.prose-pm .ProseMirror > .pm-page-block.pm-page-last {
+  padding-bottom: 4px;
+}
+
+/* Trailing section-break HR — `<hr class="pm-section-break">` —
+ * appears at the end of every section. When it's the last child of
+ * the editor (i.e. the document's section properties carrier with
+ * no following content), Word does NOT render anything. Hide it
+ * inside the page card so it doesn't introduce a phantom dashed
+ * line right above the footer cap. */
+.prose-pm .ProseMirror > hr.pm-section-break:last-child,
+.prose-pm .ProseMirror > hr.pm-section-break + .pm-page-cap-bottom {
+  /* The HR itself stays in the doc (PM positions depend on it) but
+   * we collapse its visual chrome and zero its margin so the body
+   * butts directly into the footer cap. */
+}
+.prose-pm .ProseMirror > hr.pm-section-break:last-child {
+  display: none;
+}
+
+/* Page edge — the strip between two adjacent chunks: footer of
+ * prev page + visible grey gap + header of next page. The widget
+ * itself spans edge-to-edge of the white card so the gap can show
+ * the grey desk underneath; its inner zones re-pad to the column. */
+.prose-pm .ProseMirror > .pm-page-edge {
+  padding-left: 0;
+  padding-right: 0;
+  background: transparent;
+}
+
+.prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer {
+  background: var(--background);
+  padding: 4px 72px 24px 72px;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.18);
+}
+
+.prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header {
+  background: var(--background);
+  padding: 24px 72px 4px 72px;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.04);
+}
+
+/* The gap inside a page-edge has to paint the desk colour explicitly
+ * — the `.ProseMirror` it sits inside is white edge-to-edge, so a
+ * transparent gap would just show that whiteness. */
+.prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
+  position: relative;
+  height: 28px;
+  background: var(--page-backdrop, #ecebe8);
+}
+
+.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap,
+html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
+  background: #131313;
+}
+
+.prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label {
+  position: absolute;
+  right: 16px;
+  bottom: 6px;
+  display: inline-block;
+  padding: 1px 8px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--secondary);
   font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label,
+html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Header / footer zone — the actual interactive surface inside a
+ * page cap or page edge. Word-flavoured: small italic placeholder,
+ * a dashed separator from the body, a label badge that fades in on
+ * hover so the user knows it's a clickable region. */
+.prose-pm .ProseMirror .pm-page-zone {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--secondary);
+  letter-spacing: 0.01em;
+  border-radius: 2px;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
+}
+
+.prose-pm .ProseMirror .pm-page-zone-header {
+  border-bottom: 1px dashed var(--divider);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.prose-pm .ProseMirror .pm-page-zone-footer {
+  border-top: 1px dashed var(--divider);
+  padding-top: 6px;
+  margin-top: 8px;
+}
+
+.prose-pm .ProseMirror .pm-page-zone:hover {
+  color: var(--foreground);
+  background-color: color-mix(in srgb, var(--accent-light) 60%, transparent);
+}
+
+/* Word-style "Header" / "Footer" pill that fades in on hover. */
+.prose-pm .ProseMirror .pm-page-zone::before {
+  content: attr(data-zone-label);
+  position: absolute;
+  top: -10px;
+  left: 0;
+  display: inline-block;
+  padding: 1px 8px;
+  background: var(--accent);
+  color: #ffffff;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.prose-pm .ProseMirror .pm-page-zone-footer::before {
+  top: auto;
+  bottom: -10px;
+}
+
+.prose-pm .ProseMirror .pm-page-zone:hover::before {
+  opacity: 1;
+}
+
+.prose-pm .ProseMirror .pm-page-zone-content {
+  min-height: 16px;
+  padding: 2px 4px;
+  white-space: pre-wrap;
+}
+
+.prose-pm .ProseMirror .pm-page-zone-empty {
+  font-style: italic;
+  color: var(--tertiary);
+}
+
+/* ── Active editing — Word's "Header & Footer" mode.
+ *
+ * When the React shell opens the inline `PageZoneEditor`, it adds
+ * `data-zone-editing="header"` (or "footer") to the host `.prose-pm`.
+ * That pulls in:
+ *   - All page-zones become semi-translucent except the active one.
+ *   - All body content dims to 0.4 opacity, mirroring Word.
+ *   - The active zone's label badge stays pinned. */
+.prose-pm[data-zone-editing] .ProseMirror > .pm-page-block,
+.prose-pm[data-zone-editing] .ProseMirror > hr {
+  opacity: 0.35;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.prose-pm[data-zone-editing="header"] .pm-page-zone-footer,
+.prose-pm[data-zone-editing="footer"] .pm-page-zone-header {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.prose-pm[data-zone-editing="header"] .pm-page-zone-header,
+.prose-pm[data-zone-editing="footer"] .pm-page-zone-footer {
+  background-color: color-mix(in srgb, var(--accent-light) 80%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--foreground);
+}
+
+.prose-pm[data-zone-editing="header"] .pm-page-zone-header::before,
+.prose-pm[data-zone-editing="footer"] .pm-page-zone-footer::before {
+  opacity: 1;
+  background: var(--accent);
 }
