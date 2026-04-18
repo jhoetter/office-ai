@@ -126,7 +126,10 @@ function blockToPM(block: BlockNode): PMNode | null {
         tableJson: encode(tableToRenderable(block)),
       });
     case "section-break":
-      return docxSchema.nodes.section_break.create({ blockId: block.id, rawJson: encode(block.raw) });
+      return docxSchema.nodes.section_break.create({
+        blockId: block.id,
+        rawJson: block.raw ? encode(block.raw) : encode(null),
+      });
     case "opaque-block":
       return opaqueBlockToPM(block.id, block.raw, block.children);
     default: {
@@ -284,6 +287,17 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       return;
     case "break":
       out.push(docxSchema.nodes.hard_break.create({ breakType: child.breakType ?? null }, null, marks));
+      return;
+    case "page-break":
+      // Render as a typed hard_break with breakType="page" so the
+      // existing PM <br> projection still applies; the page-frame
+      // chunker (P3.3) reads the typed leaf directly off the snapshot
+      // without going through PM.
+      out.push(docxSchema.nodes.hard_break.create({ breakType: "page" }, null, marks));
+      return;
+    case "last-rendered-page-break":
+      // Layout hint only; never visible. Drop on render — the snapshot
+      // model still carries the leaf so it round-trips on save.
       return;
     case "tab":
       out.push(docxSchema.nodes.tab.create(null, null, marks));

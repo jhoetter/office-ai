@@ -1,7 +1,7 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
 import type { NodeId } from "@officeai/core";
 import type { DocxSnapshot, Paragraph, ParagraphProperties } from "../model/types.js";
-import { buildDiff, evolveSnapshot } from "./helpers.js";
+import { buildDiff, buildDiffMulti, evolveSnapshot } from "./helpers.js";
 import { locateParagraph } from "./set-paragraph-list.js";
 
 /**
@@ -40,7 +40,7 @@ export const setParagraphSpacingHandler: CommandHandler<SetParagraphSpacingPaylo
 
     const updatedProps = applySpacing(located.paragraph.properties, payload);
     if (spacingEqual(located.paragraph.properties.spacing, updatedProps.spacing)) {
-      return { next: snapshot, diff: buildDiff(snapshot.revision, snapshot.revision) };
+      return { next: snapshot, diff: buildDiffMulti(snapshot.revision, snapshot.revision, []) };
     }
     const updatedParagraph: Paragraph = { ...located.paragraph, properties: updatedProps };
     const nextDoc = located.replace(updatedParagraph);

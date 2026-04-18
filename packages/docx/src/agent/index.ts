@@ -9,3 +9,8 @@ export {
 export { snapshotToMarkdown } from "./markdown.js";
 export { diffDocxSnapshots } from "./diff.js";
 export { resolveEffectiveRpr, resolveEffectivePpr } from "./style-resolver.js";
+export {
+  resolveHeaderFooterParts,
+  type ResolvedHeaderFooter,
+  type ResolvedSectionHeaderFooters,
+} from "./header-footer-graph.js";

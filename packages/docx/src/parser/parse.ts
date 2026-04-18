@@ -26,6 +26,7 @@ import { parseDrawing } from "./images.js";
 import { parseMediaParts } from "./media.js";
 import { parseNumberingPart } from "./numbering.js";
 import { parseRelationshipsParts } from "./relationships.js";
+import { parseSectionProperties } from "./sections.js";
 import { parseStylesPart } from "./styles.js";
 import { parseTable as parseTableTyped } from "./tables.js";
 import {
@@ -219,7 +220,13 @@ function parseBody(bodyEntry: Record<string, unknown>, mintNodeId: IdMinter): Bl
 }
 
 function parseSectionBreak(entry: Record<string, unknown>, mintNodeId: IdMinter): SectionBreak {
-  return { kind: "section-break", id: mintNodeId(), raw: captureOpaque(entry) };
+  const properties = parseSectionProperties(entry);
+  return {
+    kind: "section-break",
+    id: mintNodeId(),
+    properties,
+    raw: captureOpaque(entry),
+  };
 }
 
 /**
@@ -516,9 +523,14 @@ function parseRunChild(entry: Record<string, unknown>, mintNodeId: IdMinter): Ru
     }
     case "w:br": {
       const t = attrOf(entry, "w:type");
-      const breakType = t === "page" || t === "column" || t === "textWrapping" ? t : undefined;
+      if (t === "page") {
+        return { kind: "page-break", id: mintNodeId() };
+      }
+      const breakType = t === "column" || t === "textWrapping" ? t : undefined;
       return { kind: "break", id: mintNodeId(), ...(breakType ? { breakType } : {}) };
     }
+    case "w:lastRenderedPageBreak":
+      return { kind: "last-rendered-page-break", id: mintNodeId() };
     case "w:tab":
       return { kind: "tab", id: mintNodeId() };
     case "w:drawing":

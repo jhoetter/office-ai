@@ -21,6 +21,7 @@ import { serializeInlineImageDrawing } from "./images.js";
 import { serializeMediaParts } from "./media.js";
 import { serializeNumberingPart } from "./numbering.js";
 import { serializeRelationshipsParts } from "./relationships.js";
+import { serializeSectionProperties } from "./sections.js";
 import { serializeTable, serializeTableFromRaw } from "./tables.js";
 
 const MAIN_PART = "word/document.xml";
@@ -206,7 +207,11 @@ function serializeBlock(block: BlockNode): unknown {
       if (block.raw) return serializeTableFromRaw(block.raw);
       return serializeTable(block, serializeBlock);
     case "section-break":
-      return opaqueToEntry(block.raw);
+      // P3.2: byte-preservation fast path. `raw` is dropped by mutating
+      // commands (none in P3.2 itself) so its presence is the signal
+      // that this section has not been touched since parse.
+      if (block.raw) return opaqueToEntry(block.raw);
+      return serializeSectionProperties(block.properties);
     case "opaque-block":
       // P2.3: when a content-wrapper carrier (SDT / fldSimple / mc:* /
       // smartTag / customXml) was unwrapped at parse time and a mutation
@@ -385,6 +390,10 @@ function serializeRunChild(c: RunChild): unknown {
     }
     case "break":
       return c.breakType ? makeEl("w:br", { "w:type": c.breakType }) : { "w:br": [] };
+    case "page-break":
+      return makeEl("w:br", { "w:type": "page" });
+    case "last-rendered-page-break":
+      return { "w:lastRenderedPageBreak": [] };
     case "tab":
       return { "w:tab": [] };
     case "drawing": {

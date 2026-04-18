@@ -348,10 +348,100 @@ export interface TableCellProperties {
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
+/* ── Page geometry / section properties (P3.2) ───────────────────────────── */
+
+/** OOXML twips (1/20 pt). Used for page sizes, margins, indents, etc. */
+export type Twips = number;
+
+/**
+ * Typed projection of `<w:pgSz>`. `w` and `h` are page width/height in
+ * twips. `orient` is the explicit `w:orient` attribute when present;
+ * Word will also write `w:code` (size enum) which we don't model — it
+ * round-trips through the parent section's `opaqueProps`.
+ */
+export interface PageSize {
+  readonly w: Twips;
+  readonly h: Twips;
+  readonly orient?: "portrait" | "landscape";
+}
+
+/** Typed projection of `<w:pgMar>`. */
+export interface PageMargins {
+  readonly top: Twips;
+  readonly right: Twips;
+  readonly bottom: Twips;
+  readonly left: Twips;
+  readonly header: Twips;
+  readonly footer: Twips;
+  readonly gutter?: Twips;
+}
+
+/** Typed projection of `<w:cols>` (multi-column body layout). */
+export interface PageColumns {
+  readonly num: number;
+  readonly sep?: boolean;
+  readonly equalWidth?: boolean;
+  readonly space?: Twips;
+}
+
+/**
+ * Typed projection of `<w:headerReference>` / `<w:footerReference>`.
+ * `relationshipId` resolves through `word/_rels/document.xml.rels` to a
+ * concrete header/footer part stored in `DocxDocument.headersAndFooters`.
+ */
+export interface HeaderFooterRef {
+  readonly type: "default" | "first" | "even";
+  readonly relationshipId: string;
+}
+
+/**
+ * Typed projection of `<w:sectPr>`. The renderer reads this to draw page
+ * frames at the correct size, margins, and to pick the right
+ * header/footer slot per page. Mutating commands (P3.4 / P3.6) edit
+ * these fields in place; untouched sections re-emit `SectionBreak.raw`
+ * verbatim for byte-identical round-trip.
+ */
+export interface SectionProperties {
+  readonly pgSz?: PageSize;
+  readonly pgMar?: PageMargins;
+  readonly cols?: PageColumns;
+  readonly headerRefs: ReadonlyArray<HeaderFooterRef>;
+  readonly footerRefs: ReadonlyArray<HeaderFooterRef>;
+  /** `<w:titlePg/>` — section uses the `first` header/footer on page 1. */
+  readonly titlePg?: boolean;
+  /**
+   * `<w:type w:val>`. Drives Word's flow at the section boundary:
+   * `continuous` keeps text on the same page; `nextPage` (default) starts
+   * a fresh page; `oddPage`/`evenPage` skip to the next odd/even page.
+   */
+  readonly sectionType?: "continuous" | "nextPage" | "oddPage" | "evenPage" | "nextColumn";
+  /**
+   * Catch-all for `<w:sectPr>` children we don't model yet
+   * (`<w:lineNumType>`, `<w:pgNumType>`, `<w:formProt>`, `<w:vAlign>`,
+   * `<w:rtlGutter>`, `<w:docGrid>`, `<w:bidi>`, …). Captured in original
+   * order so the serializer rebuild path preserves them.
+   */
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
+}
+
 export interface SectionBreak {
   readonly kind: "section-break";
   readonly id: NodeId;
-  readonly raw: OpaqueXml;
+  /**
+   * Typed projection of the `<w:sectPr>`. Always present from P3.2
+   * onwards; synthetic snapshots constructed without a `sectPr` set
+   * `headerRefs`/`footerRefs` to `[]` and leave the geometry fields
+   * undefined.
+   */
+  readonly properties: SectionProperties;
+  /**
+   * Original `<w:sectPr>` subtree captured at parse time. When present
+   * AND no field of `properties` has been mutated, the serializer
+   * re-emits `raw` verbatim (byte-preservation fast path, mirrors
+   * `Table.raw` / `InlineImageDrawing.raw`). Mutating commands MUST
+   * drop `raw` on the new `SectionBreak` they produce.
+   */
+  readonly raw?: OpaqueXml;
 }
 
 /**
@@ -415,7 +505,14 @@ export interface RunProperties {
   readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
-export type RunChild = TextLeaf | BreakLeaf | TabLeaf | DrawingLeaf | OpaqueRunChild;
+export type RunChild =
+  | TextLeaf
+  | BreakLeaf
+  | TabLeaf
+  | DrawingLeaf
+  | PageBreakLeaf
+  | LastRenderedPageBreakLeaf
+  | OpaqueRunChild;
 
 export interface TextLeaf {
   readonly kind: "text";
@@ -429,7 +526,35 @@ export interface TextLeaf {
 export interface BreakLeaf {
   readonly kind: "break";
   readonly id: NodeId;
-  readonly breakType?: "page" | "column" | "textWrapping";
+  /**
+   * `column` and `textWrapping` are kept on this legacy leaf. The page
+   * break case (`<w:br w:type="page"/>`) is promoted to the typed
+   * {@link PageBreakLeaf} at parse time so the page chunker can switch
+   * on `kind` directly.
+   */
+  readonly breakType?: "column" | "textWrapping";
+}
+
+/**
+ * A `<w:br w:type="page"/>` inside a run. Promoted to a typed leaf in
+ * P3.2 / W6 so the page-chunker can split the body without reaching into
+ * opaque carriers. Round-trips back to `<w:br w:type="page"/>`.
+ */
+export interface PageBreakLeaf {
+  readonly kind: "page-break";
+  readonly id: NodeId;
+}
+
+/**
+ * `<w:lastRenderedPageBreak/>`. Word writes this hint at the position
+ * where pagination broke during the last save. Layout-only — no
+ * formatting, no content. The page chunker uses it as a cheap heuristic
+ * for picking initial page breaks but never treats it as authoritative
+ * (Word may not have written it; the geometry may have changed since).
+ */
+export interface LastRenderedPageBreakLeaf {
+  readonly kind: "last-rendered-page-break";
+  readonly id: NodeId;
 }
 
 export interface TabLeaf {
