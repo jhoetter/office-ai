@@ -1055,3 +1055,336 @@ ContentType=".../worksheet+xml"/>` for any sheet missing
   add-sheet diff carries `meta.partPath` so a future
   delete-sheet inverse can target the exact part without
   re-resolving by name.
+
+### Phase 7i — structural reshape commands (2026-04-18)
+
+`xlsx:insert-row`, `xlsx:insert-column`, `xlsx:delete-row`,
+`xlsx:delete-column` ship together. These are the four commands
+spec'd in `spec/xlsx/agent-commands.md` §§5–8 and the first
+commands that need to rewrite formulas across the entire
+workbook, not just the targeted sheet.
+
+**Code landed**
+
+- `packages/xlsx/src/formula/serialize-ast.ts` — AST → canonical
+  formula text. Walks the AST with the surrounding operator
+  precedence threaded through so binary children get parens
+  iff dropping them would re-associate the expression on a
+  round-trip (`(1+2)*3` keeps parens, `1+2*3` does not).
+  Function names are uppercased and whitespace dropped to match
+  Excel's own canonicalisation on edit. Used by the formula
+  rewriter below; reused by anything that needs to emit Excel
+  formula text from a parsed AST.
+- `packages/xlsx/src/formula/rewrite-refs.ts` — `rewriteFormulaRefs`.
+  Parses a formula, walks every `ref`/`range` node through an
+  `AdjustFn` from `references.ts`, replaces deleted references
+  with `#REF!` error literals, and re-serialises via
+  `serializeAst`. Returns `{ text, hasRefError, changed }` so
+  callers can decide whether to emit a `referenced-cell-deleted`
+  diff and whether to update the cell at all.
+- `packages/xlsx/src/commands/structural-shift.ts` — shared
+  pipeline for the four commands. `applyStructuralOp` validates
+  `at`/`count` against Excel's row/column limits, prechecks that
+  no merge straddles the deletion/insertion boundary, shifts
+  cells (or drops them, for deletes), adjusts every merge
+  region (shift / expand / shrink / drop), iterates _every_
+  formula in _every_ sheet through `rewriteFormulaRefs`, rebinds
+  the formula engine, runs a full workbook recalc, and folds the
+  recalc deltas back into the next snapshot. Returns the next
+  workbook plus the structured pieces individual handlers need
+  to assemble their `DiffChange` arrays.
+- `packages/xlsx/src/commands/insert-row.ts`,
+  `insert-column.ts`, `delete-row.ts`, `delete-column.ts` —
+  thin handlers that resolve the sheet, delegate to
+  `applyStructuralOp`, and emit the per-command `DiffChange`s
+  (`rows-inserted` / `columns-inserted` /
+  `rows-deleted` / `columns-deleted` summary, one
+  `formula-updated` per rewritten formula, one
+  `referenced-cell-deleted` per `#REF!` casualty for the delete
+  variants, plus `cachedValue` deltas for any non-rewritten
+  formula whose cached value changed across the recalc).
+- Wired into `commands/registry.ts` (now **12/13 P0 commands
+  shipped**) and re-exported from `commands/index.ts`.
+
+**Tests landed**
+
+- `packages/xlsx/src/formula/__tests__/serialize-ast.test.ts` —
+  20 tests: literals (numbers, strings with embedded quotes,
+  booleans, errors), cell + range refs with and without
+  `anchorSheet`, unary/percent/binary precedence,
+  right-associative `^`, function calls, defined names,
+  array literals.
+- `packages/xlsx/src/formula/__tests__/rewrite-refs.test.ts` —
+  11 tests: cell shift on insert, range shift, cross-sheet refs
+  ignored unless the sheet matches, single-cell deletion →
+  `#REF!`, range entirely inside the deletion → `#REF!`, range
+  partially overlapping the deletion shrinks correctly, complex
+  expression with mixed refs, idempotency for formulas with no
+  relevant refs.
+- `packages/xlsx/src/commands/insert-row.test.ts` (13 tests),
+  `insert-column.test.ts` (9 tests), `delete-row.test.ts`
+  (12 tests), `delete-column.test.ts` (12 tests). Cover the
+  happy paths (cell + formula shift, summary diff shape),
+  merge handling (expand on touching the boundary, shift past
+  the band, reject on mid-band split), validation (unknown
+  sheet, `at` < 1, `count` < 1, overflow past Excel's
+  1,048,576-row / 16,384-column limits), and the
+  `#REF!`-casualty path for the delete variants (single ref
+  → `#REF!`, range fully inside deletion → `SUM(#REF!)`, the
+  `referenced-cell-deleted` diff entry shows up).
+- `tests/roundtrip/xlsx/commands-roundtrip.test.ts` — two new
+  end-to-end cases: parse → insert-row + insert-column →
+  serialize → reparse preserves the rewritten `=Z3*3` formula
+  and shifted operand; the same loop with delete-row +
+  delete-column persists `=#REF!+1` after the referenced cell
+  is removed.
+
+**Totals after Phase 7i**
+
+- `@officeai/xlsx` unit tests: **596 passing** (+80 from Phase 7h).
+- Integration tests: **51 passing** (+2).
+- 12/13 P0 commands now wired through the bus; only
+  `xlsx:set-named-range` remains.
+- `pnpm --filter @officeai/xlsx test`, `lint`, `build`, and
+  `pnpm format:check` all green.
+
+**Decisions**
+
+- **One `applyStructuralOp` for all four commands.** The cell
+  shift, merge adjust, formula rewrite, and recalc steps are
+  identical modulo axis (row vs column) and direction (insert
+  vs delete). Inlining the pipeline in each handler would
+  duplicate ~200 lines of subtle index arithmetic four times;
+  centralising it lets the four handlers stay <60 lines each
+  and keeps the per-axis index math in one auditable spot.
+- **Formula rewrite walks the whole workbook, not just the
+  targeted sheet.** Cross-sheet refs (`Sheet2!A5`) on _any_
+  sheet may need adjustment when `Sheet2` shrinks or grows.
+  The cheaper "scan only the targeted sheet" optimisation
+  would silently leave stale formulas elsewhere. The recalc
+  pass after the rewrite catches dependent value changes for
+  formulas that didn't textually change.
+- **`#REF!` is emitted as a literal `ErrorLiteral` AST node,
+  re-serialised inline.** Excel writes `=#REF!+1`, not
+  `=ERR("#REF!")+1`; the rewriter inserts an
+  `ErrorLiteral("#REF!")` exactly where the doomed `ref` /
+  `range` node lived so the surrounding expression text stays
+  syntactically valid and matches Excel's canonical form.
+- **Precedence-aware serializer.** The naïve "always
+  parenthesise binary children" emitter produced churn like
+  `=A1+B1` ⇒ `=(A1)+(B1)` on every shift, which polluted the
+  diff and ruined visual readability. Threading `parentPrec`
+  through the recursion costs a handful of integer comparisons
+  and produces text identical to what a human (or Excel) would
+  write.
+- **Defined names, comments, hyperlinks deferred.** The typed
+  model doesn't yet expose these as walkable structures (they
+  live inside opaque OPC parts). Phase 7i sets up the
+  rewrite hook in `applyStructuralOp` so a follow-up phase can
+  add the missing walks without changing the command surface.
+  The spec's §§5–8 acceptance criteria for those parts are
+  tracked as carry-over items.
+- **`merge-boundary-crossed` is the single rejection code for
+  any operation that would split a merge.** Earlier drafts had
+  separate codes for "expand crosses boundary" vs "delete
+  shaves region", but in the agent UI both reduce to "the
+  merge in the way must be removed first" — a single code with
+  meta.firstOffender (sheet + range) gives the agent enough
+  context to recover.
+
+### Phase 7i — structural reshape commands (2026-04-18)
+
+**Shipped**
+
+- `packages/xlsx/src/formula/serialize-ast.ts` — re-emits a
+  parsed formula AST as canonical Excel formula text (no
+  leading `=`). Handles every AST node kind exhaustively:
+  literals (numbers / strings with `""` escaping / booleans /
+  errors), single-cell and range refs (delegating to
+  `serializeCellRef` / `serializeRangeRef` for `$` and
+  cross-sheet `Sheet!` rendering), defined names, binary /
+  unary / percent operators, function calls, and `{...;...}`
+  array literals. Defensively wraps binary / unary / percent
+  child expressions in parens to preserve operator precedence
+  without tracking the parent's level. `anchorSheet` controls
+  sheet-prefix omission so refs on the formula's own sheet emit
+  bare (`A1` not `Sheet1!A1`).
+- `packages/xlsx/src/formula/rewrite-refs.ts` — `rewriteFormulaRefs(text, anchor, adjust)`
+  re-parses a formula against `anchor`, walks the AST with
+  structural sharing (returning the same node when nothing
+  changed below it), feeds every `Reference` and
+  `RangeReference` through `adjust`, and re-serializes via
+  `serializeAst(_, anchor.sheet)`. When `adjust` returns a
+  `CellError` (the target lay inside a deletion band) the
+  ref node is replaced by a literal `#REF!` token — Excel's
+  canonical "deleted target" rendering per EC-R2. Returns
+  `{ text, changed, hasRefError }` so callers can tell the
+  difference between a no-op rewrite, a benign shift, and a
+  rewrite that produced casualties.
+- `packages/xlsx/src/commands/structural-shift.ts` —
+  consolidated engine that powers all four reshape commands.
+  Pipeline:
+  1. Validate `at ≥ 1`, `count ≥ 1`, and the resulting band
+     fits inside Excel limits (`1,048,576` rows / `16,384`
+     columns) before any work.
+  2. Resolve the target sheet by name (`unknown-sheet`
+     rejection on miss).
+  3. **Merge precheck.** For inserts: reject if the insertion
+     index falls strictly _inside_ a merged region
+     (`lo < at0 < hi`). For deletes: reject if the deletion
+     band straddles a merge boundary (the merge extends outside
+     the band on either side). Both produce
+     `merge-boundary-crossed` rejections with `meta.range`.
+  4. **Cell shift.** Insertions allocate a fresh `Map` and
+     copy each cell with the row/column adjusted by `count`
+     when at-or-after the insertion index. Deletions skip
+     cells inside the band entirely and shift cells after the
+     band up/left by `count`.
+  5. **Merge shift.** Same shape as cell shift, with the merge
+     precheck having already eliminated the partial-overlap
+     cases.
+  6. **Workbook-wide formula rewrite.** Walks every cell in
+     every sheet (not just the target sheet — a formula on
+     `Sheet2` may reference the deleted band on `Sheet1`),
+     calls `rewriteFormulaRefs` with the appropriate
+     `adjustForInsertRow` / `…InsertColumn` / `…DeleteRow` /
+     `…DeleteColumn` from `formula/references.ts` scoped to
+     the target sheet, and collects the rewritten cells for
+     dirty-marking and diff emission.
+  7. **Recalculate.** Rebuilds the formula `Engine` against the
+     post-shift / post-rewrite snapshot and runs a full
+     workbook recalc to refresh cached values for everything
+     that depended on the moved or deleted refs.
+  8. **Diff.** Emits one summary change
+     (`rows-inserted` / `columns-inserted` / `rows-deleted` /
+     `columns-deleted`) with `{ at, count, sheet }` in `meta`,
+     plus `node-removed` for each cell dropped inside a delete
+     band, `formula-updated` for each rewritten formula text,
+     `referenced-cell-deleted` for each `#REF!` casualty, and
+     `cell-updated` for each cached value that flipped during
+     recalc.
+- `packages/xlsx/src/commands/insert-row.ts`,
+  `insert-column.ts`, `delete-row.ts`, `delete-column.ts` —
+  thin wrappers; each handler resolves to one
+  `applyStructuralShift(snapshot, payload, axis, op)` call so
+  the four commands share identical semantics for validation,
+  precheck, shift, rewrite, recalc, and diff. Specs:
+  `agent-commands.md` §§5–8.
+- `packages/xlsx/src/commands/payloads.ts` — added
+  `InsertRowPayload`, `InsertColumnPayload`, `DeleteRowPayload`,
+  `DeleteColumnPayload` (`sheet`, `at` 1-based, `count ≥ 1`).
+- Wired into `commands/registry.ts` (now **12/13 P0 commands
+  shipped**) and re-exported from `commands/index.ts` plus
+  the package root `src/index.ts`.
+
+**Tests landed**
+
+- `packages/xlsx/src/formula/__tests__/serialize-ast.test.ts`
+  — **20 tests** covering every literal kind (number / string
+  with `""` escape / boolean / error / range fallback), bare
+  - absolute + cross-sheet refs, range serialization, defined
+    names, binary precedence wrapping, unary / percent, nested
+    function calls, array literals, `anchorSheet` prefix
+    omission, and a parse → serialize → parse semantic
+    round-trip on a non-trivial formula.
+- `packages/xlsx/src/formula/__tests__/rewrite-refs.test.ts`
+  — **11 tests**: cell-ref shift on row insert, cell-ref shift
+  on column insert, refs above the insertion left untouched,
+  range expansion when the band falls inside the range,
+  multiple-ref formulas, cross-sheet refs unaffected when
+  `adjust` is scoped to a different sheet, deleted single-cell
+  ref → `#REF!`, deleted range entirely → `#REF!`, partial
+  range overlap shifts correctly, no-op when the adjust is a
+  pass-through, `hasRefError` and `changed` accounting.
+- `packages/xlsx/src/commands/insert-row.test.ts` — **13 tests**
+  covering shifted cell positions, formula range expansion,
+  cross-sheet ref untouched, merge straddling a boundary
+  expands `r2`, merge fully below shifts down, merge straddling
+  strictly inside is rejected, `rows-inserted` summary diff
+  shape, validation (`unknown-sheet`, `invalid-position`,
+  `invalid-count`, `invalid-position` when `at + count`
+  exceeds the row limit), and a full parse → insert → serialize
+  → re-parse round-trip preserving cell values and formulas.
+- `packages/xlsx/src/commands/insert-column.test.ts` — **9 tests**
+  on the column axis: cell shift, formula range expansion,
+  merge boundary expansion vs. straddle rejection,
+  `columns-inserted` summary, validation (unknown sheet,
+  invalid position / count, exceeds column limit).
+- `packages/xlsx/src/commands/delete-row.test.ts` — **14 tests**:
+  cells inside the band dropped, cells below shifted up, cells
+  above unchanged, formula partial-range shift with the
+  recalculated cached value verified, deleted single-cell ref
+  rewritten to `#REF!` with the cached value flipping to a
+  `#REF!` `CellError`, `referenced-cell-deleted` change emitted
+  for casualties, cross-sheet refs targeting a different sheet
+  untouched, merges fully inside dropped, merges below shifted,
+  merges straddling rejected with `merge-boundary-crossed`,
+  `rows-deleted` summary diff, and validation (`unknown-sheet`,
+  `invalid-position`, `invalid-count`).
+- `packages/xlsx/src/commands/delete-column.test.ts` — **13 tests**
+  mirroring delete-row on the column axis: cell drop / shift /
+  preserve, formula partial-range shift with verified cached
+  value (range `U1:Y1` deleting `V:W` becomes `U1:W1` summing
+  the surviving `U`, `X→V`, `Y→W` = `1+4+5 = 10`), single-cell
+  ref → `#REF!`, casualty diff, cross-sheet refs untouched,
+  merge inside dropped / right-of shifted left / straddle
+  rejected, summary diff, and validation.
+
+**Totals after 7i**
+
+- `@officeai/xlsx` unit tests: **596 passing** (+80).
+- 12/13 P0 commands now wired through the bus.
+- `pnpm --filter @officeai/xlsx test`, `lint`, `build`, and
+  `pnpm format:check` all green.
+
+**Decisions**
+
+- **Single shared engine for all four commands.** Insert and
+  delete on rows and columns are the same operation modulo (a)
+  which axis is being shifted, (b) the sign of the shift, and
+  (c) the merge-precheck rule. Splitting the implementation
+  across four files would have meant four near-duplicate
+  ~250-line pipelines and four separate places to fix any
+  precedence / merge / `#REF!` bug. `structural-shift.ts`
+  parameterizes on `axis: "row" | "column"` and
+  `op: "insert" | "delete"` and dispatches to the right
+  `adjustForXxx` from `formula/references.ts`. The four
+  command handlers are 8 lines each.
+- **Workbook-wide formula rewrite, not just the target sheet.**
+  A formula on `Sheet2` like `=Sheet1!A1` must be rewritten
+  when row 1 of `Sheet1` is deleted. The rewrite pass iterates
+  every cell on every sheet, not just the sheet whose
+  structure is changing. The `adjustForXxx` functions
+  short-circuit on a sheet mismatch so the per-cell cost on
+  unrelated sheets is one comparison.
+- **Re-emit, don't byte-preserve, rewritten formulas.**
+  `serializeAst` produces canonical text that is **not**
+  byte-identical to the original source (whitespace stripped,
+  function names uppercased, defensive parens around binary
+  children). Round-tripping the rewritten text through
+  `parse → evaluate` yields the same value, which is the
+  contract the formula engine actually needs. Preserving
+  source bytes would have required carrying span / trivia
+  through the AST, which is out of scope for the 80% target.
+- **`#REF!` is a literal, not a special node kind.** When a
+  ref is fully inside the deletion band the rewriter replaces
+  the `Reference` / `RangeReference` node with a `Literal`
+  carrying `err({ kind: "#REF!" })`. Re-parsing
+  `serializeAst` on that literal yields a `Reference` to a
+  defined-name `#REF!` per the lexer rules, which the
+  evaluator surfaces as the same error — keeping the AST
+  union closed without a separate `RefError` node.
+- **Merge precheck differs by op.** Insertions reject only
+  when the insertion index splits a merge **strictly inside**
+  (`lo < at < hi`); landing on a boundary cleanly extends or
+  shifts the merge. Deletions reject whenever the band
+  partially overlaps a merge — i.e., the merge extends outside
+  the band on either side — because there's no defensible
+  "shrink the merge" rule in the spec. Both paths emit
+  `merge-boundary-crossed` with `meta.range` carrying the
+  offending merge's A1.
+- **Defined names, comments, hyperlinks: deferred.** The
+  typed model doesn't yet carry defined names, comments, or
+  hyperlinks (they live in opaque parts), so this phase
+  doesn't adjust them. When those models land we'll thread
+  the same `adjust` functions through their rewriters.

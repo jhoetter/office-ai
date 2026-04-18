@@ -1,6 +1,10 @@
 import type { CommandHandler } from "@officeai/core";
 import type { XlsxSnapshot } from "../model/types.js";
 import { addSheetHandler } from "./add-sheet.js";
+import { deleteColumnHandler } from "./delete-column.js";
+import { deleteRowHandler } from "./delete-row.js";
+import { insertColumnHandler } from "./insert-column.js";
+import { insertRowHandler } from "./insert-row.js";
 import { mergeCellsHandler } from "./merge-cells.js";
 import { renameSheetHandler } from "./rename-sheet.js";
 import { setCellFormatHandler } from "./set-cell-format.js";
@@ -12,7 +16,7 @@ import { unmergeCellsHandler } from "./unmerge-cells.js";
 /**
  * P0 command handlers wired into the bus.
  *
- * Shipped (8/13):
+ * Shipped (12/13):
  *   - xlsx:set-cell-value      (Phase 5)
  *   - xlsx:set-range-values    (Phase 5)
  *   - xlsx:merge-cells         (Phase 5)
@@ -21,12 +25,12 @@ import { unmergeCellsHandler } from "./unmerge-cells.js";
  *   - xlsx:set-cell-formula    (Phase 7f; runs full recalc and writes downstream cached values)
  *   - xlsx:set-cell-format     (Phase 7g; typed style table + content-hash dedupe)
  *   - xlsx:add-sheet           (Phase 7h; workbook + content-types + rels rewrite)
+ *   - xlsx:insert-row          (Phase 7i; cell shift + formula rewrite + recalc)
+ *   - xlsx:insert-column       (Phase 7i)
+ *   - xlsx:delete-row          (Phase 7i; #REF! casualty surfacing)
+ *   - xlsx:delete-column       (Phase 7i)
  *
  * Deferred to later sub-phases (documented in `docs/build-log/xlsx.md`):
- *   - xlsx:insert-row           → Phase 7i (formula adjustment)
- *   - xlsx:insert-column        → Phase 7i
- *   - xlsx:delete-row           → Phase 7i
- *   - xlsx:delete-column        → Phase 7i
  *   - xlsx:add-comment          → Phase 7j (comments XML emission)
  */
 export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot>> = [
@@ -38,6 +42,10 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   unmergeCellsHandler as CommandHandler<unknown, XlsxSnapshot>,
   renameSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   addSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
+  insertRowHandler as CommandHandler<unknown, XlsxSnapshot>,
+  insertColumnHandler as CommandHandler<unknown, XlsxSnapshot>,
+  deleteRowHandler as CommandHandler<unknown, XlsxSnapshot>,
+  deleteColumnHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

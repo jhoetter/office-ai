@@ -66,6 +66,10 @@ export {
   unmergeCellsHandler,
   renameSheetHandler,
   addSheetHandler,
+  insertRowHandler,
+  insertColumnHandler,
+  deleteRowHandler,
+  deleteColumnHandler,
   type SetCellValuePayload,
   type SetCellFormulaPayload,
   type SetCellFormatPayload,
@@ -76,6 +80,10 @@ export {
   type UnmergeCellsPayload,
   type RenameSheetPayload,
   type AddSheetPayload,
+  type InsertRowPayload,
+  type InsertColumnPayload,
+  type DeleteRowPayload,
+  type DeleteColumnPayload,
 } from "./commands/index.js";
 
 export {

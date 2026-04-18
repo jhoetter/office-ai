@@ -115,3 +115,43 @@ export interface SetCellFormatPayload {
   readonly range: string;
   readonly format: CellFormatPatch;
 }
+
+/* ── Structural reshape (§§5–8) ───────────────────────────────────────────
+ * `at` is 1-based to match A1 row / column indexing; `count` ≥ 1.
+ */
+
+/** `xlsx:insert-row` */
+export interface InsertRowPayload {
+  readonly sheet: string;
+  /** 1-based row index; insertion is BEFORE this row. */
+  readonly at: number;
+  /** Number of blank rows to insert. Must satisfy `at + count - 1 ≤ 1048576`. */
+  readonly count: number;
+}
+
+/** `xlsx:insert-column` */
+export interface InsertColumnPayload {
+  readonly sheet: string;
+  /** 1-based column index (A=1); insertion is to the LEFT of this column. */
+  readonly at: number;
+  /** Number of blank columns to insert. Must satisfy `at + count - 1 ≤ 16384`. */
+  readonly count: number;
+}
+
+/** `xlsx:delete-row` */
+export interface DeleteRowPayload {
+  readonly sheet: string;
+  /** 1-based row index of the first row to drop. */
+  readonly at: number;
+  /** Number of rows to drop. Removes rows `at..at+count-1`. */
+  readonly count: number;
+}
+
+/** `xlsx:delete-column` */
+export interface DeleteColumnPayload {
+  readonly sheet: string;
+  /** 1-based column index (A=1) of the first column to drop. */
+  readonly at: number;
+  /** Number of columns to drop. Removes columns `at..at+count-1`. */
+  readonly count: number;
+}
