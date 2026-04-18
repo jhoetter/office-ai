@@ -2,6 +2,14 @@
 
 > Live log of decisions, deviations from spec, and known issues for the
 > PPTX phase. Mirrors `docs/build-log/docx.md`.
+>
+> See also: [`../pptx-architecture-notes.md`](../pptx-architecture-notes.md)
+> for the twelve patterns that PPTX deliberately implements differently
+> from DOCX (snapshot scaffolding, `Set<string>` dirty model, three-tier
+> opaque taxonomy, slide buckets, `PptxIdGen`, slide-scoped `cNvPrId`,
+> hybrid renderer with no editor library, `SvgRenderCtx`,
+> `headless-invariant.test.ts`, `dirty-roundtrip.test.ts`, the ≥ 95 %
+> roundtrip threshold, and `OFFICEAI_DETERMINISTIC_IDS=1`).
 
 ## Decisions
 

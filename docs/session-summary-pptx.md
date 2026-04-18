@@ -2,7 +2,7 @@
 
 > Date: 2026-04-18 — 2026-04-19 ("night shift" + follow-up shift)
 > Scope (chosen at session start): full PPTX phase (Analyze → Spec → Build → Validate), then a follow-up shift covering five P0/P1 polish items, three typed-model phases (Tables, Charts, Animations), and final validation.
-> Sister documents: [`docs/session-summary.md`](./session-summary.md) (DOCX), [`docs/build-log/pptx.md`](./build-log/pptx.md) (live decision log for slides), [`spec/pptx/`](../spec/pptx/) (authoritative specs).
+> Sister documents: [`docs/session-summary.md`](./session-summary.md) (DOCX), [`docs/build-log/pptx.md`](./build-log/pptx.md) (live decision log for slides), [`docs/pptx-architecture-notes.md`](./pptx-architecture-notes.md) (where slides diverge from DOCX, and why), [`spec/pptx/`](../spec/pptx/) (authoritative specs).
 
 ## TL;DR
 
