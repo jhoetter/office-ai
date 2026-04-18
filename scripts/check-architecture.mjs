@@ -46,17 +46,25 @@ const ALLOWED_INTERNAL_DEPS = {
   "@officeai/ui": ["@officeai/design-tokens"],
   "@officeai/docx": ["@officeai/core"],
   "@officeai/xlsx": ["@officeai/core"],
-  "@officeai/agent": ["@officeai/core", "@officeai/docx", "@officeai/xlsx"],
+  "@officeai/pptx": ["@officeai/core"],
+  "@officeai/agent": [
+    "@officeai/core",
+    "@officeai/docx",
+    "@officeai/xlsx",
+    "@officeai/pptx",
+  ],
   "@officeai/integration-tests": [
     "@officeai/core",
     "@officeai/docx",
     "@officeai/xlsx",
+    "@officeai/pptx",
     "@officeai/agent",
   ],
   "@officeai/web": [
     "@officeai/core",
     "@officeai/docx",
     "@officeai/xlsx",
+    "@officeai/pptx",
     "@officeai/agent",
     "@officeai/ui",
     "@officeai/design-tokens",
@@ -71,6 +79,9 @@ const FORBIDDEN_EXTERNAL_DEPS = {
   "@officeai/core": ["react", "react-dom", "next"],
   "@officeai/docx": ["react", "react-dom", "next"],
   "@officeai/xlsx": ["react", "react-dom", "next"],
+  // pptx exposes optional React renderer components via `./renderer/react`
+  // entry point — react is an OPTIONAL peer dep, runtime imports are guarded
+  // to the renderer/react/ subtree (see src/headless-invariant.test.ts).
   "@officeai/agent": ["react", "react-dom", "next"],
   "@officeai/design-tokens": ["react", "react-dom", "next"],
 };

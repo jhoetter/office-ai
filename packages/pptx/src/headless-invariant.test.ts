@@ -32,7 +32,15 @@ function stripStringsAndComments(src: string): string {
   return out;
 }
 
-const HEADLESS_DIRS = ["model", "parser", "serializer", "commands", "agent"];
+const HEADLESS_DIRS = [
+  "model",
+  "parser",
+  "serializer",
+  "commands",
+  "agent",
+  "renderer/layout",
+  "renderer/svg",
+];
 
 async function* walk(dir: string): AsyncGenerator<string> {
   const entries = await readdir(dir, { withFileTypes: true });
