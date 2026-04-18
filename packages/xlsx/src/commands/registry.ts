@@ -5,6 +5,7 @@ import { addSheetHandler } from "./add-sheet.js";
 import { deleteColumnHandler } from "./delete-column.js";
 import { deleteRowHandler } from "./delete-row.js";
 import { deleteSheetHandler } from "./delete-sheet.js";
+import { fillRangeHandler } from "./fill-range.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertRowHandler } from "./insert-row.js";
 import { mergeCellsHandler } from "./merge-cells.js";
@@ -57,6 +58,7 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   deleteSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   pasteRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
   textToColumnsHandler as CommandHandler<unknown, XlsxSnapshot>,
+  fillRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

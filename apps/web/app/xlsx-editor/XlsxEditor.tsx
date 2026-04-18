@@ -992,7 +992,8 @@ export function XlsxEditor(): ReactNode {
         | "xlsx:delete-column"
         | "xlsx:set-column-width"
         | "xlsx:set-row-height"
-        | "xlsx:text-to-columns",
+        | "xlsx:text-to-columns"
+        | "xlsx:fill-range",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -1040,6 +1041,34 @@ export function XlsxEditor(): ReactNode {
       range: formatSelection(selection),
     });
   }, [activeSheet, selection, dispatchOrToast]);
+
+  // P13g — Smart fill handle. Grid calls back once on mouse-up with
+  // source/target/direction; we forward to xlsx:fill-range.
+  const onFill = useCallback(
+    (args: {
+      source: { r1: number; c1: number; r2: number; c2: number };
+      target: { r1: number; c1: number; r2: number; c2: number };
+      direction: "down" | "right" | "up" | "left";
+    }) => {
+      if (!activeSheet) return;
+      const sourceRange = formatRange({
+        start: { row: args.source.r1, col: args.source.c1 },
+        end: { row: args.source.r2, col: args.source.c2 },
+      });
+      const targetRange = formatRange({
+        start: { row: args.target.r1, col: args.target.c1 },
+        end: { row: args.target.r2, col: args.target.c2 },
+      });
+      if (sourceRange === targetRange) return;
+      dispatchOrToast("xlsx:fill-range", {
+        sheet: activeSheet.name,
+        source: sourceRange,
+        target: targetRange,
+        direction: args.direction,
+      });
+    },
+    [activeSheet, dispatchOrToast]
+  );
 
   // P13f — Text to Columns popover state.
   const [ttocOpen, setTtocOpen] = useState(false);
@@ -1655,6 +1684,7 @@ export function XlsxEditor(): ReactNode {
                   }
                 : null
             }
+            onFill={onFill}
           />
         ) : (
           <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">
