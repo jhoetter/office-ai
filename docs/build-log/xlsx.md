@@ -489,3 +489,74 @@ including the rejected intersection operator.
   introspection point.** The dependency graph (7d) needs the
   volatile set at parse time to flag formulas; everything else
   about a function (arg shapes, return types) is opaque.
+
+## 2026-04-18 — Phase 7d: dependency graph + recalc orchestrator
+
+**Shipped**
+
+- `packages/xlsx/src/formula/dependency-graph.ts` — `DepGraph` with
+  forward/reverse edges, a per-sheet flat range-overlay index,
+  volatile tracking, and a Kahn topological drain plus Tarjan SCC
+  for cycle detection. `addCell` rebuilds edges and dirties the
+  cell; `removeCell` drops edges and dirties downstream;
+  `markDirty(ref)` walks transitive closure across both cell-edges
+  and range-overlap entries; `drainTopological()` returns
+  `{ order, cycles }` where cycles are SCCs of size > 1 (or
+  self-loops).
+- `packages/xlsx/src/formula/recalc.ts` — public `FormulaEngine`
+  (`parse`, `addCell`, `removeCell`, `onCellChanged`, `recalc`,
+  `recalcAll`, `getCachedValue`) bound to a passive `EngineHost`
+  that supplies cell/range data. Engine owns formula caches; host
+  owns raw user-typed values and stitches them with the engine's
+  cache on range materialisation. Cycle SCCs short-circuit to
+  `Errors.refWithCycle(...)` before evaluator dispatch.
+
+**Tests landed**
+
+- `packages/xlsx/src/formula/__tests__/recalc.test.ts` — 11 tests
+  covering: simple A1→B1→C1 chain in topological order; partial
+  recalc (only affected dependents re-fire); `removeCell` edge
+  drop + downstream dirty; range-dependency dirty bubble (`SUM(A1:A3)`
+  re-fires when `A2` changes, but not when an out-of-range `D1`
+  changes); cycle detection for 2-cell, 3-cell, and self-loop
+  cases (each surfaces `#REF!` with `meta.cycle`); volatile
+  re-fire (`=RAND()` recomputes every recalc with no edits);
+  `recalcAll` for blanket re-evaluation; and a perf smoke
+  asserting a 1k-cell linear chain recalcs in < 50ms (the §17
+  budget allows 100ms for 10k formulas).
+
+**Totals after 7d**
+
+- `@officeai/xlsx` unit tests: **173 passing** (Phase 7a → 38;
+  7b → +34; 7c → +27; 7d → +11).
+- Full `make verify` (format-check / lint / architecture /
+  typecheck / test / build) green.
+
+**Decisions**
+
+- **Engine is passive; host owns raw cell data.** The engine never
+  touches the workbook directly. `EngineHost.readCell` /
+  `readRange` are the only data-side hooks. This keeps the engine
+  reusable across the headless `XlsxAgent` and the future browser
+  editor without a DOM dependency.
+- **Range index v1 is a flat `Map<sheet, RangeDep[]>`.** Per
+  spec §14.1 the linear scan is fine for the §17 fixture; we
+  switch to an interval index only if profiling demands it. The
+  Kahn-walk dirty bubble walks both cell-edges and range entries
+  on every step, so range-only formulas (`=SUM(A1:A1000)`) recalc
+  correctly when an inner cell changes.
+- **Cache split: formulas in the engine, raw values in the host.**
+  When a downstream formula reads `A1` mid-recalc, the engine
+  consults its formula cache first (so the precedent's freshly
+  computed value wins), and falls through to the host for plain
+  value cells. This is the contract that keeps topological order
+  meaningful.
+- **Cycles surface as `#REF!` with `meta.cycle`, never as
+  exceptions.** The recalc loop assigns the cycle error to every
+  cell in the SCC before the evaluator runs on the topo-sorted
+  remainder. No try/catch; no infinite recursion.
+- **`recalcAll` is opt-in for the host.** The normal `recalc()`
+  drains only the dirty + volatile sets (per §17). `recalcAll`
+  marks every known cell dirty and re-runs — used when the host
+  re-imports a workbook or when a user explicitly forces
+  recalculation.
