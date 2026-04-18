@@ -29,6 +29,7 @@
 | ---------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 2026-04-19 | LLM bridge wiring for `/pptx-editor` | F1.1 — extended `/api/llm` to switch system prompt + allow-list on `format`, added `lib/llm-client-pptx.ts`. |
 | 2026-04-19 | Theme color resolution                | F1.2 — `parser/theme.ts` extracts `a:clrScheme` into `PptxPresentation.themeDefault`; renderer resolves `<a:schemeClr>` from run opaque children. |
+| 2026-04-19 | Playwright e2e for `/pptx-editor`     | F1.3 — `apps/web/e2e/pptx-editor.spec.ts` covers route mount, sample-deck thumbnail, Add slide / Delete enable, Text box, Bold toggle, agent panel "add a slide" via the LLM bridge offline fallback. |
 
 ## Deferred to a follow-up session
 
@@ -97,6 +98,8 @@ Final test/build totals at the close of P10:
 - `dpi` is hard-coded to 96 in the renderer's pixel conversions; an
   override hook is exported (`emuToPx(emu, dpi)`) but unused. Will
   matter once we expose a zoom slider.
-- Browser smoke tests for `/pptx-editor` are manual via the
+- ~~Browser smoke tests for `/pptx-editor` are manual via the
   `cursor-ide-browser` MCP; an automated Playwright pass mirroring
-  `tests/e2e/docx-editor.spec.ts` is queued.
+  `tests/e2e/docx-editor.spec.ts` is queued.~~ Resolved in F1.3:
+  `apps/web/e2e/pptx-editor.spec.ts` covers mount + toolbar + agent
+  panel via the existing Playwright config.
