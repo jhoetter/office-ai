@@ -1,10 +1,5 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
-import type {
-  BlockNode,
-  DocxSnapshot,
-  SectionBreak,
-  SectionProperties,
-} from "../model/types.js";
+import type { BlockNode, DocxSnapshot, SectionBreak, SectionProperties } from "../model/types.js";
 import { buildDiff, evolveSnapshot } from "./helpers.js";
 import type { SetSectionDifferentFirstPayload } from "./payloads.js";
 
@@ -19,69 +14,67 @@ import type { SetSectionDifferentFirstPayload } from "./payloads.js";
  * {@link serializeSectionProperties}. Untouched sections still
  * round-trip byte-identical.
  */
-export const setSectionDifferentFirstHandler: CommandHandler<
-  SetSectionDifferentFirstPayload,
-  DocxSnapshot
-> = {
-  type: "docx:set-section-different-first",
-  apply(snapshot, payload) {
-    const { paragraphIndex, enabled } = payload;
-    if (!Number.isInteger(paragraphIndex) || paragraphIndex < 0) {
-      throw new CommandError(
-        "invalid-payload",
-        `paragraphIndex must be a non-negative integer (got ${paragraphIndex})`
-      );
-    }
-    if (typeof enabled !== "boolean") {
-      throw new CommandError("invalid-payload", `enabled must be a boolean (got ${typeof enabled})`);
-    }
+export const setSectionDifferentFirstHandler: CommandHandler<SetSectionDifferentFirstPayload, DocxSnapshot> =
+  {
+    type: "docx:set-section-different-first",
+    apply(snapshot, payload) {
+      const { paragraphIndex, enabled } = payload;
+      if (!Number.isInteger(paragraphIndex) || paragraphIndex < 0) {
+        throw new CommandError(
+          "invalid-payload",
+          `paragraphIndex must be a non-negative integer (got ${paragraphIndex})`
+        );
+      }
+      if (typeof enabled !== "boolean") {
+        throw new CommandError("invalid-payload", `enabled must be a boolean (got ${typeof enabled})`);
+      }
 
-    const located = findOwningSection(snapshot, paragraphIndex);
-    if (!located) {
-      throw new CommandError(
-        "unknown-target",
-        `no section found at or after paragraph index ${paragraphIndex} (body has ${snapshot.root.body.length} blocks)`
-      );
-    }
+      const located = findOwningSection(snapshot, paragraphIndex);
+      if (!located) {
+        throw new CommandError(
+          "unknown-target",
+          `no section found at or after paragraph index ${paragraphIndex} (body has ${snapshot.root.body.length} blocks)`
+        );
+      }
 
-    const currentTitlePg = located.section.properties.titlePg ?? false;
-    if (currentTitlePg === enabled) {
+      const currentTitlePg = located.section.properties.titlePg ?? false;
+      if (currentTitlePg === enabled) {
+        return {
+          next: snapshot,
+          diff: buildDiff(snapshot.revision, snapshot.revision, {
+            kind: "node-updated",
+            nodeId: located.section.id,
+            path: ["body", located.index],
+            field: "titlePg",
+            summary: `no-op (already ${enabled})`,
+          }),
+        };
+      }
+
+      const nextProps = withTitlePg(located.section.properties, enabled);
+      const updatedSection: SectionBreak = {
+        ...located.section,
+        properties: nextProps,
+        // Drop raw — the typed model is the source of truth now.
+        raw: undefined,
+      };
+
+      const newBody: BlockNode[] = snapshot.root.body.slice();
+      newBody[located.index] = updatedSection;
+      const next = evolveSnapshot(snapshot, { ...snapshot.root, body: newBody }, { body: true });
+
       return {
-        next: snapshot,
-        diff: buildDiff(snapshot.revision, snapshot.revision, {
+        next,
+        diff: buildDiff(snapshot.revision, next.revision, {
           kind: "node-updated",
           nodeId: located.section.id,
           path: ["body", located.index],
           field: "titlePg",
-          summary: `no-op (already ${enabled})`,
+          summary: `titlePg := ${enabled}`,
         }),
       };
-    }
-
-    const nextProps = withTitlePg(located.section.properties, enabled);
-    const updatedSection: SectionBreak = {
-      ...located.section,
-      properties: nextProps,
-      // Drop raw — the typed model is the source of truth now.
-      raw: undefined,
-    };
-
-    const newBody: BlockNode[] = snapshot.root.body.slice();
-    newBody[located.index] = updatedSection;
-    const next = evolveSnapshot(snapshot, { ...snapshot.root, body: newBody }, { body: true });
-
-    return {
-      next,
-      diff: buildDiff(snapshot.revision, next.revision, {
-        kind: "node-updated",
-        nodeId: located.section.id,
-        path: ["body", located.index],
-        field: "titlePg",
-        summary: `titlePg := ${enabled}`,
-      }),
-    };
-  },
-};
+    },
+  };
 
 interface LocatedSection {
   readonly index: number;

@@ -26,9 +26,7 @@ describe("serializePptx — no-edit roundtrip", () => {
       // Every original part must round-trip with the same content hash.
       for (const [partPath] of snap.container.parts) {
         const before = sha256Hex(snap.container.readBytes(partPath));
-        expect(reload.has(partPath), `${name}: part missing after roundtrip: ${partPath}`).toBe(
-          true
-        );
+        expect(reload.has(partPath), `${name}: part missing after roundtrip: ${partPath}`).toBe(true);
         const after = sha256Hex(reload.readBytes(partPath));
         expect(after, `${name}: ${partPath} differs after roundtrip`).toBe(before);
       }

@@ -42,8 +42,8 @@ describe("PptxAgent skeleton", () => {
   it("returns no-handler error mutation for unknown command", async () => {
     const buf = await readFile(join(FIXTURES_DIR.pathname, "01-blank.pptx"));
     const agent = await PptxAgent.fromBuffer(buf);
-    await expect(
-      agent.applyCommand({ type: "non.existent.command", payload: {} })
-    ).rejects.toThrow(/no-handler|No handler/);
+    await expect(agent.applyCommand({ type: "non.existent.command", payload: {} })).rejects.toThrow(
+      /no-handler|No handler/
+    );
   });
 });

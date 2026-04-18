@@ -58,8 +58,7 @@ export function PageZoneEditor(props: PageZoneEditorProps): React.ReactNode {
 
   // Position above the anchor rect for footer (so it doesn't slip
   // off the bottom of the viewport) and below it for header.
-  const popoverTop =
-    slot === "footer" ? Math.max(8, anchorRect.top - 200) : anchorRect.bottom + 6;
+  const popoverTop = slot === "footer" ? Math.max(8, anchorRect.top - 200) : anchorRect.bottom + 6;
 
   const isAuthorable = partPath !== null;
 
@@ -90,8 +89,8 @@ export function PageZoneEditor(props: PageZoneEditorProps): React.ReactNode {
       </div>
       {!isAuthorable && (
         <p className="mb-2 rounded border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-foreground">
-          This document has no {slot} part for this section. Add one in
-          Word, then re-open the file. Auto-creation is on the P4 list.
+          This document has no {slot} part for this section. Add one in Word, then re-open the file.
+          Auto-creation is on the P4 list.
         </p>
       )}
       <textarea
@@ -102,11 +101,7 @@ export function PageZoneEditor(props: PageZoneEditorProps): React.ReactNode {
         onKeyDown={onKey}
         disabled={!isAuthorable}
         placeholder={
-          isAuthorable
-            ? slot === "header"
-              ? "e.g. Project Apollo — Confidential"
-              : "e.g. Page [PAGE]"
-            : ""
+          isAuthorable ? (slot === "header" ? "e.g. Project Apollo — Confidential" : "e.g. Page [PAGE]") : ""
         }
         className="w-full resize-y rounded border border-divider bg-background px-2 py-1.5 text-sm text-foreground focus:border-accent focus:outline-none disabled:opacity-50"
         data-testid="page-zone-editor-textarea"

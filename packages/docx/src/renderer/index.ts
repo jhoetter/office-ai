@@ -9,6 +9,7 @@ export {
 export { mountDocxEditor, type MountOptions, type MountResult } from "./mount.js";
 export {
   chunkIntoPages,
+  documentPageGeometry,
   geometryFromProperties,
   type PageChunk,
   type PageGeometry,

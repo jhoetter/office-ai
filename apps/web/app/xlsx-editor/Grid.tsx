@@ -79,7 +79,46 @@ export interface GridProps {
    * the parent maps it to a row-major or column-major selection.
    */
   readonly onSelectAxis?: (axis: "row" | "col", index: number, opts?: { extend?: boolean }) => void;
+  /**
+   * Right-click context-menu hooks. The Grid passes the click target
+   * (variant + index/coords) plus the page coordinates the menu
+   * should anchor to. Parent owns the menu state + entries so the
+   * Grid stays presentational. (P13b)
+   */
+  readonly onContextMenu?: (target: GridContextTarget, coords: { x: number; y: number }) => void;
+  /**
+   * Marching-ants overlay for the active clipboard source range
+   * (Phase 13d). When non-null, the Grid renders a dashed animated
+   * border around the rectangle. `mode` distinguishes Cut from Copy
+   * for the small visual hint that mirrors Excel.
+   */
+  readonly marchingAnts?: MarchingAntsRect | null;
+  /**
+   * Smart fill handle (Phase 13g). When the user drags the little
+   * square at the bottom-right of the selection, the Grid manages
+   * the whole interaction and raises this callback once on
+   * mouse-up with the source rect, the extended target rect, and
+   * the direction the user pulled in.
+   */
+  readonly onFill?: (args: {
+    source: { r1: number; c1: number; r2: number; c2: number };
+    target: { r1: number; c1: number; r2: number; c2: number };
+    direction: "down" | "right" | "up" | "left";
+  }) => void;
 }
+
+export interface MarchingAntsRect {
+  readonly r1: number;
+  readonly c1: number;
+  readonly r2: number;
+  readonly c2: number;
+  readonly mode: "copy" | "cut";
+}
+
+export type GridContextTarget =
+  | { readonly kind: "cell"; readonly row: number; readonly col: number }
+  | { readonly kind: "row-header"; readonly row: number }
+  | { readonly kind: "col-header"; readonly col: number };
 
 export interface RefRect {
   readonly r1: number;
@@ -115,6 +154,9 @@ export function Grid(props: GridProps): ReactNode {
     onResizeRow,
     refRects,
     onSelectAxis,
+    onContextMenu,
+    marchingAnts,
+    onFill,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -148,12 +190,28 @@ export function Grid(props: GridProps): ReactNode {
   // Live drag state for column / row resize. While present, the
   // header bar shows the dragged size as a transient override that
   // is committed via `onResizeColumn` / `onResizeRow` on mouse-up.
-  const [colDrag, setColDrag] = useState<{ col: number; startX: number; startWidth: number; widthPx: number } | null>(
-    null
-  );
-  const [rowDrag, setRowDrag] = useState<{ row: number; startY: number; startHeight: number; heightPx: number } | null>(
-    null
-  );
+  const [colDrag, setColDrag] = useState<{
+    col: number;
+    startX: number;
+    startWidth: number;
+    widthPx: number;
+  } | null>(null);
+  const [rowDrag, setRowDrag] = useState<{
+    row: number;
+    startY: number;
+    startHeight: number;
+    heightPx: number;
+  } | null>(null);
+
+  // Fill-handle drag state. `source` is captured at mouse-down from
+  // the active selection; `preview` is recomputed from the cursor as
+  // the user drags. The Grid manages this end-to-end and only
+  // surfaces the final result through `onFill`.
+  const [fillDrag, setFillDrag] = useState<{
+    source: { r1: number; c1: number; r2: number; c2: number };
+    preview: { r1: number; c1: number; r2: number; c2: number };
+    direction: "down" | "right" | "up" | "left" | null;
+  } | null>(null);
 
   // Global mousemove + mouseup for header resize. Tied to the
   // current `colDrag` / `rowDrag` so we drop the listeners when the
@@ -195,6 +253,7 @@ export function Grid(props: GridProps): ReactNode {
       window.removeEventListener("mouseup", onUp);
     };
   }, [rowDrag, onResizeRow]);
+
 
   const onScroll = useCallback((ev: React.UIEvent<HTMLDivElement>) => {
     const el = ev.currentTarget;
@@ -256,6 +315,73 @@ export function Grid(props: GridProps): ReactNode {
   const startCol = Math.max(0, lower(colXs, scroll.left) - OVERSCAN);
   const endCol = Math.min(TOTAL_COLS - 1, lower(colXs, scroll.left + visibleW) + OVERSCAN);
 
+  // Global mouse handlers for the fill-handle drag. Lives here (after
+  // colXs / rowYs are computed) so the cursor → cell hit-test sees
+  // up-to-date geometry on every move event.
+  useEffect(() => {
+    if (!fillDrag) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const onMove = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left + el.scrollLeft - HEADER_COL_WIDTH;
+      const y = e.clientY - rect.top + el.scrollTop - HEADER_ROW_HEIGHT;
+      const cellRow = Math.max(0, Math.min(TOTAL_ROWS - 1, lower(rowYs, Math.max(0, y))));
+      const cellCol = Math.max(0, Math.min(TOTAL_COLS - 1, lower(colXs, Math.max(0, x))));
+      setFillDrag((prev) => {
+        if (!prev) return prev;
+        const src = prev.source;
+        const dDown = Math.max(0, cellRow - src.r2);
+        const dUp = Math.max(0, src.r1 - cellRow);
+        const dRight = Math.max(0, cellCol - src.c2);
+        const dLeft = Math.max(0, src.c1 - cellCol);
+        const v = Math.max(dDown, dUp);
+        const h = Math.max(dRight, dLeft);
+        let direction: typeof prev.direction = null;
+        let preview = src;
+        if (v === 0 && h === 0) {
+          preview = src;
+        } else if (v >= h) {
+          direction = dDown >= dUp ? "down" : "up";
+          preview =
+            direction === "down"
+              ? { r1: src.r1, c1: src.c1, r2: cellRow, c2: src.c2 }
+              : { r1: cellRow, c1: src.c1, r2: src.r2, c2: src.c2 };
+        } else {
+          direction = dRight >= dLeft ? "right" : "left";
+          preview =
+            direction === "right"
+              ? { r1: src.r1, c1: src.c1, r2: src.r2, c2: cellCol }
+              : { r1: src.r1, c1: cellCol, r2: src.r2, c2: src.c2 };
+        }
+        if (
+          preview.r1 === prev.preview.r1 &&
+          preview.c1 === prev.preview.c1 &&
+          preview.r2 === prev.preview.r2 &&
+          preview.c2 === prev.preview.c2 &&
+          direction === prev.direction
+        ) {
+          return prev;
+        }
+        return { ...prev, preview, direction };
+      });
+    };
+    const onUp = () => {
+      setFillDrag((prev) => {
+        if (prev && prev.direction && onFill) {
+          onFill({ source: prev.source, target: prev.preview, direction: prev.direction });
+        }
+        return null;
+      });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [fillDrag, colXs, rowYs, onFill]);
+
   const innerStyle: CSSProperties = {
     position: "relative",
     width: HEADER_COL_WIDTH + totalWidth,
@@ -294,8 +420,7 @@ export function Grid(props: GridProps): ReactNode {
         const cellStyle = styleForCell(styles, cell?.styleId);
         const display = cell ? formatCellValue(cell.value, cellStyle.effective.numFmtId) : "";
         const inSel = !!selection && containsCell(selection, r, c);
-        const anchorCell =
-          !!selection && selection.anchor.row === r && selection.anchor.col === c;
+        const anchorCell = !!selection && selection.anchor.row === r && selection.anchor.col === c;
         const isEditing = editing?.row === r && editing?.col === c;
         out.push(
           <div
@@ -330,6 +455,19 @@ export function Grid(props: GridProps): ReactNode {
                 draft: cell?.formula ? `=${cell.formula.text}` : display,
               })
             }
+            onContextMenu={(e) => {
+              if (!onContextMenu) return;
+              e.preventDefault();
+              // Excel parity: right-click on a cell *outside* the
+              // current selection moves the selection there first;
+              // right-click *inside* the selection keeps it. Either
+              // way the menu sees the new selection because the
+              // parent re-renders before the menu opens.
+              if (!selection || !containsCell(selection, r, c)) {
+                onSelect({ row: r, col: c });
+              }
+              onContextMenu({ kind: "cell", row: r, col: c }, { x: e.clientX, y: e.clientY });
+            }}
             style={{
               position: "absolute",
               top: HEADER_ROW_HEIGHT + rowYs[r]!,
@@ -363,9 +501,7 @@ export function Grid(props: GridProps): ReactNode {
               // Selection background wins over a per-cell fill so the
               // user can still see what's highlighted, except for the
               // anchor where Excel keeps the cell's real fill.
-              ...(inSel && !anchorCell
-                ? { background: "var(--ai-violet-light)" }
-                : {}),
+              ...(inSel && !anchorCell ? { background: "var(--ai-violet-light)" } : {}),
             }}
           >
             {isEditing ? (
@@ -403,7 +539,22 @@ export function Grid(props: GridProps): ReactNode {
       }
     }
     return out;
-  }, [sheet, styles, mergeIndex, colXs, rowYs, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
+  }, [
+    sheet,
+    styles,
+    mergeIndex,
+    colXs,
+    rowYs,
+    startRow,
+    endRow,
+    startCol,
+    endCol,
+    selection,
+    editing,
+    onSelect,
+    onCommitEdit,
+    onContextMenu,
+  ]);
 
   // Coloured borders for refs referenced by the formula currently
   // being edited (Phase 12c). Rendered behind the marquee so the
@@ -438,8 +589,41 @@ export function Grid(props: GridProps): ReactNode {
     }
   }
 
+  // Marching-ants clipboard source overlay (Phase 13d). Drawn behind
+  // the active selection marquee so the user can still see what's
+  // currently selected; the dashed border keeps moving until the user
+  // pastes or hits Escape (which the parent clears via the prop).
+  let antsOverlay: ReactNode = null;
+  if (marchingAnts) {
+    const r0 = Math.max(0, Math.min(marchingAnts.r1, marchingAnts.r2));
+    const r1 = Math.min(TOTAL_ROWS - 1, Math.max(marchingAnts.r1, marchingAnts.r2));
+    const c0 = Math.max(0, Math.min(marchingAnts.c1, marchingAnts.c2));
+    const c1 = Math.min(TOTAL_COLS - 1, Math.max(marchingAnts.c1, marchingAnts.c2));
+    if (r0 <= r1 && c0 <= c1) {
+      antsOverlay = (
+        <div
+          data-testid="grid-marching-ants"
+          data-mode={marchingAnts.mode}
+          aria-hidden
+          className={`xlsx-marching-ants ${marchingAnts.mode === "cut" ? "xlsx-marching-ants-cut" : ""}`}
+          style={{
+            position: "absolute",
+            top: HEADER_ROW_HEIGHT + rowYs[r0]!,
+            left: HEADER_COL_WIDTH + colXs[c0]!,
+            width: colXs[c1 + 1]! - colXs[c0]!,
+            height: rowYs[r1 + 1]! - rowYs[r0]!,
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 5,
+          }}
+        />
+      );
+    }
+  }
+
   // Bounding-box marquee — positioned over the union of the selection.
   let marquee: ReactNode = null;
+  let fillHandle: ReactNode = null;
   if (selection) {
     const n = normalizeSelection(selection);
     marquee = (
@@ -461,6 +645,63 @@ export function Grid(props: GridProps): ReactNode {
         }}
       />
     );
+    if (onFill) {
+      const handleSize = 7;
+      const right = HEADER_COL_WIDTH + colXs[n.c1 + 1]!;
+      const bottom = HEADER_ROW_HEIGHT + rowYs[n.r1 + 1]!;
+      fillHandle = (
+        <div
+          data-testid="grid-fill-handle"
+          aria-label="Fill handle"
+          role="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const src = { r1: n.r0, c1: n.c0, r2: n.r1, c2: n.c1 };
+            setFillDrag({ source: src, preview: src, direction: null });
+          }}
+          style={{
+            position: "absolute",
+            top: bottom - Math.floor(handleSize / 2) - 1,
+            left: right - Math.floor(handleSize / 2) - 1,
+            width: handleSize,
+            height: handleSize,
+            background: "var(--ai-violet)",
+            border: "1px solid white",
+            cursor: "crosshair",
+            zIndex: 6,
+          }}
+        />
+      );
+    }
+  }
+
+  let fillPreviewOverlay: ReactNode = null;
+  if (fillDrag) {
+    const fp = fillDrag.preview;
+    const r0 = Math.max(0, Math.min(fp.r1, fp.r2));
+    const r1 = Math.min(TOTAL_ROWS - 1, Math.max(fp.r1, fp.r2));
+    const c0 = Math.max(0, Math.min(fp.c1, fp.c2));
+    const c1 = Math.min(TOTAL_COLS - 1, Math.max(fp.c1, fp.c2));
+    if (r0 <= r1 && c0 <= c1) {
+      fillPreviewOverlay = (
+        <div
+          data-testid="grid-fill-preview"
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: HEADER_ROW_HEIGHT + rowYs[r0]!,
+            left: HEADER_COL_WIDTH + colXs[c0]!,
+            width: colXs[c1 + 1]! - colXs[c0]!,
+            height: rowYs[r1 + 1]! - rowYs[r0]!,
+            border: "1px dashed var(--ai-violet)",
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 5,
+          }}
+        />
+      );
+    }
   }
 
   // Column header band — tracks the viewport's top edge.
@@ -481,6 +722,14 @@ export function Grid(props: GridProps): ReactNode {
           if (tgt.dataset.testid?.startsWith("col-resize-")) return;
           e.preventDefault();
           onSelectAxis("col", c, { extend: e.shiftKey });
+        }}
+        onContextMenu={(e) => {
+          if (!onContextMenu) return;
+          e.preventDefault();
+          // Right-click on a column header selects the whole
+          // column first (Excel parity), then opens the menu.
+          onSelectAxis?.("col", c);
+          onContextMenu({ kind: "col-header", col: c }, { x: e.clientX, y: e.clientY });
         }}
         style={{
           position: "absolute",
@@ -548,6 +797,12 @@ export function Grid(props: GridProps): ReactNode {
           if (tgt.dataset.testid?.startsWith("row-resize-")) return;
           e.preventDefault();
           onSelectAxis("row", r, { extend: e.shiftKey });
+        }}
+        onContextMenu={(e) => {
+          if (!onContextMenu) return;
+          e.preventDefault();
+          onSelectAxis?.("row", r);
+          onContextMenu({ kind: "row-header", row: r }, { x: e.clientX, y: e.clientY });
         }}
         style={{
           position: "absolute",
@@ -635,7 +890,10 @@ export function Grid(props: GridProps): ReactNode {
         {rowHeaders}
         {cellList}
         {refHighlights}
+        {antsOverlay}
+        {fillPreviewOverlay}
         {marquee}
+        {fillHandle}
       </div>
     </div>
   );

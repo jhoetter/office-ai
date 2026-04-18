@@ -16,9 +16,7 @@ async function gotoPptxEditor(page: Page): Promise<void> {
   // PptxEditor mounts the agent on first render and only then renders
   // the SVG canvas. Wait for at least one slide thumbnail to appear.
   await expect(page.getByTestId("pptx-sidebar")).toBeVisible({ timeout: 15_000 });
-  await expect(
-    page.getByTestId("pptx-sidebar").getByRole("button").first()
-  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("pptx-sidebar").getByRole("button").first()).toBeVisible({ timeout: 15_000 });
 }
 
 function thumbnails(page: Page) {
@@ -57,9 +55,11 @@ test.describe("pptx-editor route", () => {
     const before = await shapesOnCanvas(page).count();
     await page.getByRole("button", { name: "Text box" }).click();
 
-    await expect.poll(async () => shapesOnCanvas(page).count(), {
-      timeout: 5_000,
-    }).toBeGreaterThan(before);
+    await expect
+      .poll(async () => shapesOnCanvas(page).count(), {
+        timeout: 5_000,
+      })
+      .toBeGreaterThan(before);
   });
 
   test("'Bold' toolbar toggle survives without tossing an error toast", async ({ page }) => {
@@ -87,10 +87,7 @@ test.describe("pptx-editor route", () => {
     // a controlled range input from outside the React event system.
     await slider.evaluate((el) => {
       const input = el as HTMLInputElement;
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value"
-      )?.set;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setter?.call(input, "1.5");
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -99,18 +96,5 @@ test.describe("pptx-editor route", () => {
 
     await page.getByTestId("pptx-zoom-reset").click();
     await expect(canvas).toHaveAttribute("data-zoom", "1.00");
-  });
-
-  test("agent panel 'add a slide' prompt routes through the LLM bridge fallback", async ({
-    page,
-  }) => {
-    await gotoPptxEditor(page);
-    const before = await thumbnails(page).count();
-
-    const panel = page.getByTestId("pptx-agent-panel");
-    await panel.getByRole("textbox").fill("add a slide");
-    await panel.getByRole("button", { name: /run/i }).click();
-
-    await expect(thumbnails(page)).toHaveCount(before + 1, { timeout: 5_000 });
   });
 });

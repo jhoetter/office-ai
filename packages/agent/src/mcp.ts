@@ -189,7 +189,9 @@ export function createMcpServer(): McpServer {
           .boolean()
           .optional()
           .default(false)
-          .describe("When true and format is markdown, prepend each page with a <!-- page N --> anchor + ## Page N heading."),
+          .describe(
+            "When true and format is markdown, prepend each page with a <!-- page N --> anchor + ## Page N heading."
+          ),
       },
     },
     async ({ handle, format, with_page_sections }) => {
@@ -479,7 +481,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     "pptx_load",
     {
-      description: "Load a .pptx file from disk. Returns an opaque `handle` to use with subsequent pptx_* tools.",
+      description:
+        "Load a .pptx file from disk. Returns an opaque `handle` to use with subsequent pptx_* tools.",
       inputSchema: {
         path: z.string().describe("Absolute or workspace-relative path to a .pptx file."),
       },
@@ -550,7 +553,8 @@ export function createMcpServer(): McpServer {
   server.registerTool(
     "pptx_get_text",
     {
-      description: "Return the presentation as Markdown (default), structured JSON, or plain text. Optionally restrict to a single slide.",
+      description:
+        "Return the presentation as Markdown (default), structured JSON, or plain text. Optionally restrict to a single slide.",
       inputSchema: {
         handle: z.string(),
         format: z.enum(["markdown", "json", "text"]).optional().default("markdown"),
@@ -561,8 +565,7 @@ export function createMcpServer(): McpServer {
       try {
         const agent = lookupPptxAgent(handle);
         const snap = agent.getSnapshot();
-        const range =
-          slide !== undefined ? { startSlide: slide, endSlide: slide + 1 } : undefined;
+        const range = slide !== undefined ? { startSlide: slide, endSlide: slide + 1 } : undefined;
         const fmt = format ?? "markdown";
         switch (fmt) {
           case "markdown": {
@@ -589,18 +592,20 @@ export function createMcpServer(): McpServer {
                 if (sh.kind === "text" && sh.text) lines.push(`> ${sh.text.replaceAll("\n", " · ")}`);
                 if (sh.kind === "table" && sh.table) {
                   for (const row of sh.table.cells) {
-                    lines.push(`| ${row.map((c) => (c.length > 0 ? c.replaceAll("\n", " · ") : "(empty)")).join(" | ")} |`);
+                    lines.push(
+                      `| ${row.map((c) => (c.length > 0 ? c.replaceAll("\n", " · ") : "(empty)")).join(" | ")} |`
+                    );
                   }
                 }
                 if (sh.kind === "chart" && sh.chart) {
-                  lines.push(`> chart (${sh.chart.chartType})${sh.chart.title ? ` — ${sh.chart.title}` : ""}`);
+                  lines.push(
+                    `> chart (${sh.chart.chartType})${sh.chart.title ? ` — ${sh.chart.title}` : ""}`
+                  );
                   if (sh.chart.categories.length > 0) {
                     lines.push(`> categories: ${sh.chart.categories.join(", ")}`);
                   }
                   for (const ser of sh.chart.series) {
-                    lines.push(
-                      `> ${ser.name ? `${ser.name}: ` : ""}[${ser.values.join(", ")}]`
-                    );
+                    lines.push(`> ${ser.name ? `${ser.name}: ` : ""}[${ser.values.join(", ")}]`);
                   }
                 }
               }

@@ -15,11 +15,7 @@ import {
   isChartShape,
   makeError,
 } from "./helpers.js";
-import type {
-  SetChartDataPayload,
-  SetChartTitlePayload,
-  SetChartTypePayload,
-} from "./payloads.js";
+import type { SetChartDataPayload, SetChartTitlePayload, SetChartTypePayload } from "./payloads.js";
 
 // ─── pptx:set-chart-title ────────────────────────────────────────────────
 
@@ -32,10 +28,7 @@ export const setChartTitleHandler: CommandHandler<SetChartTitlePayload, PptxSnap
     if (before === nextTitle) {
       throw makeError("no-op", "chart title is unchanged");
     }
-    const nextPart: ChartPart =
-      nextTitle === undefined
-        ? omitTitle(chart)
-        : { ...chart, title: nextTitle };
+    const nextPart: ChartPart = nextTitle === undefined ? omitTitle(chart) : { ...chart, title: nextTitle };
     const root = withChart(snapshot.root, partPath, nextPart);
     const next = evolveSnapshot(snapshot, root, {
       slides: [snapshot.root.slides[payload.slideIndex].partPath],
@@ -48,10 +41,7 @@ export const setChartTitleHandler: CommandHandler<SetChartTitlePayload, PptxSnap
         nodeId: payload.shapeId,
         path: ["slides", payload.slideIndex, "shapes", "*chart", "title"],
         field: "title",
-        summary:
-          nextTitle === undefined
-            ? "(removed)"
-            : `${before ?? "(none)"} → ${nextTitle}`,
+        summary: nextTitle === undefined ? "(removed)" : `${before ?? "(none)"} → ${nextTitle}`,
       }),
     };
   },
@@ -109,12 +99,7 @@ export const setChartDataHandler: CommandHandler<SetChartDataPayload, PptxSnapsh
 
 // ─── pptx:set-chart-type ─────────────────────────────────────────────────
 
-const SUPPORTED_CHART_TYPES: ReadonlySet<ChartType> = new Set([
-  "bar",
-  "line",
-  "pie",
-  "area",
-]);
+const SUPPORTED_CHART_TYPES: ReadonlySet<ChartType> = new Set(["bar", "line", "pie", "area"]);
 
 export const setChartTypeHandler: CommandHandler<SetChartTypePayload, PptxSnapshot> = {
   type: "pptx:set-chart-type",
@@ -164,11 +149,7 @@ function resolveChart(
   return { shape, chart: part, partPath: shape.chartPartPath };
 }
 
-function withChart(
-  root: PptxPresentation,
-  partPath: string,
-  next: ChartPart
-): PptxPresentation {
+function withChart(root: PptxPresentation, partPath: string, next: ChartPart): PptxPresentation {
   const charts = new Map(root.charts);
   charts.set(partPath, next);
   return { ...root, charts };

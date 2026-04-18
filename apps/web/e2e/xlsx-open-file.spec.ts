@@ -5,10 +5,7 @@ import { gotoXlsxEditor } from "./_helpers";
 // Resolve the fixture relative to the spec's working directory
 // (apps/web). Playwright runs specs from the package root so this is
 // stable across local + CI invocations.
-const FIXTURE = path.resolve(
-  process.cwd(),
-  "../../fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx"
-);
+const FIXTURE = path.resolve(process.cwd(), "../../fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx");
 
 test.describe("xlsx editor: open .xlsx from disk", () => {
   test("loading a fixture replaces the seeded sample workbook", async ({ page }) => {

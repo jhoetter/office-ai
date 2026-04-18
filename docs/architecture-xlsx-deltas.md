@@ -339,11 +339,11 @@ significance (clicking a cell appends an A1 ref at the caret).
 
 ## 15. Two-layer formula rendering: strict lexer + permissive scanner
 
-|                  | DOCX                                  | XLSX                                                                                                            |
-| ---------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Display tokeniser | n/a                                  | `tokenizeForDisplay()` in `packages/xlsx/src/formula/highlight.ts` — never throws, contiguous-cover guarantee   |
-| Evaluator tokeniser | n/a                                | `lex()` in `packages/xlsx/src/formula/lexer.ts` — strict, throws on malformed input, source of truth for AST    |
-| Why two           | only one consumer (PM)              | the highlighter is **always** asked to render mid-typing input (`=A1+`, `=SUM("hello`); the evaluator is not    |
+|                     | DOCX                   | XLSX                                                                                                          |
+| ------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Display tokeniser   | n/a                    | `tokenizeForDisplay()` in `packages/xlsx/src/formula/highlight.ts` — never throws, contiguous-cover guarantee |
+| Evaluator tokeniser | n/a                    | `lex()` in `packages/xlsx/src/formula/lexer.ts` — strict, throws on malformed input, source of truth for AST  |
+| Why two             | only one consumer (PM) | the highlighter is **always** asked to render mid-typing input (`=A1+`, `=SUM("hello`); the evaluator is not  |
 
 **Why two scanners**: forcing the strict lexer to be permissive
 would erode its evaluator contract; teaching the highlighter to
@@ -367,11 +367,11 @@ chromatic-distinct rendering.
 
 ## 16. Two-surface input model with a transparent overlay
 
-|                       | DOCX                                  | XLSX                                                                                                              |
-| --------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Where the user types   | the document surface (PM editor)     | one of three: cell `<input>`, formula bar `<input>`, or the surface `<div>` (type-to-edit redirects to formula)   |
-| Coloured rendering    | n/a                                   | `FormulaHighlight.tsx` overlay layered behind the formula bar — same font/spacing, transparent input text         |
-| Caret ownership       | PM owns the caret                     | the `<input>` keeps the caret; overlay is `pointer-events:none, aria-hidden`                                      |
+|                      | DOCX                             | XLSX                                                                                                            |
+| -------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Where the user types | the document surface (PM editor) | one of three: cell `<input>`, formula bar `<input>`, or the surface `<div>` (type-to-edit redirects to formula) |
+| Coloured rendering   | n/a                              | `FormulaHighlight.tsx` overlay layered behind the formula bar — same font/spacing, transparent input text       |
+| Caret ownership      | PM owns the caret                | the `<input>` keeps the caret; overlay is `pointer-events:none, aria-hidden`                                    |
 
 **Why an overlay instead of `contentEditable`**: the formula bar
 already owns a long history of careful caret behaviour (P11
@@ -391,10 +391,10 @@ when CJK formula authors arrive.
 
 ## 17. Ref-rectangle highlighting: separate visual layer
 
-|                | DOCX                              | XLSX                                                                                                |
-| -------------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Selection paint | PM decoration on the doc          | `<div data-testid="grid-marquee">` absolutely positioned over `colXs / rowYs`                         |
-| Other overlays  | n/a                               | `refRects` rendered as 2px dashed coloured borders (zIndex 3, below marquee)                          |
+|                 | DOCX                     | XLSX                                                                          |
+| --------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| Selection paint | PM decoration on the doc | `<div data-testid="grid-marquee">` absolutely positioned over `colXs / rowYs` |
+| Other overlays  | n/a                      | `refRects` rendered as 2px dashed coloured borders (zIndex 3, below marquee)  |
 
 **Why a separate visual layer for refs**: selection and ref-
 highlight have different lifecycles (selection is persistent;
@@ -412,11 +412,11 @@ rendering layer.
 
 ## 18. Keyboard parity: surface vs in-edit modes (P12)
 
-|                          | DOCX                                  | XLSX                                                                                                                  |
-| ------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Where keyboard handlers live | PM plugins (one tree, one model)     | three: surface div (`onSurfaceKeyDown`), formula bar `<input>` (`onKeyDown`), in-cell `<input>` (`onKeyDown`)         |
-| Mode dispatch            | PM cursor position                   | `formulaFocused` × `formulaDraft.startsWith("=")` × `selection.kind` (single vs range vs whole-row vs whole-col)    |
-| Excel-isms shipped       | n/a                                  | Arrow nav (+ Shift extend, + Ctrl jump-to-data-edge), Tab/Enter commit-and-move, F2 enter edit, Delete drops whole rows/cols |
+|                              | DOCX                             | XLSX                                                                                                                         |
+| ---------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Where keyboard handlers live | PM plugins (one tree, one model) | three: surface div (`onSurfaceKeyDown`), formula bar `<input>` (`onKeyDown`), in-cell `<input>` (`onKeyDown`)                |
+| Mode dispatch                | PM cursor position               | `formulaFocused` × `formulaDraft.startsWith("=")` × `selection.kind` (single vs range vs whole-row vs whole-col)             |
+| Excel-isms shipped           | n/a                              | Arrow nav (+ Shift extend, + Ctrl jump-to-data-edge), Tab/Enter commit-and-move, F2 enter edit, Delete drops whole rows/cols |
 
 **Why three handlers instead of one**: each surface owns
 different invariants — the surface div manages selection and

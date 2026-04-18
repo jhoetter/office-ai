@@ -28,6 +28,7 @@ import { parseNumberingPart } from "./numbering.js";
 import { parseRelationshipsParts } from "./relationships.js";
 import { parseSectionProperties } from "./sections.js";
 import { parseStylesPart } from "./styles.js";
+import { parseThemePart } from "./theme.js";
 import { parseTable as parseTableTyped } from "./tables.js";
 import {
   attrOf,
@@ -139,6 +140,7 @@ export async function parseDocx(
   const relationships = parseRelationshipsParts(container);
   const numbering = parseNumberingPart(container);
   const styles = parseStylesPart(container);
+  const theme = parseThemePart(container);
 
   const root: DocxDocument = {
     id: mintNodeId(),
@@ -149,6 +151,7 @@ export async function parseDocx(
     relationships,
     ...(numbering ? { numbering } : {}),
     ...(styles ? { styles } : {}),
+    ...(theme ? { theme } : {}),
     documentRootAttrs,
   };
 
@@ -480,6 +483,17 @@ export function parseRunProperties(entry: Record<string, unknown>): RunPropertie
       case "w:rFonts": {
         const ascii = attrOf(c, "w:ascii");
         if (ascii) props.fontFamily = ascii;
+        // Theme refs are projected into typed fields so the cascade
+        // resolver can consult them. The raw element is still pushed
+        // into `opaqueProps` for byte-identical round-trip — the
+        // serializer suppresses it when an explicit `fontFamily` has
+        // been set on the run, otherwise emits it verbatim. See
+        // `agent/style-resolver.ts` for the projection rule (literal
+        // ascii wins over asciiTheme when both are present).
+        const asciiTheme = attrOf(c, "w:asciiTheme");
+        if (asciiTheme) props.fontFamilyAsciiTheme = asciiTheme;
+        const hAnsiTheme = attrOf(c, "w:hAnsiTheme");
+        if (hAnsiTheme) props.fontFamilyHAnsiTheme = hAnsiTheme;
         opaqueProps.push(captureOpaque(c));
         break;
       }

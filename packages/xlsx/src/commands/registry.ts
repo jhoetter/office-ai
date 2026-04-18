@@ -4,9 +4,12 @@ import { addCommentHandler } from "./add-comment.js";
 import { addSheetHandler } from "./add-sheet.js";
 import { deleteColumnHandler } from "./delete-column.js";
 import { deleteRowHandler } from "./delete-row.js";
+import { deleteSheetHandler } from "./delete-sheet.js";
+import { fillRangeHandler } from "./fill-range.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertRowHandler } from "./insert-row.js";
 import { mergeCellsHandler } from "./merge-cells.js";
+import { pasteRangeHandler } from "./paste-range.js";
 import { renameSheetHandler } from "./rename-sheet.js";
 import { setCellFormatHandler } from "./set-cell-format.js";
 import { setCellFormulaHandler } from "./set-cell-formula.js";
@@ -14,6 +17,7 @@ import { setCellValueHandler } from "./set-cell-value.js";
 import { setColumnWidthHandler } from "./set-column-width.js";
 import { setRangeValuesHandler } from "./set-range-values.js";
 import { setRowHeightHandler } from "./set-row-height.js";
+import { textToColumnsHandler } from "./text-to-columns.js";
 import { unmergeCellsHandler } from "./unmerge-cells.js";
 
 /**
@@ -51,6 +55,10 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   addCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
   setColumnWidthHandler as CommandHandler<unknown, XlsxSnapshot>,
   setRowHeightHandler as CommandHandler<unknown, XlsxSnapshot>,
+  deleteSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
+  pasteRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
+  textToColumnsHandler as CommandHandler<unknown, XlsxSnapshot>,
+  fillRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

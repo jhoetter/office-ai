@@ -84,8 +84,80 @@ jobs:
           sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-writer
           soffice --version
 
-      - name: Roundtrip every real-world fixture through LibreOffice
-        run: make roundtrip-libre
+      - name: Roundtrip every DOCX fixture through LibreOffice
+        run: make roundtrip-libre-docx
+
+  xlsx-libreoffice-roundtrip:
+    name: xlsx libreoffice roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The roundtrip script imports the built @officeai/xlsx dist; build
+      # the workspace once so the dynamic import resolves.
+      - name: Build packages
+        run: pnpm build
+
+      - name: Install LibreOffice (headless, with Calc)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-calc
+          soffice --version
+
+      - name: Roundtrip every XLSX fixture through LibreOffice
+        run: make roundtrip-libre-xlsx
+
+  pptx-libreoffice-roundtrip:
+    name: pptx libreoffice roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The roundtrip script imports the built @officeai/pptx dist; build
+      # the workspace once so the dynamic import resolves.
+      - name: Build packages
+        run: pnpm build
+
+      - name: Install LibreOffice (headless, with Impress)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-impress
+          soffice --version
+
+      - name: Roundtrip every PPTX fixture through LibreOffice
+        run: make roundtrip-libre-pptx
 
   web-e2e:
     name: web e2e (playwright)
@@ -159,6 +231,62 @@ jobs:
       - name: Run DOCX perf budgets
         run: make perf-docx
 
+  xlsx-perf:
+    name: xlsx perf budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run XLSX perf budgets
+        run: make perf-xlsx
+
+  pptx-perf:
+    name: pptx perf budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run PPTX perf budgets
+        run: make perf-pptx
+
   docx-schema-validation:
     name: docx OOXML XSD validation
     runs-on: ubuntu-latest
@@ -210,8 +338,104 @@ jobs:
       - name: Build packages
         run: pnpm build
 
-      - name: Validate every fixture (input + agent re-emit) against the OOXML XSDs
-        run: make schema-validate
+      - name: Validate every DOCX fixture (input + agent re-emit) against wml.xsd
+        run: make schema-validate-docx
+
+  xlsx-schema-validation:
+    name: xlsx OOXML XSD validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Advisory until the XLSX serializer audit lands. ECMA-376 Transitional
+    # flags pre-existing extension attributes (mc:Ignorable, x14ac:*) that
+    # the upstream `xlsx` (SheetJS) emitter writes verbatim and we
+    # round-trip without rewriting. The job artifact still surfaces every
+    # violation so the follow-up audit has a precise hit list.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install xmllint (libxml2-utils)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --version
+
+      - name: Cache OOXML XSD bundle
+        uses: actions/cache@v4
+        with:
+          path: vendor/ooxml-xsd
+          key: ooxml-xsd-${{ hashFiles('scripts/fetch-ooxml-xsd.mjs') }}
+
+      - name: Fetch OOXML XSDs (cache miss only)
+        run: make xsd-fetch
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Validate every XLSX fixture (input + agent re-emit) against sml.xsd
+        run: make schema-validate-xlsx
+
+  pptx-schema-validation:
+    name: pptx OOXML XSD validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Advisory until the PPTX serializer audit lands. ECMA-376 Transitional
+    # flags real (and known) violations such as `buSzPct` raw-percent values
+    # that need the DML pattern fix. Captured as artifact for the follow-up.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install xmllint (libxml2-utils)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --version
+
+      - name: Cache OOXML XSD bundle
+        uses: actions/cache@v4
+        with:
+          path: vendor/ooxml-xsd
+          key: ooxml-xsd-${{ hashFiles('scripts/fetch-ooxml-xsd.mjs') }}
+
+      - name: Fetch OOXML XSDs (cache miss only)
+        run: make xsd-fetch
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Validate every PPTX fixture (input + agent re-emit) against pml.xsd
+        run: make schema-validate-pptx
 
   license-scan:
     name: license-graph SPDX scan

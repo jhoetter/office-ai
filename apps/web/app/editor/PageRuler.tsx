@@ -42,9 +42,15 @@ export function PageRuler(props: PageRulerProps): ReactNode {
   const geometry = useMemo(() => resolveSectionGeometry(snapshot), [snapshot]);
   const useMetric = useMemo(() => isMetricLocale(), []);
 
-  const totalUnits = useMetric ? geometry.pageWidthTwips / TWIPS_PER_CM : geometry.pageWidthTwips / TWIPS_PER_INCH;
-  const leftMarginUnits = useMetric ? geometry.leftMarginTwips / TWIPS_PER_CM : geometry.leftMarginTwips / TWIPS_PER_INCH;
-  const rightMarginUnits = useMetric ? geometry.rightMarginTwips / TWIPS_PER_CM : geometry.rightMarginTwips / TWIPS_PER_INCH;
+  const totalUnits = useMetric
+    ? geometry.pageWidthTwips / TWIPS_PER_CM
+    : geometry.pageWidthTwips / TWIPS_PER_INCH;
+  const leftMarginUnits = useMetric
+    ? geometry.leftMarginTwips / TWIPS_PER_CM
+    : geometry.leftMarginTwips / TWIPS_PER_INCH;
+  const rightMarginUnits = useMetric
+    ? geometry.rightMarginTwips / TWIPS_PER_CM
+    : geometry.rightMarginTwips / TWIPS_PER_INCH;
 
   const ticks: number[] = [];
   const tickStep = useMetric ? 1 : 0.5;
@@ -84,13 +90,8 @@ export function PageRuler(props: PageRulerProps): ReactNode {
             className="absolute top-0 flex h-full flex-col items-center"
             style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
           >
-            <div
-              className="bg-secondary"
-              style={{ width: 1, height: isMajor ? "70%" : "40%" }}
-            />
-            {isMajor && u !== 0 && (
-              <span className="mt-[1px] tabular-nums">{Math.round(u)}</span>
-            )}
+            <div className="bg-secondary" style={{ width: 1, height: isMajor ? "70%" : "40%" }} />
+            {isMajor && u !== 0 && <span className="mt-[1px] tabular-nums">{Math.round(u)}</span>}
           </div>
         );
       })}

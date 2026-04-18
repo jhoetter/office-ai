@@ -44,6 +44,15 @@ export interface XlsxDirtyFlags {
   threadedComments: ReadonlySet<string>;
   /** Per-sheet rels parts (`xl/worksheets/_rels/sheetN.xml.rels`). */
   sheetRels: ReadonlySet<string>;
+  /**
+   * Sheet part paths the next serializer pass MUST drop from the
+   * package: the `xl/worksheets/sheetN.xml` part, its `_rels/`
+   * sidecar, the workbook-rels relationship that targeted it, and
+   * the content-types `<Override>` that registered it. Driven by
+   * `xlsx:delete-sheet`. Membership implies the sheet has already
+   * been removed from `workbook.sheets`.
+   */
+  removedSheetParts: ReadonlySet<string>;
 }
 
 export interface XlsxWorkbook {
@@ -239,5 +248,6 @@ export function emptyDirty(): XlsxDirtyFlags {
     comments: new Set<string>(),
     threadedComments: new Set<string>(),
     sheetRels: new Set<string>(),
+    removedSheetParts: new Set<string>(),
   };
 }

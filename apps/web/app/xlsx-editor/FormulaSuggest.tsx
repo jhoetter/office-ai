@@ -1,10 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import {
-  listRegisteredFunctions,
-  type RegisteredFunctionInfo,
-} from "@officeai/xlsx";
+import { listRegisteredFunctions, type RegisteredFunctionInfo } from "@officeai/xlsx";
 
 const ALL_FUNCTIONS: ReadonlyArray<RegisteredFunctionInfo> = listRegisteredFunctions();
 const MAX_SUGGESTIONS = 8;

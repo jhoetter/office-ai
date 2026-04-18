@@ -37,17 +37,11 @@ export const tableSetCellTextHandler: CommandHandler<TableSetCellTextPayload, Pp
       throw makeError("not-applicable", `shape ${payload.shapeId} is not a table`);
     }
     if (payload.row < 0 || payload.row >= shape.rows.length) {
-      throw makeError(
-        "unknown-target",
-        `row ${payload.row} out of range (0..${shape.rows.length})`
-      );
+      throw makeError("unknown-target", `row ${payload.row} out of range (0..${shape.rows.length})`);
     }
     const row = shape.rows[payload.row]!;
     if (payload.column < 0 || payload.column >= row.cells.length) {
-      throw makeError(
-        "unknown-target",
-        `column ${payload.column} out of range (0..${row.cells.length})`
-      );
+      throw makeError("unknown-target", `column ${payload.column} out of range (0..${row.cells.length})`);
     }
 
     const oldCell = row.cells[payload.column]!;
@@ -140,10 +134,7 @@ export const tableDeleteRowHandler: CommandHandler<TableDeleteRowPayload, PptxSn
       throw makeError("invalid-payload", "cannot delete last row of a table");
     }
     if (payload.row < 0 || payload.row >= shape.rows.length) {
-      throw makeError(
-        "unknown-target",
-        `row ${payload.row} out of range (0..${shape.rows.length})`
-      );
+      throw makeError("unknown-target", `row ${payload.row} out of range (0..${shape.rows.length})`);
     }
     const removed = shape.rows[payload.row]!;
     const newRows = shape.rows.filter((_, i) => i !== payload.row);
@@ -179,15 +170,11 @@ export const tableAddColumnHandler: CommandHandler<TableAddColumnPayload, PptxSn
     }
     const at = payload.at ?? shape.columnWidths.length;
     if (at < 0 || at > shape.columnWidths.length) {
-      throw makeError(
-        "invalid-position",
-        `at ${at} out of range (0..${shape.columnWidths.length})`
-      );
+      throw makeError("invalid-position", `at ${at} out of range (0..${shape.columnWidths.length})`);
     }
     const oldCount = shape.columnWidths.length;
     const totalWidth = shape.columnWidths.reduce((a, b) => a + b, 0);
-    const width =
-      payload.width ?? (oldCount > 0 ? Math.round(totalWidth / oldCount) : 1000000);
+    const width = payload.width ?? (oldCount > 0 ? Math.round(totalWidth / oldCount) : 1000000);
 
     const newColumnWidths = [...shape.columnWidths];
     newColumnWidths.splice(at, 0, width);
@@ -285,11 +272,7 @@ function buildEmptyCell(ctx: HandlerContext): TableCell {
   };
 }
 
-function textBodyFromPlainText(
-  text: string,
-  ctx: HandlerContext,
-  inherit: TextBody
-): TextBody {
+function textBodyFromPlainText(text: string, ctx: HandlerContext, inherit: TextBody): TextBody {
   const lines = text.length === 0 ? [""] : text.split("\n");
   const inheritedParaProps = inherit.paragraphs[0]?.properties ?? {};
   const inheritedRunProps = inherit.paragraphs[0]?.runs[0]?.properties ?? {};

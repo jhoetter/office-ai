@@ -2,17 +2,15 @@ import { describe, expect, it } from "vitest";
 import { deterministicIdMinter } from "@officeai/core";
 import { DocxAgent } from "../agent/agent.js";
 import { parseDocx } from "../parser/parse.js";
-import {
-  DEFAULT_DOC_ROOT_ATTRS,
-  escapeXml,
-  makeSyntheticDocx,
-} from "../test-utils/synthetic.js";
+import { DEFAULT_DOC_ROOT_ATTRS, escapeXml, makeSyntheticDocx } from "../test-utils/synthetic.js";
 import type { Paragraph, Run } from "../model/types.js";
 import { chunkIntoPages } from "../renderer/page-chunker.js";
 
 function syntheticDocXml(paraCount = 2): string {
-  const paras = Array.from({ length: paraCount }, (_, i) =>
-    `<w:p><w:r><w:t xml:space="preserve">${escapeXml(`Paragraph ${i + 1} body text`)}</w:t></w:r></w:p>`
+  const paras = Array.from(
+    { length: paraCount },
+    (_, i) =>
+      `<w:p><w:r><w:t xml:space="preserve">${escapeXml(`Paragraph ${i + 1} body text`)}</w:t></w:r></w:p>`
   ).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>${paras}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/></w:sectPr></w:body></w:document>`;
@@ -98,7 +96,7 @@ describe("docx:insert-page-break (P3.5 / W18)", () => {
     expect(m.rejection?.code).toBe("invalid-payload");
   });
 
-  it("round-trip: page break survives parse → export → parse as <w:br w:type=\"page\"/>", async () => {
+  it('round-trip: page break survives parse → export → parse as <w:br w:type="page"/>', async () => {
     const agent = await makeAgent();
     const para = agent.getSnapshot().root.body[0] as Paragraph;
     await agent.applyCommand({

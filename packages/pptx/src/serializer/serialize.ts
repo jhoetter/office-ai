@@ -23,7 +23,6 @@ import { ATTR_KEY, ATTR_PREFIX, opaqueToEntry } from "../parser/xml-helpers.js";
 import { PptxSerializeError } from "./errors.js";
 
 const PRESENTATION_PART = "ppt/presentation.xml";
-const PRESENTATION_RELS = "ppt/_rels/presentation.xml.rels";
 const RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer> {
@@ -94,11 +93,10 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
       const xml = serializePresentationXml(snapshot.root);
       container.writeText(PRESENTATION_PART, xml);
     } catch (err) {
-      throw new PptxSerializeError(
-        "presentation-failed",
-        `Failed to serialize ${PRESENTATION_PART}`,
-        { partPath: PRESENTATION_PART, cause: err }
-      );
+      throw new PptxSerializeError("presentation-failed", `Failed to serialize ${PRESENTATION_PART}`, {
+        partPath: PRESENTATION_PART,
+        cause: err,
+      });
     }
   }
 
@@ -195,9 +193,7 @@ const ENTRANCE_EFFECT_PRESET_ID: Readonly<Record<string, number>> = {
   wipe: 10,
 };
 
-function timingFromAnimations(
-  animations: ReadonlyArray<EntranceAnimation>
-): Record<string, unknown> {
+function timingFromAnimations(animations: ReadonlyArray<EntranceAnimation>): Record<string, unknown> {
   let cTnId = 3; // 1 = tmRoot, 2 = mainSeq, ≥3 = per-animation cTn ids
   const animPars: unknown[] = [];
   for (const a of animations) {
@@ -211,16 +207,10 @@ function timingFromAnimations(
           dur: "1",
           fill: "hold",
         }),
-        makeEntry("p:tgtEl", [
-          makeEntry("p:spTgt", [], { spid: String(a.targetCNvPrId) }),
-        ]),
-        makeEntry("p:attrNameLst", [
-          makeEntry("p:attrName", [{ "#text": "style.visibility" }]),
-        ]),
+        makeEntry("p:tgtEl", [makeEntry("p:spTgt", [], { spid: String(a.targetCNvPrId) })]),
+        makeEntry("p:attrNameLst", [makeEntry("p:attrName", [{ "#text": "style.visibility" }])]),
       ]),
-      makeEntry("p:to", [
-        makeEntry("p:strVal", [], { val: "visible" }),
-      ]),
+      makeEntry("p:to", [makeEntry("p:strVal", [], { val: "visible" })]),
     ]);
     const animCTnAttrs: Record<string, string> = {
       id: String(animCTnId),
@@ -232,36 +222,28 @@ function timingFromAnimations(
     };
     if (a.durationMs !== undefined) animCTnAttrs.dur = String(a.durationMs);
     animPars.push(
-      makeEntry("p:par", [
-        makeEntry(
-          "p:cTn",
-          [makeEntry("p:childTnLst", [setEntry])],
-          animCTnAttrs
-        ),
-      ])
+      makeEntry("p:par", [makeEntry("p:cTn", [makeEntry("p:childTnLst", [setEntry])], animCTnAttrs)])
     );
   }
   const seq = makeEntry(
     "p:seq",
     [
-      makeEntry(
-        "p:cTn",
-        [makeEntry("p:childTnLst", animPars)],
-        { id: "2", dur: "indefinite", nodeType: "mainSeq" }
-      ),
+      makeEntry("p:cTn", [makeEntry("p:childTnLst", animPars)], {
+        id: "2",
+        dur: "indefinite",
+        nodeType: "mainSeq",
+      }),
     ],
     { concurrent: "1", nextAc: "seek" }
   );
-  const tmRoot = makeEntry(
-    "p:par",
-    [
-      makeEntry(
-        "p:cTn",
-        [makeEntry("p:childTnLst", [seq])],
-        { id: "1", dur: "indefinite", restart: "never", nodeType: "tmRoot" }
-      ),
-    ]
-  );
+  const tmRoot = makeEntry("p:par", [
+    makeEntry("p:cTn", [makeEntry("p:childTnLst", [seq])], {
+      id: "1",
+      dur: "indefinite",
+      restart: "never",
+      nodeType: "tmRoot",
+    }),
+  ]);
   return makeEntry("p:timing", [makeEntry("p:tnLst", [tmRoot])]);
 }
 
@@ -296,9 +278,7 @@ function textShapeToEntry(shape: TextShape): Record<string, unknown> {
     }
   }
   if (!emittedCNvPr) {
-    nvSpPrChildren.unshift(
-      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
-    );
+    nvSpPrChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
   }
 
   const nvSpPr = makeEntry("p:nvSpPr", nvSpPrChildren);
@@ -337,9 +317,7 @@ function pictureToEntry(shape: Picture): Record<string, unknown> {
     }
   }
   if (!emittedCNvPr) {
-    nvPicPrChildren.unshift(
-      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
-    );
+    nvPicPrChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
   }
   const nvPicPr = makeEntry("p:nvPicPr", nvPicPrChildren);
 
@@ -390,9 +368,7 @@ function groupShapeToEntry(shape: GroupShape): Record<string, unknown> {
     }
   }
   if (!emittedCNvPr) {
-    nvChildren.unshift(
-      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
-    );
+    nvChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
   }
   const nvGrpSpPr = makeEntry("p:nvGrpSpPr", nvChildren);
 
@@ -432,9 +408,7 @@ function tableShapeToEntry(shape: TableShape): Record<string, unknown> {
     }
   }
   if (!emittedCNvPr) {
-    nvChildren.unshift(
-      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
-    );
+    nvChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
   }
   const nvGraphicFramePr = makeEntry("p:nvGraphicFramePr", nvChildren);
 
@@ -462,9 +436,7 @@ function tableShapeToEntry(shape: TableShape): Record<string, unknown> {
   if (shape.tblPrRaw) tblChildren.push(opaqueToEntry(shape.tblPrRaw));
   else tblChildren.push(makeEntry("a:tblPr", []));
 
-  const gridChildren: unknown[] = shape.columnWidths.map((w) =>
-    makeEntry("a:gridCol", [], { w: String(w) })
-  );
+  const gridChildren: unknown[] = shape.columnWidths.map((w) => makeEntry("a:gridCol", [], { w: String(w) }));
   tblChildren.push(makeEntry("a:tblGrid", gridChildren));
 
   for (const row of shape.rows) {
@@ -527,10 +499,7 @@ function serializeChartPartXml(part: ChartPart): string {
   return ooxml.serializeXml([chartSpace]);
 }
 
-function rebuildChartElement(
-  part: ChartPart,
-  chart: Record<string, unknown>
-): Record<string, unknown> {
+function rebuildChartElement(part: ChartPart, chart: Record<string, unknown>): Record<string, unknown> {
   const chartChildren = (chart["c:chart"] as unknown[] | undefined) ?? [];
   const out: unknown[] = [];
   let titleEmitted = false;
@@ -608,17 +577,12 @@ function chartTypeTag(t: ChartPart["chartType"]): string {
   }
 }
 
-function rebuildSeries(
-  part: ChartPart,
-  s: ChartPart["series"][number]
-): Record<string, unknown> {
+function rebuildSeries(part: ChartPart, s: ChartPart["series"][number]): Record<string, unknown> {
   const children: unknown[] = [];
   children.push(makeEntry("c:idx", [], { val: String(s.idx) }));
   children.push(makeEntry("c:order", [], { val: String(s.idx) }));
   if (s.name !== undefined) {
-    children.push(
-      makeEntry("c:tx", [makeEntry("c:v", [{ "#text": s.name }])])
-    );
+    children.push(makeEntry("c:tx", [makeEntry("c:v", [{ "#text": s.name }])]));
   }
   if (part.categories.length > 0) {
     children.push(rebuildCategoryRef(part.categories));
@@ -631,9 +595,7 @@ function rebuildCategoryRef(categories: ReadonlyArray<string>): Record<string, u
   const ptCount = makeEntry("c:ptCount", [], { val: String(categories.length) });
   const pts: unknown[] = [ptCount];
   for (let i = 0; i < categories.length; i++) {
-    pts.push(
-      makeEntry("c:pt", [makeEntry("c:v", [{ "#text": categories[i] }])], { idx: String(i) })
-    );
+    pts.push(makeEntry("c:pt", [makeEntry("c:v", [{ "#text": categories[i] }])], { idx: String(i) }));
   }
   // Use c:strRef + c:strCache (standard PowerPoint shape) so reparse
   // round-trips cleanly. The `<c:f>` reference is a placeholder; the
@@ -651,17 +613,10 @@ function rebuildValueRef(values: ReadonlyArray<number>): Record<string, unknown>
   const pts: unknown[] = [ptCount];
   for (let i = 0; i < values.length; i++) {
     pts.push(
-      makeEntry(
-        "c:pt",
-        [makeEntry("c:v", [{ "#text": String(values[i] ?? 0) }])],
-        { idx: String(i) }
-      )
+      makeEntry("c:pt", [makeEntry("c:v", [{ "#text": String(values[i] ?? 0) }])], { idx: String(i) })
     );
   }
-  const cache = makeEntry("c:numCache", [
-    makeEntry("c:formatCode", [{ "#text": "General" }]),
-    ...pts,
-  ]);
+  const cache = makeEntry("c:numCache", [makeEntry("c:formatCode", [{ "#text": "General" }]), ...pts]);
   const ref = makeEntry("c:numRef", [
     makeEntry("c:f", [{ "#text": "Sheet1!$B$2:$B$" + (values.length + 1) }]),
     cache,
@@ -681,9 +636,7 @@ function chartShapeToEntry(shape: ChartShape): Record<string, unknown> {
     }
   }
   if (!emittedCNvPr) {
-    nvChildren.unshift(
-      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
-    );
+    nvChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
   }
   const nvGraphicFramePr = makeEntry("p:nvGraphicFramePr", nvChildren);
 
@@ -764,10 +717,7 @@ function buildXfrm(
   return entry;
 }
 
-function buildGroupXfrm(
-  shape: GroupShape,
-  captured: OpaqueXml | undefined
-): Record<string, unknown> {
+function buildGroupXfrm(shape: GroupShape, captured: OpaqueXml | undefined): Record<string, unknown> {
   const xfrmAttrs = captured ? captured.attrs : {};
   const subChildren: unknown[] = [];
   if (shape.position) {
@@ -776,9 +726,7 @@ function buildGroupXfrm(
     );
   }
   if (shape.size) {
-    subChildren.push(
-      makeEntry("a:ext", [], { cx: String(shape.size.cxEmu), cy: String(shape.size.cyEmu) })
-    );
+    subChildren.push(makeEntry("a:ext", [], { cx: String(shape.size.cxEmu), cy: String(shape.size.cyEmu) }));
   }
   for (const o of shape.chOffExtRaw) subChildren.push(opaqueToEntry(o));
   const entry: Record<string, unknown> = { "a:xfrm": subChildren };
@@ -813,10 +761,7 @@ function paragraphToEntry(p: TextParagraph): Record<string, unknown> {
       if (Object.keys(attrs).length > 0) entry[ATTR_KEY] = makeRawAttrs(attrs);
       children.push(entry);
     }
-  } else if (
-    p.properties.alignment !== undefined ||
-    p.properties.level !== undefined
-  ) {
+  } else if (p.properties.alignment !== undefined || p.properties.level !== undefined) {
     const attrs: Record<string, string> = {};
     if (p.properties.level !== undefined) attrs.lvl = String(p.properties.level);
     if (p.properties.alignment) {
@@ -875,11 +820,7 @@ function buildRPrChildren(r: TextRun): unknown[] {
 
   // Emit fill first, then other children, then latin, matching OOXML order.
   if (wantsSolidFill) {
-    out.push(
-      makeEntry("a:solidFill", [
-        makeEntry("a:srgbClr", [], { val: String(r.properties.color) }),
-      ])
-    );
+    out.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: String(r.properties.color) })]));
   }
   for (const c of captured) {
     // Drop captured a:solidFill / a:latin only when the model overrides them;

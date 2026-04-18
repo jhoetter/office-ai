@@ -16,9 +16,7 @@ test.describe("xlsx editor: formula reference highlighting (P12a-c)", () => {
     const refSpans = overlay.locator('[data-token-kind="ref"]');
     await expect(refSpans).toHaveCount(3);
 
-    const colors = await refSpans.evaluateAll((els) =>
-      els.map((el) => (el as HTMLElement).style.color)
-    );
+    const colors = await refSpans.evaluateAll((els) => els.map((el) => (el as HTMLElement).style.color));
     // B1 (index 0) and B1 (index 2) are the same; C2 (index 1) differs.
     expect(colors[0]).toBe(colors[2]);
     expect(colors[0]).not.toBe(colors[1]);

@@ -224,6 +224,38 @@ describe("office-agent CLI", () => {
     expect(agent.toMarkdown()).toContain("JSON first paragraph body");
   });
 
+  it("apply with N>=3 commands does not duplicate insert-text (§G0 regression)", async () => {
+    // Repro of the bug captured in docs/cli-gap-report.md §G0:
+    // the previous `getPendingMutations().forEach(approveMutation)` pattern
+    // mutated `this.pending` mid-iteration, leaving half the mutations
+    // pending and re-applying them via `recomputeWorking`. A four-command
+    // batch produced `BBB...` in paragraph 1 instead of `B...`.
+    const input = await makeFixture();
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-g0-"));
+    mkdirSync(dir, { recursive: true });
+    const cmdsPath = join(dir, "commands.json");
+    writeFileSync(
+      cmdsPath,
+      JSON.stringify({
+        commands: [
+          { type: "docx:insert-text", payload: { at: { paragraph: 0, offset: 0 }, text: "A" } },
+          { type: "docx:insert-text", payload: { at: { paragraph: 1, offset: 0 }, text: "B" } },
+          { type: "docx:insert-text", payload: { at: { paragraph: 2, offset: 0 }, text: "C" } },
+        ],
+      })
+    );
+    const output = join(dir, "out.docx");
+    const { io } = makeIO();
+    const code = await runCli(["apply", "-i", input, "-o", output, "-c", cmdsPath], io);
+    expect(code).toBe(0);
+    const md = (await DocxAgent.fromBuffer(readFileSync(output))).toMarkdown();
+    expect(md).toContain("AHello");
+    expect(md).toContain("Bfirst paragraph body");
+    expect(md).toContain("Csecond paragraph body");
+    expect(md).not.toMatch(/BB/);
+    expect(md).not.toMatch(/CC/);
+  });
+
   it("invalid selector reports an error", async () => {
     const input = await makeFixture();
     const dir = mkdtempSync(join(tmpdir(), "office-agent-bad-"));

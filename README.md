@@ -7,11 +7,11 @@ and the OOXML file is the source of truth.
 
 ## Status
 
-| Format | Status   | Notes                                                                                                                                                                   |
-| ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DOCX   | active   | Spec complete. Parser/serializer with opaque-blob preservation. Agent commands + tracked changes. ProseMirror renderer. CLI + MCP.                                      |
+| Format | Status   | Notes                                                                                                                                                                                                                                                                                                                                                                         |
+| ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DOCX   | active   | Spec complete. Parser/serializer with opaque-blob preservation. Agent commands + tracked changes. ProseMirror renderer. CLI + MCP.                                                                                                                                                                                                                                            |
 | XLSX   | active   | Spec complete. SheetJS-backed parser/serializer with opaque-blob preservation. **All 13 P0 commands** + column/row sizing. Sync formula engine (89 functions). Excel-flavoured `/xlsx-editor`: open .xlsx from disk, multi-cell selection, type-to-edit, click-to-insert-ref, formula autocomplete, styling toolbar, merge / insert / delete, drag-resize headers. CLI + MCP. |
-| PPTX   | deferred | Spec slot reserved; implementation in a follow-up.                                                                                                                      |
+| PPTX   | deferred | Spec slot reserved; implementation in a follow-up.                                                                                                                                                                                                                                                                                                                            |
 
 ## Stack
 

@@ -1,15 +1,10 @@
-import {
-  CommandBus,
-  type Command,
-  type CommandLite,
-  type DocumentDiff,
-  type Mutation,
-} from "@officeai/core";
+import { CommandBus, type Command, type CommandLite, type DocumentDiff, type Mutation } from "@officeai/core";
 import { allPptxHandlers } from "../commands/index.js";
 import type { PptxSnapshot, Shape, Slide, TextShape } from "../model/types.js";
 import { parsePptx, type ParseOptions } from "../parser/parse.js";
 import { serializePptx } from "../serializer/serialize.js";
 import { paragraphText, snapshotToMarkdown } from "./markdown.js";
+import { buildBlankPptxBuffer } from "./empty.js";
 
 export interface PptxAgentOptions extends ParseOptions {
   readonly sessionId?: string;
@@ -66,12 +61,18 @@ export class PptxAgent {
     this.bus.registerAll(allPptxHandlers);
   }
 
-  static async fromBuffer(
-    buffer: ArrayBuffer | Uint8Array,
-    opts: PptxAgentOptions = {}
-  ): Promise<PptxAgent> {
+  static async fromBuffer(buffer: ArrayBuffer | Uint8Array, opts: PptxAgentOptions = {}): Promise<PptxAgent> {
     const snap = await parsePptx(buffer, opts);
     return new PptxAgent(snap, opts);
+  }
+
+  /**
+   * Construct a PptxAgent backed by a brand-new blank deck — one
+   * empty slide on a default "Blank" layout/master/theme triple.
+   * Use as the entry point for `oa pptx create --out`.
+   */
+  static async empty(opts: PptxAgentOptions = {}): Promise<PptxAgent> {
+    return PptxAgent.fromBuffer(buildBlankPptxBuffer(), opts);
   }
 
   // ── Read ───────────────────────────────────────────────────────────────
@@ -110,9 +111,7 @@ export class PptxAgent {
     const slides = this.getSnapshot().root.slides;
     const out: PptxSearchResult[] = [];
     const flags = spec.caseSensitive ? "g" : "gi";
-    const pattern = spec.regex
-      ? new RegExp(spec.query, flags)
-      : new RegExp(escapeRegex(spec.query), flags);
+    const pattern = spec.regex ? new RegExp(spec.query, flags) : new RegExp(escapeRegex(spec.query), flags);
     for (let si = 0; si < slides.length; si++) {
       walkShapes(slides[si].shapes, (shape) => {
         if (shape.kind === "text") {
@@ -215,9 +214,7 @@ export class PptxAgent {
   }
 
   // ── Subscriptions ──────────────────────────────────────────────────────
-  subscribe(
-    listener: (snapshot: PptxSnapshot, mutation: Mutation<PptxSnapshot>) => void
-  ): () => void {
+  subscribe(listener: (snapshot: PptxSnapshot, mutation: Mutation<PptxSnapshot>) => void): () => void {
     return this.bus.subscribe(listener);
   }
 }

@@ -1,24 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Loader2, MessageSquarePlus, Sparkles, X } from "lucide-react";
+import { MessageSquarePlus, X } from "lucide-react";
 import { Button } from "@officeai/ui";
 
 /**
- * Comment composer popover (P2.5 / W24).
+ * Comment composer popover.
  *
- * Replaces the old hard-coded `text: "Looks good?"` recipe with a
- * proper composer surface. The user types the comment they actually
- * want; an optional "Draft with AI" button asks the LLM bridge to draft
- * a constructive comment about the highlighted snippet (the bridge is
- * passed the same selection context as `dispatchToLlm`, so when the
- * server has no API key the offline fallback simply mirrors the
- * snippet back as a placeholder draft).
+ * Pure human-driven authoring surface: the user types the comment they
+ * actually want and clicks Add. The earlier "Draft with AI" button has
+ * been removed — agent-driven comment authoring now flows through the
+ * `office-agent` CLI (`oa docx comment`) rather than through the
+ * editor UI.
  *
  * The component is purely presentational: positioning + selection
- * snippet + busy-state come from the parent (`DocxEditor`). The parent
- * owns the actual command dispatch so it can route the comment through
- * the same `agent.applyCommand` funnel as everything else.
+ * snippet come from the parent (`DocxEditor`), which owns the actual
+ * command dispatch so the comment lands through the same
+ * `agent.applyCommand` funnel as every other mutation.
  */
 
 export interface CommentComposerProps {
@@ -30,19 +28,12 @@ export interface CommentComposerProps {
   onSubmit: (text: string) => void;
   /** Called when the user dismisses the popover. */
   onCancel: () => void;
-  /**
-   * Optional AI-draft helper. When provided, an "Ask AI" button appears
-   * that calls this with the current draft and the selection snippet,
-   * and the returned text replaces the textarea contents.
-   */
-  onDraftWithAi?: (currentDraft: string, selectionText: string) => Promise<string>;
   /** Anchor coords (page-relative). The popover positions below it. */
   anchor: { left: number; top: number; bottom: number } | null;
 }
 
 export function CommentComposer(props: CommentComposerProps): ReactNode {
   const [text, setText] = useState(props.initialText ?? "");
-  const [busy, setBusy] = useState(false);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -64,17 +55,6 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
     const trimmed = text.trim();
     if (!trimmed) return;
     props.onSubmit(trimmed);
-  };
-
-  const draft = async (): Promise<void> => {
-    if (!props.onDraftWithAi) return;
-    setBusy(true);
-    try {
-      const next = await props.onDraftWithAi(text, props.selectionText);
-      if (typeof next === "string" && next.length > 0) setText(next);
-    } finally {
-      setBusy(false);
-    }
   };
 
   // Anchor: `coordsAtPos` from PM returns viewport-relative coordinates,
@@ -139,36 +119,19 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
         }}
       />
 
-      <div className="flex items-center justify-between gap-2">
-        {props.onDraftWithAi ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void draft()}
-            disabled={busy}
-            className="text-[var(--ai-violet)] hover:bg-[var(--ai-violet)]/10"
-            data-testid="comment-composer-ai"
-          >
-            {busy ? <Loader2 className="animate-spin" size={12} /> : <Sparkles size={12} />}
-            Draft with AI
-          </Button>
-        ) : (
-          <span />
-        )}
-        <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" onClick={props.onCancel}>
-            Cancel
-          </Button>
-          <Button
-            variant="accent"
-            size="sm"
-            onClick={submit}
-            disabled={text.trim().length === 0}
-            data-testid="comment-composer-submit"
-          >
-            Add comment
-          </Button>
-        </div>
+      <div className="flex items-center justify-end gap-1.5">
+        <Button variant="ghost" size="sm" onClick={props.onCancel}>
+          Cancel
+        </Button>
+        <Button
+          variant="accent"
+          size="sm"
+          onClick={submit}
+          disabled={text.trim().length === 0}
+          data-testid="comment-composer-submit"
+        >
+          Add comment
+        </Button>
       </div>
     </div>
   );

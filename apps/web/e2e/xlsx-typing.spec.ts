@@ -39,9 +39,7 @@ test.describe("xlsx editor: Excel-like keyboard editing", () => {
     await expect(page.getByTestId("cell-A2")).toHaveText("");
   });
 
-  test("click-to-insert-ref: clicking a cell while editing a formula appends its ref", async ({
-    page,
-  }) => {
+  test("click-to-insert-ref: clicking a cell while editing a formula appends its ref", async ({ page }) => {
     await gotoXlsxEditor(page);
 
     // Start editing C1 with `=` — that puts us in formula point mode.

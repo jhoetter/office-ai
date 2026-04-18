@@ -262,7 +262,8 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       </ToolbarBtn>
       {props.activeIndentLeft !== null && props.activeIndentLeft > 0 && (
         <span className="px-1 text-[11px] tabular-nums text-secondary" title="Left indent">
-          {twipsToInches(props.activeIndentLeft)}"
+          {twipsToInches(props.activeIndentLeft)}
+          {'"'}
         </span>
       )}
 

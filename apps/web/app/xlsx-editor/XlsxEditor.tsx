@@ -2,13 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
-import { FolderOpen, Loader2, Sparkles, Download } from "lucide-react";
+import { FolderOpen, Loader2, Download } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import {
   XlsxAgent,
   assignRefColors,
   cellKey,
-  colToLetter,
   flattenCellXf,
   formatA1,
   formatRange,
@@ -20,7 +19,8 @@ import {
   type XlsxSnapshot,
 } from "@officeai/xlsx";
 import { buildSampleXlsx } from "@/lib/sample-xlsx";
-import { Grid, type RefRect } from "./Grid";
+import { Grid, type RefRect, type GridContextTarget, type MarchingAntsRect } from "./Grid";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { FormulaHighlight } from "./FormulaHighlight";
 import {
   formatSelection,
@@ -30,13 +30,17 @@ import {
   type CellPos,
   type Selection,
 } from "./selection";
-import {
-  FormulaSuggest,
-  applySuggestion,
-  getSuggestions,
-} from "./FormulaSuggest";
+import { FormulaSuggest, applySuggestion, getSuggestions } from "./FormulaSuggest";
 import { Toolbar } from "./Toolbar";
+import { TextToColumnsPopover } from "./TextToColumnsPopover";
+import { sniffDelimiter } from "@officeai/xlsx";
 import { formatCellValue as renderCellValue } from "./styles";
+import {
+  marshalClipboard,
+  parseClipboardPayload,
+  writeToSystemClipboard,
+  readFromSystemClipboard,
+} from "./clipboard";
 
 interface ToastMessage {
   id: number;
@@ -48,6 +52,8 @@ const SAMPLE_NAME = "sample.xlsx";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+const noop = (): void => undefined;
+
 /**
  * Top-level XLSX editor surface for /xlsx-editor.
  *
@@ -56,10 +62,13 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
  *      load it into a fresh `XlsxAgent`.
  *   2. Subscribe to mutations to keep `revision`, `pendingCount`, and
  *      the visible cell snapshot in sync.
- *   3. Render header → formula bar → grid → sheet tabs → agent prompt.
+ *   3. Render header → formula bar → grid → sheet tabs.
  *
  * All cell mutations dispatch through `agent.applyCommand` so the
- * single command-bus invariant holds for the agent path too.
+ * single command-bus invariant holds for both human edits and any
+ * external agent driving the same `XlsxAgent` over the headless
+ * `office-agent` CLI. The editor surface itself is human-only — agent
+ * affordances live in the CLI, not the UI.
  */
 export function XlsxEditor(): ReactNode {
   const agentRef = useRef<XlsxAgent | null>(null);
@@ -69,14 +78,24 @@ export function XlsxEditor(): ReactNode {
   const [selection, setSelection] = useState<Selection | null>(singleSelection({ row: 0, col: 0 }));
   const [pendingCount, setPendingCount] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [agentPrompt, setAgentPrompt] = useState("");
   const [formulaDraft, setFormulaDraft] = useState("");
   const [formulaFocused, setFormulaFocused] = useState(false);
   const formulaInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [filename, setFilename] = useState<string>(SAMPLE_NAME);
   const [dragOver, setDragOver] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<{
+    target: GridContextTarget;
+    x: number;
+    y: number;
+  } | null>(null);
+  // Phase 13d — clipboard source overlay ("marching ants"). Tracks the
+  // last range Cmd+C / Cmd+X copied from THIS app so we can render
+  // the dashed border AND, on a follow-up Cmd+V, clear the source if
+  // the original op was a Cut. Cleared on Escape or any model edit.
+  const [marchingAnts, setMarchingAnts] = useState<(MarchingAntsRect & { readonly sheet: string }) | null>(
+    null
+  );
 
   const toastIdRef = useRef(0);
   const pushToast = useCallback((kind: ToastMessage["kind"], text: string) => {
@@ -315,33 +334,27 @@ export function XlsxEditor(): ReactNode {
   const GRID_ROWS = 1000;
   const GRID_COLS = 26;
 
-  const handleAxisSelect = useCallback(
-    (axis: "row" | "col", index: number, opts?: { extend?: boolean }) => {
-      // Row click → select the entire row (col 0 .. GRID_COLS-1).
-      // Column click → select the entire column (row 0 .. GRID_ROWS-1).
-      // Shift-click extends from the existing anchor along the same
-      // axis so users can rubber-band multi-row / multi-col ranges.
-      setSelection((prev) => {
-        const focus: CellPos =
-          axis === "row"
-            ? { row: index, col: GRID_COLS - 1 }
-            : { row: GRID_ROWS - 1, col: index };
-        const anchor: CellPos =
-          axis === "row" ? { row: index, col: 0 } : { row: 0, col: index };
-        if (opts?.extend && prev) {
-          // Keep the prior anchor; replace the focus on the matching
-          // axis only (so a row-select extends rows, col-select cols).
-          if (axis === "row") {
-            return { anchor: { row: prev.anchor.row, col: 0 }, focus };
-          }
-          return { anchor: { row: 0, col: prev.anchor.col }, focus };
+  const handleAxisSelect = useCallback((axis: "row" | "col", index: number, opts?: { extend?: boolean }) => {
+    // Row click → select the entire row (col 0 .. GRID_COLS-1).
+    // Column click → select the entire column (row 0 .. GRID_ROWS-1).
+    // Shift-click extends from the existing anchor along the same
+    // axis so users can rubber-band multi-row / multi-col ranges.
+    setSelection((prev) => {
+      const focus: CellPos =
+        axis === "row" ? { row: index, col: GRID_COLS - 1 } : { row: GRID_ROWS - 1, col: index };
+      const anchor: CellPos = axis === "row" ? { row: index, col: 0 } : { row: 0, col: index };
+      if (opts?.extend && prev) {
+        // Keep the prior anchor; replace the focus on the matching
+        // axis only (so a row-select extends rows, col-select cols).
+        if (axis === "row") {
+          return { anchor: { row: prev.anchor.row, col: 0 }, focus };
         }
-        return { anchor, focus };
-      });
-      surfaceRef.current?.focus({ preventScroll: true });
-    },
-    []
-  );
+        return { anchor: { row: 0, col: prev.anchor.col }, focus };
+      }
+      return { anchor, focus };
+    });
+    surfaceRef.current?.focus({ preventScroll: true });
+  }, []);
 
   // Detect whether the current selection covers entire rows / cols
   // — used to decide whether Cmd/Ctrl+− deletes a row or a column.
@@ -373,8 +386,7 @@ export function XlsxEditor(): ReactNode {
             anchor,
             focus: pos,
           };
-          const ref =
-            isSingle(sel) ? formatA1(sel.anchor) : formatRange(selectionToRange(sel));
+          const ref = isSingle(sel) ? formatA1(sel.anchor) : formatRange(selectionToRange(sel));
           insertRefAtCaret(ref);
         } else {
           pendingRefSpanRef.current = null;
@@ -386,9 +398,7 @@ export function XlsxEditor(): ReactNode {
 
       // Normal (non-formula) selection behaviour.
       if (opts?.extend) {
-        setSelection((prev) =>
-          prev ? { anchor: prev.anchor, focus: pos } : singleSelection(pos)
-        );
+        setSelection((prev) => (prev ? { anchor: prev.anchor, focus: pos } : singleSelection(pos)));
       } else {
         setSelection(singleSelection(pos));
       }
@@ -409,20 +419,17 @@ export function XlsxEditor(): ReactNode {
   // Move the active selection one cell in the given direction, with
   // optional Shift-extend. Pure helper — no side effects beyond
   // calling setSelection.
-  const moveSelection = useCallback(
-    (dRow: number, dCol: number, opts: { extend: boolean }) => {
-      setSelection((prev) => {
-        const base: CellPos = prev?.focus ?? { row: 0, col: 0 };
-        const next: CellPos = {
-          row: Math.max(0, Math.min(GRID_ROWS - 1, base.row + dRow)),
-          col: Math.max(0, Math.min(GRID_COLS - 1, base.col + dCol)),
-        };
-        if (opts.extend && prev) return { anchor: prev.anchor, focus: next };
-        return singleSelection(next);
-      });
-    },
-    []
-  );
+  const moveSelection = useCallback((dRow: number, dCol: number, opts: { extend: boolean }) => {
+    setSelection((prev) => {
+      const base: CellPos = prev?.focus ?? { row: 0, col: 0 };
+      const next: CellPos = {
+        row: Math.max(0, Math.min(GRID_ROWS - 1, base.row + dRow)),
+        col: Math.max(0, Math.min(GRID_COLS - 1, base.col + dCol)),
+      };
+      if (opts.extend && prev) return { anchor: prev.anchor, focus: next };
+      return singleSelection(next);
+    });
+  }, []);
 
   // Cmd/Ctrl+arrow Excel-style "jump to data edge". When stationed
   // on a non-empty cell, jump to the last non-empty cell in the run;
@@ -467,6 +474,192 @@ export function XlsxEditor(): ReactNode {
       });
     },
     [activeSheet]
+  );
+
+  /**
+   * Capture the current selection into a {@link XlsxClipboardSnapshot}
+   * and write the TSV + HTML pair to the system clipboard. Also
+   * primes `marchingAnts` so the Grid draws the source overlay.
+   */
+  const copySelection = useCallback(
+    async (mode: "copy" | "cut"): Promise<boolean> => {
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return false;
+      const range = selectionToRange(selection);
+      let snap;
+      try {
+        snap = a.getClipboardSnapshot({
+          sheet: activeSheet.name,
+          range: formatRange(range),
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+        return false;
+      }
+      const payload = marshalClipboard(snap);
+      try {
+        await writeToSystemClipboard(payload);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+        return false;
+      }
+      setMarchingAnts({
+        sheet: activeSheet.name,
+        r1: range.start.row,
+        c1: range.start.col,
+        r2: range.end.row,
+        c2: range.end.col,
+        mode,
+      });
+      return true;
+    },
+    [activeSheet, selection, pushToast]
+  );
+
+  /**
+   * Try the synchronous `event.clipboardData` channel first (works
+   * inside a real `paste` event handler). Falls back to the async
+   * `navigator.clipboard.read()` permission dance for keyboard
+   * shortcut handlers that don't sit inside a paste event.
+   */
+  const pasteAtSelection = useCallback(
+    async (direct?: { html?: string | null; text?: string | null }): Promise<boolean> => {
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return false;
+      const target = formatA1(selection.anchor);
+      const snap = direct ? parseClipboardPayload(direct) : await readFromSystemClipboard();
+      if (!snap) {
+        pushToast("warn", "Clipboard is empty.");
+        return false;
+      }
+      try {
+        await a.applyCommand({
+          type: "xlsx:paste-range",
+          payload: { sheet: activeSheet.name, target, source: snap },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+        return false;
+      }
+
+      // If the source was a Cut from THIS app, clear the source range
+      // now (Excel parity — Cut doesn't actually mutate until Paste).
+      if (marchingAnts?.mode === "cut" && marchingAnts.sheet === activeSheet.name) {
+        const r0 = Math.min(marchingAnts.r1, marchingAnts.r2);
+        const r1 = Math.max(marchingAnts.r1, marchingAnts.r2);
+        const c0 = Math.min(marchingAnts.c1, marchingAnts.c2);
+        const c1 = Math.max(marchingAnts.c1, marchingAnts.c2);
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            void a
+              .applyCommand({
+                type: "xlsx:set-cell-value",
+                payload: {
+                  sheet: activeSheet.name,
+                  ref: formatA1({ row: r, col: c }),
+                  value: null,
+                },
+                source: "human",
+              })
+              .catch((err: unknown) => {
+                pushToast("error", err instanceof Error ? err.message : String(err));
+              });
+          }
+        }
+      }
+      setMarchingAnts(null);
+
+      // Move the selection to cover the pasted block so subsequent
+      // Cmd+V / arrow keys feel "Excel-y".
+      const end: CellPos = {
+        row: selection.anchor.row + Math.max(0, snap.height - 1),
+        col: selection.anchor.col + Math.max(0, snap.width - 1),
+      };
+      setSelection({ anchor: selection.anchor, focus: end });
+      return true;
+    },
+    [activeSheet, selection, marchingAnts, pushToast]
+  );
+
+  // Native `copy` / `cut` / `paste` events fire on the focused element
+  // and bubble. The surface div is `tabIndex=0`, so when the user
+  // hits Cmd+C/X/V outside an input we receive them here. We
+  // `preventDefault` and use the synchronous `event.clipboardData`
+  // channel which avoids the async permission dance entirely.
+  const onSurfaceCopy = useCallback(
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      const tgt = e.target as HTMLElement;
+      if (tgt.tagName === "INPUT" || tgt.tagName === "BUTTON" || tgt.isContentEditable) return;
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return;
+      e.preventDefault();
+      try {
+        const range = selectionToRange(selection);
+        const snap = a.getClipboardSnapshot({
+          sheet: activeSheet.name,
+          range: formatRange(range),
+        });
+        const payload = marshalClipboard(snap);
+        e.clipboardData.setData("text/plain", payload.tsv);
+        e.clipboardData.setData("text/html", payload.html);
+        setMarchingAnts({
+          sheet: activeSheet.name,
+          r1: range.start.row,
+          c1: range.start.col,
+          r2: range.end.row,
+          c2: range.end.col,
+          mode: "copy",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [activeSheet, selection, pushToast]
+  );
+
+  const onSurfaceCut = useCallback(
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      const tgt = e.target as HTMLElement;
+      if (tgt.tagName === "INPUT" || tgt.tagName === "BUTTON" || tgt.isContentEditable) return;
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return;
+      e.preventDefault();
+      try {
+        const range = selectionToRange(selection);
+        const snap = a.getClipboardSnapshot({
+          sheet: activeSheet.name,
+          range: formatRange(range),
+        });
+        const payload = marshalClipboard(snap);
+        e.clipboardData.setData("text/plain", payload.tsv);
+        e.clipboardData.setData("text/html", payload.html);
+        setMarchingAnts({
+          sheet: activeSheet.name,
+          r1: range.start.row,
+          c1: range.start.col,
+          r2: range.end.row,
+          c2: range.end.col,
+          mode: "cut",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [activeSheet, selection, pushToast]
+  );
+
+  const onSurfacePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      const tgt = e.target as HTMLElement;
+      if (tgt.tagName === "INPUT" || tgt.tagName === "BUTTON" || tgt.isContentEditable) return;
+      if (!agentRef.current || !activeSheet || !selection) return;
+      e.preventDefault();
+      const html = e.clipboardData.getData("text/html");
+      const text = e.clipboardData.getData("text/plain");
+      void pasteAtSelection({ html, text });
+    },
+    [activeSheet, selection, pasteAtSelection]
   );
 
   const onSurfaceKeyDown = useCallback(
@@ -560,7 +753,14 @@ export function XlsxEditor(): ReactNode {
 
       if (e.key === "Escape") {
         // Plain Escape on the surface clears the selection back to a
-        // single anchor — handy after Shift-extending a range.
+        // single anchor — handy after Shift-extending a range. It
+        // also dismisses the clipboard "marching ants" overlay, which
+        // mirrors Excel's behaviour exactly.
+        if (marchingAnts) {
+          e.preventDefault();
+          setMarchingAnts(null);
+          return;
+        }
         if (!selection) return;
         e.preventDefault();
         setSelection(singleSelection(selection.anchor));
@@ -587,9 +787,7 @@ export function XlsxEditor(): ReactNode {
               payload: { sheet: activeSheet.name, at: range.start.row + 1, count },
               source: "human",
             })
-            .catch((err: unknown) =>
-              pushToast("error", err instanceof Error ? err.message : String(err))
-            );
+            .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
           return;
         }
         if (wholeColSelection) {
@@ -600,9 +798,7 @@ export function XlsxEditor(): ReactNode {
               payload: { sheet: activeSheet.name, at: range.start.col + 1, count },
               source: "human",
             })
-            .catch((err: unknown) =>
-              pushToast("error", err instanceof Error ? err.message : String(err))
-            );
+            .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
           return;
         }
 
@@ -636,7 +832,7 @@ export function XlsxEditor(): ReactNode {
       // selection.
       if (!selection || !isSingle(selection)) return;
       const isPrintable =
-        e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " " ||
+        (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " ") ||
         // Treat Space as an explicit edit-start (replaces existing
         // contents), since that matches Excel's behaviour.
         (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey);
@@ -656,6 +852,7 @@ export function XlsxEditor(): ReactNode {
       activeSheet,
       derivedFormulaDisplay,
       jumpToDataEdge,
+      marchingAnts,
       moveSelection,
       pushToast,
       selection,
@@ -740,38 +937,6 @@ export function XlsxEditor(): ReactNode {
     }
   }, [filename, pushToast]);
 
-  const onAgentRun = useCallback(async () => {
-    const a = agentRef.current;
-    if (!a || !activeSheet) return;
-    const prompt = agentPrompt.trim();
-    if (!prompt) return;
-    setAgentBusy(true);
-    try {
-      // Demo recipe — the parallel of DocxEditor's "[AI] " prefix.
-      // The agent stages a `xlsx:set-cell-value` against a free cell
-      // (col 3 / "D") in the active sheet's bounding row range. It is
-      // marked `source: "agent"` so it lands in the pending queue for
-      // human review, surfacing the badge in the header.
-      const target = pickAgentTarget(activeSheet);
-      await a.applyCommand({
-        type: "xlsx:set-cell-value",
-        payload: {
-          sheet: activeSheet.name,
-          ref: target,
-          value: `[AI] ${prompt}`,
-        },
-        source: "agent",
-        agentId: "demo-agent",
-      });
-      setAgentPrompt("");
-      pushToast("info", `Agent staged a change at ${target}.`);
-    } catch (err) {
-      pushToast("error", err instanceof Error ? err.message : String(err));
-    } finally {
-      setAgentBusy(false);
-    }
-  }, [activeSheet, agentPrompt, pushToast]);
-
   const sheets = snapshot?.root.sheets ?? [];
   const revision = snapshot?.revision ?? 0;
 
@@ -826,15 +991,15 @@ export function XlsxEditor(): ReactNode {
         | "xlsx:delete-row"
         | "xlsx:delete-column"
         | "xlsx:set-column-width"
-        | "xlsx:set-row-height",
+        | "xlsx:set-row-height"
+        | "xlsx:text-to-columns"
+        | "xlsx:fill-range",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
       if (!a) return;
       void a
-        .applyCommand({ type, payload, source: "human" } as Parameters<
-          typeof a.applyCommand
-        >[0])
+        .applyCommand({ type, payload, source: "human" } as Parameters<typeof a.applyCommand>[0])
         .catch((err: unknown) => {
           pushToast("error", err instanceof Error ? err.message : String(err));
         });
@@ -854,11 +1019,7 @@ export function XlsxEditor(): ReactNode {
     const n = selectionToRange(selection);
     return (
       activeSheet.merges.find(
-        (m) =>
-          m.r1 === n.start.row &&
-          m.c1 === n.start.col &&
-          m.r2 === n.end.row &&
-          m.c2 === n.end.col
+        (m) => m.r1 === n.start.row && m.c1 === n.start.col && m.r2 === n.end.row && m.c2 === n.end.col
       ) ??
       activeSheet.merges.find(
         (m) =>
@@ -880,6 +1041,66 @@ export function XlsxEditor(): ReactNode {
       range: formatSelection(selection),
     });
   }, [activeSheet, selection, dispatchOrToast]);
+
+  // P13g — Smart fill handle. Grid calls back once on mouse-up with
+  // source/target/direction; we forward to xlsx:fill-range.
+  const onFill = useCallback(
+    (args: {
+      source: { r1: number; c1: number; r2: number; c2: number };
+      target: { r1: number; c1: number; r2: number; c2: number };
+      direction: "down" | "right" | "up" | "left";
+    }) => {
+      if (!activeSheet) return;
+      const sourceRange = formatRange({
+        start: { row: args.source.r1, col: args.source.c1 },
+        end: { row: args.source.r2, col: args.source.c2 },
+      });
+      const targetRange = formatRange({
+        start: { row: args.target.r1, col: args.target.c1 },
+        end: { row: args.target.r2, col: args.target.c2 },
+      });
+      if (sourceRange === targetRange) return;
+      dispatchOrToast("xlsx:fill-range", {
+        sheet: activeSheet.name,
+        source: sourceRange,
+        target: targetRange,
+        direction: args.direction,
+      });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  // P13f — Text to Columns popover state.
+  const [ttocOpen, setTtocOpen] = useState(false);
+  const ttocDefaultDelim = useMemo(() => {
+    if (!activeSheet || !selection) return ",";
+    const r = selectionToRange(selection);
+    const sample = activeSheet.cells.get(cellKey(r.start.row, r.start.col))?.value;
+    if (typeof sample === "string" && sample.length > 0) return sniffDelimiter(sample);
+    return ",";
+  }, [activeSheet, selection]);
+  const canTextToColumns = !!(
+    activeSheet &&
+    selection &&
+    selection.anchor.col === selection.focus.col
+  );
+  const onTextToColumns = useCallback(() => {
+    if (!canTextToColumns) return;
+    setTtocOpen(true);
+  }, [canTextToColumns]);
+  const onTextToColumnsConfirm = useCallback(
+    (opts: { delimiter: string; treatConsecutiveAsOne: boolean }) => {
+      setTtocOpen(false);
+      if (!activeSheet || !selection) return;
+      dispatchOrToast("xlsx:text-to-columns", {
+        sheet: activeSheet.name,
+        range: formatSelection(selection),
+        delimiter: opts.delimiter,
+        treatConsecutiveAsOne: opts.treatConsecutiveAsOne,
+      });
+    },
+    [activeSheet, selection, dispatchOrToast]
+  );
 
   const onUnmerge = useCallback(() => {
     if (!activeSheet || !matchedMerge) return;
@@ -974,6 +1195,226 @@ export function XlsxEditor(): ReactNode {
     });
   }, [activeSheet, selection, dispatchOrToast]);
 
+  const onClearContents = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const a = agentRef.current;
+    if (!a) return;
+    const range = selectionToRange(selection);
+    for (let r = range.start.row; r <= range.end.row; r++) {
+      for (let c = range.start.col; c <= range.end.col; c++) {
+        void a
+          .applyCommand({
+            type: "xlsx:set-cell-value",
+            payload: {
+              sheet: activeSheet.name,
+              ref: formatA1({ row: r, col: c }),
+              value: null,
+            },
+            source: "human",
+          })
+          .catch((err: unknown) => {
+            pushToast("error", err instanceof Error ? err.message : String(err));
+          });
+      }
+    }
+  }, [activeSheet, selection, pushToast]);
+
+  const onClearFormats = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    onApplyFormat({
+      font: { color: undefined, bold: undefined, italic: undefined, underline: undefined, strike: undefined },
+      fill: { color: undefined, pattern: undefined },
+      alignment: { horizontal: undefined, vertical: undefined },
+      numberFormat: undefined,
+    });
+  }, [activeSheet, selection, onApplyFormat]);
+
+  const onContextMenuOpen = useCallback((target: GridContextTarget, coords: { x: number; y: number }) => {
+    setCtxMenu({ target, x: coords.x, y: coords.y });
+  }, []);
+
+  const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
+
+  const onCutMenu = useCallback(() => {
+    void copySelection("cut");
+  }, [copySelection]);
+  const onCopyMenu = useCallback(() => {
+    void copySelection("copy");
+  }, [copySelection]);
+  const onPasteMenu = useCallback(() => {
+    void pasteAtSelection();
+  }, [pasteAtSelection]);
+
+  const ctxMenuItems = useMemo<ReadonlyArray<ContextMenuItem>>(() => {
+    if (!ctxMenu) return [];
+    const target = ctxMenu.target;
+    const canCopyHere = !!(activeSheet && selection);
+    const cellEntries: ContextMenuItem[] = [
+      {
+        kind: "action",
+        id: "cut",
+        label: "Cut",
+        shortcut: "⌘X",
+        disabled: !canCopyHere,
+        onSelect: onCutMenu,
+      },
+      {
+        kind: "action",
+        id: "copy",
+        label: "Copy",
+        shortcut: "⌘C",
+        disabled: !canCopyHere,
+        onSelect: onCopyMenu,
+      },
+      {
+        kind: "action",
+        id: "paste",
+        label: "Paste",
+        shortcut: "⌘V",
+        disabled: !canCopyHere,
+        onSelect: onPasteMenu,
+      },
+      { kind: "divider", id: "div-clipboard" },
+      {
+        kind: "action",
+        id: "insert-row-above",
+        label: "Insert row above",
+        onSelect: onInsertRowAbove,
+      },
+      {
+        kind: "action",
+        id: "insert-row-below",
+        label: "Insert row below",
+        onSelect: onInsertRowBelow,
+      },
+      {
+        kind: "action",
+        id: "insert-col-left",
+        label: "Insert column left",
+        onSelect: onInsertColumnLeft,
+      },
+      {
+        kind: "action",
+        id: "insert-col-right",
+        label: "Insert column right",
+        onSelect: onInsertColumnRight,
+      },
+      { kind: "divider", id: "div-insert" },
+      { kind: "action", id: "delete-row", label: "Delete row", onSelect: onDeleteRow },
+      { kind: "action", id: "delete-col", label: "Delete column", onSelect: onDeleteColumn },
+      { kind: "divider", id: "div-delete" },
+      { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
+      { kind: "action", id: "clear-formats", label: "Clear formats", onSelect: onClearFormats },
+      { kind: "divider", id: "div-data" },
+      {
+        kind: "action",
+        id: "text-to-columns",
+        label: "Text to Columns…",
+        disabled: !canTextToColumns,
+        onSelect: onTextToColumns,
+      },
+    ];
+    if (target.kind === "row-header") {
+      return [
+        {
+          kind: "action",
+          id: "cut",
+          label: "Cut",
+          shortcut: "⌘X",
+          disabled: !canCopyHere,
+          onSelect: onCutMenu,
+        },
+        {
+          kind: "action",
+          id: "copy",
+          label: "Copy",
+          shortcut: "⌘C",
+          disabled: !canCopyHere,
+          onSelect: onCopyMenu,
+        },
+        {
+          kind: "action",
+          id: "paste",
+          label: "Paste",
+          shortcut: "⌘V",
+          disabled: !canCopyHere,
+          onSelect: onPasteMenu,
+        },
+        { kind: "divider", id: "div-clip-row" },
+        { kind: "action", id: "insert-row-above", label: "Insert row above", onSelect: onInsertRowAbove },
+        { kind: "action", id: "insert-row-below", label: "Insert row below", onSelect: onInsertRowBelow },
+        { kind: "action", id: "delete-row", label: "Delete row", onSelect: onDeleteRow },
+        { kind: "divider", id: "div-row-clear" },
+        { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
+      ];
+    }
+    if (target.kind === "col-header") {
+      return [
+        {
+          kind: "action",
+          id: "cut",
+          label: "Cut",
+          shortcut: "⌘X",
+          disabled: !canCopyHere,
+          onSelect: onCutMenu,
+        },
+        {
+          kind: "action",
+          id: "copy",
+          label: "Copy",
+          shortcut: "⌘C",
+          disabled: !canCopyHere,
+          onSelect: onCopyMenu,
+        },
+        {
+          kind: "action",
+          id: "paste",
+          label: "Paste",
+          shortcut: "⌘V",
+          disabled: !canCopyHere,
+          onSelect: onPasteMenu,
+        },
+        { kind: "divider", id: "div-clip-col" },
+        { kind: "action", id: "insert-col-left", label: "Insert column left", onSelect: onInsertColumnLeft },
+        {
+          kind: "action",
+          id: "insert-col-right",
+          label: "Insert column right",
+          onSelect: onInsertColumnRight,
+        },
+        { kind: "action", id: "delete-col", label: "Delete column", onSelect: onDeleteColumn },
+        { kind: "divider", id: "div-col-clear" },
+        { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
+        { kind: "divider", id: "div-col-data" },
+        {
+          kind: "action",
+          id: "text-to-columns",
+          label: "Text to Columns…",
+          disabled: !canTextToColumns,
+          onSelect: onTextToColumns,
+        },
+      ];
+    }
+    return cellEntries;
+  }, [
+    ctxMenu,
+    activeSheet,
+    selection,
+    onCutMenu,
+    onCopyMenu,
+    onPasteMenu,
+    onInsertRowAbove,
+    onInsertRowBelow,
+    onInsertColumnLeft,
+    onInsertColumnRight,
+    onDeleteRow,
+    onDeleteColumn,
+    onClearContents,
+    onClearFormats,
+    canTextToColumns,
+    onTextToColumns,
+  ]);
+
   const acceptSuggestion = useCallback(
     (info: Parameters<typeof applySuggestion>[1]) => {
       if (!suggestionSpan) return;
@@ -998,6 +1439,9 @@ export function XlsxEditor(): ReactNode {
       ref={surfaceRef}
       tabIndex={0}
       onKeyDown={onSurfaceKeyDown}
+      onCopy={onSurfaceCopy}
+      onCut={onSurfaceCut}
+      onPaste={onSurfacePaste}
       data-testid="xlsx-surface"
       data-whole-row={wholeRowSelection ? "1" : "0"}
       data-whole-col={wholeColSelection ? "1" : "0"}
@@ -1085,14 +1529,21 @@ export function XlsxEditor(): ReactNode {
           canUnmerge={canUnmerge}
           onMerge={onMerge}
           onUnmerge={onUnmerge}
-          onInsertRowAbove={onInsertRowAbove}
-          onInsertRowBelow={onInsertRowBelow}
-          onInsertColumnLeft={onInsertColumnLeft}
-          onInsertColumnRight={onInsertColumnRight}
-          onDeleteRow={onDeleteRow}
-          onDeleteColumn={onDeleteColumn}
+          canUndo={false}
+          canRedo={false}
+          onUndo={noop}
+          onRedo={noop}
+          canTextToColumns={canTextToColumns}
+          onTextToColumns={onTextToColumns}
         />
       ) : null}
+
+      <TextToColumnsPopover
+        open={ttocOpen}
+        defaultDelimiter={ttocDefaultDelim}
+        onCancel={() => setTtocOpen(false)}
+        onConfirm={onTextToColumnsConfirm}
+      />
 
       <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
         <span
@@ -1110,94 +1561,94 @@ export function XlsxEditor(): ReactNode {
             scrollLeft={formulaScrollLeft}
           />
           <input
-          ref={formulaInputRef}
-          data-testid="formula-input"
-          aria-label="Formula bar"
-          value={formulaValue}
-          onScroll={(e) => setFormulaScrollLeft(e.currentTarget.scrollLeft)}
-          onChange={(e) => {
-            // A user keystroke invalidates the click-to-insert pending
-            // span — anything they type from here adds to / replaces
-            // the formula instead of extending the picked ref.
-            pendingRefSpanRef.current = null;
-            pendingRefAnchorRef.current = null;
-            setFormulaDraft(e.target.value);
-            captureCaret();
-          }}
-          onSelect={captureCaret}
-          onClick={captureCaret}
-          onFocus={() => {
-            // Only seed the draft from the resolved cell value when the
-            // user is focusing the bar fresh (mouse click, Tab). When
-            // type-to-edit has already pre-filled `formulaDraft`, leave
-            // it alone — otherwise the just-typed character would be
-            // clobbered by the cell's prior value.
-            if (formulaDraft === "") setFormulaDraft(derivedFormulaDisplay);
-            setFormulaFocused(true);
-            requestAnimationFrame(captureCaret);
-          }}
-          onBlur={() => {
-            setFormulaFocused(false);
-            setFormulaDraft("");
-            pendingRefSpanRef.current = null;
-            pendingRefAnchorRef.current = null;
-          }}
-          onKeyDown={(e) => {
-            const hasSuggestions = suggestionMatches.length > 0;
-            if (hasSuggestions && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-              e.preventDefault();
-              setSuggestHighlight((prev) => {
-                const dir = e.key === "ArrowDown" ? 1 : -1;
-                const n = suggestionMatches.length;
-                return (prev + dir + n) % n;
-              });
-              return;
-            }
-            if (hasSuggestions && (e.key === "Tab" || e.key === "Enter")) {
-              // Enter accepts a suggestion only while the popover is
-              // open; otherwise it submits the formula.
-              const pick = suggestionMatches[Math.min(suggestHighlight, suggestionMatches.length - 1)];
-              if (pick) {
-                e.preventDefault();
-                acceptSuggestion(pick);
-                return;
-              }
-            }
-            if (e.key === "Enter") {
-              e.preventDefault();
-              onFormulaSubmit({ row: e.shiftKey ? -1 : 1, col: 0 });
-            } else if (e.key === "Tab") {
-              e.preventDefault();
-              onFormulaSubmit({ row: 0, col: e.shiftKey ? -1 : 1 });
-            } else if (e.key === "Escape") {
-              e.preventDefault();
+            ref={formulaInputRef}
+            data-testid="formula-input"
+            aria-label="Formula bar"
+            value={formulaValue}
+            onScroll={(e) => setFormulaScrollLeft(e.currentTarget.scrollLeft)}
+            onChange={(e) => {
+              // A user keystroke invalidates the click-to-insert pending
+              // span — anything they type from here adds to / replaces
+              // the formula instead of extending the picked ref.
+              pendingRefSpanRef.current = null;
+              pendingRefAnchorRef.current = null;
+              setFormulaDraft(e.target.value);
+              captureCaret();
+            }}
+            onSelect={captureCaret}
+            onClick={captureCaret}
+            onFocus={() => {
+              // Only seed the draft from the resolved cell value when the
+              // user is focusing the bar fresh (mouse click, Tab). When
+              // type-to-edit has already pre-filled `formulaDraft`, leave
+              // it alone — otherwise the just-typed character would be
+              // clobbered by the cell's prior value.
+              if (formulaDraft === "") setFormulaDraft(derivedFormulaDisplay);
+              setFormulaFocused(true);
+              requestAnimationFrame(captureCaret);
+            }}
+            onBlur={() => {
               setFormulaFocused(false);
               setFormulaDraft("");
               pendingRefSpanRef.current = null;
               pendingRefAnchorRef.current = null;
-              formulaInputRef.current?.blur();
-              surfaceRef.current?.focus();
-            } else {
-              captureCaret();
-            }
-          }}
-          placeholder={selection ? "Type a value or =formula" : "Select a cell to edit"}
-          disabled={!selection || !agent}
-          // When the formula starts with `=`, the FormulaHighlight
-          // overlay is responsible for the visible glyphs — make the
-          // input's own text transparent (but keep the caret visible
-          // via `caretColor`). Plain literals stay rendered by the
-          // input itself so we don't have to model number / string
-          // colours in the overlay too.
-          style={{
-            position: "relative",
-            zIndex: 1,
-            background: "transparent",
-            color: formulaValue.startsWith("=") ? "transparent" : undefined,
-            caretColor: "var(--foreground)",
-          }}
-          className="block w-full bg-transparent p-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
-        />
+            }}
+            onKeyDown={(e) => {
+              const hasSuggestions = suggestionMatches.length > 0;
+              if (hasSuggestions && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                e.preventDefault();
+                setSuggestHighlight((prev) => {
+                  const dir = e.key === "ArrowDown" ? 1 : -1;
+                  const n = suggestionMatches.length;
+                  return (prev + dir + n) % n;
+                });
+                return;
+              }
+              if (hasSuggestions && (e.key === "Tab" || e.key === "Enter")) {
+                // Enter accepts a suggestion only while the popover is
+                // open; otherwise it submits the formula.
+                const pick = suggestionMatches[Math.min(suggestHighlight, suggestionMatches.length - 1)];
+                if (pick) {
+                  e.preventDefault();
+                  acceptSuggestion(pick);
+                  return;
+                }
+              }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onFormulaSubmit({ row: e.shiftKey ? -1 : 1, col: 0 });
+              } else if (e.key === "Tab") {
+                e.preventDefault();
+                onFormulaSubmit({ row: 0, col: e.shiftKey ? -1 : 1 });
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setFormulaFocused(false);
+                setFormulaDraft("");
+                pendingRefSpanRef.current = null;
+                pendingRefAnchorRef.current = null;
+                formulaInputRef.current?.blur();
+                surfaceRef.current?.focus();
+              } else {
+                captureCaret();
+              }
+            }}
+            placeholder={selection ? "Type a value or =formula" : "Select a cell to edit"}
+            disabled={!selection || !agent}
+            // When the formula starts with `=`, the FormulaHighlight
+            // overlay is responsible for the visible glyphs — make the
+            // input's own text transparent (but keep the caret visible
+            // via `caretColor`). Plain literals stay rendered by the
+            // input itself so we don't have to model number / string
+            // colours in the overlay too.
+            style={{
+              position: "relative",
+              zIndex: 1,
+              background: "transparent",
+              color: formulaValue.startsWith("=") ? "transparent" : undefined,
+              caretColor: "var(--foreground)",
+            }}
+            className="block w-full bg-transparent p-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
+          />
         </div>
         <div className="absolute left-[68px] right-2 top-full z-40">
           <FormulaSuggest
@@ -1221,6 +1672,19 @@ export function XlsxEditor(): ReactNode {
             onResizeRow={onResizeRow}
             refRects={refRects}
             onSelectAxis={handleAxisSelect}
+            onContextMenu={onContextMenuOpen}
+            marchingAnts={
+              marchingAnts && marchingAnts.sheet === activeSheet.name
+                ? {
+                    r1: marchingAnts.r1,
+                    c1: marchingAnts.c1,
+                    r2: marchingAnts.r2,
+                    c2: marchingAnts.c2,
+                    mode: marchingAnts.mode,
+                  }
+                : null
+            }
+            onFill={onFill}
           />
         ) : (
           <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">
@@ -1259,35 +1723,13 @@ export function XlsxEditor(): ReactNode {
         )}
       </div>
 
-      <div className="agent-bar flex items-center gap-2 rounded-md border border-[var(--ai-violet-muted)] bg-[var(--ai-violet-light)]/40 px-2 py-1.5">
-        <Sparkles size={14} className="text-[var(--ai-violet)] shrink-0" />
-        <input
-          data-testid="agent-prompt"
-          aria-label="Agent prompt"
-          value={agentPrompt}
-          onChange={(e) => setAgentPrompt(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void onAgentRun();
-            }
-          }}
-          placeholder="Ask the agent to stage a change…"
-          disabled={!agent || agentBusy}
-          className="flex-1 bg-transparent px-1 py-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
-        />
-        <Button
-          size="sm"
-          variant="accent"
-          onClick={() => void onAgentRun()}
-          disabled={!agent || agentBusy || agentPrompt.trim().length === 0}
-          data-testid="agent-run"
-          className="bg-[var(--ai-violet)] hover:bg-[var(--ai-violet)]/90"
-        >
-          {agentBusy ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-          Propose
-        </Button>
-      </div>
+      <ContextMenu
+        open={ctxMenu !== null}
+        x={ctxMenu?.x ?? 0}
+        y={ctxMenu?.y ?? 0}
+        items={ctxMenuItems}
+        onClose={closeCtxMenu}
+      />
 
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
         {toasts.map((t) => (
@@ -1328,20 +1770,4 @@ function parseLiteral(raw: string): CellValue {
   if (lower === "true") return true;
   if (lower === "false") return false;
   return raw;
-}
-
-/**
- * Pick a free-ish target cell for the demo agent recipe. Falls back to
- * the column after the populated bounding box, on the first empty row.
- */
-function pickAgentTarget(sheet: Sheet): string {
-  let maxRow = -1;
-  let maxCol = -1;
-  for (const c of sheet.cells.values()) {
-    if (c.row > maxRow) maxRow = c.row;
-    if (c.col > maxCol) maxCol = c.col;
-  }
-  const targetRow = Math.max(maxRow + 1, 0);
-  const targetCol = Math.min(Math.max(maxCol + 1, 3), 25);
-  return `${colToLetter(targetCol)}${targetRow + 1}`;
 }

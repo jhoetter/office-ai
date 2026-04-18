@@ -2,13 +2,18 @@ import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorState, Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type {
-  DocxAgent,
-  DocxSnapshot,
-  HeaderFooterPart,
-  PageChunk,
-} from "@officeai/docx";
+import type { DocxAgent, DocxSnapshot, HeaderFooterPart, Measure, PageChunk } from "@officeai/docx";
 import { chunkIntoPages, resolveHeaderFooterParts } from "@officeai/docx";
+
+/**
+ * CSS pixels → OOXML twips. 1 inch = 1440 twips = 96 CSS pixels, so
+ * one CSS px is 15 twips. We measure rendered block heights in CSS
+ * pixels (`getBoundingClientRect().height`) and feed them to the
+ * chunker which speaks twips. Centralised so the conversion factor
+ * lives in one place — drop or change it in lockstep with the
+ * page-card sizing math in `DocxEditor.tsx` / `globals.css`.
+ */
+export const TWIPS_PER_CSS_PX = 15;
 
 /**
  * Page-decoration plugin (P3.3 / W11, extended in P3.8).
@@ -58,18 +63,32 @@ export interface PageZoneEditDetail {
 export const PAGE_ZONE_EDIT_EVENT = "pm-page-zone-edit";
 
 export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsState> {
+  // Per-block measured heights, in twips, indexed by `body` block index.
+  // Lives in plugin closure rather than plugin state because it is a
+  // *measurement cache* — the source of truth is the DOM, the cache is a
+  // memo that lets us decide when to re-chunk without thrashing layout.
+  // PM state is for things that participate in transactions; this does
+  // not.
+  let heightCache: number[] = [];
+  // RAF handle so we never schedule more than one pending measurement
+  // pass per frame (typing into a long doc can fire many transactions
+  // back-to-back).
+  let scheduledRaf: number | null = null;
+
+  const measure: Measure = (blockIndex) => heightCache[blockIndex] ?? 0;
+
   return new Plugin<PageDecorationsState>({
     key: pageDecorationsKey,
     state: {
       init(_config, state) {
-        return computeState(agent, state);
+        return computeState(agent, state, measure);
       },
       apply(tr: Transaction, prev: PageDecorationsState, _old: EditorState, next: EditorState) {
         const meta = tr.getMeta(pageDecorationsKey);
         if (!tr.docChanged && meta !== "force") {
           return prev;
         }
-        return computeState(agent, next);
+        return computeState(agent, next, measure);
       },
     },
     props: {
@@ -77,14 +96,89 @@ export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsS
         return pageDecorationsKey.getState(state)?.decorations ?? DecorationSet.empty;
       },
     },
+    view(view) {
+      const schedule = (): void => {
+        if (scheduledRaf !== null) return;
+        scheduledRaf = requestAnimationFrame(() => {
+          scheduledRaf = null;
+          remeasureAndForce(view, heightCache, (next) => {
+            heightCache = next;
+          });
+        });
+      };
+      // Initial measurement on mount: PM has just laid out the doc, so
+      // by next frame `getBoundingClientRect()` is meaningful.
+      schedule();
+      return {
+        update(updatedView, prevState) {
+          // Re-measure whenever the doc changed OR the viewport / DOM
+          // structure changed (selection-only transactions don't, so we
+          // gate on `docChanged` to avoid pointless work).
+          if (updatedView.state.doc !== prevState.doc) schedule();
+        },
+        destroy() {
+          if (scheduledRaf !== null) {
+            cancelAnimationFrame(scheduledRaf);
+            scheduledRaf = null;
+          }
+        },
+      };
+    },
   });
 }
 
-function computeState(agent: DocxAgent, state: EditorState): PageDecorationsState {
+function computeState(agent: DocxAgent, state: EditorState, measure: Measure): PageDecorationsState {
   const snapshot = agent.getSnapshot();
-  const chunks = chunkIntoPages(snapshot);
+  // The chunker tolerates a measure() that returns 0 for blocks it
+  // hasn't seen yet (initial render, before the first measurement
+  // pass). When every block reports 0, no measured break can fire and
+  // we degrade gracefully to "honour hard + hint breaks only" — the
+  // pre-measurement behaviour.
+  const chunks = chunkIntoPages(snapshot, measure);
   const decorations = buildDecorations(snapshot, chunks, state);
   return { chunks, decorations };
+}
+
+/**
+ * Walk the editor's top-level DOM children, read each block's CSS-px
+ * height via `getBoundingClientRect()`, convert to twips, and if the
+ * resulting array differs from `prevCache` dispatch a force-recompute
+ * meta so the plugin's `apply` re-runs the chunker against the new
+ * heights.
+ *
+ * The dispatched transaction touches no doc content — it is a
+ * meta-only signal. PM still calls `view.update`, which will trigger
+ * another `schedule()`, which will read the same DOM heights, find
+ * them unchanged, and short-circuit. One extra cycle per real change.
+ */
+function remeasureAndForce(
+  view: EditorView,
+  prevCache: ReadonlyArray<number>,
+  commit: (next: number[]) => void
+): void {
+  const editorRoot = view.dom as HTMLElement;
+  // PM mounts the editable doc as direct children of `view.dom`; the
+  // page-decoration widgets (caps, edges) are also direct children and
+  // must NOT be measured into a chunk's content height — they live in
+  // the page's *margin* visually. We identify body blocks by the
+  // `pm-page-block` class our own decorations stamp on every body
+  // child.
+  const blocks = editorRoot.querySelectorAll<HTMLElement>(":scope > .pm-page-block");
+  const next: number[] = [];
+  let changed = blocks.length !== prevCache.length;
+  blocks.forEach((el) => {
+    const idxAttr = el.getAttribute("data-block-index");
+    const blockIndex = idxAttr !== null ? Number.parseInt(idxAttr, 10) : Number.NaN;
+    if (!Number.isFinite(blockIndex)) return;
+    const h = el.getBoundingClientRect().height;
+    const twips = Math.round(h * TWIPS_PER_CSS_PX);
+    next[blockIndex] = twips;
+    if (prevCache[blockIndex] !== twips) changed = true;
+  });
+  if (!changed) return;
+  commit(next);
+  const tr = view.state.tr.setMeta(pageDecorationsKey, "force");
+  view.dispatch(tr);
 }
 
 function buildDecorations(
@@ -129,6 +223,12 @@ function buildDecorations(
         Decoration.node(start, end, {
           class: classes.join(" "),
           "data-page-number": String(chunk.pageNumber),
+          // Stamped so the measurement pass in remeasureAndForce can
+          // correlate a measured DOM rect back to its body index — PM
+          // does not expose top-level child indices on `view.dom`'s
+          // DOM children, and counting siblings is fragile because of
+          // interleaved widget decorations (caps, edges).
+          "data-block-index": String(b),
         })
       );
     }
@@ -154,14 +254,10 @@ function buildDecorations(
       const insertAt = childPositions[nextChunk.startBlock];
       if (insertAt === undefined) continue;
       decos.push(
-        Decoration.widget(
-          insertAt,
-          () => renderPageEdge(chunk, nextChunk, footerPart, nextHeaderPart),
-          {
-            side: -1,
-            key: `page-edge-${chunk.pageNumber}->${nextChunk.pageNumber}`,
-          }
-        )
+        Decoration.widget(insertAt, () => renderPageEdge(chunk, nextChunk, footerPart, nextHeaderPart), {
+          side: -1,
+          key: `page-edge-${chunk.pageNumber}->${nextChunk.pageNumber}`,
+        })
       );
     }
 
@@ -262,9 +358,7 @@ function renderZone(
   inner.className = "pm-page-zone-content";
   if (text.length === 0) {
     inner.classList.add("pm-page-zone-empty");
-    inner.textContent = part
-      ? `Click to add ${slot} text`
-      : `Double-click to add a ${slot}`;
+    inner.textContent = part ? `Click to add ${slot} text` : `Double-click to add a ${slot}`;
   } else {
     inner.textContent = text;
   }
@@ -324,11 +418,7 @@ export function getPageChunks(state: EditorState): ReadonlyArray<PageChunk> {
  * when the position is before the first page boundary, and `chunks.length`
  * when after the last.
  */
-export function pageNumberForPos(
-  chunks: ReadonlyArray<PageChunk>,
-  state: EditorState,
-  pos: number
-): number {
+export function pageNumberForPos(chunks: ReadonlyArray<PageChunk>, state: EditorState, pos: number): number {
   if (chunks.length === 0) return 1;
   const docNode = state.doc;
   const childIndices: number[] = [];
@@ -352,11 +442,7 @@ export function pageNumberForPos(
  * P3.5 / W19 — move the caret to the start of the requested page and
  * scroll it into view. Returns `true` when the jump succeeded.
  */
-export function gotoPage(
-  view: EditorView,
-  pageNumber: number,
-  chunks: ReadonlyArray<PageChunk>
-): boolean {
+export function gotoPage(view: EditorView, pageNumber: number, chunks: ReadonlyArray<PageChunk>): boolean {
   if (chunks.length === 0) return false;
   const clampedPage = Math.max(1, Math.min(pageNumber, chunks.length));
   const chunk = chunks.find((c) => c.pageNumber === clampedPage);

@@ -22,9 +22,9 @@ export default function HomePage() {
           Headless-first office editors with a real command bus.
         </h1>
         <p className="max-w-prose text-base text-secondary">
-          Word-, Excel- and PowerPoint-compatible editors built around an OOXML-faithful core. Every change
-          — human or AI — flows through the same typed command bus, so agents and humans collaborate without
-          two parallel mutation paths. DOCX, XLSX and PPTX editors: all live.
+          Word-, Excel- and PowerPoint-compatible editors built around an OOXML-faithful core. Every change —
+          human or AI — flows through the same typed command bus, so agents and humans collaborate without two
+          parallel mutation paths. DOCX, XLSX and PPTX editors: all live.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Link href="/editor">

@@ -13,7 +13,7 @@ test.describe("xlsx editor: column / row resizing", () => {
     const handle = page.getByTestId("col-resize-A");
     const before = await page.getByTestId("col-header-A").boundingBox();
     expect(before).not.toBeNull();
-    const startX = (before!.x + before!.width) - 1;
+    const startX = before!.x + before!.width - 1;
     const y = before!.y + before!.height / 2;
 
     // Drag 80px to the right.
@@ -40,7 +40,7 @@ test.describe("xlsx editor: column / row resizing", () => {
     const before = await page.getByTestId("row-header-1").boundingBox();
     expect(before).not.toBeNull();
     const x = before!.x + before!.width / 2;
-    const startY = (before!.y + before!.height) - 1;
+    const startY = before!.y + before!.height - 1;
 
     await page.mouse.move(x, startY);
     await page.mouse.down();

@@ -66,15 +66,15 @@ describe("xlsx:set-column-width", () => {
 
   it("rejects out-of-range widths and column indices", () => {
     const snap = makeSnapshot();
-    expect(() =>
-      setColumnWidthHandler.apply(snap, { sheet: "Sheet1", column: 0, width: 100 })
-    ).toThrow(CommandError);
-    expect(() =>
-      setColumnWidthHandler.apply(snap, { sheet: "Sheet1", column: 1, width: 4 })
-    ).toThrow(CommandError);
-    expect(() =>
-      setColumnWidthHandler.apply(snap, { sheet: "Sheet1", column: 1, width: 5000 })
-    ).toThrow(CommandError);
+    expect(() => setColumnWidthHandler.apply(snap, { sheet: "Sheet1", column: 0, width: 100 })).toThrow(
+      CommandError
+    );
+    expect(() => setColumnWidthHandler.apply(snap, { sheet: "Sheet1", column: 1, width: 4 })).toThrow(
+      CommandError
+    );
+    expect(() => setColumnWidthHandler.apply(snap, { sheet: "Sheet1", column: 1, width: 5000 })).toThrow(
+      CommandError
+    );
   });
 
   it("is a no-op when the width matches the current override", () => {
@@ -103,14 +103,14 @@ describe("xlsx:set-row-height", () => {
 
   it("rejects negative / zero / huge heights", () => {
     const snap = makeSnapshot();
-    expect(() =>
-      setRowHeightHandler.apply(snap, { sheet: "Sheet1", row: 1, height: 0 })
-    ).toThrow(CommandError);
-    expect(() =>
-      setRowHeightHandler.apply(snap, { sheet: "Sheet1", row: 1, height: -10 })
-    ).toThrow(CommandError);
-    expect(() =>
-      setRowHeightHandler.apply(snap, { sheet: "Sheet1", row: 1, height: 9999 })
-    ).toThrow(CommandError);
+    expect(() => setRowHeightHandler.apply(snap, { sheet: "Sheet1", row: 1, height: 0 })).toThrow(
+      CommandError
+    );
+    expect(() => setRowHeightHandler.apply(snap, { sheet: "Sheet1", row: 1, height: -10 })).toThrow(
+      CommandError
+    );
+    expect(() => setRowHeightHandler.apply(snap, { sheet: "Sheet1", row: 1, height: 9999 })).toThrow(
+      CommandError
+    );
   });
 });

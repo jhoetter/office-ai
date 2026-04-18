@@ -22,7 +22,7 @@ export interface PptxSnapshot extends DocumentSnapshot<PptxPresentation> {
 }
 
 export interface PptxDirty {
-  readonly presentation: boolean;       // ppt/presentation.xml
+  readonly presentation: boolean; // ppt/presentation.xml
   readonly slides: ReadonlySet<string>; // slide part paths e.g. "ppt/slides/slide3.xml"
   readonly notesSlides: ReadonlySet<string>;
   readonly masters: ReadonlySet<string>;
@@ -30,7 +30,7 @@ export interface PptxDirty {
   readonly theme: ReadonlySet<string>;
   readonly media: ReadonlySet<string>;
   readonly relationships: ReadonlySet<string>; // rels part paths
-  readonly contentTypes: boolean;       // [Content_Types].xml
+  readonly contentTypes: boolean; // [Content_Types].xml
 }
 
 export interface PptxPresentation {
@@ -83,10 +83,10 @@ export interface SlideSize {
 }
 
 export interface PptxIdGen {
-  readonly nextSlideId: number;       // <p:sldId @id>; PowerPoint starts at 256
-  readonly nextRelId: number;         // global per-rels-part counter; serializer scopes per rels file
-  readonly nextSlidePartIndex: number;// next "slideN.xml" suffix
-  readonly nextMediaPartIndex: number;// next "imageN.ext" suffix
+  readonly nextSlideId: number; // <p:sldId @id>; PowerPoint starts at 256
+  readonly nextRelId: number; // global per-rels-part counter; serializer scopes per rels file
+  readonly nextSlidePartIndex: number; // next "slideN.xml" suffix
+  readonly nextMediaPartIndex: number; // next "imageN.ext" suffix
 }
 
 export interface OpaquePart {
@@ -103,8 +103,8 @@ export interface OpaquePart {
 export interface MediaPart {
   readonly partPath: string;
   readonly contentType: string; // e.g. "image/png"
-  readonly bytes: Uint8Array;   // referenced by inserted images for re-emit
-  readonly sha256: string;      // dedup key
+  readonly bytes: Uint8Array; // referenced by inserted images for re-emit
+  readonly sha256: string; // dedup key
 }
 ```
 
@@ -169,13 +169,7 @@ export interface Slide {
 ## Shapes
 
 ```typescript
-export type Shape =
-  | TextShape
-  | Picture
-  | TableShape
-  | ChartShape
-  | GroupShape
-  | OpaqueShape;
+export type Shape = TextShape | Picture | TableShape | ChartShape | GroupShape | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 
@@ -191,8 +185,14 @@ export interface ShapeBase {
   readonly size?: Size;
 }
 
-export interface Position { readonly xEmu: number; readonly yEmu: number; }
-export interface Size     { readonly cxEmu: number; readonly cyEmu: number; }
+export interface Position {
+  readonly xEmu: number;
+  readonly yEmu: number;
+}
+export interface Size {
+  readonly cxEmu: number;
+  readonly cyEmu: number;
+}
 
 /** A `<p:sp>` shape carrying a `<p:txBody>`. P0-editable text + xfrm. */
 export interface TextShape extends ShapeBase {
@@ -456,14 +456,7 @@ export interface ChartSeries {
  */
 export interface SlideTransition {
   readonly id: NodeId;
-  readonly kind:
-    | "none"
-    | "fade"
-    | "push"
-    | "wipe"
-    | "split"
-    | "cut"
-    | "unsupported";
+  readonly kind: "none" | "fade" | "push" | "wipe" | "split" | "cut" | "unsupported";
   /** `@spd` — slide / fast / med / slow. */
   readonly speed?: "slow" | "med" | "fast";
   /** Verbatim `<p:transition>` attrs/children we don't model. */

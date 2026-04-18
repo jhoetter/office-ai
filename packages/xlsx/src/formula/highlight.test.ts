@@ -1,14 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  assignRefColors,
-  DEFAULT_REF_COLORS,
-  tokenizeForDisplay,
-  type DisplayToken,
-} from "./highlight.js";
+import { assignRefColors, DEFAULT_REF_COLORS, tokenizeForDisplay, type DisplayToken } from "./highlight.js";
 
-const concat = (tokens: ReadonlyArray<DisplayToken>): string =>
-  tokens.map((t) => t.text).join("");
+const concat = (tokens: ReadonlyArray<DisplayToken>): string => tokens.map((t) => t.text).join("");
 
 describe("tokenizeForDisplay", () => {
   it("returns an empty array for empty input", () => {

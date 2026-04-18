@@ -47,8 +47,7 @@ export function HeaderFooterPanel(props: HeaderFooterPanelProps): ReactNode {
       kind: p.kind,
       target: p.target,
       firstParagraphText: extractFirstParagraphText(p),
-      firstParagraphId:
-        p.body[0] && p.body[0].kind === "paragraph" ? p.body[0].id : null,
+      firstParagraphId: p.body[0] && p.body[0].kind === "paragraph" ? p.body[0].id : null,
     }));
   }, [snapshot]);
 
@@ -61,11 +60,7 @@ export function HeaderFooterPanel(props: HeaderFooterPanelProps): ReactNode {
     return false;
   }, [snapshot]);
 
-  const onEditPart = async (
-    partPath: string,
-    kind: "header" | "footer",
-    text: string
-  ) => {
+  const onEditPart = async (partPath: string, kind: "header" | "footer", text: string) => {
     if (!agent) return;
     const cmdType = kind === "header" ? "docx:set-header-text" : "docx:set-footer-text";
     const m = await agent.applyCommand({
@@ -121,25 +116,19 @@ export function HeaderFooterPanel(props: HeaderFooterPanelProps): ReactNode {
         <span className="ml-1 rounded bg-background px-1.5 py-0.5 text-[10px] text-secondary">
           {parts.length} part{parts.length === 1 ? "" : "s"}
         </span>
-        <ChevronDown
-          size={12}
-          className={cn("ml-auto transition-transform", expanded && "rotate-180")}
-        />
+        <ChevronDown size={12} className={cn("ml-auto transition-transform", expanded && "rotate-180")} />
       </button>
       {expanded && (
         <div className="space-y-3 border-t border-divider px-3 py-3 text-xs">
           {parts.length === 0 ? (
             <p className="text-secondary">
-              This document has no header or footer parts. Use Word to add one
-              for now (P3.4 does not yet auto-create parts).
+              This document has no header or footer parts. Use Word to add one for now (P3.4 does not yet
+              auto-create parts).
             </p>
           ) : (
             <ul className="space-y-3">
               {parts.map((p) => (
-                <li
-                  key={p.partPath}
-                  className="rounded border border-divider bg-background p-2"
-                >
+                <li key={p.partPath} className="rounded border border-divider bg-background p-2">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="text-[11px] font-medium uppercase tracking-wide text-secondary">
                       {p.kind} · {p.target}

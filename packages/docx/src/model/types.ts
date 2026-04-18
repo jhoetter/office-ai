@@ -120,6 +120,20 @@ export interface DocxDocument {
    * even when the run carries no direct `<w:rPr>` of its own.
    */
   readonly styles?: StylesPart;
+  /**
+   * Typed `word/theme/theme1.xml` projection. `undefined` when the
+   * package has no theme part (synthetic test fixtures and the older
+   * welcome doc both omit it). When present, the style cascade
+   * resolver consults it to translate `<w:rFonts w:asciiTheme="…"/>`
+   * (and friends) into the literal typeface Word would render.
+   *
+   * Round-trip contract: the part survives byte-identical via the
+   * container cache. We never re-emit it from this typed model — it
+   * is parsed read-only and `dirty.theme` does not exist in
+   * {@link DocxDirtyFlags}. Adding theme mutation is a future
+   * workstream when font-scheme authoring lands.
+   */
+  readonly theme?: ThemePart;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
 }
 
@@ -145,6 +159,37 @@ export interface StylesPart {
   readonly styles: ReadonlyMap<string, StyleDefinition>;
   /** Captured but not modeled bits (latentStyles, doc parts, etc.). */
   readonly raw?: OpaqueXml;
+}
+
+/* ── Theme part (P3.9 — font-scheme awareness) ───────────────────────────── */
+
+/**
+ * Typed projection of `word/theme/theme1.xml`. Only the font scheme is
+ * modeled today — that is what the style cascade resolver needs to
+ * translate `<w:rFonts w:asciiTheme="majorHAnsi"/>` to a literal
+ * typeface ("Aptos Display" in Word 2024+, "Cambria" in Office 2007,
+ * whatever a custom theme defines).
+ *
+ * The full DrawingML theme (color scheme, format scheme, custom theme
+ * elements, …) round-trips byte-identical via the container cache;
+ * mutating it is out of scope here. Added in P3.9.
+ */
+export interface ThemePart {
+  readonly partPath: string;
+  readonly majorFont: ThemeFontEntry;
+  readonly minorFont: ThemeFontEntry;
+}
+
+/**
+ * One side (`majorFont` or `minorFont`) of `<a:fontScheme>`. Only the
+ * Latin typeface is consumed by the resolver today; East-Asian (`ea`)
+ * and complex-script (`cs`) typefaces are captured for completeness so
+ * a future workstream can resolve runs that target those scripts.
+ */
+export interface ThemeFontEntry {
+  readonly latin: string;
+  readonly ea?: string;
+  readonly cs?: string;
 }
 
 export interface StyleDefinition {
@@ -498,7 +543,25 @@ export interface RunProperties {
   readonly italic?: boolean;
   readonly underline?: boolean | string;
   readonly strike?: boolean;
+  /**
+   * Literal Latin typeface from `<w:rFonts w:ascii="…"/>`. Wins over
+   * {@link fontFamilyAsciiTheme} when both are present at the same
+   * cascade level — that is Word's resolution rule, mirrored in
+   * `agent/style-resolver.ts`.
+   */
   readonly fontFamily?: string;
+  /**
+   * Theme reference from `<w:rFonts w:asciiTheme="…"/>`. Typical
+   * values: `majorHAnsi`, `minorHAnsi`, `majorAscii`, `minorAscii`.
+   * Resolved through {@link ThemePart} (or the Word-default fallback
+   * map in `style-resolver.ts`) to a literal typeface. We keep the
+   * raw value rather than eagerly projecting at parse time so the
+   * cascade resolver can re-project against an updated theme part
+   * without re-parsing.
+   */
+  readonly fontFamilyAsciiTheme?: string;
+  /** Companion to {@link fontFamilyAsciiTheme}; from `w:hAnsiTheme`. */
+  readonly fontFamilyHAnsiTheme?: string;
   readonly fontSize?: number;
   readonly color?: string;
   readonly highlight?: string;

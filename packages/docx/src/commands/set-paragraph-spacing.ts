@@ -108,15 +108,10 @@ function stripUndefined(props: ParagraphProperties): ParagraphProperties {
   return out as ParagraphProperties;
 }
 
-function spacingEqual(
-  a: ParagraphProperties["spacing"],
-  b: ParagraphProperties["spacing"]
-): boolean {
+function spacingEqual(a: ParagraphProperties["spacing"], b: ParagraphProperties["spacing"]): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
-  return (
-    a.before === b.before && a.after === b.after && a.line === b.line && a.lineRule === b.lineRule
-  );
+  return a.before === b.before && a.after === b.after && a.line === b.line && a.lineRule === b.lineRule;
 }
 
 function summariseSpacing(p: SetParagraphSpacingPayload): string {

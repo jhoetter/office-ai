@@ -8,10 +8,10 @@
 
 ## Why
 
-P3.3 made pages *visible* — the user sees a "Page N of M" divider
-between chunks and a status bar. P3.4 made *section chrome* editable
+P3.3 made pages _visible_ — the user sees a "Page N of M" divider
+between chunks and a status bar. P3.4 made _section chrome_ editable
 — the user can author headers, footers, and section breaks. P3.5
-closes the loop by making *navigation and authoring* page-aware:
+closes the loop by making _navigation and authoring_ page-aware:
 
 1. **Ctrl/Cmd+Enter inserts a hard page break** at the caret. This
    is Word's #1 keyboard shortcut for power users and is the
@@ -132,7 +132,7 @@ PM's default keymap binds these to `gapCursor` movement. We
 override them to scroll the editor host by one viewport-page
 height and snap the caret to the first / last visible block.
 
-- For **PageDown**, we move the caret to the start of the *next*
+- For **PageDown**, we move the caret to the start of the _next_
   page chunk (per `getPageChunks`); for **PageUp**, the previous
   one.
 - When already on the first / last page we fall through to PM's
@@ -166,8 +166,9 @@ press PageDown → caret lands at the first block of page 2.
 Caret in last page → PageDown falls through to default behavior.
 
 A6. **No regressions.** All 231 docx tests + 51 integration tests
-+ 47 agent tests stay green. New tests cover the page-break
-command + helpers.
+
+- 47 agent tests stay green. New tests cover the page-break
+  command + helpers.
 
 ## Out of scope (P3.5)
 

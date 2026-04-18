@@ -113,10 +113,7 @@ export interface PageGeometry {
 
 export type Measure = (blockIndex: number) => number;
 
-export function chunkIntoPages(
-  snapshot: DocxSnapshot,
-  measure?: Measure
-): ReadonlyArray<PageChunk>;
+export function chunkIntoPages(snapshot: DocxSnapshot, measure?: Measure): ReadonlyArray<PageChunk>;
 ```
 
 ### Algorithm

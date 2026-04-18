@@ -71,7 +71,13 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
   }
 
   getPending(): ReadonlyArray<Mutation<TSnapshot>> {
-    return this.pending;
+    // Return a defensive copy: callers (notably the CLI) loop with
+    // `getPending().forEach(m => approveMutation(m.id))`, which mutates
+    // `this.pending` mid-iteration. Handing out the live array caused
+    // every other mutation to be skipped and re-applied during
+    // `recomputeWorking`, producing duplicated content. See §G0 of
+    // docs/cli-gap-report.md for the full trace.
+    return [...this.pending];
   }
 
   getHistory(): ReadonlyArray<Mutation<TSnapshot>> {

@@ -12,7 +12,7 @@ References surveyed (per [`prompt.md`](../../prompt.md) §Reference Repositories
 - `pipipi-pikachu/PPTist` (AGPL) — **architecture concepts only**. Read public READMEs and the high-level data-model write-ups; **no source code consulted**, no patterns inherited that aren't independently derivable from the spec. Treated as a "this kind of editor exists and ships" existence proof, not a reference implementation.
 - ECMA-376 / `officeopenxml.com` — canonical truth, prefer over any implementation.
 
-The DOCX clean-room work in [`spec/docx/analysis.md`](../docx/analysis.md) is the most important reference for *us*: PPTX reuses `@officeai/core` (`OoxmlContainer`, `RelationshipGraph`, `ContentTypes`, `CommandBus`, `parseXml`/`serializeXml`, `sha256Hex`) and the same architectural invariants (headless first, byte-preservation by part-hash, pending/approved/working tri-state).
+The DOCX clean-room work in [`spec/docx/analysis.md`](../docx/analysis.md) is the most important reference for _us_: PPTX reuses `@officeai/core` (`OoxmlContainer`, `RelationshipGraph`, `ContentTypes`, `CommandBus`, `parseXml`/`serializeXml`, `sha256Hex`) and the same architectural invariants (headless first, byte-preservation by part-hash, pending/approved/working tri-state).
 
 ---
 
@@ -70,6 +70,7 @@ PPTist (architecture-level only) confirms: editors keep an in-memory model at sl
   - **Typed:** `Slide`, `Shape` (the union below), `TextBody { paragraphs[] → runs[] }` (paragraphs and runs only — no level, lang, smartTag promotion this round), `Position { xEmu, yEmu }`, `Size { cxEmu, cyEmu }`, `Picture` with media-rel reference.
   - **Opaque:** masters, layouts, theme, notes slides, transitions, timing, table cells, chart graphicFrames, SmartArt graphicFrames, connectors with non-trivial geometry, group shapes whose children we don't need to address (we still parse the group's bounding box so the renderer can show them; children stay opaque).
 - **Shape union:**
+
   ```
   Shape =
     | TextShape   { kind: "text",   id, name, position, size, txBody, opaqueXfrmExtras?, raw? }
@@ -77,7 +78,9 @@ PPTist (architecture-level only) confirms: editors keep an in-memory model at sl
     | GroupShape  { kind: "group",  id, name, position, size, children: Shape[], raw? }
     | OpaqueShape { kind: "opaque", id, name, position?, size?, rawXml }
   ```
+
   - `id` is the OOXML `<p:nvSpPr><p:cNvPr id="…">` int (PPTX uses ints, not GUIDs). The parser also mints a stable `NodeId` and stores it separately so commands address shapes regardless of `cNvPr` collisions across slides.
+
 - The model is **immutable** at the surface (mutations produce new snapshots). Internally a handler may do a shallow copy + targeted splice, then `Object.freeze` in dev/test via `freezeSnapshot`.
 - The model is **format-aware but renderer-agnostic.** SVG/HTML projection happens at render time. The model is the truth.
 
@@ -97,7 +100,7 @@ OOXML files are zip archives. Inside, `ppt/presentation.xml` is the manifest; th
   2. **Pass 2 — slides:** for each slide part, load XML, walk `cSld/spTree`, recognize `sp`/`pic`/`grpSp`/`cxnSp`/`graphicFrame`. Anything else → `OpaqueShape`. Within a recognized `sp`, parse `nvSpPr` (id+name), `spPr` (xfrm → position/size + a stash for non-xfrm spPr children we don't introspect), and `txBody` (paragraphs → runs → text + per-run rPr).
 - **Layouts/masters/theme/notes** → loaded as opaque `OpaquePart` entries in the snapshot. Parser only enumerates them and computes part-hashes (so the serializer knows they're untouched). It does **not** recurse into them.
 - **Picture media** → for each `<p:pic>`, resolve `<a:blipFill>/<a:blip r:embed="rIdN">` against the slide's rels graph to obtain the media part path. Compute SHA-256 of the media bytes; record the digest on the `Picture` so `insert-image` can dedup against existing media without re-reading the bytes.
-- **Default unknown handling:** any element inside `spTree` that doesn't match a recognized opener becomes an `OpaqueShape` carrying `rawXml` (a *serialized* slice of the original parsed-order array, NOT a re-stringified version). On serialize the slice is re-emitted in place.
+- **Default unknown handling:** any element inside `spTree` that doesn't match a recognized opener becomes an `OpaqueShape` carrying `rawXml` (a _serialized_ slice of the original parsed-order array, NOT a re-stringified version). On serialize the slice is re-emitted in place.
 
 ---
 
@@ -190,7 +193,7 @@ Group shapes have their own `xfrm` describing the group's position/size and `chO
 ## 6. What references get wrong / sacrifice that we improve
 
 - **PptxGenJS cannot read existing files.** It is a one-way builder. We build the parser it lacks.
-- **PPTist (architecture inference only)** does not, by public documentation, treat byte-preservation as a hard invariant; its primary mode is to *render* PPTX into its own model and re-serialize on save. We make byte-preservation the central invariant, identical to DOCX.
+- **PPTist (architecture inference only)** does not, by public documentation, treat byte-preservation as a hard invariant; its primary mode is to _render_ PPTX into its own model and re-serialize on save. We make byte-preservation the central invariant, identical to DOCX.
 - **None of the references treat agents as first-class.** Same gap as DOCX: the agent API and CLI are primary; the UI is a skin over the same headless agent.
 - **None expose a structured, per-mutation diff** an agent can introspect / approve / reject. We inherit DOCX's approach.
 

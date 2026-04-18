@@ -32,6 +32,8 @@ export type PartialDirtyFlags = Partial<{
   comments: ReadonlyArray<string>;
   threadedComments: ReadonlyArray<string>;
   sheetRels: ReadonlyArray<string>;
+  /** Sheet part paths the serializer must drop entirely (delete-sheet). */
+  removedSheetParts: ReadonlyArray<string>;
 }>;
 
 export function mergeDirty(prev: XlsxDirtyFlags, patch: PartialDirtyFlags): XlsxDirtyFlags {
@@ -43,6 +45,8 @@ export function mergeDirty(prev: XlsxDirtyFlags, patch: PartialDirtyFlags): Xlsx
   for (const p of patch.threadedComments ?? []) threadedComments.add(p);
   const sheetRels = new Set(prev.sheetRels);
   for (const p of patch.sheetRels ?? []) sheetRels.add(p);
+  const removedSheetParts = new Set(prev.removedSheetParts);
+  for (const p of patch.removedSheetParts ?? []) removedSheetParts.add(p);
   return {
     workbook: patch.workbook ?? prev.workbook,
     sharedStrings: patch.sharedStrings ?? prev.sharedStrings,
@@ -53,6 +57,7 @@ export function mergeDirty(prev: XlsxDirtyFlags, patch: PartialDirtyFlags): Xlsx
     comments,
     threadedComments,
     sheetRels,
+    removedSheetParts,
   };
 }
 

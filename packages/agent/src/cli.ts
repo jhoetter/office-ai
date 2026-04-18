@@ -4,12 +4,21 @@ import { extname, resolve } from "node:path";
 import { Command, Option } from "commander";
 import { DocxAgent, paragraphPlainText } from "@officeai/docx";
 import type { DocxComment, DocxPosition, DocxSnapshot, Paragraph } from "@officeai/docx";
-import type { CommandLite, Mutation } from "@officeai/core";
+import type { CommandLite, DocumentDiff, Mutation } from "@officeai/core";
 import { parseSelector, SelectorError, type Selector } from "./selector.js";
 import { runMcpStdioServer } from "./mcp.js";
-import { CliError, parseIntOpt, stringifyJson, type IO } from "./cli-shared.js";
+import {
+  CliError,
+  parseIntOpt,
+  readStdinToString,
+  setDeterministicIds,
+  stringifyJson,
+  useDeterministicIds,
+  type IO,
+} from "./cli-shared.js";
 import { registerXlsxSubcommands } from "./cli-xlsx.js";
 import { registerPptxSubcommands } from "./pptx-cli.js";
+import { deterministicIdMinter } from "@officeai/core";
 
 const defaultIO: IO = { stdout: process.stdout, stderr: process.stderr };
 
@@ -21,6 +30,15 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       "Headless agent CLI for OfficeAI. DOCX, XLSX and PPTX are all supported in this build. The 'docx', 'xlsx' and 'pptx' subcommand groups are the canonical surfaces; top-level read/search/insert-text/comment/apply remain as backward-compatible shims for DOCX."
     )
     .version("0.1.0")
+    .option(
+      "--deterministic-ids",
+      "Mint stable NodeIds across invocations (otherwise UUIDs change each parse). Useful for scripted CLI flows that chain set-text/format-text/etc. by id. Equivalent to OFFICEAI_DETERMINISTIC_IDS=1.",
+      false
+    )
+    .hook("preAction", (thisCommand) => {
+      const opts = thisCommand.opts<{ deterministicIds?: boolean }>();
+      if (opts.deterministicIds) setDeterministicIds(true);
+    })
     .exitOverride();
 
   // ── docx subcommand group ───────────────────────────────────────────────
@@ -65,13 +83,29 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
 
 function registerDocxSubcommands(docx: Command, io: IO): void {
   docx
+    .command("create")
+    .description("Create a brand-new blank .docx file at --out (one empty paragraph, no styles part).")
+    .requiredOption("--out <path>", "Path to write the new .docx file")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { out: string; pretty: boolean }) => {
+      const agent = await DocxAgent.empty();
+      await writeFile(resolve(opts.out), Buffer.from(await agent.exportFile()));
+      io.stdout.write(stringifyJson({ wrote: opts.out, format: "docx" }, opts.pretty) + "\n");
+    });
+
+  docx
     .command("inspect")
     .description("Print a structural summary (paragraphs, tables, comments, parts) as JSON.")
     .requiredOption("--file <path>", "Path to a .docx file")
+    .option(
+      "--with-runs",
+      "Include per-paragraph run breakdown (offset, length, text) so callers can target precise text ranges",
+      false
+    )
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; pretty: boolean }) => {
+    .action(async (opts: { file: string; withRuns: boolean; pretty: boolean }) => {
       const agent = await loadAgent(opts.file);
-      const summary = inspectSnapshot(agent.getSnapshot());
+      const summary = inspectSnapshot(agent.getSnapshot(), { withRuns: opts.withRuns });
       io.stdout.write(stringifyJson(summary, opts.pretty) + "\n");
     });
 
@@ -83,12 +117,18 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
       new Option("--format <fmt>", "Output format").choices(["markdown", "json", "text"]).default("markdown")
     )
     .addOption(new Option("--range <selector>", "Selector e.g. paragraph:0..paragraph:5"))
+    .option(
+      "--with-tables",
+      "JSON: include a top-level `tables` array with table id, dimensions, and per-cell paragraph ids/text",
+      false
+    )
     .option("--pretty", "Pretty-print JSON output (only with --format json)", false)
     .action(
       async (opts: {
         file: string;
         format: "markdown" | "json" | "text";
         range?: string;
+        withTables: boolean;
         pretty: boolean;
       }) => {
         const agent = await loadAgent(opts.file);
@@ -102,7 +142,12 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
             io.stdout.write(renderPlainText(snap, range) + "\n");
             return;
           case "json":
-            io.stdout.write(stringifyJson(snapshotToJsonProjection(snap, range), opts.pretty) + "\n");
+            io.stdout.write(
+              stringifyJson(
+                snapshotToJsonProjection(snap, range, { withTables: opts.withTables }),
+                opts.pretty
+              ) + "\n"
+            );
             return;
           default: {
             const _exhaustive: never = opts.format;
@@ -343,6 +388,74 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     );
 
   docx
+    .command("insert-paragraph")
+    .description(
+      "Insert a new paragraph at the given position selector. Optional --style applies a paragraph style id."
+    )
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--at <selector>", "Position selector targeting a paragraph (e.g. paragraph:0)")
+    .option("--style <styleId>", "Paragraph style id to apply (e.g. Heading1, Heading2, ListParagraph)")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        at: string;
+        style?: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        const at = positionFromSelector(parseSelector(opts.at));
+        const payload: Record<string, unknown> = { at };
+        if (opts.style !== undefined) payload.style = opts.style;
+        await runWrite(io, opts, "docx:insert-paragraph", payload);
+      }
+    );
+
+  docx
+    .command("delete-range")
+    .description(
+      "Delete a range of text. Range may span runs/paragraphs (e.g. paragraph:0/text:0..20 or paragraph:0..2)."
+    )
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--range <selector>", "Range selector e.g. paragraph:0/text:0..5 or paragraph:0..2")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: { file: string; range: string; out?: string; approve: boolean; pretty: boolean }) => {
+        const range = rangeFromSelector(opts.range);
+        await runWrite(io, opts, "docx:delete-range", { range });
+      }
+    );
+
+  docx
+    .command("replace-text")
+    .description(
+      "Replace the entire text content of a paragraph (delete-range + insert-text in one mutation batch)."
+    )
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph <n>", "0-based paragraph index", parseIntOpt)
+    .requiredOption("--text <text>", "New text content for the paragraph (may be empty)")
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraph: number;
+        text: string;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runReplaceText(io, opts);
+      }
+    );
+
+  docx
     .command("accept-change")
     .description("Accept a tracked change (insertion folds in, deletion lands).")
     .requiredOption("--file <path>", "Path to a .docx file")
@@ -497,9 +610,11 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
 
   docx
     .command("set-cell-text")
-    .description("Replace one table cell's content with a single plain-text paragraph.")
+    .description(
+      "Replace one table cell's content with a single plain-text paragraph. Discover --table-id values via `docx read --format json --with-tables`."
+    )
     .requiredOption("--file <path>", "Path to a .docx file")
-    .requiredOption("--table-id <id>", "Target table id")
+    .requiredOption("--table-id <id>", "Target table id (see `docx read --format json --with-tables`)")
     .requiredOption("--row <n>", "0-based row index", parseIntOpt)
     .requiredOption("--col <n>", "0-based column index", parseIntOpt)
     .requiredOption("--text <text>", "Text to place in the cell")
@@ -799,30 +914,54 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
 
   docx
     .command("apply")
-    .description("Apply a JSON command file (single command or { commands: [...] }) and write the result.")
+    .description(
+      "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive)."
+    )
     .requiredOption("--file <path>", "Path to a .docx file")
-    .requiredOption("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+    .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+    .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
     .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; commands: string; out?: string; pretty: boolean }) => {
-      const agent = await loadAgent(opts.file);
-      const raw = await readFile(resolve(opts.commands), "utf8");
-      const data: unknown = JSON.parse(raw);
-      const cmds = normalizeCommands(data);
-      const muts = await agent.applyCommands(cmds);
-      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
-      const out = opts.out ?? opts.file;
-      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-      io.stdout.write(
-        stringifyJson(
-          {
-            wrote: out,
-            mutations: muts.map((m) => ({ id: m.id, type: m.command.type, status: m.status })),
-          },
-          opts.pretty
-        ) + "\n"
-      );
-    });
+    .action(
+      async (opts: {
+        file: string;
+        commands?: string;
+        fromStdin: boolean;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        if (opts.fromStdin === Boolean(opts.commands)) {
+          throw new CliError(64, "docx apply: pass exactly one of -c/--commands <path> or --from-stdin");
+        }
+        const agent = await loadAgent(opts.file);
+        const raw = opts.fromStdin
+          ? await readStdinToString()
+          : await readFile(resolve(opts.commands as string), "utf8");
+        const data: unknown = JSON.parse(raw);
+        const cmds = normalizeCommands(data);
+        const muts = await agent.applyCommands(cmds);
+        const ids = agent.getPendingMutations().map((m) => m.id);
+        for (const id of ids) agent.approveMutation(id);
+        const out = opts.out ?? opts.file;
+        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+        io.stdout.write(
+          stringifyJson(
+            {
+              wrote: out,
+              mutations: muts.map((m) => mutationLineSummary(m)),
+            },
+            opts.pretty
+          ) + "\n"
+        );
+        const rejected = muts.filter((m) => m.status === "rejected");
+        if (rejected.length > 0) {
+          throw new CliError(
+            2,
+            `docx apply: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
+          );
+        }
+      }
+    );
 
   docx
     .command("diff")
@@ -957,6 +1096,9 @@ function registerLegacyTopLevel(program: Command, io: IO): void {
 
 async function loadAgent(input: string): Promise<DocxAgent> {
   const buf = await readFile(resolve(input));
+  if (useDeterministicIds()) {
+    return DocxAgent.fromBuffer(buf, { idMinter: deterministicIdMinter("n") });
+  }
   return DocxAgent.fromBuffer(buf);
 }
 
@@ -987,7 +1129,8 @@ async function runWrite(
   });
   const approve = opts.approve !== false;
   if (approve) {
-    agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
+    const ids = agent.getPendingMutations().map((p) => p.id);
+    for (const id of ids) agent.approveMutation(id);
   }
   const out = opts.out ?? opts.file;
   await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
@@ -1005,6 +1148,118 @@ async function runWrite(
       opts.pretty === true
     ) + "\n"
   );
+  if (m.status === "rejected") {
+    throw new CliError(
+      2,
+      `docx ${type}: mutation rejected (${m.rejection?.code ?? "unknown"}): ${m.rejection?.message ?? "no message"}`
+    );
+  }
+}
+
+/**
+ * Helper for `docx replace-text`. Resolves the target paragraph's plain
+ * text length, then dispatches a delete-range + insert-text batch as a
+ * single commit (one mutation summary line). When the paragraph is
+ * already empty we skip the delete-range so the bus doesn't reject a
+ * zero-width range.
+ */
+async function runReplaceText(
+  io: IO,
+  opts: { file: string; paragraph: number; text: string; out?: string; approve?: boolean; pretty?: boolean }
+): Promise<void> {
+  const agent = await loadAgent(opts.file);
+  const snap = agent.getSnapshot();
+  const body = snap.root.body;
+  if (opts.paragraph < 0 || opts.paragraph >= body.length) {
+    throw new CliError(
+      64,
+      `replace-text: --paragraph ${opts.paragraph} out of range (0..${body.length - 1})`
+    );
+  }
+  const block = body[opts.paragraph];
+  if (block.kind !== "paragraph") {
+    throw new CliError(
+      64,
+      `replace-text: block at index ${opts.paragraph} is not a paragraph (kind=${block.kind})`
+    );
+  }
+  const length = paragraphPlainText(block).length;
+  const cmds: ReadonlyArray<CommandLite> =
+    length > 0
+      ? [
+          {
+            type: "docx:delete-range",
+            payload: {
+              range: {
+                start: { paragraph: opts.paragraph, offset: 0 },
+                end: { paragraph: opts.paragraph, offset: length },
+              },
+            },
+          },
+          {
+            type: "docx:insert-text",
+            payload: { at: { paragraph: opts.paragraph, offset: 0 }, text: opts.text },
+          },
+        ]
+      : [
+          {
+            type: "docx:insert-text",
+            payload: { at: { paragraph: opts.paragraph, offset: 0 }, text: opts.text },
+          },
+        ];
+  const muts = await agent.applyCommands(
+    cmds.map((c) => ({ ...c, source: "agent" as const, agentId: "office-agent-cli" }))
+  );
+  const approve = opts.approve !== false;
+  if (approve) {
+    const ids = agent.getPendingMutations().map((p) => p.id);
+    for (const id of ids) agent.approveMutation(id);
+  }
+  const out = opts.out ?? opts.file;
+  await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+  io.stdout.write(
+    stringifyJson(
+      {
+        wrote: out,
+        mutations: muts.map((m) => ({
+          ...mutationLineSummary(m),
+          status: approve ? "approved" : "pending",
+        })),
+      },
+      opts.pretty === true
+    ) + "\n"
+  );
+}
+
+/**
+ * Per-mutation envelope entry used by every multi-mutation pipeline
+ * (`docx apply`, `docx replace-text`). Mirrors the single-mutation
+ * `mutationSummary` shape: surfaces freshly minted node ids and added
+ * OPC parts so callers don't have to follow up with `inspect`.
+ */
+function mutationLineSummary(m: Mutation<DocxSnapshot>): {
+  id: string;
+  type: string;
+  status: string;
+  inserted?: ReadonlyArray<{ nodeId: string; path: string }>;
+  addedParts?: ReadonlyArray<string>;
+} {
+  const inserted: Array<{ nodeId: string; path: string }> = [];
+  const addedParts: string[] = [];
+  for (const c of m.diff.changes) {
+    if (c.kind === "node-inserted") {
+      inserted.push({ nodeId: c.nodeId, path: c.path.join("/") });
+    } else if (c.kind === "part-added") {
+      addedParts.push(c.path.join("/"));
+    }
+  }
+  return {
+    id: m.id,
+    type: m.command.type,
+    status: m.status,
+    ...(inserted.length > 0 ? { inserted } : {}),
+    ...(addedParts.length > 0 ? { addedParts } : {}),
+  };
 }
 
 /** Coerce a commander option string to a boolean, throwing CliError on bad input. */
@@ -1094,20 +1349,52 @@ export interface DocxSnapshotSummary {
   trackedChanges: number;
   parts: string[];
   styles: ReadonlyArray<{ id: string; count: number }>;
+  /** Populated when `inspectSnapshot(snap, { withRuns: true })` is called. */
+  runs?: ReadonlyArray<{
+    paragraphIndex: number;
+    paragraphId: string;
+    runs: ReadonlyArray<{
+      index: number;
+      id: string;
+      offset: number;
+      length: number;
+      text: string;
+    }>;
+  }>;
 }
 
-export function inspectSnapshot(snap: DocxSnapshot): DocxSnapshotSummary {
+/**
+ * Build the snapshot summary used by `docx inspect` and the `docx_inspect`
+ * MCP tool. Pass `{ withRuns: true }` to additionally surface a per-paragraph
+ * run breakdown (run id, offset within the paragraph's plain text, length,
+ * literal text). This is the recommended way to discover the offsets that
+ * `docx insert-text`, `docx delete-range`, and `docx format-range` accept
+ * via their `--at` / `--range` selectors.
+ */
+export function inspectSnapshot(snap: DocxSnapshot, opts: { withRuns?: boolean } = {}): DocxSnapshotSummary {
   let paragraphs = 0;
   let tables = 0;
   let trackedChanges = 0;
   const styleCounts = new Map<string, number>();
-  for (const b of snap.root.body) {
+  const runsOut: Array<{
+    paragraphIndex: number;
+    paragraphId: string;
+    runs: Array<{ index: number; id: string; offset: number; length: number; text: string }>;
+  }> = [];
+  for (let i = 0; i < snap.root.body.length; i++) {
+    const b = snap.root.body[i];
     if (b.kind === "paragraph") {
       paragraphs++;
       const id = b.properties.styleId;
       if (id) styleCounts.set(id, (styleCounts.get(id) ?? 0) + 1);
       for (const c of b.children) {
         if (c.kind === "revision") trackedChanges++;
+      }
+      if (opts.withRuns === true) {
+        const runs = projectParagraphRuns(b);
+        if (runs.length > 0) {
+          runsOut.push({ paragraphIndex: i, paragraphId: b.id, runs });
+        }
       }
     } else if (b.kind === "table") {
       tables++;
@@ -1128,7 +1415,58 @@ export function inspectSnapshot(snap: DocxSnapshot): DocxSnapshotSummary {
     trackedChanges,
     parts,
     styles,
+    ...(opts.withRuns === true ? { runs: runsOut } : {}),
   };
+}
+
+/**
+ * Walk the inline children of a paragraph and emit one descriptor per
+ * `<w:r>` (Run), recording the byte/char offset within the paragraph's
+ * concatenated plain text. Inline non-run nodes (hyperlinks, comment
+ * markers, revision wrappers) are flattened in document order so the
+ * offsets line up with `paragraphPlainText`.
+ */
+function projectParagraphRuns(p: Paragraph): Array<{
+  index: number;
+  id: string;
+  offset: number;
+  length: number;
+  text: string;
+}> {
+  const out: Array<{ index: number; id: string; offset: number; length: number; text: string }> = [];
+  let offset = 0;
+  let runIdx = 0;
+  function visit(children: ReadonlyArray<unknown>): void {
+    for (const child of children) {
+      const c = child as { kind: string; id?: string; children?: ReadonlyArray<unknown> };
+      if (c.kind === "run") {
+        const text = collectRunText(c.children ?? []);
+        out.push({
+          index: runIdx++,
+          id: c.id ?? "",
+          offset,
+          length: text.length,
+          text,
+        });
+        offset += text.length;
+      } else if (c.kind === "hyperlink" || c.kind === "revision") {
+        visit(c.children ?? []);
+      }
+    }
+  }
+  visit(p.children);
+  return out;
+}
+
+function collectRunText(runChildren: ReadonlyArray<unknown>): string {
+  let s = "";
+  for (const ch of runChildren) {
+    const c = ch as { kind: string; text?: string };
+    if (c.kind === "text" && typeof c.text === "string") s += c.text;
+    else if (c.kind === "tab") s += "\t";
+    else if (c.kind === "break" || c.kind === "page-break") s += "\n";
+  }
+  return s;
 }
 
 /**
@@ -1138,7 +1476,8 @@ export function inspectSnapshot(snap: DocxSnapshot): DocxSnapshotSummary {
  */
 export function snapshotToJsonProjection(
   snap: DocxSnapshot,
-  range?: { start: DocxPosition; end: DocxPosition }
+  range?: { start: DocxPosition; end: DocxPosition },
+  opts: { withTables?: boolean } = {}
 ): {
   format: "docx";
   revision: number;
@@ -1156,6 +1495,18 @@ export function snapshotToJsonProjection(
     text: string;
     resolved?: boolean;
     parentId?: string;
+  }>;
+  tables?: ReadonlyArray<{
+    blockIndex: number;
+    id: string;
+    rows: number;
+    cols: number;
+    cells: ReadonlyArray<
+      ReadonlyArray<{
+        paragraphIds: ReadonlyArray<string>;
+        text: string;
+      }>
+    >;
   }>;
 } {
   const body = snap.root.body;
@@ -1186,6 +1537,40 @@ export function snapshotToJsonProjection(
     ...(c.resolved === true ? { resolved: true } : {}),
     ...(c.parentId !== undefined ? { parentId: c.parentId } : {}),
   }));
+  if (opts.withTables === true) {
+    const tables: Array<{
+      blockIndex: number;
+      id: string;
+      rows: number;
+      cols: number;
+      cells: Array<Array<{ paragraphIds: string[]; text: string }>>;
+    }> = [];
+    for (let i = 0; i < body.length; i++) {
+      const b = body[i];
+      if (b.kind !== "table") continue;
+      const cells = b.rows.map((row) =>
+        row.cells.map((cell) => {
+          const pIds: string[] = [];
+          const texts: string[] = [];
+          for (const block of cell.body) {
+            if (block.kind === "paragraph") {
+              pIds.push(block.id);
+              texts.push(paragraphPlainText(block));
+            }
+          }
+          return { paragraphIds: pIds, text: texts.join("\n") };
+        })
+      );
+      tables.push({
+        blockIndex: i,
+        id: b.id,
+        rows: b.rows.length,
+        cols: b.grid.length,
+        cells,
+      });
+    }
+    return { format: "docx", revision: snap.revision, paragraphs, comments, tables };
+  }
   return { format: "docx", revision: snap.revision, paragraphs, comments };
 }
 
@@ -1309,19 +1694,51 @@ function projectParagraphs(snap: DocxSnapshot): Array<{ id: string; styleId?: st
   return out;
 }
 
+/**
+ * Wrap a mutation into the JSON envelope written to stdout by every
+ * single-command write subcommand. Includes any newly minted node ids
+ * and added OPC parts (extracted from `mutation.diff.changes`) so
+ * callers — most importantly chained CLI invocations and the agentic
+ * example — can immediately use the new ids without a second
+ * `inspect` round-trip.
+ */
 function mutationSummary(
-  m: { id: string; status: string; rejection?: { code: string; message: string } | undefined },
+  m: {
+    id: string;
+    status: string;
+    rejection?: { code: string; message: string } | undefined;
+    diff?: DocumentDiff | undefined;
+  },
   wrote: string
 ): {
   wrote: string;
-  mutation: { id: string; status: string; rejection?: { code: string; message: string } };
+  mutation: {
+    id: string;
+    status: string;
+    rejection?: { code: string; message: string };
+    inserted?: ReadonlyArray<{ nodeId: string; path: string }>;
+    addedParts?: ReadonlyArray<string>;
+  };
 } {
+  const inserted: Array<{ nodeId: string; path: string }> = [];
+  const addedParts: string[] = [];
+  if (m.diff) {
+    for (const c of m.diff.changes) {
+      if (c.kind === "node-inserted") {
+        inserted.push({ nodeId: c.nodeId, path: c.path.join("/") });
+      } else if (c.kind === "part-added") {
+        addedParts.push(c.path.join("/"));
+      }
+    }
+  }
   return {
     wrote,
     mutation: {
       id: m.id,
       status: m.status,
       ...(m.rejection ? { rejection: m.rejection } : {}),
+      ...(inserted.length > 0 ? { inserted } : {}),
+      ...(addedParts.length > 0 ? { addedParts } : {}),
     },
   };
 }

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * OOXML schema validator (W9 / Theme D4).
+ * OOXML schema validator (W9 / Theme D4) — multi-format.
  *
- * For every `.docx` in `fixtures/docx/real-world/`:
+ * For every fixture in the configured directories, this script:
  *   1. Loads the input bytes into an `OoxmlContainer` and enumerates every
  *      XML part.
- *   2. Roundtrips the file through `DocxAgent.fromBuffer → trivial edit →
- *      agent.exportFile()`, then enumerates every XML part of the re-emit.
+ *   2. Roundtrips the file through `<Format>Agent.fromBuffer → exportFile()`,
+ *      then enumerates every XML part of the re-emit.
  *   3. Maps each part to its corresponding ECMA-376 (Transitional) XSD via a
  *      `[Content_Types].xml`-aware lookup, and shells out to `xmllint
  *      --noout --schema <xsd>` to validate the part bytes.
@@ -14,12 +14,17 @@
  *      re-emit ✓/✗`. On failure, emits the offending xmllint stderr as a
  *      quoted block.
  *
+ * Usage:
+ *   node scripts/validate-ooxml-schemas.mjs                # docx (default)
+ *   node scripts/validate-ooxml-schemas.mjs --format xlsx
+ *   node scripts/validate-ooxml-schemas.mjs --format pptx
+ *
  * Exit semantics (matches the `make perf-docx` / `make roundtrip-libre`
  * pattern so wrappers don't need to special-case it):
  *   - exit 0 + warning : `xmllint` is missing from PATH (graceful skip; CI
  *     installs `libxml2-utils` so the gate still runs server-side).
- *   - exit 0 + warning : `vendor/ooxml-xsd/` is empty (run
- *     `make xsd-fetch`).
+ *   - exit 0 + warning : the relevant XSD file is missing under
+ *     `vendor/ooxml-xsd/` (run `make xsd-fetch`).
  *   - exit 0           : every part is well-formed AND schema-valid.
  *   - exit 1           : at least one part fails.
  *
@@ -28,12 +33,11 @@
  *                          would be validated and which XSD each maps to.
  *                          Used by `tests/scripts/validate-ooxml-schemas.test.ts`
  *                          so the test stays hermetic on a fresh CI runner.
- *   --self-test          : like --dry-run, plus assert that all 7 real-world
- *                          fixtures are present and that every observed part
- *                          maps to either a known XSD or an explicit "skip"
- *                          bucket (OPC parts, w15 extensions). Exit non-zero
- *                          if a fixture is missing or an unknown part shape
- *                          is encountered.
+ *   --self-test          : like --dry-run, plus assert that the expected
+ *                          fixture count is present and that every observed
+ *                          part maps to either a known XSD or an explicit
+ *                          "skip" bucket. Exit non-zero if an unknown part
+ *                          shape is encountered.
  *   --inject-broken      : prepend a synthetic malformed-XML "part" to the
  *                          validation queue and assert the failure path
  *                          counts it as a violation. Combined with
@@ -41,7 +45,7 @@
  *                          confirm the failure path raises non-zero without
  *                          needing xmllint installed.
  *
- * Run via `make schema-validate` or `node scripts/validate-ooxml-schemas.mjs`.
+ * Run via `make schema-validate-{docx,xlsx,pptx}`.
  */
 
 import { spawnSync } from "node:child_process";
@@ -52,64 +56,45 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const FIXTURE_DIR = resolve(root, "fixtures/docx/real-world");
 const XSD_DIR = resolve(root, "vendor/ooxml-xsd");
-const XSD_SENTINEL = join(XSD_DIR, "wml.xsd");
-const DOCX_DIST = resolve(root, "packages/docx/dist/index.js");
 const CORE_DIST = resolve(root, "packages/core/dist/index.js");
 
-const args = new Set(process.argv.slice(2));
-const DRY_RUN = args.has("--dry-run") || args.has("--self-test");
-const SELF_TEST = args.has("--self-test");
-const INJECT_BROKEN = args.has("--inject-broken");
-
 /* ────────────────────────────────────────────────────────────────────────────
- * Part → XSD mapping
- *
- * Maps each OOXML part path to the XSD that constrains it. We key on the
- * part's content-type (from `[Content_Types].xml`) so that custom paths like
- * `word/glossary/document.xml` still get the right schema; we fall back to a
- * filename-pattern lookup for parts that have no explicit content-type
- * override (rare, but happens with hand-crafted fixtures).
- *
- * "skip" means the part is intentionally not validated. Reasons:
- *   - OPC parts (Content_Types, _rels) need ECMA-376 Part 2 schemas, which
- *     ship in a separate bundle we haven't pinned yet.
- *   - `commentsExtended.xml`, `commentsIds.xml`, `people.xml` use the w15
- *     namespace, which is a Microsoft extension, NOT covered by the
- *     transitional XSD set.
- *   - Image binaries (`word/media/*`) are not XML.
+ * Args
  * ──────────────────────────────────────────────────────────────────────── */
 
-const CT_TO_XSD = {
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml": "wml.xsd",
-  "application/vnd.openxmlformats-officedocument.theme+xml": "dml-main.xsd",
-  "application/vnd.openxmlformats-officedocument.themeOverride+xml": "dml-main.xsd",
-  "application/vnd.openxmlformats-officedocument.drawingml.chart+xml": "dml-chart.xsd",
-  "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml": "dml-diagram.xsd",
-  "application/vnd.openxmlformats-officedocument.extended-properties+xml":
-    "shared-documentPropertiesExtended.xsd",
-  "application/vnd.openxmlformats-officedocument.custom-properties+xml":
-    "shared-documentPropertiesCustom.xsd",
-  // Skipped (no XSD in our pinned bundle):
+const argv = process.argv.slice(2);
+const argSet = new Set(argv);
+let FORMAT = "docx";
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === "--format" && argv[i + 1]) {
+    FORMAT = argv[i + 1];
+  } else if (argv[i].startsWith("--format=")) {
+    FORMAT = argv[i].slice("--format=".length);
+  }
+}
+const DRY_RUN = argSet.has("--dry-run") || argSet.has("--self-test");
+const SELF_TEST = argSet.has("--self-test");
+const INJECT_BROKEN = argSet.has("--inject-broken");
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Per-format config
+ *
+ * Each format declares:
+ *   - extension      : fixture file extension (case-insensitive match)
+ *   - fixtureDirs    : ordered list of dirs to scan; missing dirs ignored
+ *   - sentinelXsd    : the XSD whose presence indicates the bundle is fetched
+ *   - selfTestCount  : pinned fixture count for `--self-test` (0 = no pin)
+ *   - agentDist      : built dist path for the format's agent
+ *   - agentName      : exported class on `agentDist`
+ *   - ctMap          : Content-Type → xsd filename (or `skip:<reason>`)
+ *   - pathFallbacks  : ordered [regex, xsd] pairs for parts without a
+ *                      content-type override
+ * ──────────────────────────────────────────────────────────────────────── */
+
+const SHARED_OPC_SKIPS = {
   "application/vnd.openxmlformats-package.relationships+xml": "skip:opc",
   "application/vnd.openxmlformats-package.core-properties+xml": "skip:opc",
-  "application/vnd.ms-word.commentsExtended+xml": "skip:w15",
-  "application/vnd.ms-word.commentsIds+xml": "skip:w15",
-  "application/vnd.ms-word.people+xml": "skip:w15",
-  "application/vnd.openxmlformats-officedocument.vmlDrawing": "skip:vml-binary",
   "image/png": "skip:binary",
   "image/jpeg": "skip:binary",
   "image/gif": "skip:binary",
@@ -117,35 +102,187 @@ const CT_TO_XSD = {
   "image/bmp": "skip:binary",
 };
 
-const PATH_TO_XSD_FALLBACK = [
-  [/^word\/document\d*\.xml$/, "wml.xsd"],
-  [/^word\/styles\d*\.xml$/, "wml.xsd"],
-  [/^word\/numbering\.xml$/, "wml.xsd"],
-  [/^word\/settings\.xml$/, "wml.xsd"],
-  [/^word\/webSettings\.xml$/, "wml.xsd"],
-  [/^word\/fontTable\.xml$/, "wml.xsd"],
-  [/^word\/comments\.xml$/, "wml.xsd"],
-  [/^word\/header\d*\.xml$/, "wml.xsd"],
-  [/^word\/footer\d*\.xml$/, "wml.xsd"],
-  [/^word\/footnotes\.xml$/, "wml.xsd"],
-  [/^word\/endnotes\.xml$/, "wml.xsd"],
-  [/^word\/glossary\/document\.xml$/, "wml.xsd"],
-  [/^word\/theme\/theme\d*\.xml$/, "dml-main.xsd"],
-  [/^docProps\/app\.xml$/, "shared-documentPropertiesExtended.xsd"],
-  [/^docProps\/custom\.xml$/, "shared-documentPropertiesCustom.xsd"],
-  // Skipped:
+const SHARED_PATH_SKIPS = [
   [/^\[Content_Types\]\.xml$/, "skip:opc"],
   [/^_rels\//, "skip:opc"],
   [/_rels\//, "skip:opc"],
   [/^docProps\/core\.xml$/, "skip:opc"],
-  [/^word\/commentsExtended\.xml$/, "skip:w15"],
-  [/^word\/commentsIds\.xml$/, "skip:w15"],
-  [/^word\/people\.xml$/, "skip:w15"],
-  [/^word\/media\//, "skip:binary"],
-  [/^word\/embeddings\//, "skip:binary"],
   [/\.bin$/, "skip:binary"],
   [/\.png$|\.jpe?g$|\.gif$|\.svg$|\.bmp$/i, "skip:binary"],
 ];
+
+const SHARED_DOC_PROPS = {
+  "application/vnd.openxmlformats-officedocument.extended-properties+xml":
+    "shared-documentPropertiesExtended.xsd",
+  "application/vnd.openxmlformats-officedocument.custom-properties+xml":
+    "shared-documentPropertiesCustom.xsd",
+  "application/vnd.openxmlformats-officedocument.theme+xml": "dml-main.xsd",
+  "application/vnd.openxmlformats-officedocument.themeOverride+xml": "dml-main.xsd",
+  "application/vnd.openxmlformats-officedocument.drawingml.chart+xml": "dml-chart.xsd",
+  "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml": "dml-diagram.xsd",
+  "application/vnd.openxmlformats-officedocument.drawingml.diagramLayout+xml": "dml-diagram.xsd",
+  "application/vnd.openxmlformats-officedocument.drawingml.diagramStyle+xml": "dml-diagram.xsd",
+  "application/vnd.openxmlformats-officedocument.drawingml.diagramColors+xml": "dml-diagram.xsd",
+  "application/vnd.openxmlformats-officedocument.vmlDrawing": "skip:vml-binary",
+};
+
+const FORMATS = {
+  docx: {
+    extension: ".docx",
+    fixtureDirs: ["fixtures/docx/real-world"],
+    sentinelXsd: "wml.xsd",
+    selfTestCount: 7,
+    agentDist: resolve(root, "packages/docx/dist/index.js"),
+    agentName: "DocxAgent",
+    ctMap: {
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml": "wml.xsd",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml": "wml.xsd",
+      ...SHARED_DOC_PROPS,
+      ...SHARED_OPC_SKIPS,
+      "application/vnd.ms-word.commentsExtended+xml": "skip:w15",
+      "application/vnd.ms-word.commentsIds+xml": "skip:w15",
+      "application/vnd.ms-word.people+xml": "skip:w15",
+    },
+    pathFallbacks: [
+      [/^word\/document\d*\.xml$/, "wml.xsd"],
+      [/^word\/styles\d*\.xml$/, "wml.xsd"],
+      [/^word\/numbering\.xml$/, "wml.xsd"],
+      [/^word\/settings\.xml$/, "wml.xsd"],
+      [/^word\/webSettings\.xml$/, "wml.xsd"],
+      [/^word\/fontTable\.xml$/, "wml.xsd"],
+      [/^word\/comments\.xml$/, "wml.xsd"],
+      [/^word\/header\d*\.xml$/, "wml.xsd"],
+      [/^word\/footer\d*\.xml$/, "wml.xsd"],
+      [/^word\/footnotes\.xml$/, "wml.xsd"],
+      [/^word\/endnotes\.xml$/, "wml.xsd"],
+      [/^word\/glossary\/document\.xml$/, "wml.xsd"],
+      [/^word\/theme\/theme\d*\.xml$/, "dml-main.xsd"],
+      [/^docProps\/app\.xml$/, "shared-documentPropertiesExtended.xsd"],
+      [/^docProps\/custom\.xml$/, "shared-documentPropertiesCustom.xsd"],
+      ...SHARED_PATH_SKIPS,
+      [/^word\/commentsExtended\.xml$/, "skip:w15"],
+      [/^word\/commentsIds\.xml$/, "skip:w15"],
+      [/^word\/people\.xml$/, "skip:w15"],
+      [/^word\/media\//, "skip:binary"],
+      [/^word\/embeddings\//, "skip:binary"],
+    ],
+  },
+  xlsx: {
+    extension: ".xlsx",
+    fixtureDirs: ["fixtures/xlsx/synthetic", "fixtures/xlsx/real-world"],
+    sentinelXsd: "sml.xsd",
+    selfTestCount: 0,
+    agentDist: resolve(root, "packages/xlsx/dist/index.js"),
+    agentName: "XlsxAgent",
+    ctMap: {
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml": "sml.xsd",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml": "sml.xsd",
+      "application/vnd.ms-excel.sheetMetadata+xml": "sml.xsd",
+      ...SHARED_DOC_PROPS,
+      ...SHARED_OPC_SKIPS,
+    },
+    pathFallbacks: [
+      [/^xl\/workbook\.xml$/, "sml.xsd"],
+      [/^xl\/worksheets\/sheet\d+\.xml$/, "sml.xsd"],
+      [/^xl\/styles\.xml$/, "sml.xsd"],
+      [/^xl\/sharedStrings\.xml$/, "sml.xsd"],
+      [/^xl\/calcChain\.xml$/, "sml.xsd"],
+      [/^xl\/metadata\.xml$/, "sml.xsd"],
+      [/^xl\/comments\d*\.xml$/, "sml.xsd"],
+      [/^xl\/tables\/table\d+\.xml$/, "sml.xsd"],
+      [/^xl\/theme\/theme\d*\.xml$/, "dml-main.xsd"],
+      [/^xl\/charts\/chart\d+\.xml$/, "dml-chart.xsd"],
+      [/^xl\/drawings\/drawing\d+\.xml$/, "dml-spreadsheetDrawing.xsd"],
+      [/^docProps\/app\.xml$/, "shared-documentPropertiesExtended.xsd"],
+      [/^docProps\/custom\.xml$/, "shared-documentPropertiesCustom.xsd"],
+      ...SHARED_PATH_SKIPS,
+      [/^xl\/media\//, "skip:binary"],
+      [/^xl\/embeddings\//, "skip:binary"],
+      [/^xl\/printerSettings\//, "skip:binary"],
+    ],
+  },
+  pptx: {
+    extension: ".pptx",
+    fixtureDirs: ["fixtures/pptx/synthetic", "fixtures/pptx/real"],
+    sentinelXsd: "pml.xsd",
+    selfTestCount: 0,
+    agentDist: resolve(root, "packages/pptx/dist/index.js"),
+    agentName: "PptxAgent",
+    ctMap: {
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.slide+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.handoutMaster+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.commentAuthors+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.comments+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.presProps+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml": "pml.xsd",
+      "application/vnd.openxmlformats-officedocument.presentationml.tags+xml": "pml.xsd",
+      ...SHARED_DOC_PROPS,
+      ...SHARED_OPC_SKIPS,
+    },
+    pathFallbacks: [
+      [/^ppt\/presentation\.xml$/, "pml.xsd"],
+      [/^ppt\/slides\/slide\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/slideLayouts\/slideLayout\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/slideMasters\/slideMaster\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/notesSlides\/notesSlide\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/notesMasters\/notesMaster\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/handoutMasters\/handoutMaster\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/presProps\.xml$/, "pml.xsd"],
+      [/^ppt\/viewProps\.xml$/, "pml.xsd"],
+      [/^ppt\/tableStyles\.xml$/, "pml.xsd"],
+      [/^ppt\/tags\/tag\d+\.xml$/, "pml.xsd"],
+      [/^ppt\/comments?\/.+\.xml$/, "pml.xsd"],
+      [/^ppt\/commentAuthors\.xml$/, "pml.xsd"],
+      [/^ppt\/theme\/theme\d*\.xml$/, "dml-main.xsd"],
+      [/^ppt\/charts\/chart\d+\.xml$/, "dml-chart.xsd"],
+      [/^ppt\/diagrams\/.+\.xml$/, "dml-diagram.xsd"],
+      [/^docProps\/app\.xml$/, "shared-documentPropertiesExtended.xsd"],
+      [/^docProps\/custom\.xml$/, "shared-documentPropertiesCustom.xsd"],
+      ...SHARED_PATH_SKIPS,
+      [/^ppt\/media\//, "skip:binary"],
+      [/^ppt\/embeddings\//, "skip:binary"],
+      [/^ppt\/printerSettings\//, "skip:binary"],
+    ],
+  },
+};
+
+const formatConfig = FORMATS[FORMAT];
+if (!formatConfig) {
+  console.error(`Unknown --format ${FORMAT}. Use one of: docx, xlsx, pptx.`);
+  process.exit(1);
+}
+
+const XSD_SENTINEL = join(XSD_DIR, formatConfig.sentinelXsd);
 
 /**
  * Given a part path and an optional content-type lookup table, return the XSD
@@ -155,8 +292,8 @@ const PATH_TO_XSD_FALLBACK = [
  */
 export function mapPartToXsd(partPath, contentTypeFor) {
   const ct = contentTypeFor ? contentTypeFor(partPath) : undefined;
-  if (ct && CT_TO_XSD[ct]) return CT_TO_XSD[ct];
-  for (const [re, xsd] of PATH_TO_XSD_FALLBACK) {
+  if (ct && formatConfig.ctMap[ct]) return formatConfig.ctMap[ct];
+  for (const [re, xsd] of formatConfig.pathFallbacks) {
     if (re.test(partPath)) return xsd;
   }
   return null;
@@ -167,14 +304,23 @@ export function mapPartToXsd(partPath, contentTypeFor) {
  * ──────────────────────────────────────────────────────────────────────── */
 
 function listFixtures() {
-  try {
-    return readdirSync(FIXTURE_DIR)
-      .filter((f) => f.toLowerCase().endsWith(".docx"))
-      .sort()
-      .map((f) => join(FIXTURE_DIR, f));
-  } catch {
-    return [];
+  const out = [];
+  for (const rel of formatConfig.fixtureDirs) {
+    const dir = resolve(root, rel);
+    if (!existsSync(dir)) continue;
+    let entries;
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const f of entries.sort()) {
+      if (f.toLowerCase().endsWith(formatConfig.extension)) {
+        out.push(join(dir, f));
+      }
+    }
   }
+  return out;
 }
 
 function findXmllint() {
@@ -189,15 +335,22 @@ function findXmllint() {
 }
 
 async function loadCore() {
-  if (!existsSync(CORE_DIST) || !existsSync(DOCX_DIST)) {
+  if (!existsSync(CORE_DIST) || !existsSync(formatConfig.agentDist)) {
     console.error(
-      `❌ schema-validate: missing built dist (run \`pnpm build\` first).\n   expected: ${CORE_DIST}\n   expected: ${DOCX_DIST}`
+      `❌ schema-validate: missing built dist (run \`pnpm build\` first).\n` +
+        `   expected: ${CORE_DIST}\n` +
+        `   expected: ${formatConfig.agentDist}`
     );
     process.exit(1);
   }
   const core = await import(pathToFileURL(CORE_DIST).href);
-  const docx = await import(pathToFileURL(DOCX_DIST).href);
-  return { core, docx };
+  const agentMod = await import(pathToFileURL(formatConfig.agentDist).href);
+  const Agent = agentMod[formatConfig.agentName];
+  if (!Agent) {
+    console.error(`❌ schema-validate: ${formatConfig.agentDist} does not export ${formatConfig.agentName}.`);
+    process.exit(1);
+  }
+  return { core, Agent };
 }
 
 /**
@@ -213,8 +366,8 @@ function buildContentTypeLookup(container) {
   } catch {
     return () => undefined;
   }
-  const defaults = new Map(); // ext (lower) -> contentType
-  const overrides = new Map(); // /partName -> contentType
+  const defaults = new Map();
+  const overrides = new Map();
   for (const m of xml.matchAll(/<Default\s+[^>]*Extension="([^"]+)"\s+ContentType="([^"]+)"/gi)) {
     defaults.set(m[1].toLowerCase(), m[2]);
   }
@@ -287,11 +440,6 @@ function validateWithXmllint(xmllint, xsdPath, xmlPath) {
   };
 }
 
-function status(ok, dryRun) {
-  if (dryRun) return ok === "would-run" ? "would-run" : "skip";
-  return ok ? "✓" : "✗";
-}
-
 function padRight(s, n) {
   return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length);
 }
@@ -302,38 +450,17 @@ async function validateContainer({ container, label, fixtureName, xmllint, workD
   for (const partPath of partPaths) {
     const xsd = mapPartToXsd(partPath, ctLookup);
     if (!xsd) {
-      results.push({
-        fixture: fixtureName,
-        side: label,
-        part: partPath,
-        outcome: "unmapped",
-      });
+      results.push({ fixture: fixtureName, side: label, part: partPath, outcome: "unmapped" });
       continue;
     }
     if (xsd.startsWith("skip:")) {
-      results.push({
-        fixture: fixtureName,
-        side: label,
-        part: partPath,
-        outcome: "skip",
-        reason: xsd,
-      });
+      results.push({ fixture: fixtureName, side: label, part: partPath, outcome: "skip", reason: xsd });
       continue;
     }
     if (DRY_RUN || !xmllint) {
-      results.push({
-        fixture: fixtureName,
-        side: label,
-        part: partPath,
-        outcome: "would-run",
-        xsd,
-      });
+      results.push({ fixture: fixtureName, side: label, part: partPath, outcome: "would-run", xsd });
       continue;
     }
-
-    // Materialize the part to disk so xmllint can read it. Keeping the
-    // filename close to the original makes xmllint's error messages easy to
-    // grep for in CI logs.
     const safe = partPath.replace(/[^A-Za-z0-9._-]/g, "_");
     const xmlPath = join(workDir, `${label}-${safe}`);
     writeFileSync(xmlPath, container.readBytes(partPath));
@@ -360,7 +487,6 @@ function printTable(rows) {
   console.log(
     `| ${"-".repeat(fixCol)} | ${"-".repeat(partCol)} | ------ | ------- | --------------------------------------- |`
   );
-  // Group by (fixture, part); emit one row per part.
   const byKey = new Map();
   for (const r of rows) {
     const key = `${r.fixture}\n${r.part}`;
@@ -416,20 +542,16 @@ function printFailures(rows) {
 
 async function runSelfTest({ core }) {
   const fixtures = listFixtures();
-  console.log(`self-test: discovered ${fixtures.length} fixture(s) in ${FIXTURE_DIR}`);
-  // Corpus grew to 7 in P2.3 with the addition of `07-toc-sdt.docx`,
-  // which exercises the SDT/TOC unwrapping path. The pin is intentional
-  // so a future fixture addition forces an explicit, reviewed bump here.
-  if (fixtures.length !== 7) {
+  console.log(
+    `self-test: discovered ${fixtures.length} fixture(s) in ${formatConfig.fixtureDirs.join(", ")}`
+  );
+  if (formatConfig.selfTestCount > 0 && fixtures.length !== formatConfig.selfTestCount) {
     console.error(
-      `self-test: expected 7 real-world fixtures, found ${fixtures.length}. The brief pins the corpus at 7.`
+      `self-test: expected ${formatConfig.selfTestCount} ${FORMAT} fixtures, found ${fixtures.length}.`
     );
     return 1;
   }
 
-  // Walk every part of every fixture, assert that mapPartToXsd returns
-  // either an xsd name or skip:<reason>. An "unmapped" result here is a
-  // genuine signal that we have a new part type to teach the validator about.
   const unmapped = [];
   let totalParts = 0;
   let totalSkipped = 0;
@@ -455,8 +577,6 @@ async function runSelfTest({ core }) {
     return 1;
   }
 
-  // --inject-broken arm: feed a synthetic malformed blob through the
-  // well-formedness probe and assert the script reports a failure.
   if (INJECT_BROKEN) {
     const broken = `<?xml version="1.0"?><root><child>oops</root>`;
     const wf = isXmlWellFormed(broken);
@@ -467,8 +587,6 @@ async function runSelfTest({ core }) {
       return 1;
     }
     console.log(`self-test: --inject-broken correctly flagged the synthetic blob (${wf.reason}).`);
-    // Surface non-zero so the test harness can assert the failure path
-    // propagates an exit code (mirrors `license-scan.mjs --inject-agpl`).
     return 1;
   }
 
@@ -483,7 +601,7 @@ async function runSelfTest({ core }) {
 async function main() {
   const fixtures = listFixtures();
   if (fixtures.length === 0) {
-    console.warn(`⚠ no fixtures in ${FIXTURE_DIR}; run \`pnpm fixtures-real\` first.`);
+    console.warn(`⚠ no ${FORMAT} fixtures in ${formatConfig.fixtureDirs.join(", ")}.`);
     return 0;
   }
 
@@ -494,7 +612,7 @@ async function main() {
 
   if (!existsSync(XSD_SENTINEL)) {
     console.warn(
-      `⚠ vendor/ooxml-xsd/wml.xsd not found — skipping schema validation.\n` +
+      `⚠ vendor/ooxml-xsd/${formatConfig.sentinelXsd} not found — skipping ${FORMAT} schema validation.\n` +
         `  Run \`make xsd-fetch\` (or \`node scripts/fetch-ooxml-xsd.mjs\`) once\n` +
         `  to populate the schemas. CI runs the fetch step before this gate.`
     );
@@ -506,7 +624,7 @@ async function main() {
     xmllint = findXmllint();
     if (!xmllint) {
       console.warn(
-        `⚠ xmllint not found on PATH — skipping schema validation.\n` +
+        `⚠ xmllint not found on PATH — skipping ${FORMAT} schema validation.\n` +
           `  Install libxml2 (e.g. \`brew install libxml2\` or\n` +
           `  \`apt-get install libxml2-utils\`) to run the full check locally.\n` +
           `  CI installs it explicitly so the gate still runs in CI.`
@@ -515,12 +633,13 @@ async function main() {
     }
   }
 
-  const { core, docx } = await loadCore();
+  const { core, Agent } = await loadCore();
+  console.log(`✓ format: ${FORMAT}`);
   console.log(`✓ using xmllint at ${xmllint ?? "(dry-run)"}`);
   console.log(`✓ using XSD bundle at ${XSD_DIR}`);
-  console.log(`✓ checking ${fixtures.length} fixtures from ${FIXTURE_DIR}`);
+  console.log(`✓ checking ${fixtures.length} fixtures`);
 
-  const workDir = join(tmpdir(), `officeai-xsd-${process.pid}`);
+  const workDir = join(tmpdir(), `officeai-xsd-${FORMAT}-${process.pid}`);
   mkdirSync(workDir, { recursive: true });
 
   const results = [];
@@ -528,7 +647,6 @@ async function main() {
     const fixtureName = path.split("/").pop();
     const buf = readFileSync(path);
 
-    // 1. Validate the input bytes as-is.
     const inputContainer = await core.ooxml.OoxmlContainer.load(buf);
     await validateContainer({
       container: inputContainer,
@@ -539,28 +657,29 @@ async function main() {
       results,
     });
 
-    // 2. Run the agent through it (trivial edit) and validate the re-emit.
+    // Trivial agent re-emit: for DOCX we apply an `insert-text` so the diff
+    // path is exercised end-to-end (the historical CI signal). For XLSX and
+    // PPTX we just `exportFile()` — that already exercises serializer paths
+    // and avoids coupling the validator to format-specific command shapes.
+    // The post-mutation path is exercised separately by `roundtrip-libre`.
     let reemitBuf;
     try {
-      const agent = await docx.DocxAgent.fromBuffer(buf);
-      const snap = agent.getSnapshot();
-      const firstParaIdx = snap.root.body.findIndex((b) => b.kind === "paragraph");
-      if (firstParaIdx >= 0) {
-        await agent.applyCommand({
-          type: "docx:insert-text",
-          payload: {
-            at: { paragraph: firstParaIdx, offset: 0 },
-            text: "X",
-          },
-          source: "agent",
-          agentId: "schema-validate",
-        });
+      const agent = await Agent.fromBuffer(buf);
+      if (FORMAT === "docx") {
+        const snap = agent.getSnapshot();
+        const firstParaIdx = snap.root.body.findIndex((b) => b.kind === "paragraph");
+        if (firstParaIdx >= 0) {
+          await agent.applyCommand({
+            type: "docx:insert-text",
+            payload: { at: { paragraph: firstParaIdx, offset: 0 }, text: "X" },
+            source: "agent",
+            agentId: "schema-validate",
+          });
+        }
       }
       reemitBuf = Buffer.from(await agent.exportFile());
     } catch (err) {
       console.error(`❌ ${fixtureName}: agent re-emit failed — ${err instanceof Error ? err.message : err}`);
-      // Record a synthetic per-fixture failure so the table makes the gap
-      // visible without crashing the rest of the run.
       results.push({
         fixture: fixtureName,
         side: "re-emit",
@@ -593,21 +712,19 @@ async function main() {
 
   console.log("");
   console.log(
-    `summary: ${totalRows} part-checks across ${fixtures.length} fixtures — ` +
+    `summary [${FORMAT}]: ${totalRows} part-checks across ${fixtures.length} fixtures — ` +
       `valid=${valid}, invalid=${invalid}, skipped=${skipped}, dry-run=${wouldRun}.`
   );
 
-  // Best effort cleanup; leave artifacts on failure so a developer can poke at
-  // the offending part with `xmllint --schema` interactively.
   if (invalid === 0 && existsSync(workDir)) {
     rmSync(workDir, { recursive: true, force: true });
   }
 
   if (invalid > 0) {
-    console.error(`\n❌ schema-validate: ${invalid} schema violation(s). Artifacts in ${workDir}`);
+    console.error(`\n❌ schema-validate [${FORMAT}]: ${invalid} schema violation(s). Artifacts in ${workDir}`);
     return 1;
   }
-  console.log("\n✅ schema-validate: every checked part validates clean.");
+  console.log(`\n✅ schema-validate [${FORMAT}]: every checked part validates clean.`);
   return 0;
 }
 

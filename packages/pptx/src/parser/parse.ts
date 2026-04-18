@@ -59,8 +59,7 @@ const REL_TYPE_SLIDE_MASTER =
 const REL_TYPE_SLIDE_LAYOUT =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 const REL_TYPE_THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
-const REL_TYPE_NOTES_SLIDE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const REL_TYPE_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const REL_TYPE_CHART = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 
@@ -104,8 +103,7 @@ export async function parsePptx(
   }
 
   const presentationRootAttrs = readRootAttrs(presentationEntry);
-  const presentationChildren =
-    (presentationEntry["p:presentation"] as unknown[] | undefined) ?? [];
+  const presentationChildren = (presentationEntry["p:presentation"] as unknown[] | undefined) ?? [];
 
   // Slide id list — drives slide order, slideId, and rId.
   const sldIdLst = findElementEntry(presentationChildren, "p:sldIdLst");
@@ -248,10 +246,7 @@ export async function parsePptx(
   const relationships = new Map<string, RelationshipsSnap>();
   for (const partPath of container.parts.keys()) {
     if (!partPath.endsWith(".rels")) continue;
-    const graph = ooxml.RelationshipGraph.loadFor(
-      container,
-      relsPathToOwnerPath(partPath) ?? partPath
-    );
+    const graph = ooxml.RelationshipGraph.loadFor(container, relsPathToOwnerPath(partPath) ?? partPath);
     relationships.set(partPath, {
       relsPath: partPath,
       entries: graph.relationships.map((r) => ({
@@ -280,8 +275,7 @@ export async function parsePptx(
     if (!container.has(chartPath)) continue;
     const chartXml = container.readText(chartPath);
     const ctOverride = ct.overrides.find((o) => o.partName === `/${chartPath}`)?.contentType;
-    const ctype =
-      ctOverride ?? "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+    const ctype = ctOverride ?? "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
     try {
       charts.set(chartPath, parseChartPart(chartPath, chartXml, ctype, mintNodeId));
     } catch {
@@ -501,10 +495,7 @@ function parseGraphicFrameChart(
   if (!graphicData) return null;
   const uri = attrOf(graphicData, "uri") ?? "";
   if (uri !== CHART_GRAPHIC_DATA_URI) return null;
-  const chart = findElementEntry(
-    (graphicData["a:graphicData"] as unknown[] | undefined) ?? [],
-    "c:chart"
-  );
+  const chart = findElementEntry((graphicData["a:graphicData"] as unknown[] | undefined) ?? [], "c:chart");
   if (!chart) return null;
   const chartRelId = attrOf(chart, "r:id") ?? "";
   if (!chartRelId) return null;
@@ -515,9 +506,7 @@ function parseGraphicFrameChart(
   let name = "";
   const nvGFPrTail: OpaqueXml[] = [];
   if (nvGFPr) {
-    for (const c of elementEntries(
-      (nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? []
-    )) {
+    for (const c of elementEntries((nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? [])) {
       const tag = ooxml.getTag(c);
       if (tag === "p:cNvPr") {
         cNvPrId = Number(attrOf(c, "id") ?? "0");
@@ -566,10 +555,7 @@ function parseGraphicFrameChart(
  * `<a:graphicData @uri>` is the table URI. Returns `null` otherwise so
  * the caller can fall back to `OpaqueShape` for charts / SmartArt.
  */
-function parseGraphicFrameTable(
-  entry: Record<string, unknown>,
-  mintNodeId: IdMinter
-): TableShape | null {
+function parseGraphicFrameTable(entry: Record<string, unknown>, mintNodeId: IdMinter): TableShape | null {
   const children = (entry["p:graphicFrame"] as unknown[] | undefined) ?? [];
   const nvGFPr = findElementEntry(children, "p:nvGraphicFramePr");
   const xfrm = findElementEntry(children, "p:xfrm");
@@ -582,19 +568,14 @@ function parseGraphicFrameTable(
   if (!graphicData) return null;
   const uri = attrOf(graphicData, "uri") ?? "";
   if (uri !== TABLE_GRAPHIC_DATA_URI) return null;
-  const tbl = findElementEntry(
-    (graphicData["a:graphicData"] as unknown[] | undefined) ?? [],
-    "a:tbl"
-  );
+  const tbl = findElementEntry((graphicData["a:graphicData"] as unknown[] | undefined) ?? [], "a:tbl");
   if (!tbl) return null;
 
   let cNvPrId = 0;
   let name = "";
   const nvGFPrTail: OpaqueXml[] = [];
   if (nvGFPr) {
-    for (const c of elementEntries(
-      (nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? []
-    )) {
+    for (const c of elementEntries((nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? [])) {
       const tag = ooxml.getTag(c);
       if (tag === "p:cNvPr") {
         cNvPrId = Number(attrOf(c, "id") ?? "0");
@@ -630,9 +611,7 @@ function parseGraphicFrameTable(
 
   const columnWidths: number[] = [];
   if (tblGrid) {
-    for (const c of elementEntries(
-      (tblGrid["a:tblGrid"] as unknown[] | undefined) ?? []
-    )) {
+    for (const c of elementEntries((tblGrid["a:tblGrid"] as unknown[] | undefined) ?? [])) {
       if (ooxml.getTag(c) !== "a:gridCol") continue;
       columnWidths.push(Number(attrOf(c, "w") ?? "0"));
     }
@@ -655,10 +634,7 @@ function parseGraphicFrameTable(
       const txBodyEntry = findElementEntry(tcChildren, "a:txBody");
       const tcPr = findElementEntry(tcChildren, "a:tcPr");
       const txBody: TextBody = txBodyEntry
-        ? parseTextBodyChildren(
-            (txBodyEntry["a:txBody"] as unknown[] | undefined) ?? [],
-            mintNodeId
-          )
+        ? parseTextBodyChildren((txBodyEntry["a:txBody"] as unknown[] | undefined) ?? [], mintNodeId)
         : emptyTextBody();
       cells.push({
         id: mintNodeId(),
@@ -959,10 +935,7 @@ function parseTextBody(entry: Record<string, unknown>, mintNodeId: IdMinter): Te
  * and `<a:txBody>` (inside table `<a:tc>`); the children themselves are
  * always in the `a:` namespace so the wrapper tag doesn't matter.
  */
-function parseTextBodyChildren(
-  children: ReadonlyArray<unknown>,
-  mintNodeId: IdMinter
-): TextBody {
+function parseTextBodyChildren(children: ReadonlyArray<unknown>, mintNodeId: IdMinter): TextBody {
   const bodyPr = findElementEntry(children, "a:bodyPr");
   const lstStyle = findElementEntry(children, "a:lstStyle");
   const paragraphs: TextParagraph[] = [];
@@ -1109,10 +1082,7 @@ function readNotesSize(presChildren: ReadonlyArray<unknown>): SlideSize | undefi
   return { cxEmu: cx, cyEmu: cy };
 }
 
-function collectPartsByType(
-  graph: ooxml.RelationshipGraph,
-  type: string
-): string[] {
+function collectPartsByType(graph: ooxml.RelationshipGraph, type: string): string[] {
   const out: string[] = [];
   const sourcePart = relsPathToOwnerPath(graph.relsPath);
   for (const r of graph.relationships) {
@@ -1178,11 +1148,7 @@ function mediaContentType(ext: string): string {
   }
 }
 
-function opaquePartFor(
-  container: ooxml.OoxmlContainer,
-  partPath: string,
-  rootTag: string
-): OpaquePart {
+function opaquePartFor(container: ooxml.OoxmlContainer, partPath: string, rootTag: string): OpaquePart {
   let tree: unknown;
   try {
     tree = ooxml.parseXml(container.readText(partPath));
@@ -1235,10 +1201,7 @@ export {
   REL_TYPE_THEME,
 };
 
-function walkShapesForCharts(
-  shapes: ReadonlyArray<Shape>,
-  visit: (chartPartPath: string) => void
-): void {
+function walkShapesForCharts(shapes: ReadonlyArray<Shape>, visit: (chartPartPath: string) => void): void {
   for (const sh of shapes) {
     if (sh.kind === "chart" && sh.chartPartPath) visit(sh.chartPartPath);
     if (sh.kind === "group") walkShapesForCharts(sh.children, visit);
@@ -1263,12 +1226,7 @@ const CHART_TYPE_TAGS: ReadonlyArray<{ tag: string; type: ChartType }> = [
  * so the serializer can rebuild the part byte-for-byte unless explicitly
  * dirtied.
  */
-function parseChartPart(
-  partPath: string,
-  xml: string,
-  contentType: string,
-  mintNodeId: IdMinter
-): ChartPart {
+function parseChartPart(partPath: string, xml: string, contentType: string, mintNodeId: IdMinter): ChartPart {
   const tree = ooxml.parseXml(xml) as unknown[];
   const chartSpace = findElementEntry(tree, "c:chartSpace");
   if (!chartSpace) {
@@ -1276,15 +1234,12 @@ function parseChartPart(
       partPath,
     });
   }
-  const chartSpaceChildren =
-    (chartSpace["c:chartSpace"] as unknown[] | undefined) ?? [];
+  const chartSpaceChildren = (chartSpace["c:chartSpace"] as unknown[] | undefined) ?? [];
   const chart = findElementEntry(chartSpaceChildren, "c:chart");
   const chartChildren = chart ? ((chart["c:chart"] as unknown[] | undefined) ?? []) : [];
   const title = readChartTitle(chartChildren);
   const plotArea = findElementEntry(chartChildren, "c:plotArea");
-  const plotAreaChildren = plotArea
-    ? ((plotArea["c:plotArea"] as unknown[] | undefined) ?? [])
-    : [];
+  const plotAreaChildren = plotArea ? ((plotArea["c:plotArea"] as unknown[] | undefined) ?? []) : [];
 
   let chartType: ChartType = "unsupported";
   let chartTypeEntry: Record<string, unknown> | null = null;
@@ -1308,8 +1263,7 @@ function parseChartPart(
   const seriesRaw = new Map<number, OpaqueXml>();
   let categories: ReadonlyArray<string> = [];
   if (chartTypeEntry) {
-    const ctChildren =
-      (chartTypeEntry[ooxml.getTag(chartTypeEntry)] as unknown[] | undefined) ?? [];
+    const ctChildren = (chartTypeEntry[ooxml.getTag(chartTypeEntry)] as unknown[] | undefined) ?? [];
     for (const sEntry of elementEntries(ctChildren)) {
       if (ooxml.getTag(sEntry) !== "c:ser") continue;
       const sChildren = (sEntry["c:ser"] as unknown[] | undefined) ?? [];
@@ -1349,10 +1303,7 @@ function parseChartPart(
 function readChartTitle(chartChildren: ReadonlyArray<unknown>): string | undefined {
   const titleEntry = findElementEntry(chartChildren, "c:title");
   if (!titleEntry) return undefined;
-  const tx = findElementEntry(
-    (titleEntry["c:title"] as unknown[] | undefined) ?? [],
-    "c:tx"
-  );
+  const tx = findElementEntry((titleEntry["c:title"] as unknown[] | undefined) ?? [], "c:tx");
   if (!tx) return undefined;
   const rich = findElementEntry((tx["c:tx"] as unknown[] | undefined) ?? [], "c:rich");
   if (!rich) {
@@ -1383,10 +1334,7 @@ function readSeriesText(txEntry: Record<string, unknown>): string | undefined {
   const txChildren = (txEntry["c:tx"] as unknown[] | undefined) ?? [];
   const strRef = findElementEntry(txChildren, "c:strRef");
   if (strRef) {
-    const cache = findElementEntry(
-      (strRef["c:strRef"] as unknown[] | undefined) ?? [],
-      "c:strCache"
-    );
+    const cache = findElementEntry((strRef["c:strRef"] as unknown[] | undefined) ?? [], "c:strCache");
     if (cache) {
       const pt = findElementEntry((cache["c:strCache"] as unknown[] | undefined) ?? [], "c:pt");
       if (pt) {
@@ -1406,11 +1354,9 @@ function readNumericCache(entry: Record<string, unknown>, parentTag: string): nu
   const lit = findElementEntry(children, "c:numLit");
   const cacheParent = ref ?? lit;
   if (!cacheParent) return [];
-  const cacheChildren =
-    (cacheParent[ooxml.getTag(cacheParent)] as unknown[] | undefined) ?? [];
+  const cacheChildren = (cacheParent[ooxml.getTag(cacheParent)] as unknown[] | undefined) ?? [];
   const cache = findElementEntry(cacheChildren, "c:numCache") ?? cacheParent;
-  const cacheNodeChildren =
-    (cache[ooxml.getTag(cache)] as unknown[] | undefined) ?? cacheChildren;
+  const cacheNodeChildren = (cache[ooxml.getTag(cache)] as unknown[] | undefined) ?? cacheChildren;
   const out: number[] = [];
   for (const pt of elementEntries(cacheNodeChildren)) {
     if (ooxml.getTag(pt) !== "c:pt") continue;
@@ -1428,14 +1374,12 @@ function readStringCache(entry: Record<string, unknown>, parentTag: string): str
   const multi = findElementEntry(children, "c:multiLvlStrRef");
   const cacheParent = ref ?? lit ?? multi;
   if (!cacheParent) return [];
-  const cacheChildren =
-    (cacheParent[ooxml.getTag(cacheParent)] as unknown[] | undefined) ?? [];
+  const cacheChildren = (cacheParent[ooxml.getTag(cacheParent)] as unknown[] | undefined) ?? [];
   const cache =
     findElementEntry(cacheChildren, "c:strCache") ??
     findElementEntry(cacheChildren, "c:multiLvlStrCache") ??
     cacheParent;
-  const cacheNodeChildren =
-    (cache[ooxml.getTag(cache)] as unknown[] | undefined) ?? cacheChildren;
+  const cacheNodeChildren = (cache[ooxml.getTag(cache)] as unknown[] | undefined) ?? cacheChildren;
   const out: string[] = [];
   for (const node of elementEntries(cacheNodeChildren)) {
     const tag = ooxml.getTag(node);
@@ -1474,16 +1418,11 @@ const ENTRANCE_PRESET_IDS: ReadonlyMap<number, EntranceEffect> = new Map([
   [10, "wipe"],
 ]);
 
-function parseSlideTransition(
-  entry: Record<string, unknown>,
-  mintNodeId: IdMinter
-): SlideTransition {
+function parseSlideTransition(entry: Record<string, unknown>, mintNodeId: IdMinter): SlideTransition {
   const children = (entry["p:transition"] as unknown[] | undefined) ?? [];
   const speedAttr = attrOf(entry, "spd");
   const speed: TransitionSpeed | undefined =
-    speedAttr === "slow" || speedAttr === "med" || speedAttr === "fast"
-      ? speedAttr
-      : undefined;
+    speedAttr === "slow" || speedAttr === "med" || speedAttr === "fast" ? speedAttr : undefined;
   let kind: TransitionKind = "unsupported";
   for (const cand of TRANSITION_KIND_TAGS) {
     if (findElementEntry(children, cand.tag)) {

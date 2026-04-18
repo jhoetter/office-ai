@@ -6,12 +6,9 @@ import { cn } from "@officeai/ui";
 import { PptxAgent } from "@officeai/pptx/agent";
 import { SlideCanvas, SlidesSidebar } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
-import type { Mutation } from "@officeai/core";
 import type { Shape, ShapePreset, TextShape } from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
-import { dispatchToLlmPptx } from "@/lib/llm-client-pptx";
 import { PptxToolbar } from "./PptxToolbar";
-import { PptxAgentPanel, type PptxAgentDispatch } from "./PptxAgentPanel";
 
 interface ToastMessage {
   id: number;
@@ -36,7 +33,6 @@ export function PptxEditor(): React.ReactNode {
   const [ready, setReady] = useState(false);
   const [docName, setDocName] = useState("welcome.pptx");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [pending, setPending] = useState<Mutation[]>([]);
   const [tick, setTick] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastId = useRef(0);
@@ -59,11 +55,9 @@ export function PptxEditor(): React.ReactNode {
     setAgent(next);
     setActiveIndex(0);
     setSelectedShapeId(null);
-    setPending([...next.getPendingMutations()]);
     setReady(true);
     setTick((t) => t + 1);
     next.subscribe(() => {
-      setPending([...next.getPendingMutations()]);
       setTick((t) => t + 1);
     });
   }, []);
@@ -412,26 +406,6 @@ export function PptxEditor(): React.ReactNode {
     [applyFormat]
   );
 
-  // Routes prompts through the shared `/api/llm` bridge with `format: "pptx"`.
-  // When no `OPENAI_API_KEY` is configured server-side the helper transparently
-  // falls back to the in-process intent parser so the editor stays usable
-  // without any env vars.
-  const promptDispatch: PptxAgentDispatch = useCallback(
-    async (text: string) => {
-      const a = agentRef.current;
-      if (!a) return;
-      const result = await dispatchToLlmPptx(text, a, activeIndex);
-      if (result.note) pushToast("warn", result.note);
-      if (result.commands.length === 0) {
-        pushToast("info", result.rationale || "No commands proposed.");
-        return;
-      }
-      await a.applyCommands(result.commands);
-      pushToast("info", `Applied ${result.commands.length} command(s).`);
-    },
-    [activeIndex, pushToast]
-  );
-
   // Build object-URL map for every embedded media part so the renderer
   // can paint <Picture> shapes inserted via the toolbar. We rebuild on
   // every snapshot tick — cheap because URLs are deduplicated by part path.
@@ -528,20 +502,6 @@ export function PptxEditor(): React.ReactNode {
             </div>
           ) : null}
         </section>
-        <aside
-          data-testid="pptx-agent-panel"
-          className="hidden w-[280px] shrink-0 flex-col gap-4 border-l border-divider pl-3 lg:flex"
-        >
-          <PptxAgentPanel
-            ready={ready}
-            pending={pending}
-            onApprove={(id) => agentRef.current?.approveMutation(id)}
-            onReject={(id) => agentRef.current?.rejectMutation(id)}
-            onApproveAll={() => pending.forEach((m) => agentRef.current?.approveMutation(m.id))}
-            onRejectAll={() => pending.forEach((m) => agentRef.current?.rejectMutation(m.id))}
-            dispatch={promptDispatch}
-          />
-        </aside>
       </div>
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
         {toasts.map((t) => (

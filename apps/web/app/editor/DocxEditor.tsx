@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
-import { DocxAgent, chunkIntoPages, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
+import {
+  DocxAgent,
+  chunkIntoPages,
+  documentPageGeometry,
+  mountDocxEditor,
+  docxSchema,
+  resolveEffectivePpr,
+} from "@officeai/docx";
 import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
 import {
   getPageChunks,
@@ -16,7 +23,7 @@ import {
 import { pageKeymapPlugin } from "@/lib/page-keymap";
 import { PageZoneEditor } from "./PageZoneEditor";
 import type { EditorView } from "prosemirror-view";
-import { NotImplementedError, type Mutation } from "@officeai/core";
+import { NotImplementedError } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
 import {
   activeMarkAttr,
@@ -37,9 +44,7 @@ import { HeaderFooterPanel } from "./HeaderFooterPanel";
 import { PageRuler } from "./PageRuler";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
-import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
 import { CommentComposer } from "./CommentComposer";
-import { dispatchToLlm, type DispatchSelectionContext } from "@/lib/llm-client";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
 
 interface ToastMessage {
@@ -48,18 +53,10 @@ interface ToastMessage {
   text: string;
 }
 
-export interface DocxEditorProps {
-  /**
-   * Override how the agent prompt translates a free-form prompt into bus
-   * commands. Defaults to the demo "[AI] " + add-comment recipe so the
-   * existing P1.1 e2e flow keeps working. W6 will inject a real LLM
-   * caller here.
-   */
-  agentPromptDispatch?: (agent: DocxAgent) => AgentPromptDispatch;
-}
+export interface DocxEditorProps {}
 
 /**
- * The editor surface composed from the four P1.2 / W5 panels:
+ * The editor surface composed from the right-hand collaboration panels:
  *
  *   ┌────────────────────────────────────────────┬──────────────┐
  *   │ Toolbar (style/marks/colors/align/lists)   │              │
@@ -67,15 +64,18 @@ export interface DocxEditorProps {
  *   │                                            │              │
  *   │           ProseMirror editor surface       │   Tracked    │
  *   │                                            │   changes    │
- *   │                                            │              │
- *   │                                            │   Agent      │
- *   │                                            │   prompt     │
  *   └────────────────────────────────────────────┴──────────────┘
  *
  * Below 1024px the right column hides behind a "Comments" drawer
  * button anchored bottom-right.
+ *
+ * AI/agent affordances were intentionally removed from the editor
+ * surface: every command-bus mutation that the editor exposes is also
+ * reachable via the headless `office-agent` CLI, which is the canonical
+ * integration point for third-party agents. The bus stays the same
+ * either way; this UI only shows human-driven actions.
  */
-export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
+export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
   // The editor host DOM node is exposed via a callback ref so that
   // descendants (e.g. TrackedChangesUI's hover delegation) can read it
   // from React state during render — accessing `hostRef.current`
@@ -92,7 +92,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const [agent, setAgent] = useState<DocxAgent | null>(null);
   const [view, setView] = useState<EditorView | null>(null);
   const [agentReady, setAgentReady] = useState(false);
-  const [pending, setPending] = useState<Mutation[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [docName, setDocName] = useState("welcome.docx");
   const [docInfo, setDocInfo] = useState<{
@@ -136,7 +135,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
       agentRef.current = agentInstance;
       setAgent(agentInstance);
       const refreshState = () => {
-        setPending([...agentInstance.getPendingMutations()]);
         const snap = agentInstance.getSnapshot();
         const paragraphs = snap.root.body.reduce((n, b) => (b.kind === "paragraph" ? n + 1 : n), 0);
         setDocInfo({
@@ -429,8 +427,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
         setZoneEditor(null);
         return;
       }
-      const cmdType =
-        detail.slot === "header" ? "docx:set-header-text" : "docx:set-footer-text";
+      const cmdType = detail.slot === "header" ? "docx:set-header-text" : "docx:set-footer-text";
       try {
         await agent.applyCommand({
           type: cmdType,
@@ -476,34 +473,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
       setZoneEditor(null);
     }
   }, [pushToast, zoneEditor]);
-
-  const draftCommentWithAi = useCallback(
-    async (currentDraft: string, selectionText: string): Promise<string> => {
-      const agent = agentRef.current;
-      if (!agent) return currentDraft;
-      const promptParts = [
-        currentDraft.trim().length > 0
-          ? `Refine the following draft comment so it is concise, specific, and constructive: "${currentDraft.trim()}"`
-          : "Draft a short, specific, constructive comment about the highlighted text.",
-        "Reply with ONLY the comment body — no quotes, no preamble.",
-      ];
-      const ctx: DispatchSelectionContext | undefined = selectionText
-        ? { text: selectionText, paragraph: composer?.range.start.paragraph ?? 0, range: composer?.range }
-        : undefined;
-      const result = await dispatchToLlm(promptParts.join("\n\n"), agent, ctx);
-      if (result.note) pushToast("warn", result.note);
-      // The LLM returns commands; for the composer we only care about
-      // the rationale (or, in the offline case, the prompt text). When
-      // the LLM produced an `add-comment` we lift its `text`.
-      const addComment = result.commands.find((c) => c.type === "docx:add-comment");
-      if (addComment) {
-        const payload = addComment.payload as { text?: unknown };
-        if (typeof payload?.text === "string" && payload.text.length > 0) return payload.text;
-      }
-      return result.rationale || currentDraft;
-    },
-    [composer, pushToast]
-  );
 
   const surfaceUnsupported = useCallback(
     (label: string) => {
@@ -796,18 +765,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     [pushToast]
   );
 
-  const approveAll = useCallback(() => {
-    const agent = agentRef.current;
-    if (!agent) return;
-    pending.forEach((m) => agent.approveMutation(m.id));
-  }, [pending]);
-
-  const rejectAll = useCallback(() => {
-    const agent = agentRef.current;
-    if (!agent) return;
-    pending.forEach((m) => agent.rejectMutation(m.id));
-  }, [pending]);
-
   // Derive toolbar UI state from the current PM view (re-runs on uiTick).
   void uiTick;
   const snapshot = agent?.getSnapshot() ?? null;
@@ -836,31 +793,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const activeIndentLeft = computeActiveIndentLeft(snapshot, activeParagraphIndex);
   const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   void commentParagraphIndex;
-
-  // Default dispatch routes through the LLM bridge (`/api/llm`). When the
-  // server has no `OPENAI_API_KEY` configured, the helper falls back to
-  // the honest offline recipe (P2.5/W27): a single comment carrying the
-  // user's prompt, anchored to the live selection when there is one.
-  const { agentPromptDispatch: agentPromptDispatchProp } = props;
-  const promptDispatch: AgentPromptDispatch = (() => {
-    if (!agent) return async () => undefined;
-    if (agentPromptDispatchProp) return agentPromptDispatchProp(agent);
-    return async (text: string) => {
-      const liveView = mountRef.current?.view;
-      const ctx: DispatchSelectionContext | undefined = (() => {
-        if (!liveView) return undefined;
-        const { state } = liveView;
-        if (state.selection.empty) return undefined;
-        const range = pmSelectionToRange(state);
-        const selectedText = state.doc.textBetween(state.selection.from, state.selection.to, " ", " ");
-        if (!selectedText) return undefined;
-        return { text: selectedText, paragraph: range.start.paragraph, range };
-      })();
-      const result = await dispatchToLlm(text, agent, ctx);
-      if (result.note) pushToast("warn", result.note);
-      if (result.commands.length > 0) await agent.applyCommands(result.commands);
-    };
-  })();
 
   return (
     <div className="docx-editor flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:grid-rows-1 lg:gap-6">
@@ -921,20 +853,44 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           onInfo={(msg) => pushToast("info", msg)}
         />
         <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-[color-mix(in_srgb,var(--divider)_25%,var(--surface))] dark:bg-[#0e0e0e]">
-          <div
-            className="mx-auto py-6"
-            style={{
-              width: `${720 * zoom}px`,
-              transform: `scale(${zoom})`,
-              transformOrigin: "top center",
-            }}
-          >
-            <PageRuler snapshot={snapshot} />
-            <div
-              ref={setHostEl}
-              className="prose-pm min-h-[60vh] w-[720px] outline-none"
-            />
-          </div>
+          {(() => {
+            // Page geometry, derived once per render from the live snapshot.
+            // - 1 inch = 1440 twips = 96 CSS px → 1 CSS px = 15 twips.
+            // - Width drives the white card; left/right margins drive the
+            //   universal horizontal padding selector in globals.css.
+            // - When the snapshot is null (initial frame), fall back to
+            //   US-Letter so the visual frame has a stable initial size
+            //   instead of collapsing to 0.
+            const TWIPS_PER_CSS_PX = 15;
+            const geometry = snapshot
+              ? documentPageGeometry(snapshot)
+              : {
+                  pgSz: { w: 12240, h: 15840 },
+                  pgMar: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 720 },
+                };
+            const pageWidthCssPx = geometry.pgSz.w / TWIPS_PER_CSS_PX;
+            const pageMarginLeftCssPx = geometry.pgMar.left / TWIPS_PER_CSS_PX;
+            const pageMarginRightCssPx = geometry.pgMar.right / TWIPS_PER_CSS_PX;
+            const cssVars = {
+              "--pm-page-width": `${pageWidthCssPx}px`,
+              "--pm-page-margin-left": `${pageMarginLeftCssPx}px`,
+              "--pm-page-margin-right": `${pageMarginRightCssPx}px`,
+            } as React.CSSProperties;
+            return (
+              <div
+                className="mx-auto py-6"
+                style={{
+                  ...cssVars,
+                  width: `${pageWidthCssPx * zoom}px`,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top center",
+                }}
+              >
+                <PageRuler snapshot={snapshot} />
+                <div ref={setHostEl} className="prose-pm min-h-[60vh] outline-none" style={cssVars} />
+              </div>
+            );
+          })()}
           {!agentReady && (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
               <Loader2 className="mr-2 animate-spin" size={14} />
@@ -947,7 +903,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
               anchor={composer.anchor}
               onSubmit={(t) => void submitComment(t)}
               onCancel={() => setComposer(null)}
-              onDraftWithAi={(draft, sel) => draftCommentWithAi(draft, sel)}
             />
           )}
           {zoneEditor && (
@@ -963,12 +918,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
             />
           )}
         </div>
-        <PageStatusBar
-          view={view}
-          totalPages={docInfo?.pageCount ?? 1}
-          zoom={zoom}
-          onZoomChange={setZoom}
-        />
+        <PageStatusBar view={view} totalPages={docInfo?.pageCount ?? 1} zoom={zoom} onZoomChange={setZoom} />
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
           {toasts.map((t) => (
             <div
@@ -1036,18 +986,6 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           editorHost={hostEl}
           onAccept={acceptChange}
           onReject={rejectChange}
-        />
-
-        <AgentPrompt
-          agent={agent}
-          agentReady={agentReady}
-          pending={pending}
-          onApprove={(id) => agent?.approveMutation(id)}
-          onReject={(id) => agent?.rejectMutation(id)}
-          onApproveAll={approveAll}
-          onRejectAll={rejectAll}
-          onError={onError}
-          dispatch={promptDispatch}
         />
       </aside>
     </div>

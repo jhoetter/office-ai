@@ -39,16 +39,16 @@ semantics; see `spec/shared/agent-api.md` and
 
 ## Status
 
-| Doc                      | Status                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `analysis.md`            | landed (P1)                                                                                                                    |
-| `feature-scope.md`       | landed (P2)                                                                                                                    |
-| `document-model.md`      | landed (P2); P11 added `Sheet.columnWidths` / `Sheet.rowHeights`                                                               |
-| `ooxml-mapping.md`       | landed (P2)                                                                                                                    |
-| `parser.md`              | implemented (P4 thin + P5 typed cells)                                                                                         |
-| `serializer.md`          | implemented (P4 byte-oracle + P5 dirty-sheet rewrite)                                                                          |
+| Doc                      | Status                                                                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `analysis.md`            | landed (P1)                                                                                                                             |
+| `feature-scope.md`       | landed (P2)                                                                                                                             |
+| `document-model.md`      | landed (P2); P11 added `Sheet.columnWidths` / `Sheet.rowHeights`                                                                        |
+| `ooxml-mapping.md`       | landed (P2)                                                                                                                             |
+| `parser.md`              | implemented (P4 thin + P5 typed cells)                                                                                                  |
+| `serializer.md`          | implemented (P4 byte-oracle + P5 dirty-sheet rewrite)                                                                                   |
 | `renderer.md`            | landed (P2); P9 thin virtualized grid, P11 Excel-flavoured `/xlsx-editor` (selection, type-to-edit, autocomplete, toolbar, drag-resize) |
-| `formula-engine.md`      | landed (P2); implemented across P7a–P7e (lexer / parser / evaluator / dep-graph / 89-fn library)                               |
-| `agent-commands.md`      | implemented (13/13 P0 in P5–P7j) + 2 Phase-11 sizing additions (`xlsx:set-column-width`, `xlsx:set-row-height`)                 |
-| `edge-cases.md`          | landed (P2)                                                                                                                    |
-| `acceptance-criteria.md` | landed (P2)                                                                                                                    |
+| `formula-engine.md`      | landed (P2); implemented across P7a–P7e (lexer / parser / evaluator / dep-graph / 89-fn library)                                        |
+| `agent-commands.md`      | implemented (13/13 P0 in P5–P7j) + 2 Phase-11 sizing additions (`xlsx:set-column-width`, `xlsx:set-row-height`)                         |
+| `edge-cases.md`          | landed (P2)                                                                                                                             |
+| `acceptance-criteria.md` | landed (P2)                                                                                                                             |

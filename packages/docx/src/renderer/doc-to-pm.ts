@@ -307,7 +307,9 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       // index per visible widget; this branch is what the editor
       // surface sees inside header/footer previews and in the body if
       // a page number ever ends up there.
-      out.push(docxSchema.text(child.cachedText && child.cachedText.length > 0 ? child.cachedText : "#", marks));
+      out.push(
+        docxSchema.text(child.cachedText && child.cachedText.length > 0 ? child.cachedText : "#", marks)
+      );
       return;
     case "tab":
       out.push(docxSchema.nodes.tab.create(null, null, marks));

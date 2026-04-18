@@ -1192,11 +1192,11 @@ type SetColumnWidthPayload = {
 
 #### `precheck`
 
-| `reason`          | When                                                          |
-| ----------------- | ------------------------------------------------------------- |
-| `unknown-sheet`   | sheet missing                                                 |
-| `invalid-column`  | not a positive integer                                        |
-| `invalid-width`   | finite number outside `[MIN_COL_WIDTH, MAX_COL_WIDTH]`        |
+| `reason`         | When                                                   |
+| ---------------- | ------------------------------------------------------ |
+| `unknown-sheet`  | sheet missing                                          |
+| `invalid-column` | not a positive integer                                 |
+| `invalid-width`  | finite number outside `[MIN_COL_WIDTH, MAX_COL_WIDTH]` |
 
 #### Example
 

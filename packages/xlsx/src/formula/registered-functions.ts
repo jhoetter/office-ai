@@ -1,8 +1,4 @@
-import {
-  createRegistry,
-  type FunctionEntry,
-  type MutableFunctionRegistry,
-} from "./function-registry.js";
+import { createRegistry, type FunctionEntry, type MutableFunctionRegistry } from "./function-registry.js";
 import { registerInfo } from "./functions/info.js";
 import { registerLogic } from "./functions/logic.js";
 import { registerLookup } from "./functions/lookup.js";

@@ -8,6 +8,16 @@
  *   styles part that DEFINES `Heading1`, Word and LibreOffice silently fall
  *   back to default formatting and the heading renders as plain text in the
  *   exported .docx. Verified end-to-end with LibreOffice headless render.
+ *
+ * IMPORTANT — why this file ships a real `word/theme/theme1.xml`:
+ *   The heading styles below reference `<w:rFonts w:asciiTheme="majorHAnsi"/>`,
+ *   which Word 2024+ resolves through the document's font scheme to "Aptos
+ *   Display". Without a theme part shipped alongside the doc, Word falls back
+ *   to its built-in default theme (also Aptos), but the editor's style
+ *   resolver had no way to project the theme ref to a literal typeface and
+ *   would mis-report "Calibri" in the toolbar. We now ship the part so the
+ *   round-trip is fully self-describing — the editor and Word agree on the
+ *   rendered font ("Aptos Display") for headings and ("Aptos") for body text.
  */
 import JSZip from "jszip";
 
@@ -17,6 +27,7 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
 </Types>`;
 
 const PKG_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -27,7 +38,70 @@ const PKG_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const DOC_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
 </Relationships>`;
+
+/**
+ * Minimal theme part. Only the font scheme is interesting — the editor's
+ * style cascade resolver consults `majorFont.latin` / `minorFont.latin`
+ * to project `<w:rFonts w:asciiTheme="majorHAnsi"/>` references in the
+ * styles below to the literal "Aptos Display" / "Aptos" typefaces Word
+ * 2024+ uses by default. The color and format schemes are placeholders;
+ * Word ignores their absence on this minimal doc.
+ */
+const THEME_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office">
+  <a:themeElements>
+    <a:clrScheme name="Office">
+      <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+      <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+      <a:dk2><a:srgbClr val="0E2841"/></a:dk2>
+      <a:lt2><a:srgbClr val="E8E8E8"/></a:lt2>
+      <a:accent1><a:srgbClr val="156082"/></a:accent1>
+      <a:accent2><a:srgbClr val="E97132"/></a:accent2>
+      <a:accent3><a:srgbClr val="196B24"/></a:accent3>
+      <a:accent4><a:srgbClr val="0F9ED5"/></a:accent4>
+      <a:accent5><a:srgbClr val="A02B93"/></a:accent5>
+      <a:accent6><a:srgbClr val="4EA72E"/></a:accent6>
+      <a:hlink><a:srgbClr val="467886"/></a:hlink>
+      <a:folHlink><a:srgbClr val="96607D"/></a:folHlink>
+    </a:clrScheme>
+    <a:fontScheme name="Office">
+      <a:majorFont>
+        <a:latin typeface="Aptos Display" panose="02110004020202020204"/>
+        <a:ea typeface=""/>
+        <a:cs typeface=""/>
+      </a:majorFont>
+      <a:minorFont>
+        <a:latin typeface="Aptos" panose="02110004020202020204"/>
+        <a:ea typeface=""/>
+        <a:cs typeface=""/>
+      </a:minorFont>
+    </a:fontScheme>
+    <a:fmtScheme name="Office">
+      <a:fillStyleLst>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+      </a:fillStyleLst>
+      <a:lnStyleLst>
+        <a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+        <a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+        <a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+      </a:lnStyleLst>
+      <a:effectStyleLst>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+      </a:effectStyleLst>
+      <a:bgFillStyleLst>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+      </a:bgFillStyleLst>
+    </a:fmtScheme>
+  </a:themeElements>
+</a:theme>`;
 
 const DOC_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -149,5 +223,6 @@ export async function buildSampleDocx(): Promise<ArrayBuffer> {
   z.file("word/_rels/document.xml.rels", DOC_RELS);
   z.file("word/document.xml", DOC_XML);
   z.file("word/styles.xml", STYLES_XML);
+  z.file("word/theme/theme1.xml", THEME_XML);
   return z.generateAsync({ type: "arraybuffer" });
 }

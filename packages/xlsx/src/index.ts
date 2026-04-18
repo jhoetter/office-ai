@@ -85,6 +85,8 @@ export {
   addCommentHandler,
   setColumnWidthHandler,
   setRowHeightHandler,
+  deleteSheetHandler,
+  pasteRangeHandler,
   type SetCellValuePayload,
   type SetCellFormulaPayload,
   type SetCellFormatPayload,
@@ -102,7 +104,28 @@ export {
   type AddCommentPayload,
   type SetColumnWidthPayload,
   type SetRowHeightPayload,
+  type DeleteSheetPayload,
+  type PasteRangePayload,
+  type FillRangePayload,
+  type TextToColumnsPayload,
 } from "./commands/index.js";
+
+export {
+  extractClipboardSnapshot,
+  snapshotToTsv,
+  tsvToSnapshot,
+  delimitedToSnapshot,
+  sniffDelimiter,
+  type ClipboardMerge,
+  type XlsxClipboardCell,
+  type XlsxClipboardSnapshot,
+} from "./clipboard/snapshot.js";
+
+export {
+  parseExternalClipboard,
+  parseHtmlTable,
+  parseFingerprintHtml,
+} from "./clipboard/external.js";
 
 export {
   XlsxAgent,

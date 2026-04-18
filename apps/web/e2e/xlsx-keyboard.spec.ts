@@ -89,10 +89,7 @@ test.describe("xlsx editor: keyboard navigation (P12d-g)", () => {
     // (currently "Sam") up into A2.
     await expect(page.getByTestId("cell-A2")).toContainText("Alex");
     await page.getByTestId("row-header-2").click();
-    await expect(page.getByTestId("xlsx-surface")).toHaveAttribute(
-      "data-whole-row",
-      "1"
-    );
+    await expect(page.getByTestId("xlsx-surface")).toHaveAttribute("data-whole-row", "1");
     await page.keyboard.press("Delete");
 
     await expect(page.getByTestId("cell-A2")).toContainText("Sam");

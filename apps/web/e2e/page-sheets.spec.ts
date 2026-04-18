@@ -17,9 +17,7 @@ import { gotoEditor } from "./_helpers";
  * carry-over noted in `docs/build-log/docx.md`.
  */
 test.describe("editor: paginated page sheets", () => {
-  test("renders header + footer zones at the top and bottom of the page", async ({
-    page,
-  }) => {
+  test("renders header + footer zones at the top and bottom of the page", async ({ page }) => {
     await gotoEditor(page);
     const surface = page.locator(".ProseMirror").first();
     await expect(surface).toBeVisible();
@@ -33,16 +31,16 @@ test.describe("editor: paginated page sheets", () => {
     await expect(footerZone).toContainText("Double-click to add a footer");
 
     const block = surface.locator(".pm-page-block").first();
-    await expect(block).toHaveCount(1, { timeout: 1000 }).catch(() => {});
+    await expect(block)
+      .toHaveCount(1, { timeout: 1000 })
+      .catch(() => {});
     await expect(surface.locator(".pm-page-block").first()).toBeVisible();
   });
 
   test("double-clicking the header zone opens the page-zone editor", async ({ page }) => {
     await gotoEditor(page);
     const surface = page.locator(".ProseMirror").first();
-    const headerZone = surface
-      .locator(".pm-page-cap-top .pm-page-zone-header .pm-page-zone-content")
-      .first();
+    const headerZone = surface.locator(".pm-page-cap-top .pm-page-zone-header .pm-page-zone-content").first();
     await headerZone.scrollIntoViewIfNeeded();
     await headerZone.dblclick();
 

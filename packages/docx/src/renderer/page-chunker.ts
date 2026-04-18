@@ -103,10 +103,7 @@ interface SectionGroup {
   readonly geometry: PageGeometry;
 }
 
-export function chunkIntoPages(
-  snapshot: DocxSnapshot,
-  measure?: Measure
-): ReadonlyArray<PageChunk> {
+export function chunkIntoPages(snapshot: DocxSnapshot, measure?: Measure): ReadonlyArray<PageChunk> {
   const body = snapshot.root.body;
   const sections = groupBySection(body);
   const out: PageChunk[] = [];
@@ -240,6 +237,28 @@ export function geometryFromProperties(props: SectionProperties): PageGeometry {
   };
 }
 
+/**
+ * Resolve the document's *nominal* page geometry — i.e. the geometry
+ * the editor card should render at when the document has not yet been
+ * chunked.
+ *
+ * Strategy: Word stores `<w:sectPr>` at the END of the section it
+ * describes, so the *first* `SectionBreak` block is the source of truth
+ * for the first section's geometry. When the body has no section break
+ * at all (a fresh doc, or a doc whose `sectPr` is implicit), fall back
+ * to the US-Letter default so the renderer always has a frame.
+ *
+ * Pure / no DOM access — safe to call in the React render path.
+ */
+export function documentPageGeometry(snapshot: DocxSnapshot): PageGeometry {
+  for (const block of snapshot.root.body) {
+    if (block.kind === "section-break") {
+      return geometryFromSection(block);
+    }
+  }
+  return DEFAULT_GEOMETRY;
+}
+
 type BreakSignal = "none" | "hard-before" | "hint";
 
 function classifyBreakSignal(block: BlockNode, measureProvided: boolean): BreakSignal {
@@ -261,8 +280,5 @@ function* paragraphRunChildren(p: Paragraph): IterableIterator<RunChild> {
 }
 
 function computeContentHeight(geometry: PageGeometry): number {
-  return Math.max(
-    1,
-    geometry.pgSz.h - geometry.pgMar.top - geometry.pgMar.bottom
-  );
+  return Math.max(1, geometry.pgSz.h - geometry.pgMar.top - geometry.pgMar.bottom);
 }

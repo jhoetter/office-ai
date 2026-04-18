@@ -1776,16 +1776,16 @@ overwhelmingly UX + two new commands for column / row sizing.
 
 ### Roadmap at a glance
 
-| Sub | Deliverable                                                                                | Tests delta             |
-| --- | ------------------------------------------------------------------------------------------ | ----------------------- |
-| 11a | Open `.xlsx` from disk + drag-drop (replace-agent on file load)                            | +1 e2e                  |
-| 11b | Multi-cell selection (anchor/focus, drag-extend, shift-click, marquee)                     | +2 e2e                  |
-| 11c | Type-to-edit + click-to-insert-ref while editing formulas                                  | +3 e2e                  |
-| 11d | Formula autocomplete popover (export `listRegisteredFunctions`, Tab to accept)             | +3 e2e + 7 unit         |
-| 11e | Rich styling toolbar (font / align / fill / number-format) + Grid renders `styleId`        | +4 e2e                  |
-| 11f | Merge / Unmerge / Insert / Delete from selection, merged-cell rendering                    | +3 e2e                  |
-| 11g | `xlsx:set-column-width` / `xlsx:set-row-height` + drag handles + variable-geometry Grid    | +2 e2e + 7 unit         |
-| 11h | Browser smoke + build-log + README + spec close-out                                        | -                       |
+| Sub | Deliverable                                                                             | Tests delta     |
+| --- | --------------------------------------------------------------------------------------- | --------------- |
+| 11a | Open `.xlsx` from disk + drag-drop (replace-agent on file load)                         | +1 e2e          |
+| 11b | Multi-cell selection (anchor/focus, drag-extend, shift-click, marquee)                  | +2 e2e          |
+| 11c | Type-to-edit + click-to-insert-ref while editing formulas                               | +3 e2e          |
+| 11d | Formula autocomplete popover (export `listRegisteredFunctions`, Tab to accept)          | +3 e2e + 7 unit |
+| 11e | Rich styling toolbar (font / align / fill / number-format) + Grid renders `styleId`     | +4 e2e          |
+| 11f | Merge / Unmerge / Insert / Delete from selection, merged-cell rendering                 | +3 e2e          |
+| 11g | `xlsx:set-column-width` / `xlsx:set-row-height` + drag handles + variable-geometry Grid | +2 e2e + 7 unit |
+| 11h | Browser smoke + build-log + README + spec close-out                                     | -               |
 
 ### 11a — Open `.xlsx` from disk
 
@@ -1942,9 +1942,9 @@ extended with the 2 sizing commands, browser smoke verified at
 
 ### Tests delta
 
-| Layer | Count | Notes                                                                      |
-| ----- | ----: | -------------------------------------------------------------------------- |
-| Unit  |   +14 | `registered-functions.test.ts` (7) + `sizing.test.ts` (7)                  |
+| Layer | Count | Notes                                                                                                                                                      |
+| ----- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit  |   +14 | `registered-functions.test.ts` (7) + `sizing.test.ts` (7)                                                                                                  |
 | E2E   |   +18 | `xlsx-open-file` (1), `xlsx-selection` (2), `xlsx-typing` (3), `xlsx-formula-autocomplete` (3), `xlsx-style` (4), `xlsx-structural` (3), `xlsx-resize` (2) |
 
 After Phase 11 the XLSX gate is **624/624 unit tests** + **19/19
@@ -1992,7 +1992,7 @@ command types except those P7i already shipped.
 
 - `tokenizeForDisplay(source)` — left-to-right scanner that emits
   `DisplayToken`s with `kind ∈ { ref, range, function, string,
-  number, operator, punct, error, text }`. Never throws on partial
+number, operator, punct, error, text }`. Never throws on partial
   input.
 - `assignRefColors(tokens)` — hashes by `refKey` (uppercased,
   `$`-stripped, sheet-qualified) so `A1`, `$A$1`, `a1`, `$A1` all
@@ -2004,8 +2004,8 @@ command types except those P7i already shipped.
 qualified refs incl. quoted-with-apostrophe, palette wrap,
 malformed-input survival).
 
-**Decisions.** *Why a separate scanner instead of wrapping the
-strict `lex()` in a try/catch?* The strict lexer throws on
+**Decisions.** _Why a separate scanner instead of wrapping the
+strict `lex()` in a try/catch?_ The strict lexer throws on
 malformed input by design (it's the source of truth for the
 evaluator). Mid-typing (`=A1+`, `=SUM("hello`) is the **common
 case** for the highlighter. A purpose-built permissive scanner
@@ -2013,7 +2013,7 @@ keeps the strict one pristine and gives us a contiguous-cover
 guarantee (`tokens[i].end === tokens[i+1].start`) that downstream
 overlay rendering relies on.
 
-*Why hash refs by normalised `refKey` instead of raw text?* So
+_Why hash refs by normalised `refKey` instead of raw text?_ So
 `=A1+$A$1` colours both occurrences identically — that's what
 Excel does and it matches user expectation for "this is the same
 cell".
@@ -2034,16 +2034,16 @@ semantic colours. The input keeps `caretColor: var(--foreground)`
 so the cursor stays visible even though the input's own glyphs are
 transparent.
 
-**Decisions.** *Why overlay instead of `contentEditable`?* The
+**Decisions.** _Why overlay instead of `contentEditable`?_ The
 existing formula bar is an `<input>` with a long history of caret
 behaviour (click-to-insert-ref, autocomplete, type-to-edit). Moving
 to `contentEditable` would force re-validating all of that; the
 overlay pattern keeps the input intact and only changes how it
-*looks*. Trade-off: when the user scrolls the input horizontally
+_looks_. Trade-off: when the user scrolls the input horizontally
 (long formulas), we mirror `scrollLeft` via `transform: translateX`
 on the overlay so the layers don't drift.
 
-*Why only highlight when `value.startsWith("=")`?* Plain literals
+_Why only highlight when `value.startsWith("=")`?_ Plain literals
 ("Alex", `42`) shouldn't turn purple. The overlay does emit text
 for them but the parent only swaps the input to transparent in
 formula mode.
@@ -2068,13 +2068,13 @@ catches up. Acceptable for P12's English-formula scope.
 only paint the active sheet), and looks the colour up in the same
 `refColors` map the formula bar overlay consumes.
 
-**Decisions.** *Why dashed and not solid?* The selection marquee
+**Decisions.** _Why dashed and not solid?_ The selection marquee
 is solid violet; the ref rectangles are 2px dashed in the assigned
 ref colour, layered at `zIndex: 3` (below the marquee, above the
 cells). On overlap with the selection, the marquee wins
 visually — exactly Excel's order.
 
-*Why dedupe by `refKey` before rendering rects?* `=A1+A1` only
+_Why dedupe by `refKey` before rendering rects?_ `=A1+A1` only
 needs one coloured border on A1, not two stacked. The dedupe also
 keeps the React key stable across re-renders.
 
@@ -2095,20 +2095,20 @@ keyboard event:
 - `Shift+Arrow*` → keep the existing anchor, replace the focus
   (rubber-band a range from the current anchor).
 - `Ctrl/Cmd+Arrow*` → "jump to data edge" — if currently on a
-  filled cell, walk while the *next* cell is also filled (Excel's
+  filled cell, walk while the _next_ cell is also filled (Excel's
   contiguous-block jump); if on an empty cell, walk until the next
   filled cell.
 - `Home` → first column in the current row; `Shift+Home` extends.
 - `Ctrl+Home` → A1; `Ctrl+End` → bottom-right of the used range
   (computed from `max(row,col)` over filled cells).
 
-**Decisions.** *Why a closed-form helper instead of a switch in
-the keydown handler?* Both arrow nav AND `handleAxisSelect` need
+**Decisions.** _Why a closed-form helper instead of a switch in
+the keydown handler?_ Both arrow nav AND `handleAxisSelect` need
 the "extend vs collapse" pattern; the helper keeps the contract
 identical.
 
-*Why clamp to `GRID_ROWS / GRID_COLS` (1000 × 26) instead of the
-sheet's actual extent?* The renderer's virtual extent is the user's
+_Why clamp to `GRID_ROWS / GRID_COLS` (1000 × 26) instead of the
+sheet's actual extent?_ The renderer's virtual extent is the user's
 ceiling. Past P12 a real "scroll into used range" pass can lift
 this.
 
@@ -2129,7 +2129,7 @@ behave identically:
   delta is passed into `onFormulaSubmit({row, col})` so the same
   function handles all four cases.
 
-**Decisions.** *Why commit-and-move on Tab?* Excel's classic data-
+**Decisions.** _Why commit-and-move on Tab?_ Excel's classic data-
 entry flow. `Tab` across a row, `Enter` to wrap to the next row's
 start. We don't yet implement Enter's "wrap to start column"
 behaviour — that needs a per-row anchor memory which P12 didn't
@@ -2166,16 +2166,16 @@ the right `count` to drop the entire span in a single command. For
 any other selection shape Delete falls back to the P11 range-clear
 behaviour (set every cell to `null`).
 
-**Decisions.** *Why "Delete deletes the row" instead of Excel's
-`Cmd+−`?* The user explicitly asked for it. It also dodges a
+**Decisions.** _Why "Delete deletes the row" instead of Excel's
+`Cmd+−`?_ The user explicitly asked for it. It also dodges a
 practical Playwright problem: `Cmd+−` is Chromium's zoom-out
 shortcut, intercepted before reaching the page in headless mode.
 The Delete-on-whole-row mapping reads more naturally to non-Excel
 users too ("I selected the row, I pressed Delete, the row went
 away") and we keep Delete-on-cell as the safe clear semantics.
 
-*Why dispatch a single `delete-row` with `count` instead of looping
-one row at a time?* The handler accepts a `count` argument (P7i)
+_Why dispatch a single `delete-row` with `count` instead of looping
+one row at a time?_ The handler accepts a `count` argument (P7i)
 specifically so multi-row delete is one mutation and one undo
 entry.
 
@@ -2218,4 +2218,3 @@ and unrelated).
   (Chromium zoom). `Cmd+Shift+L` (filter), `Ctrl+Shift+L` (slicer
   in Excel) etc. are also out for similar reasons. We picked
   conflict-free shortcuts where Excel's would clash.
-

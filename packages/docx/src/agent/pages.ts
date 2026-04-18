@@ -75,10 +75,7 @@ export function getPageInfos(snapshot: DocxSnapshot): ReadonlyArray<PageInfo> {
  * inside an empty page (a section break with no preceding content)
  * resolve to that empty page.
  */
-export function pageForParagraph(
-  snapshot: DocxSnapshot,
-  paragraphIndex: number
-): number | null {
+export function pageForParagraph(snapshot: DocxSnapshot, paragraphIndex: number): number | null {
   if (paragraphIndex < 0 || paragraphIndex >= snapshot.root.body.length) return null;
   const chunks = chunkIntoPages(snapshot);
   for (let i = chunks.length - 1; i >= 0; i--) {
@@ -136,11 +133,7 @@ export function getPagePlainText(snapshot: DocxSnapshot, pageNumber: number): st
   return lines.join("\n");
 }
 
-function inferTrigger(
-  chunk: PageChunk,
-  prev: PageChunk | null,
-  body: ReadonlyArray<BlockNode>
-): PageTrigger {
+function inferTrigger(chunk: PageChunk, prev: PageChunk | null, body: ReadonlyArray<BlockNode>): PageTrigger {
   if (!prev) return "doc-start";
   if (chunk.sectionIndex !== prev.sectionIndex) return "section-break";
   // The first block of the chunk is the one Word would render on the
