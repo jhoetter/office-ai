@@ -536,6 +536,138 @@ export function XlsxEditor(): ReactNode {
     [activeSheet, selection, pushToast]
   );
 
+  const dispatchOrToast = useCallback(
+    (
+      type:
+        | "xlsx:merge-cells"
+        | "xlsx:unmerge-cells"
+        | "xlsx:insert-row"
+        | "xlsx:insert-column"
+        | "xlsx:delete-row"
+        | "xlsx:delete-column",
+      payload: Record<string, unknown>
+    ) => {
+      const a = agentRef.current;
+      if (!a) return;
+      void a
+        .applyCommand({ type, payload, source: "human" } as Parameters<
+          typeof a.applyCommand
+        >[0])
+        .catch((err: unknown) => {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        });
+    },
+    [pushToast]
+  );
+
+  // Range eligible for merge: at least 2 cells.
+  const canMerge = !!(selection && !isSingle(selection));
+  // Resolve the merge currently under the selection (if any). We
+  // accept either an exact-match range OR a single cell that lives
+  // inside a merge — Excel-style "click the merged surface, then
+  // unmerge". The matched merge becomes the unmerge target so we
+  // don't have to grow the selection ourselves.
+  const matchedMerge = useMemo(() => {
+    if (!activeSheet || !selection) return null;
+    const n = selectionToRange(selection);
+    return (
+      activeSheet.merges.find(
+        (m) =>
+          m.r1 === n.start.row &&
+          m.c1 === n.start.col &&
+          m.r2 === n.end.row &&
+          m.c2 === n.end.col
+      ) ??
+      activeSheet.merges.find(
+        (m) =>
+          isSingle(selection) &&
+          n.start.row >= m.r1 &&
+          n.start.row <= m.r2 &&
+          n.start.col >= m.c1 &&
+          n.start.col <= m.c2
+      ) ??
+      null
+    );
+  }, [activeSheet, selection]);
+  const canUnmerge = !!matchedMerge;
+
+  const onMerge = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    dispatchOrToast("xlsx:merge-cells", {
+      sheet: activeSheet.name,
+      range: formatSelection(selection),
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
+  const onUnmerge = useCallback(() => {
+    if (!activeSheet || !matchedMerge) return;
+    const range = formatRange({
+      start: { row: matchedMerge.r1, col: matchedMerge.c1 },
+      end: { row: matchedMerge.r2, col: matchedMerge.c2 },
+    });
+    dispatchOrToast("xlsx:unmerge-cells", { sheet: activeSheet.name, range });
+  }, [activeSheet, matchedMerge, dispatchOrToast]);
+
+  const onInsertRowAbove = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const r = selectionToRange(selection);
+    dispatchOrToast("xlsx:insert-row", {
+      sheet: activeSheet.name,
+      at: r.start.row + 1,
+      count: 1,
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
+  const onInsertRowBelow = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const r = selectionToRange(selection);
+    dispatchOrToast("xlsx:insert-row", {
+      sheet: activeSheet.name,
+      at: r.end.row + 2,
+      count: 1,
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
+  const onInsertColumnLeft = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const r = selectionToRange(selection);
+    dispatchOrToast("xlsx:insert-column", {
+      sheet: activeSheet.name,
+      at: r.start.col + 1,
+      count: 1,
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
+  const onInsertColumnRight = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const r = selectionToRange(selection);
+    dispatchOrToast("xlsx:insert-column", {
+      sheet: activeSheet.name,
+      at: r.end.col + 2,
+      count: 1,
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
+  const onDeleteRow = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const r = selectionToRange(selection);
+    dispatchOrToast("xlsx:delete-row", {
+      sheet: activeSheet.name,
+      at: r.start.row + 1,
+      count: r.end.row - r.start.row + 1,
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
+  const onDeleteColumn = useCallback(() => {
+    if (!activeSheet || !selection) return;
+    const r = selectionToRange(selection);
+    dispatchOrToast("xlsx:delete-column", {
+      sheet: activeSheet.name,
+      at: r.start.col + 1,
+      count: r.end.col - r.start.col + 1,
+    });
+  }, [activeSheet, selection, dispatchOrToast]);
+
   const acceptSuggestion = useCallback(
     (info: Parameters<typeof applySuggestion>[1]) => {
       if (!suggestionSpan) return;
@@ -640,6 +772,16 @@ export function XlsxEditor(): ReactNode {
           styles={snapshot.root.styles}
           selection={selection}
           onApply={onApplyFormat}
+          canMerge={canMerge}
+          canUnmerge={canUnmerge}
+          onMerge={onMerge}
+          onUnmerge={onUnmerge}
+          onInsertRowAbove={onInsertRowAbove}
+          onInsertRowBelow={onInsertRowBelow}
+          onInsertColumnLeft={onInsertColumnLeft}
+          onInsertColumnRight={onInsertColumnRight}
+          onDeleteRow={onDeleteRow}
+          onDeleteColumn={onDeleteColumn}
         />
       ) : null}
 

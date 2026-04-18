@@ -12,6 +12,13 @@ import {
   AlignRight,
   Paintbrush,
   Type as TypeIcon,
+  Merge,
+  Split,
+  ArrowDownToLine,
+  ArrowUpToLine,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@officeai/ui";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
@@ -35,6 +42,18 @@ export interface ToolbarProps {
    * presentational component.
    */
   readonly onApply: (patch: CellFormatPatch) => void;
+  /** True iff the active selection range exactly matches an existing merge. */
+  readonly canUnmerge: boolean;
+  /** True iff the active selection covers ≥ 2 cells (eligible for merge). */
+  readonly canMerge: boolean;
+  readonly onMerge: () => void;
+  readonly onUnmerge: () => void;
+  readonly onInsertRowAbove: () => void;
+  readonly onInsertRowBelow: () => void;
+  readonly onInsertColumnLeft: () => void;
+  readonly onInsertColumnRight: () => void;
+  readonly onDeleteRow: () => void;
+  readonly onDeleteColumn: () => void;
 }
 
 /**
@@ -50,7 +69,23 @@ export interface ToolbarProps {
  * decides what the ribbon looks like).
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
-  const { disabled, anchorStyleId, styles, selection, onApply } = props;
+  const {
+    disabled,
+    anchorStyleId,
+    styles,
+    selection,
+    onApply,
+    canMerge,
+    canUnmerge,
+    onMerge,
+    onUnmerge,
+    onInsertRowAbove,
+    onInsertRowBelow,
+    onInsertColumnLeft,
+    onInsertColumnRight,
+    onDeleteRow,
+    onDeleteColumn,
+  } = props;
 
   const effective: EffectiveStyle = useMemo(
     () => flattenCellXf(styles, anchorStyleId),
@@ -187,6 +222,70 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
 
+      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+
+      <ActionBtn
+        icon={<Merge size={14} />}
+        label="Merge cells"
+        testId="format-merge"
+        disabled={disabled || !canMerge}
+        onClick={onMerge}
+      />
+      <ActionBtn
+        icon={<Split size={14} />}
+        label="Unmerge cells"
+        testId="format-unmerge"
+        disabled={disabled || !canUnmerge}
+        onClick={onUnmerge}
+      />
+
+      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+
+      <ActionBtn
+        icon={<ArrowUpToLine size={14} />}
+        label="Insert row above"
+        testId="row-insert-above"
+        disabled={disabled}
+        onClick={onInsertRowAbove}
+      />
+      <ActionBtn
+        icon={<ArrowDownToLine size={14} />}
+        label="Insert row below"
+        testId="row-insert-below"
+        disabled={disabled}
+        onClick={onInsertRowBelow}
+      />
+      <ActionBtn
+        icon={<ArrowLeftToLine size={14} />}
+        label="Insert column left"
+        testId="col-insert-left"
+        disabled={disabled}
+        onClick={onInsertColumnLeft}
+      />
+      <ActionBtn
+        icon={<ArrowRightToLine size={14} />}
+        label="Insert column right"
+        testId="col-insert-right"
+        disabled={disabled}
+        onClick={onInsertColumnRight}
+      />
+      <ActionBtn
+        icon={<Trash2 size={14} />}
+        label="Delete row"
+        testId="row-delete"
+        disabled={disabled}
+        onClick={onDeleteRow}
+      />
+      <ActionBtn
+        icon={<Trash2 size={14} className="rotate-90" />}
+        label="Delete column"
+        testId="col-delete"
+        disabled={disabled}
+        onClick={onDeleteColumn}
+      />
+
+      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+
       <select
         data-testid="format-number"
         aria-label="Number format"
@@ -241,6 +340,34 @@ function ToggleBtn(props: ToggleBtnProps): ReactNode {
       className={cn(
         "inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-50",
         active && "bg-[var(--ai-violet-light)] text-[var(--ai-violet)]"
+      )}
+    >
+      {icon}
+    </button>
+  );
+}
+
+interface ActionBtnProps {
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly testId: string;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}
+
+function ActionBtn(props: ActionBtnProps): ReactNode {
+  const { icon, label, testId, disabled, onClick } = props;
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-40"
       )}
     >
       {icon}

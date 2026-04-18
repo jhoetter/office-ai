@@ -117,11 +117,35 @@ export function Grid(props: GridProps): ReactNode {
     height: HEADER_ROW_HEIGHT + TOTAL_ROWS * ROW_HEIGHT,
   };
 
+  // Index merged regions by top-left and by "covered" cells. The
+  // top-left key yields the merge so we can render an oversized cell
+  // spanning the rectangle; the covered set lets us skip those cells
+  // in the per-cell loop so the merged surface looks contiguous.
+  const mergeIndex = useMemo(() => {
+    const topLeft = new Map<string, { r1: number; c1: number; r2: number; c2: number }>();
+    const covered = new Set<string>();
+    for (const m of sheet.merges) {
+      topLeft.set(cellKey(m.r1, m.c1), m);
+      for (let r = m.r1; r <= m.r2; r++) {
+        for (let c = m.c1; c <= m.c2; c++) {
+          if (r === m.r1 && c === m.c1) continue;
+          covered.add(cellKey(r, c));
+        }
+      }
+    }
+    return { topLeft, covered };
+  }, [sheet.merges]);
+
   const cellList: ReactNode[] = useMemo(() => {
     const out: ReactNode[] = [];
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
-        const cell = sheet.cells.get(cellKey(r, c));
+        const k = cellKey(r, c);
+        if (mergeIndex.covered.has(k)) continue;
+        const merge = mergeIndex.topLeft.get(k);
+        const widthCells = merge ? merge.c2 - merge.c1 + 1 : 1;
+        const heightCells = merge ? merge.r2 - merge.r1 + 1 : 1;
+        const cell = sheet.cells.get(k);
         const cellStyle = styleForCell(styles, cell?.styleId);
         const display = cell ? formatCellValue(cell.value, cellStyle.effective.numFmtId) : "";
         const inSel = !!selection && containsCell(selection, r, c);
@@ -165,8 +189,8 @@ export function Grid(props: GridProps): ReactNode {
               position: "absolute",
               top: HEADER_ROW_HEIGHT + r * ROW_HEIGHT,
               left: HEADER_COL_WIDTH + c * COL_WIDTH,
-              width: COL_WIDTH,
-              height: ROW_HEIGHT,
+              width: COL_WIDTH * widthCells,
+              height: ROW_HEIGHT * heightCells,
               boxSizing: "border-box",
               borderRight: "1px solid var(--divider)",
               borderBottom: "1px solid var(--divider)",
@@ -234,7 +258,7 @@ export function Grid(props: GridProps): ReactNode {
       }
     }
     return out;
-  }, [sheet, styles, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
+  }, [sheet, styles, mergeIndex, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
 
   // Bounding-box marquee — positioned over the union of the selection.
   let marquee: ReactNode = null;
