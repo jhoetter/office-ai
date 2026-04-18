@@ -11,6 +11,7 @@ import { buildSampleDocx } from "@/lib/sample-docx";
 import {
   activeMarks as computeActiveMarks,
   commentParagraphIndex,
+  commentThreads,
   currentParagraphIndex,
   paragraphStyle,
   pmSelectionToRange,
@@ -73,7 +74,11 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const [pending, setPending] = useState<Mutation[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [docName, setDocName] = useState("welcome.docx");
-  const [docInfo, setDocInfo] = useState<{ blocks: number; revision: number; comments: number } | null>(null);
+  const [docInfo, setDocInfo] = useState<{
+    paragraphs: number;
+    revision: number;
+    commentThreads: number;
+  } | null>(null);
   // Bumped to force re-derivation of toolbar state (active marks /
   // active style) without keeping a redundant copy of the snapshot.
   const [uiTick, setUiTick] = useState(0);
@@ -110,10 +115,11 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
       const refreshState = () => {
         setPending([...agentInstance.getPendingMutations()]);
         const snap = agentInstance.getSnapshot();
+        const paragraphs = snap.root.body.reduce((n, b) => (b.kind === "paragraph" ? n + 1 : n), 0);
         setDocInfo({
-          blocks: snap.root.body.length,
+          paragraphs,
           revision: snap.revision,
-          comments: snap.root.comments.length,
+          commentThreads: commentThreads(snap).length,
         });
         setUiTick((t) => t + 1);
       };

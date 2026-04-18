@@ -27,7 +27,7 @@ import type { TextFormat } from "@officeai/docx";
 
 export interface ToolbarProps {
   agentReady: boolean;
-  docInfo: { blocks: number; revision: number; comments: number } | null;
+  docInfo: { paragraphs: number; revision: number; commentThreads: number } | null;
   activeStyle: string;
   activeMarks: ReadonlySet<string>;
   onOpenFile: () => void;
@@ -183,7 +183,8 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <div className="ml-auto flex items-center gap-3 text-xs text-secondary">
         {props.docInfo && (
           <span className="hidden whitespace-nowrap md:inline">
-            {props.docInfo.blocks} blocks · rev {props.docInfo.revision} · {props.docInfo.comments} comments
+            {props.docInfo.paragraphs} paragraphs · rev {props.docInfo.revision} ·{" "}
+            {props.docInfo.commentThreads} comment{props.docInfo.commentThreads === 1 ? "" : "s"}
           </span>
         )}
         <Button variant="accent" size="sm" onClick={props.onExport}>

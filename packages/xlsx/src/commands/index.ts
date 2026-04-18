@@ -1,6 +1,7 @@
 export * from "./payloads.js";
 export { allXlsxHandlers, xlsxHandlersById } from "./registry.js";
 export { setCellValueHandler } from "./set-cell-value.js";
+export { setCellFormulaHandler } from "./set-cell-formula.js";
 export { setRangeValuesHandler } from "./set-range-values.js";
 export { mergeCellsHandler } from "./merge-cells.js";
 export { unmergeCellsHandler } from "./unmerge-cells.js";

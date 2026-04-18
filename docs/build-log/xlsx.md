@@ -668,3 +668,88 @@ SWITCH`) need lazy to skip un-chosen branches; lookup helpers
   - `VLOOKUP / HLOOKUP / MATCH` exact-match wildcards not yet
     wired (deferred until text helpers expose a shared wildcard
     matcher).
+
+## 2026-04-18 — Phase 7f: `xlsx:set-cell-formula` command
+
+**Shipped**
+
+- `packages/xlsx/src/formula/workbook-host.ts` — `WorkbookHost`
+  adapter that lets the formula engine read cells from an
+  `XlsxWorkbook` snapshot. Stitches the engine's formula cache
+  (precedents already computed) with the snapshot's typed raw
+  values; ranges materialise via `readRange`. Exports
+  `bindEngineToWorkbook(workbook)` returning `{ engine, host }`,
+  plus `toEngineValue` / `fromEngineValue` for the model ↔ engine
+  value-union conversion. The function registry is a module-level
+  singleton — re-registering all 89 P0 functions on every command
+  would dominate the recalc cost.
+- `packages/xlsx/src/commands/set-cell-formula.ts` — handler
+  implementing the §2 spec contract: validate sheet/ref/merge
+  anchor, strip leading `=`, parse via the engine (loud reject on
+  parse error per `EC-F3`), seed the engine with every existing
+  formula, add the new one, recalc, and write the cached value
+  for both the target cell and any dependents whose values
+  changed. Empty-formula bodies collapse to a clear-cell. Cycles
+  surface a `circular` diff entry with `meta.cycle` carrying the
+  SCC.
+- `packages/core/src/types/document.ts` — extended every
+  `DiffChange` variant with an optional `meta?: DiffMeta` payload
+  (`DiffMeta = Readonly<Record<string, unknown>>`). The cycle
+  metadata, before/after value snapshots, and any future
+  format-specific extras live here. Older readers that don't
+  recognise `meta` MUST ignore it.
+- Wired `setCellFormulaHandler` into
+  `packages/xlsx/src/commands/registry.ts` and re-exported from
+  `commands/index.ts`. Bus surface count: **6/13 P0 commands**.
+
+**Tests landed**
+
+- `packages/xlsx/src/commands/set-cell-formula.test.ts` —
+  **11 tests** covering: literal arithmetic + cached value;
+  with / without leading `=`; whitespace verbatim preservation;
+  `SUM(Y1:Y3)` over real cells; downstream propagation when a
+  later formula depends on an earlier one; malformed-formula
+  reject (`formula-parse-error`); unknown-sheet reject;
+  invalid-ref reject; empty-formula clear; `#DIV/0!` cached as
+  `CellErrorValue`; self-loop cycle producing `#REF!` with a
+  `circular` diff entry carrying `meta.cycle`.
+
+**Totals after 7f**
+
+- `@officeai/xlsx` unit tests: **486 passing** (+11).
+- 6/13 P0 commands now wired through the bus.
+- Full `make verify` green.
+
+**Decisions**
+
+- **Engine is rebuilt per command, registry is shared.** The
+  command bus is a pure-snapshot model — handlers are
+  `(snapshot, payload) → { next, diff }`. To run a real recalc we
+  need a `FormulaEngine` populated with the workbook's formulas.
+  Building the engine + parsing every existing formula on each
+  command is O(N) — fine at the §17 fixture scale (10k formulas
+  ~ tens of ms). A future optimisation can cache the engine keyed
+  on `snapshot.revision`. Keeping the function registry
+  module-singleton dodges the ~90 `register()` calls on every
+  command.
+- **Parse errors reject loudly; import errors stay quiet.** Per
+  `EC-F3`, formulas authored by a user/agent that fail to parse
+  return a `formula-parse-error` rejection so the caller (LLM)
+  gets feedback. Formulas already in the workbook that fail to
+  parse during `seedFormulas` are silently skipped (they remain
+  literal cells with whatever cached value the parser had); they
+  surface as `#NAME?` only at import time.
+- **Downstream cached values are written back to the model.**
+  When the recalc touches a dependent formula cell, its
+  `Cell.value` is replaced with the new cached value (preserving
+  `Cell.formula`). The diff includes one `cell-updated` entry
+  per cell that actually changed (no-op cells are skipped).
+- **Cycles are surfaced, not eliminated.** Per `EC-F1` the cycle
+  cells are written as `#REF!` (with `meta.cycle = [...refs]` on
+  the diff). Excel silently flips back to a default; we expose
+  the structured cycle list so review UIs can highlight it.
+- **`DiffMeta` lives in `@officeai/core`, not the xlsx package.**
+  Other formats (`docx` mark-text-blockquote, future `pptx`
+  slide-transition metadata, etc.) will want the same hook. The
+  field is optional and ignored by older readers, so existing
+  `docx` consumers are unaffected.

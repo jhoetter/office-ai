@@ -5,6 +5,54 @@ import { Schema, type MarkSpec, type NodeSpec } from "prosemirror-model";
  * so that PM <-> model conversion is mechanical. See spec/docx/renderer.md.
  */
 
+/**
+ * Map a typed `ParagraphProperties.styleId` to the HTML tag the renderer
+ * should emit. Word's heading styles map to `h1`-`h6`; everything else
+ * stays as `<p>` and relies on the `data-style` attr + CSS rules in
+ * `apps/web/app/globals.css` for visual differentiation.
+ *
+ * Both English (`Heading1`, `Title`, `Subtitle`) and German Word style
+ * ids (`berschrift1`, `Titel`, `Untertitel`) are recognised — the
+ * masterthesis fixture uses the German variants because Word strips the
+ * leading `Ü` from `Überschrift` when emitting style ids (ASCII-only).
+ */
+export function paragraphHtmlTag(styleId: string): string {
+  switch (styleId) {
+    case "Title":
+    case "Titel":
+      return "h1";
+    case "Subtitle":
+    case "Untertitel":
+      return "h2";
+    case "Heading1":
+    case "berschrift1":
+      return "h1";
+    case "Heading2":
+    case "berschrift2":
+      return "h2";
+    case "Heading3":
+    case "berschrift3":
+      return "h3";
+    case "Heading4":
+    case "berschrift4":
+      return "h4";
+    case "Heading5":
+    case "berschrift5":
+      return "h5";
+    case "Heading6":
+    case "berschrift6":
+    case "Heading7":
+    case "berschrift7":
+    case "Heading8":
+    case "berschrift8":
+    case "Heading9":
+    case "berschrift9":
+      return "h6";
+    default:
+      return "p";
+  }
+}
+
 const nodes: Record<string, NodeSpec> = {
   doc: { content: "block+" },
   paragraph: {
@@ -16,10 +64,29 @@ const nodes: Record<string, NodeSpec> = {
       alignment: { default: null },
       propsJson: { default: null },
     },
-    parseDOM: [{ tag: "p" }],
+    parseDOM: [
+      { tag: "p" },
+      { tag: "h1" },
+      { tag: "h2" },
+      { tag: "h3" },
+      { tag: "h4" },
+      { tag: "h5" },
+      { tag: "h6" },
+    ],
     toDOM(node) {
-      const cls = node.attrs.styleId ? `pm-p style-${String(node.attrs.styleId)}` : "pm-p";
-      return ["p", { class: cls, "data-style": node.attrs.styleId ?? "" }, 0];
+      const styleId = typeof node.attrs.styleId === "string" ? (node.attrs.styleId as string) : "";
+      const tag = paragraphHtmlTag(styleId);
+      const cls = styleId ? `pm-p style-${styleId}` : "pm-p";
+      const attrs: Record<string, string> = {
+        class: cls,
+        "data-style": styleId,
+      };
+      const alignment = typeof node.attrs.alignment === "string" ? (node.attrs.alignment as string) : "";
+      if (alignment) {
+        attrs.style = `text-align:${alignment}`;
+        attrs["data-align"] = alignment;
+      }
+      return [tag, attrs, 0];
     },
   },
   table: {

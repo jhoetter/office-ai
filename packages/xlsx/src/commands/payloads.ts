@@ -17,6 +17,15 @@ export interface SetCellValuePayload {
   readonly value: CellValue;
 }
 
+/** `xlsx:set-cell-formula` */
+export interface SetCellFormulaPayload {
+  readonly sheet: string;
+  /** A1 single-cell ref, e.g. `"C2"`. */
+  readonly ref: string;
+  /** Formula text, with or without leading `=`. Empty body clears the cell. */
+  readonly formula: string;
+}
+
 /** `xlsx:set-range-values` */
 export interface SetRangeValuesPayload {
   readonly sheet: string;

@@ -20,6 +20,8 @@ import { resolveCommentHandler } from "./resolve-comment.js";
 import { setCellContentHandler } from "./set-cell-content.js";
 import { setFooterTextHandler } from "./set-footer-text.js";
 import { setHeaderTextHandler } from "./set-header-text.js";
+import { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
+import { setParagraphIndentHandler } from "./set-paragraph-indent.js";
 import { setParagraphListHandler } from "./set-paragraph-list.js";
 import { setParagraphStyleHandler } from "./set-paragraph-style.js";
 
@@ -46,6 +48,8 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   removeParagraphListHandler as CommandHandler<unknown, DocxSnapshot>,
   insertHyperlinkHandler as CommandHandler<unknown, DocxSnapshot>,
   removeHyperlinkHandler as CommandHandler<unknown, DocxSnapshot>,
+  setParagraphAlignmentHandler as CommandHandler<unknown, DocxSnapshot>,
+  setParagraphIndentHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

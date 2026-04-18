@@ -17,7 +17,7 @@ function ref(a1: string): CellRef {
   return r;
 }
 
-function rangeRef(sheet: string, r0: number, c0: number, r1: number, c1: number): RangeRef {
+function _rangeRef(sheet: string, r0: number, c0: number, r1: number, c1: number): RangeRef {
   return { sheet, r0, c0, r1, c1, abs0: AbsRef.NONE, abs1: AbsRef.NONE };
 }
 

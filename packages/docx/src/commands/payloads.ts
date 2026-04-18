@@ -24,6 +24,8 @@ export const DOCX_COMMAND_TYPES = [
   "docx:remove-paragraph-list",
   "docx:insert-hyperlink",
   "docx:remove-hyperlink",
+  "docx:set-paragraph-alignment",
+  "docx:set-paragraph-indent",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -193,4 +195,28 @@ export interface InsertHyperlinkPayload {
 
 export interface RemoveHyperlinkPayload {
   hyperlinkId: NodeId;
+}
+
+export interface SetParagraphAlignmentPayload {
+  /** Stable id of the paragraph (body or table cell). */
+  paragraphId: NodeId;
+  /**
+   * `null` clears the alignment, falling back to the document/style
+   * default (which Word normally renders as left-to-right left-aligned).
+   */
+  alignment: "left" | "center" | "right" | "justify" | null;
+}
+
+export interface SetParagraphIndentPayload {
+  /** Stable id of the paragraph (body or table cell). */
+  paragraphId: NodeId;
+  /**
+   * Signed delta in twips applied to the paragraph's `indentation.left`.
+   * The handler clamps the result to the OOXML legal range
+   * `[0, 31680]` twips (≈ 22 inches).
+   *
+   * Pass a positive delta to "increase indent", negative to "outdent".
+   * Standard Word toolbar steps use ±360 twips (¼ inch).
+   */
+  deltaTwips: number;
 }

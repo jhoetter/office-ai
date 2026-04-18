@@ -269,24 +269,111 @@ textarea::placeholder {
   margin: 0 0 0.75rem 0;
 }
 
+/*
+ * Heading typography. The renderer's `paragraph.toDOM` (in
+ * `packages/docx/src/renderer/schema.ts`) emits `<h1>`-`<h6>` for
+ * paragraphs whose `styleId` matches a known heading style. We also
+ * keep `data-style` selectors so the legacy `<p data-style="Heading1">`
+ * path (and the German `berschrift1`-`berschrift9` aliases that fall
+ * through to a generic <p>) still pick up the right typography.
+ */
+.prose-pm .ProseMirror h1,
+.prose-pm .ProseMirror p[data-style="Title"],
+.prose-pm .ProseMirror p[data-style="Titel"],
 .prose-pm .ProseMirror p[data-style="Heading1"],
-.prose-pm .ProseMirror p[data-style="Title"] {
+.prose-pm .ProseMirror p[data-style="berschrift1"] {
   font-size: 1.875rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
+  margin: 1.5rem 0 0.5rem;
+  line-height: 1.25;
 }
 
-.prose-pm .ProseMirror p[data-style="Heading2"] {
+.prose-pm .ProseMirror h2,
+.prose-pm .ProseMirror p[data-style="Subtitle"],
+.prose-pm .ProseMirror p[data-style="Untertitel"],
+.prose-pm .ProseMirror p[data-style="Heading2"],
+.prose-pm .ProseMirror p[data-style="berschrift2"] {
   font-size: 1.5rem;
   font-weight: 600;
-  margin-top: 1rem;
+  margin: 1.25rem 0 0.5rem;
+  line-height: 1.3;
 }
 
-.prose-pm .ProseMirror p[data-style="Heading3"] {
+.prose-pm .ProseMirror h3,
+.prose-pm .ProseMirror p[data-style="Heading3"],
+.prose-pm .ProseMirror p[data-style="berschrift3"] {
   font-size: 1.25rem;
   font-weight: 600;
+  margin: 1rem 0 0.4rem;
+  line-height: 1.35;
+}
+
+.prose-pm .ProseMirror h4,
+.prose-pm .ProseMirror p[data-style="Heading4"],
+.prose-pm .ProseMirror p[data-style="berschrift4"] {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0.875rem 0 0.35rem;
+  line-height: 1.4;
+}
+
+.prose-pm .ProseMirror h5,
+.prose-pm .ProseMirror p[data-style="Heading5"],
+.prose-pm .ProseMirror p[data-style="berschrift5"] {
+  font-size: 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.75rem 0 0.3rem;
+}
+
+.prose-pm .ProseMirror h6,
+.prose-pm .ProseMirror p[data-style="Heading6"],
+.prose-pm .ProseMirror p[data-style="berschrift6"],
+.prose-pm .ProseMirror p[data-style="Heading7"],
+.prose-pm .ProseMirror p[data-style="berschrift7"],
+.prose-pm .ProseMirror p[data-style="Heading8"],
+.prose-pm .ProseMirror p[data-style="berschrift8"],
+.prose-pm .ProseMirror p[data-style="Heading9"],
+.prose-pm .ProseMirror p[data-style="berschrift9"] {
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-style: italic;
+  margin: 0.625rem 0 0.25rem;
+}
+
+.prose-pm .ProseMirror p[data-style="TOCHeading"],
+.prose-pm .ProseMirror p[data-style="Verzeichnis"],
+.prose-pm .ProseMirror p[data-style="Inhaltsverzeichnisberschrift"] {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.75rem;
+  letter-spacing: -0.005em;
+}
+
+.prose-pm .ProseMirror p[data-style^="Quote"],
+.prose-pm .ProseMirror p[data-style^="IntenseQuote"] {
+  border-left: 3px solid var(--divider);
+  padding-left: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--secondary);
+  font-style: italic;
+}
+
+.prose-pm .ProseMirror p[data-style^="Caption"],
+.prose-pm .ProseMirror p[data-style^="Beschriftung"] {
+  font-size: 0.85rem;
+  color: var(--secondary);
+  margin: 0.25rem 0 0.75rem;
+}
+
+/* TOC entries — Word's TOC1/TOC2/... styles. Keep them tight so a long
+ * table of contents stays scannable. */
+.prose-pm .ProseMirror p[data-style^="TOC"],
+.prose-pm .ProseMirror p[data-style^="Verzeichnis"] {
+  margin: 0.1rem 0;
+  line-height: 1.4;
 }
 
 .prose-pm .ProseMirror .pm-comment-mark {
@@ -347,13 +434,18 @@ textarea::placeholder {
  */
 .prose-pm .ProseMirror .pm-opaque-block-preview,
 .prose-pm .ProseMirror .pm-opaque-inline-preview {
-  border: 1px dashed var(--divider);
+  /*
+   * Inherit the surrounding typography so an SDT-wrapped TOC entry or
+   * title-page name reads like normal body text. Italic was previously
+   * forced here as a "this content is not yet typed" hint, but it
+   * misrepresents real `.docx` content (e.g. the German thesis title
+   * page), so we drop it now and rely on `data-tag` for tooling/debug.
+   */
   background: transparent;
-  color: var(--primary);
+  color: inherit;
   font-family: inherit;
   font-size: inherit;
-  font-style: italic;
-  padding: 0.25rem 0.5rem;
+  padding: 0;
   white-space: pre-wrap;
 }
 

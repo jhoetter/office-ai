@@ -23,3 +23,5 @@ export { setParagraphListHandler } from "./set-paragraph-list.js";
 export { removeParagraphListHandler } from "./remove-paragraph-list.js";
 export { insertHyperlinkHandler } from "./insert-hyperlink.js";
 export { removeHyperlinkHandler } from "./remove-hyperlink.js";
+export { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
+export { setParagraphIndentHandler } from "./set-paragraph-indent.js";

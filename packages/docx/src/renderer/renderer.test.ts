@@ -1,7 +1,7 @@
 import { EditorState } from "prosemirror-state";
 import { describe, expect, it } from "vitest";
 import { deterministicIdMinter } from "@officeai/core";
-import { docxSchema } from "./schema.js";
+import { docxSchema, paragraphHtmlTag } from "./schema.js";
 import { docToPM } from "./doc-to-pm.js";
 import { transactionToCommands } from "./transaction-to-commands.js";
 import { DocxAgent } from "../agent/agent.js";
@@ -106,6 +106,52 @@ describe("renderer", () => {
     await agent.applyCommands(result.commands);
     const pm = docToPM(agent.getSnapshot());
     expect(pm.child(0).textContent).toBe("XHello");
+  });
+
+  describe("paragraph toDOM emits heading tags & alignment", () => {
+    it("paragraphHtmlTag maps English & German heading style ids", () => {
+      expect(paragraphHtmlTag("Heading1")).toBe("h1");
+      expect(paragraphHtmlTag("Heading2")).toBe("h2");
+      expect(paragraphHtmlTag("Heading3")).toBe("h3");
+      expect(paragraphHtmlTag("Heading4")).toBe("h4");
+      expect(paragraphHtmlTag("Heading5")).toBe("h5");
+      expect(paragraphHtmlTag("Heading6")).toBe("h6");
+      expect(paragraphHtmlTag("Heading7")).toBe("h6");
+      expect(paragraphHtmlTag("Title")).toBe("h1");
+      expect(paragraphHtmlTag("Subtitle")).toBe("h2");
+      // German Word strips the leading 'Ü' from `Überschrift` because
+      // OOXML style ids must be ASCII.
+      expect(paragraphHtmlTag("berschrift1")).toBe("h1");
+      expect(paragraphHtmlTag("berschrift3")).toBe("h3");
+      expect(paragraphHtmlTag("Untertitel")).toBe("h2");
+      expect(paragraphHtmlTag("Titel")).toBe("h1");
+      // Unknown / body styles fall through to <p>.
+      expect(paragraphHtmlTag("")).toBe("p");
+      expect(paragraphHtmlTag("Normal")).toBe("p");
+      expect(paragraphHtmlTag("BodyText")).toBe("p");
+    });
+
+    it("paragraph.toDOM emits the matching heading tag for known styleIds", () => {
+      const node = docxSchema.nodes.paragraph.create({ styleId: "Heading2" });
+      const dom = node.type.spec.toDOM!(node) as [string, Record<string, string>, number];
+      expect(dom[0]).toBe("h2");
+      expect(dom[1]["data-style"]).toBe("Heading2");
+    });
+
+    it("paragraph.toDOM emits style=text-align when alignment is set", () => {
+      const node = docxSchema.nodes.paragraph.create({ alignment: "center" });
+      const dom = node.type.spec.toDOM!(node) as [string, Record<string, string>, number];
+      expect(dom[0]).toBe("p");
+      expect(dom[1].style).toBe("text-align:center");
+      expect(dom[1]["data-align"]).toBe("center");
+    });
+
+    it("paragraph.toDOM does not emit a style attr when alignment is null", () => {
+      const node = docxSchema.nodes.paragraph.create({});
+      const dom = node.type.spec.toDOM!(node) as [string, Record<string, string>, number];
+      expect("style" in dom[1]).toBe(false);
+      expect("data-align" in dom[1]).toBe(false);
+    });
   });
 
   it("agent.subscribe fires on every applied command (single-funnel hook)", async () => {
