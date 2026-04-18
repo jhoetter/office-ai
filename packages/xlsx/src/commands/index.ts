@@ -17,5 +17,6 @@ export { setColumnWidthHandler } from "./set-column-width.js";
 export { setRowHeightHandler } from "./set-row-height.js";
 export { deleteSheetHandler } from "./delete-sheet.js";
 export { pasteRangeHandler } from "./paste-range.js";
+export { textToColumnsHandler } from "./text-to-columns.js";
 export { evolveSnapshot, mergeDirty, findSheet, replaceSheet, buildDiff } from "./helpers.js";
 export { resolveSheet, parseCellRef, parseRangeRef, validateSheetName } from "./validation.js";

@@ -32,6 +32,8 @@ import {
 } from "./selection";
 import { FormulaSuggest, applySuggestion, getSuggestions } from "./FormulaSuggest";
 import { Toolbar } from "./Toolbar";
+import { TextToColumnsPopover } from "./TextToColumnsPopover";
+import { sniffDelimiter } from "@officeai/xlsx";
 import { formatCellValue as renderCellValue } from "./styles";
 import {
   marshalClipboard,
@@ -989,7 +991,8 @@ export function XlsxEditor(): ReactNode {
         | "xlsx:delete-row"
         | "xlsx:delete-column"
         | "xlsx:set-column-width"
-        | "xlsx:set-row-height",
+        | "xlsx:set-row-height"
+        | "xlsx:text-to-columns",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -1037,6 +1040,38 @@ export function XlsxEditor(): ReactNode {
       range: formatSelection(selection),
     });
   }, [activeSheet, selection, dispatchOrToast]);
+
+  // P13f — Text to Columns popover state.
+  const [ttocOpen, setTtocOpen] = useState(false);
+  const ttocDefaultDelim = useMemo(() => {
+    if (!activeSheet || !selection) return ",";
+    const r = selectionToRange(selection);
+    const sample = activeSheet.cells.get(cellKey(r.start.row, r.start.col))?.value;
+    if (typeof sample === "string" && sample.length > 0) return sniffDelimiter(sample);
+    return ",";
+  }, [activeSheet, selection]);
+  const canTextToColumns = !!(
+    activeSheet &&
+    selection &&
+    selection.anchor.col === selection.focus.col
+  );
+  const onTextToColumns = useCallback(() => {
+    if (!canTextToColumns) return;
+    setTtocOpen(true);
+  }, [canTextToColumns]);
+  const onTextToColumnsConfirm = useCallback(
+    (opts: { delimiter: string; treatConsecutiveAsOne: boolean }) => {
+      setTtocOpen(false);
+      if (!activeSheet || !selection) return;
+      dispatchOrToast("xlsx:text-to-columns", {
+        sheet: activeSheet.name,
+        range: formatSelection(selection),
+        delimiter: opts.delimiter,
+        treatConsecutiveAsOne: opts.treatConsecutiveAsOne,
+      });
+    },
+    [activeSheet, selection, dispatchOrToast]
+  );
 
   const onUnmerge = useCallback(() => {
     if (!activeSheet || !matchedMerge) return;
@@ -1241,6 +1276,14 @@ export function XlsxEditor(): ReactNode {
       { kind: "divider", id: "div-delete" },
       { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
       { kind: "action", id: "clear-formats", label: "Clear formats", onSelect: onClearFormats },
+      { kind: "divider", id: "div-data" },
+      {
+        kind: "action",
+        id: "text-to-columns",
+        label: "Text to Columns…",
+        disabled: !canTextToColumns,
+        onSelect: onTextToColumns,
+      },
     ];
     if (target.kind === "row-header") {
       return [
@@ -1313,6 +1356,14 @@ export function XlsxEditor(): ReactNode {
         { kind: "action", id: "delete-col", label: "Delete column", onSelect: onDeleteColumn },
         { kind: "divider", id: "div-col-clear" },
         { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
+        { kind: "divider", id: "div-col-data" },
+        {
+          kind: "action",
+          id: "text-to-columns",
+          label: "Text to Columns…",
+          disabled: !canTextToColumns,
+          onSelect: onTextToColumns,
+        },
       ];
     }
     return cellEntries;
@@ -1331,6 +1382,8 @@ export function XlsxEditor(): ReactNode {
     onDeleteColumn,
     onClearContents,
     onClearFormats,
+    canTextToColumns,
+    onTextToColumns,
   ]);
 
   const acceptSuggestion = useCallback(
@@ -1451,10 +1504,17 @@ export function XlsxEditor(): ReactNode {
           canRedo={false}
           onUndo={noop}
           onRedo={noop}
-          canTextToColumns={false}
-          onTextToColumns={noop}
+          canTextToColumns={canTextToColumns}
+          onTextToColumns={onTextToColumns}
         />
       ) : null}
+
+      <TextToColumnsPopover
+        open={ttocOpen}
+        defaultDelimiter={ttocDefaultDelim}
+        onCancel={() => setTtocOpen(false)}
+        onConfirm={onTextToColumnsConfirm}
+      />
 
       <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
         <span

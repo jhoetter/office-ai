@@ -1,10 +1,11 @@
 "use client";
 
 import {
-  delimitedToSnapshot,
+  parseExternalClipboard,
+  parseFingerprintHtml,
+  parseHtmlTable as parseHtmlTablePure,
   sniffDelimiter,
   snapshotToTsv,
-  tsvToSnapshot,
   type XlsxClipboardSnapshot,
 } from "@officeai/xlsx";
 
@@ -116,35 +117,31 @@ export async function writeToSystemClipboard(payload: MarshalResult): Promise<vo
  *
  * Returns `null` if the clipboard is empty / unreadable. Throws only
  * for truly unrecoverable errors (no `navigator.clipboard`, etc.).
+ *
+ * All actual parsing is delegated to `parseExternalClipboard` in
+ * `@officeai/xlsx` so the same logic exercises the package test
+ * suite (fingerprint round-trip, Excel HTML, Sheets HTML, CSV, TSV).
  */
 export async function readFromSystemClipboard(): Promise<XlsxClipboardSnapshot | null> {
   if (typeof navigator === "undefined") return null;
   const clip = navigator.clipboard;
   if (!clip) return null;
 
-  // Prefer the rich `read()` API for HTML detection. Fallback to plain
-  // text on browsers that gate it behind a permission we don't have.
   try {
     if (typeof clip.read === "function") {
       const items = await clip.read();
+      let html: string | null = null;
+      let text: string | null = null;
       for (const it of items) {
-        if (it.types.includes("text/html")) {
-          const blob = await it.getType("text/html");
-          const html = await blob.text();
-          const fromFingerprint = parseFingerprint(html);
-          if (fromFingerprint) return fromFingerprint;
-          const fromTable = parseHtmlTable(html);
-          if (fromTable) return fromTable;
+        if (!html && it.types.includes("text/html")) {
+          html = await (await it.getType("text/html")).text();
+        }
+        if (!text && it.types.includes("text/plain")) {
+          text = await (await it.getType("text/plain")).text();
         }
       }
-      // Then fall through to text/plain.
-      for (const it of items) {
-        if (it.types.includes("text/plain")) {
-          const blob = await it.getType("text/plain");
-          const text = await blob.text();
-          return parsePlain(text);
-        }
-      }
+      const out = parseExternalClipboard({ html, text });
+      if (out) return out;
     }
   } catch {
     // Fall through to readText.
@@ -153,7 +150,7 @@ export async function readFromSystemClipboard(): Promise<XlsxClipboardSnapshot |
   try {
     const text = await clip.readText();
     if (!text) return null;
-    return parsePlain(text);
+    return parseExternalClipboard({ text });
   } catch {
     return null;
   }
@@ -169,113 +166,13 @@ export function parseClipboardPayload(opts: {
   readonly html?: string | null;
   readonly text?: string | null;
 }): XlsxClipboardSnapshot | null {
-  if (opts.html) {
-    const fromFingerprint = parseFingerprint(opts.html);
-    if (fromFingerprint) return fromFingerprint;
-    const fromTable = parseHtmlTable(opts.html);
-    if (fromTable) return fromTable;
-  }
-  if (opts.text) return parsePlain(opts.text);
-  return null;
-}
-
-function parsePlain(text: string): XlsxClipboardSnapshot {
-  const delim = sniffDelimiter(text);
-  if (delim === "\t") return tsvToSnapshot(text);
-  return delimitedToSnapshot(text, delim);
+  return parseExternalClipboard(opts);
 }
 
 /**
- * Look for a `data-xlsx-fingerprint` attribute on the first `<table>`
- * element. The attribute carries the URI-encoded JSON of the
- * snapshot so we can recover values + formulas + styleIds + merges
- * without lossy HTML→snapshot inference.
+ * Re-exports of the headless parsers so existing callers keep
+ * working through this module's public surface.
  */
-export function parseFingerprint(html: string): XlsxClipboardSnapshot | null {
-  const re = new RegExp(`<table[^>]*\\s${FINGERPRINT_ATTR}="([^"]+)"`, "i");
-  const m = re.exec(html);
-  if (!m) return null;
-  try {
-    const decoded = decodeURIComponent(m[1]!);
-    const snap = JSON.parse(decoded) as unknown;
-    if (
-      snap &&
-      typeof snap === "object" &&
-      "cells" in snap &&
-      Array.isArray((snap as { cells: unknown[] }).cells)
-    ) {
-      return snap as XlsxClipboardSnapshot;
-    }
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
-/**
- * Generic `<table>` parser for external HTML (Excel-on-web, Google
- * Sheets, Word). Walks `<tr>`/`<td>`/`<th>` and emits a snapshot
- * with values only — no formulas, styles, or merges (we don't try
- * to reconstruct those from external HTML).
- */
-export function parseHtmlTable(html: string): XlsxClipboardSnapshot | null {
-  if (!html) return null;
-  // Prefer DOMParser when available (browser + jsdom in tests).
-  if (typeof DOMParser !== "undefined") {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const table = doc.querySelector("table");
-    if (!table) return null;
-    const rows = Array.from(table.querySelectorAll("tr"));
-    if (rows.length === 0) return null;
-    const matrix: Array<Array<string>> = [];
-    let width = 0;
-    for (const row of rows) {
-      const cells = Array.from(row.querySelectorAll("td,th"));
-      const r = cells.map((c) => c.textContent ?? "");
-      matrix.push(r);
-      if (r.length > width) width = r.length;
-    }
-    const cells: Array<Array<{ value: number | string | boolean | null } | null>> = [];
-    for (const row of matrix) {
-      const out: Array<{ value: number | string | boolean | null } | null> = [];
-      for (let c = 0; c < width; c++) {
-        const raw = (row[c] ?? "").trim();
-        if (raw === "") {
-          out.push(null);
-          continue;
-        }
-        if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
-          const n = Number(raw);
-          if (Number.isFinite(n)) {
-            out.push({ value: n });
-            continue;
-          }
-        }
-        const lower = raw.toLowerCase();
-        if (lower === "true") {
-          out.push({ value: true });
-          continue;
-        }
-        if (lower === "false") {
-          out.push({ value: false });
-          continue;
-        }
-        out.push({ value: raw });
-      }
-      cells.push(out);
-    }
-    return {
-      origin: { sheet: "", range: "" },
-      width,
-      height: cells.length,
-      cells,
-      merges: [],
-    };
-  }
-  return null;
-}
-
-/**
- * Re-export for tests that don't want to reach into `@officeai/xlsx`.
- */
+export const parseFingerprint = parseFingerprintHtml;
+export const parseHtmlTable = parseHtmlTablePure;
 export { sniffDelimiter };

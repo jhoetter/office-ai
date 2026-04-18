@@ -293,11 +293,20 @@ export function delimitedToSnapshot(text: string, delimiter: string): XlsxClipbo
     field += ch;
     i++;
   }
-  if (field !== "" || rows[rows.length - 1]!.length > 0) {
+  // Push the trailing field ONLY when the file did not end with a
+  // row terminator. Otherwise the `\n` already wrote the final
+  // field via line 284 and adding `field` here would inject a
+  // phantom empty cell at the end of the last row.
+  if (field !== "") {
     rows[rows.length - 1]!.push(field);
   }
-  // Drop trailing empty row produced by a final newline.
+  // Drop trailing empty row produced by a final newline (kept for
+  // safety — `if (i < text.length)` above already prevents most of
+  // these, but a CRLF + EOF can leave one behind).
   while (rows.length > 1 && rows[rows.length - 1]!.length === 1 && rows[rows.length - 1]![0] === "") {
+    rows.pop();
+  }
+  while (rows.length > 1 && rows[rows.length - 1]!.length === 0) {
     rows.pop();
   }
 

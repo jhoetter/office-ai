@@ -122,6 +122,12 @@ export {
 } from "./clipboard/snapshot.js";
 
 export {
+  parseExternalClipboard,
+  parseHtmlTable,
+  parseFingerprintHtml,
+} from "./clipboard/external.js";
+
+export {
   XlsxAgent,
   diffXlsxSnapshots,
   type XlsxAgentOptions,

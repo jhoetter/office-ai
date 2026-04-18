@@ -16,6 +16,7 @@ import { setCellValueHandler } from "./set-cell-value.js";
 import { setColumnWidthHandler } from "./set-column-width.js";
 import { setRangeValuesHandler } from "./set-range-values.js";
 import { setRowHeightHandler } from "./set-row-height.js";
+import { textToColumnsHandler } from "./text-to-columns.js";
 import { unmergeCellsHandler } from "./unmerge-cells.js";
 
 /**
@@ -55,6 +56,7 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   setRowHeightHandler as CommandHandler<unknown, XlsxSnapshot>,
   deleteSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   pasteRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
+  textToColumnsHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(
