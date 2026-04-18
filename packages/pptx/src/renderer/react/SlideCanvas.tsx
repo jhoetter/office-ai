@@ -4,6 +4,7 @@ import type { Shape, Slide, SlideSize, TextShape } from "../../model/types.js";
 import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
+import { computeSnap, type SnapGuide } from "../layout/snap.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
@@ -54,6 +55,8 @@ interface DragPreview {
   readonly dy: number;
   readonly dw: number;
   readonly dh: number;
+  /** Smart-guide lines to draw alongside the dragged shape(s). */
+  readonly guides: ReadonlyArray<SnapGuide>;
 }
 
 interface MarqueeState {
@@ -210,7 +213,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         emuPerPx,
       };
       setDrag(next);
-      setPreview(computePreview(next, 0, 0));
+      setPreview(computePreview(next, 0, 0, null));
       // Capture on the container — handles get unmounted/replaced when
       // the preview state updates, which would otherwise lose pointer
       // capture mid-drag and freeze the gesture.
@@ -225,7 +228,18 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (drag) {
         const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
         const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
-        setPreview(computePreview(drag, dxEmu, dyEmu));
+        // Snap threshold ≈ 6 CSS pixels at the current zoom — matches
+        // Figma's "feel" of a magnetic gutter while staying off the way
+        // when the user is intentionally placing a shape.
+        const snapCtx: SnapContext | null =
+          drag.mode === "move" && slide
+            ? {
+                slideSize,
+                others: collectOtherBoxes(slide.shapes, new Set(drag.targets.map((t) => t.id))),
+                thresholdEmu: Math.round(6 * drag.emuPerPx),
+              }
+            : null;
+        setPreview(computePreview(drag, dxEmu, dyEmu, snapCtx));
         return;
       }
       if (marquee) {
@@ -233,7 +247,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         return;
       }
     },
-    [drag, marquee]
+    [drag, marquee, slide, slideSize]
   );
 
   const onPointerUp = React.useCallback(
@@ -272,7 +286,15 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (!drag) return;
       const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
       const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
-      const final = computePreview(drag, dxEmu, dyEmu);
+      const snapCtx: SnapContext | null =
+        drag.mode === "move" && slide
+          ? {
+              slideSize,
+              others: collectOtherBoxes(slide.shapes, new Set(drag.targets.map((t) => t.id))),
+              thresholdEmu: Math.round(6 * drag.emuPerPx),
+            }
+          : null;
+      const final = computePreview(drag, dxEmu, dyEmu, snapCtx);
       const noChange = final.dx === 0 && final.dy === 0 && final.dw === 0 && final.dh === 0;
       const targets = drag.targets;
       const mode = drag.mode;
@@ -325,7 +347,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         props.onError?.(err as Error);
       }
     },
-    [drag, marquee, props, selectedIds, setSelectedIds, slide]
+    [drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
   );
 
   const startEditing = React.useCallback(
@@ -403,6 +425,9 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       {drag && preview ? (
         <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} />
       ) : null}
+      {drag && preview && preview.guides.length > 0 ? (
+        <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
+      ) : null}
       <SelectionOverlaySvg
         slide={slide}
         slideSize={slideSize}
@@ -421,6 +446,27 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
 function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
   const bg = resolveSlideBackgroundColor(slide.cSldHead, theme);
   return bg ? `#${bg}` : "white";
+}
+
+/**
+ * Collect every top-level shape's bounding box, skipping the ones
+ * currently being dragged (we don't want a shape to snap to itself).
+ * Group children are intentionally excluded — the smart-snap heuristic
+ * only considers slide-level peers, which keeps perceived alignment
+ * obvious for the user.
+ */
+function collectOtherBoxes(
+  shapes: ReadonlyArray<Shape>,
+  excludeIds: ReadonlySet<string>
+): { id: string; box: BoundingBox }[] {
+  const out: { id: string; box: BoundingBox }[] = [];
+  for (const sh of shapes) {
+    if (excludeIds.has(sh.id)) continue;
+    const b = shapeBoundingBox(sh);
+    if (!b) continue;
+    out.push({ id: sh.id, box: b });
+  }
+  return out;
 }
 
 function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
@@ -452,26 +498,60 @@ function unionIds(a: ReadonlyArray<string>, b: ReadonlyArray<string>): string[] 
   return out;
 }
 
+interface SnapContext {
+  readonly slideSize: SlideSize;
+  readonly others: ReadonlyArray<{ id: string; box: BoundingBox }>;
+  readonly thresholdEmu: number;
+}
+
 /**
  * Compute per-shape preview boxes for the current drag. Move drags
- * translate every target by the same delta. Resize drags only apply to
- * the primary (single) target — group resize is intentionally
- * out-of-scope for this iteration. A small minimum size (250k EMU
- * ≈ 26 px @ 96 DPI) keeps shapes grabbable after the gesture ends.
+ * translate every target by the same delta and consult the smart-snap
+ * helper to nudge the delta toward neighbouring shape edges/centres.
+ * Resize drags only apply to the primary (single) target — group
+ * resize is intentionally out-of-scope for this iteration. A small
+ * minimum size (250k EMU ≈ 26 px @ 96 DPI) keeps shapes grabbable
+ * after the gesture ends.
  */
-function computePreview(drag: DragState, dxEmu: number, dyEmu: number): DragPreview {
+function computePreview(
+  drag: DragState,
+  dxEmu: number,
+  dyEmu: number,
+  snap: SnapContext | null
+): DragPreview {
   const MIN = 250_000;
   const boxes = new Map<string, BoundingBox>();
   if (drag.mode === "move") {
+    // For multi-shape drags we snap the UNION box and apply the same
+    // delta to every shape. This matches Figma's "the group as a whole
+    // aligns with this neighbour" behaviour.
+    const unionOrigin = unionOf(drag.targets.map((t) => t.origin));
+    const proposedUnion: BoundingBox = {
+      x: unionOrigin.x + dxEmu,
+      y: unionOrigin.y + dyEmu,
+      cx: unionOrigin.cx,
+      cy: unionOrigin.cy,
+    };
+    let snapDx = 0;
+    let snapDy = 0;
+    let guides: ReadonlyArray<SnapGuide> = [];
+    if (snap) {
+      const r = computeSnap(proposedUnion, snap.others, snap.slideSize, snap.thresholdEmu);
+      snapDx = r.snapDx;
+      snapDy = r.snapDy;
+      guides = r.guides;
+    }
+    const totalDx = dxEmu + snapDx;
+    const totalDy = dyEmu + snapDy;
     for (const t of drag.targets) {
       boxes.set(t.id, {
-        x: t.origin.x + dxEmu,
-        y: t.origin.y + dyEmu,
+        x: t.origin.x + totalDx,
+        y: t.origin.y + totalDy,
         cx: t.origin.cx,
         cy: t.origin.cy,
       });
     }
-    return { boxes, dx: dxEmu, dy: dyEmu, dw: 0, dh: 0 };
+    return { boxes, dx: totalDx, dy: totalDy, dw: 0, dh: 0, guides };
   }
   // Resize: only the first target participates.
   const t = drag.targets[0];
@@ -500,7 +580,22 @@ function computePreview(drag: DragState, dxEmu: number, dyEmu: number): DragPrev
     dy: ny - o.y,
     dw: nw - o.cx,
     dh: nh - o.cy,
+    guides: [],
   };
+}
+
+function unionOf(boxes: ReadonlyArray<BoundingBox>): BoundingBox {
+  let x = boxes[0].x;
+  let y = boxes[0].y;
+  let r = boxes[0].x + boxes[0].cx;
+  let b = boxes[0].y + boxes[0].cy;
+  for (let i = 1; i < boxes.length; i++) {
+    if (boxes[i].x < x) x = boxes[i].x;
+    if (boxes[i].y < y) y = boxes[i].y;
+    if (boxes[i].x + boxes[i].cx > r) r = boxes[i].x + boxes[i].cx;
+    if (boxes[i].y + boxes[i].cy > b) b = boxes[i].y + boxes[i].cy;
+  }
+  return { x, y, cx: r - x, cy: b - y };
 }
 
 function cursorForDrag(mode: DragMode): string {
@@ -720,6 +815,66 @@ function SelectionOverlaySvg({
           opacity={isResizing ? 0.6 : 1}
         />
       ))}
+    </svg>
+  );
+}
+
+interface SmartGuidesOverlayProps {
+  readonly slideSize: SlideSize;
+  readonly guides: ReadonlyArray<SnapGuide>;
+}
+
+/**
+ * Renders Figma-style alignment guides while a shape is being dragged.
+ * Vertical guides span between the topmost and bottommost involved
+ * shape edges (so the user sees exactly which two shapes are being
+ * tied together); slide-derived guides span the full slide. We use a
+ * non-scaling stroke so the line stays 1px regardless of zoom.
+ */
+function SmartGuidesOverlay({ slideSize, guides }: SmartGuidesOverlayProps): React.ReactElement {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      {guides.map((g, i) => {
+        const colour = g.kind === "slide" ? "#0ea5e9" : g.kind === "center" ? "#f43f5e" : "#22c55e";
+        if (g.axis === "vertical") {
+          const y1 = isFinite(g.spanStart) ? px(g.spanStart) : 0;
+          const y2 = isFinite(g.spanEnd) ? px(g.spanEnd) : px(slideSize.cyEmu);
+          return (
+            <line
+              key={`v-${i}`}
+              x1={px(g.value)}
+              y1={y1}
+              x2={px(g.value)}
+              y2={y2}
+              stroke={colour}
+              strokeWidth={1}
+              strokeDasharray="3 2"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        }
+        const x1 = isFinite(g.spanStart) ? px(g.spanStart) : 0;
+        const x2 = isFinite(g.spanEnd) ? px(g.spanEnd) : px(slideSize.cxEmu);
+        return (
+          <line
+            key={`h-${i}`}
+            x1={x1}
+            y1={px(g.value)}
+            x2={x2}
+            y2={px(g.value)}
+            stroke={colour}
+            strokeWidth={1}
+            strokeDasharray="3 2"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
     </svg>
   );
 }
