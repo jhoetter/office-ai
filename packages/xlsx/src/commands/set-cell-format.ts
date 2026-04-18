@@ -244,7 +244,12 @@ function mergeFont(current: StyleFont, patch: CellFormatPatch["font"]): StyleFon
     charset?: number;
     opaqueExtras: ReadonlyArray<string>;
   } = { ...current, opaqueExtras: current.opaqueExtras };
-  if (patch.family !== undefined) next.name = patch.family;
+  // Accept both the modern `fontFamily` and the legacy `family`
+  // alias. Both map to the OOXML <font><name/> element. (The numeric
+  // `family` code on StyleFont is a separate OOXML field that this
+  // patch never sets.)
+  const requestedFontName = patch.fontFamily ?? patch.family;
+  if (requestedFontName !== undefined) next.name = requestedFontName;
   if (patch.size !== undefined) next.size = patch.size;
   if (patch.bold !== undefined) next.bold = patch.bold;
   if (patch.italic !== undefined) next.italic = patch.italic;

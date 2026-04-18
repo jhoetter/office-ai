@@ -41,6 +41,10 @@ export interface PptxDirty {
   readonly media: ReadonlySet<string>;
   /** F3: chart parts to re-emit from the typed model rather than from container bytes. */
   readonly charts: ReadonlySet<string>;
+  /** Per-slide-comments-part dirty set — keyed by `ppt/comments/commentN.xml`. */
+  readonly comments: ReadonlySet<string>;
+  /** True when `ppt/commentAuthors.xml` needs to be rebuilt. */
+  readonly commentAuthors: boolean;
   readonly relationships: ReadonlySet<string>;
   readonly contentTypes: boolean;
 }
@@ -54,6 +58,8 @@ export const emptyDirty = (): PptxDirty => ({
   theme: new Set<string>(),
   media: new Set<string>(),
   charts: new Set<string>(),
+  comments: new Set<string>(),
+  commentAuthors: false,
   relationships: new Set<string>(),
   contentTypes: false,
 });
@@ -93,7 +99,7 @@ export interface PptxPresentation {
   readonly slideSize: SlideSize;
   readonly notesSize?: SlideSize;
   readonly masters: ReadonlyMap<string, OpaquePart>;
-  readonly layouts: ReadonlyMap<string, OpaquePart>;
+  readonly layouts: ReadonlyMap<string, SlideLayout>;
   readonly theme: ReadonlyMap<string, OpaquePart>;
   /**
    * Resolved color scheme from the first theme part (`a:clrScheme`). Used
@@ -102,7 +108,19 @@ export interface PptxPresentation {
    * or the scheme can't be parsed.
    */
   readonly themeDefault: ThemeColorScheme;
-  readonly notesSlides: ReadonlyMap<string, OpaquePart>;
+  readonly notesSlides: ReadonlyMap<string, NotesSlide>;
+  /**
+   * Per-slide-comments map keyed by `ppt/comments/commentN.xml`. Each
+   * entry holds a typed list of comments belonging to that slide.
+   * Slides reference their comments part via `Slide.commentsPartPath`.
+   */
+  readonly commentsByPart: ReadonlyMap<string, PptxCommentsPart>;
+  /**
+   * Single workbook-wide author registry from `ppt/commentAuthors.xml`.
+   * Comments reference authors by `authorId`; `null` means the deck
+   * has no comments yet (no author part on disk).
+   */
+  readonly commentAuthors: PptxCommentAuthorsPart | null;
   readonly media: ReadonlyMap<string, MediaPart>;
   /**
    * F3: typed chart parts keyed by part path. Each `ChartShape` resolves
@@ -133,6 +151,140 @@ export interface PptxIdGen {
 
 export interface OpaquePart {
   readonly partPath: string;
+  readonly raw: OpaqueXml;
+}
+
+// ─── Slide layouts ────────────────────────────────────────────────────────
+
+/**
+ * The 11 PowerPoint-standard layouts plus an `unknown` escape hatch for
+ * layouts the classifier can't pigeonhole. Naming mirrors the names used
+ * in the desktop app's layout picker.
+ */
+export type LayoutKind =
+  | "title"
+  | "titleAndContent"
+  | "sectionHeader"
+  | "twoContent"
+  | "comparison"
+  | "titleOnly"
+  | "blank"
+  | "contentWithCaption"
+  | "pictureWithCaption"
+  | "titleSlide"
+  | "bigNumber"
+  | "unknown";
+
+/**
+ * Subset of `<p:ph>` attributes we care about for layout cloning. Every
+ * placeholder also remembers the (idx, type) pair so when the user
+ * switches layouts we can preserve any user content that maps cleanly
+ * to a placeholder of the same idx in the new layout.
+ */
+export interface PlaceholderSpec {
+  /** `<p:ph type="...">`. Defaults to `"body"` when absent (PowerPoint's default). */
+  readonly type: string;
+  /** `<p:ph idx="...">`. Defaults to 0. */
+  readonly idx: number;
+  /** Optional `<p:ph sz="...">` (e.g. `"quarter"`, `"half"`, `"full"`). */
+  readonly sz?: string;
+  /** Optional position from `<a:xfrm>/<a:off>` if present in the layout. */
+  readonly position?: Position;
+  /** Optional size from `<a:xfrm>/<a:ext>` if present in the layout. */
+  readonly size?: Size;
+}
+
+// ─── Speaker notes ────────────────────────────────────────────────────────
+
+/**
+ * Typed speaker-notes slide. Promoted from `OpaquePart` so we can edit
+ * the body placeholder text directly without having to rewrite raw XML.
+ *
+ * Every notes part has at most one "body" placeholder (PowerPoint's
+ * convention for the prompt that holds the actual notes); the parser
+ * extracts that into `body`. Anything else inside the notes part — the
+ * slide-image placeholder, header/footer placeholders, formatting,
+ * extLst — stays in `raw` for byte-faithful round-trip when the body
+ * isn't dirtied.
+ */
+export interface NotesSlide {
+  readonly partPath: string;
+  /** Typed text-body of the notes "body" placeholder, when present. */
+  readonly body: TextBody;
+  /** Verbatim `<p:notes>` blob preserved for round-trip. */
+  readonly raw: OpaqueXml;
+}
+
+// ─── Comments ─────────────────────────────────────────────────────────────
+
+/**
+ * One author record from `ppt/commentAuthors.xml`. PowerPoint indexes
+ * authors by a numeric `id` and references it from each comment's
+ * `authorId`. We keep the XML's optional `initials`, `lastIdx`, and
+ * `clrIdx` for round-trip even though only `name` matters to the UI.
+ */
+export interface PptxCommentAuthor {
+  readonly id: number;
+  readonly name: string;
+  readonly initials?: string;
+  /** Highest `idx` PowerPoint has minted for this author so far. */
+  readonly lastIdx?: number;
+  readonly clrIdx?: number;
+}
+
+export interface PptxCommentAuthorsPart {
+  readonly partPath: string;
+  readonly authors: ReadonlyArray<PptxCommentAuthor>;
+  /** Verbatim `<p:cmAuthorLst>` blob preserved for round-trip. */
+  readonly raw?: OpaqueXml;
+}
+
+/**
+ * One PowerPoint comment. Position is in EMU on the slide (PowerPoint
+ * uses a fixed 914400 EMU per inch). When `parentId` is set, the
+ * comment is a reply in the thread rooted at that id. `resolved` is a
+ * synthetic flag we serialise into a `<p:extLst>` extension so it
+ * survives a round-trip without losing the rest of the comment's data.
+ */
+export interface PptxComment {
+  /** Stable, deck-unique id minted by the parser/agent. */
+  readonly id: string;
+  /** Reference into `commentAuthors.authors`. */
+  readonly authorId: number;
+  /** Per-author monotonic index — required by the OOXML schema. */
+  readonly idx: number;
+  /** ISO-8601 creation timestamp (`<p:cm dt="…">`). */
+  readonly createdAt?: string;
+  /** Pin position on the slide, in EMU. */
+  readonly xEmu: number;
+  readonly yEmu: number;
+  /** Plain-text body. PowerPoint comments don't carry rich formatting. */
+  readonly text: string;
+  /** Reply-to id (top-level comments leave this undefined). */
+  readonly parentId?: string;
+  /** Synthetic resolved flag — round-tripped via an extLst extension. */
+  readonly resolved?: boolean;
+}
+
+export interface PptxCommentsPart {
+  readonly partPath: string;
+  readonly comments: ReadonlyArray<PptxComment>;
+}
+
+export interface SlideLayout {
+  readonly partPath: string;
+  /** Layout classification — drives the picker grid + add-slide cloning. */
+  readonly kind: LayoutKind;
+  /** `<p:cSld name="...">` if present, falls back to a friendly default. */
+  readonly name: string;
+  /** Every placeholder declared on the layout, in document order. */
+  readonly placeholders: ReadonlyArray<PlaceholderSpec>;
+  /**
+   * Verbatim `<p:sldLayout>` blob — used by the serializer to write the
+   * part back unchanged when the layout itself wasn't edited. For
+   * built-in layouts we synthesise on demand this comes from the
+   * builtin-layouts factory.
+   */
   readonly raw: OpaqueXml;
 }
 
@@ -186,6 +338,12 @@ export interface Slide {
   readonly relId: string;
   readonly layoutPartPath?: string;
   readonly notesSlidePartPath?: string;
+  /**
+   * Per-slide comments part path (`ppt/comments/commentN.xml`). Resolved
+   * via the slide's rels and pointed at `commentsByPart`. Absent slides
+   * have no comments.
+   */
+  readonly commentsPartPath?: string;
   readonly shapes: ReadonlyArray<Shape>;
   /**
    * F4: typed slide transition (`<p:transition>`). Optional — slides
@@ -255,9 +413,67 @@ export interface EntranceAnimation {
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-export type Shape = TextShape | Picture | TableShape | ChartShape | GroupShape | OpaqueShape;
+export type Shape =
+  | TextShape
+  | Picture
+  | TableShape
+  | ChartShape
+  | GroupShape
+  | ConnectorShape
+  | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
+
+// ─── Connectors ───────────────────────────────────────────────────────────
+
+/**
+ * One end of a connector. Anchored endpoints reference a target shape's
+ * `cNvPrId` (the OOXML numeric id used by `<a:stCxn>` / `<a:endCxn>`)
+ * plus a side; free endpoints carry an absolute slide-coordinate point.
+ *
+ * Side strings reuse the existing `AnchorSide` from the renderer so the
+ * canvas's snap-to-anchor result can be persisted directly.
+ */
+export type ConnectorSide = "n" | "s" | "e" | "w" | "center";
+
+export type ConnectorEndpoint =
+  | { readonly kind: "free"; readonly xEmu: number; readonly yEmu: number }
+  | {
+      readonly kind: "anchored";
+      readonly targetCNvPrId: number;
+      readonly side: ConnectorSide;
+    };
+
+export type ConnectorType = "straight" | "elbow" | "curved" | "unsupported";
+
+export type ConnectorEndShape = "none" | "arrow" | "triangle" | "oval";
+
+export interface ConnectorStroke {
+  /** 6-character RRGGBB hex (no `#`). */
+  readonly color: string;
+  readonly widthEmu: number;
+}
+
+/**
+ * A connector (`<p:cxnSp>`) is a line that "remembers" what it was
+ * anchored to. When either endpoint moves, anchored connectors re-route
+ * automatically. The `position`/`size` on `ShapeBase` reflect the
+ * derived bounding box of the resolved endpoints — they're rebuilt by
+ * the model on every endpoint update, not authored independently.
+ */
+export interface ConnectorShape extends ShapeBase {
+  readonly kind: "connector";
+  readonly connectorType: ConnectorType;
+  readonly start: ConnectorEndpoint;
+  readonly end: ConnectorEndpoint;
+  readonly stroke?: ConnectorStroke;
+  readonly headEnd?: ConnectorEndShape;
+  readonly tailEnd?: ConnectorEndShape;
+  /** `<p:nvCxnSpPr>` head/tail (sans `<p:cNvPr>` we type). Verbatim. */
+  readonly nvCxnSpPrTail: ReadonlyArray<OpaqueXml>;
+  /** `<p:spPr>` tail (sans `<a:xfrm>` and `<a:prstGeom>` we rebuild). */
+  readonly spPrTail: ReadonlyArray<OpaqueXml>;
+}
 
 export interface ShapeBase {
   readonly id: NodeId;
@@ -406,6 +622,14 @@ export interface TextRunProperties {
   readonly fontSizeHundredths?: number;
   readonly fontFamily?: string;
   readonly color?: string;
+  /**
+   * Character highlight (background colour behind glyphs). Stored as
+   * a 6-character RRGGBB hex string, matching `color`. Round-trips
+   * through `<a:highlight><a:srgbClr val="…"/></a:highlight>`.
+   * `undefined` means "inherit"; the empty string is rejected by the
+   * format-text command (use `undefined` to clear via patch).
+   */
+  readonly highlight?: string;
   /** <a:rPr> attrs we don't introspect (lang, dirty, kern, …). */
   readonly opaqueAttrs?: Readonly<Record<string, string>>;
   /** Children of <a:rPr> we don't model (schemeClr, hlinkClick, …). */

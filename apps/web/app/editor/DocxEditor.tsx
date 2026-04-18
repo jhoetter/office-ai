@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import {
@@ -8,10 +8,9 @@ import {
   chunkIntoPages,
   documentPageGeometry,
   mountDocxEditor,
-  docxSchema,
   resolveEffectivePpr,
 } from "@officeai/docx";
-import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
+import type { DocxSnapshot, MountResult, UnsupportedTx } from "@officeai/docx";
 import {
   getPageChunks,
   gotoPage,
@@ -21,14 +20,26 @@ import {
   type PageZoneEditDetail,
 } from "@/lib/page-decorations";
 import { pageKeymapPlugin } from "@/lib/page-keymap";
+import {
+  SHORTCUT_ADD_COMMENT_EVENT,
+  SHORTCUT_INSERT_HYPERLINK_EVENT,
+  SHORTCUT_TOGGLE_FORMATTING_MARKS_EVENT,
+  wordShortcutsKeymapPlugin,
+  type InsertHyperlinkDetail,
+} from "@/lib/word-shortcuts-keymap";
+import {
+  formattingMarksPlugin,
+  isFormattingMarksOn,
+  toggleFormattingMarks,
+} from "@/lib/formatting-marks-plugin";
+import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
+import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { PageZoneEditor } from "./PageZoneEditor";
 import type { EditorView } from "prosemirror-view";
 import { NotImplementedError } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
 import {
   activeMarkAttr,
-  activeMarks as computeActiveMarks,
-  activeRunAttr,
   commentParagraphIndex,
   commentThreads,
   currentParagraphAlignment,
@@ -40,11 +51,14 @@ import {
   pmSelectionToRange,
 } from "@/lib/format-helpers";
 import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
+import { computeDocxActive, createDocxFormatProvider } from "./docxFormatProvider";
 import { HeaderFooterPanel } from "./HeaderFooterPanel";
 import { PageRuler } from "./PageRuler";
 import { CommentsSidebar } from "./CommentsSidebar";
-import { TrackedChangesUI } from "./TrackedChangesUI";
+import { TrackedChangesHover, TrackedChangesMargin } from "./TrackedChangesUI";
 import { CommentComposer } from "./CommentComposer";
+import { collectRevisions } from "@/lib/format-helpers";
+import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
 
 interface ToastMessage {
@@ -81,6 +95,10 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
   // from React state during render — accessing `hostRef.current`
   // directly during render trips `react-hooks/refs`.
   const [hostEl, setHostEl] = useState<HTMLDivElement | null>(null);
+  // The scroll container around the page card is exposed via a callback
+  // ref so TrackedChangesMargin can compute coordinates in its content
+  // space (so balloons stay glued to the document on scroll).
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   // `agentRef` / `mountRef` are kept in addition to the React state
@@ -105,6 +123,31 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
   // active style) without keeping a redundant copy of the snapshot.
   const [uiTick, setUiTick] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Edit mode (Word / Google Docs "Track Changes" surface). The
+  // toolbar mode picker writes through to PM via `mount.setEditMode`
+  // so the underlying transaction-to-commands pipeline can swap
+  // `insert-text` ↔ `insert-text-tracked` without re-mounting.
+  // `view` mode flips PM's `editable` prop off so the surface
+  // becomes read-only. Author defaults to "You" so suggestions are
+  // attributable from day one; a real auth integration would feed
+  // the signed-in user's display name here.
+  const [editMode, setEditMode] = useState<"edit" | "suggest" | "view">("edit");
+  const [trackedAuthor] = useState<string>("You");
+  // Pilcrow toggle (Word's "Show formatting marks"). Owned by the PM
+  // plugin; the React state below is just a mirror so the toolbar
+  // button can show pressed-state. Refresh on every uiTick.
+  const [formattingMarksOn, setFormattingMarksOn] = useState(false);
+  const shortcutsDialog = useShortcutsDialog();
+  // Mirror the mode/author into refs so `mountAgent` (a
+  // useCallback) can read the latest value without re-binding on
+  // every mode flip. The effect below keeps them in sync.
+  const editModeRef = useRef<"edit" | "suggest" | "view">("edit");
+  const trackedAuthorRef = useRef<string>("You");
+  useEffect(() => {
+    editModeRef.current = editMode;
+    trackedAuthorRef.current = trackedAuthor;
+    mountRef.current?.setEditMode(editMode, trackedAuthor);
+  }, [editMode, trackedAuthor]);
 
   const toastId = useRef(0);
 
@@ -152,7 +195,16 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
         source: "human",
         onUnsupported,
         onError,
-        extraPlugins: [pageDecorationsPlugin(agentInstance), pageKeymapPlugin(agentInstance)],
+        extraPlugins: [
+          pageDecorationsPlugin(agentInstance),
+          pageKeymapPlugin(agentInstance),
+          wordShortcutsKeymapPlugin(agentInstance),
+          formattingMarksPlugin(),
+        ],
+        // Re-apply the current mode/author on every (re)mount so
+        // file-open keeps the user's mode choice across documents.
+        editMode: editModeRef.current,
+        trackedAuthor: trackedAuthorRef.current,
       });
       mountRef.current = mount;
       setView(mount.view);
@@ -197,6 +249,21 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
     return () => document.removeEventListener("selectionchange", onSel);
   }, []);
 
+  // Mirror the formatting-marks plugin's state into React so the
+  // toolbar pressed-state stays in sync. The plugin is the source
+  // of truth (it's what the keyboard shortcut also flips).
+  useEffect(() => {
+    if (!view) return;
+    setFormattingMarksOn(isFormattingMarksOn(view.state));
+  }, [view, uiTick]);
+
+  const handleToggleFormattingMarks = useCallback(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const next = toggleFormattingMarks(mount.view);
+    setFormattingMarksOn(next);
+  }, []);
+
   const handleFile = useCallback(
     async (file: File) => {
       const buf = await file.arrayBuffer();
@@ -235,56 +302,6 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
       pushToast("error", err instanceof Error ? err.message : String(err));
     }
   }, [docName, pushToast]);
-
-  const toggleMark = useCallback(
-    (markName: "bold" | "italic" | "underline" | "strike") => {
-      const mount = mountRef.current;
-      if (!mount) return;
-      const view = mount.view;
-      const { from, to, empty } = view.state.selection;
-      if (empty) {
-        pushToast("info", "Select some text first.");
-        return;
-      }
-      const schemaMarkName = markName === "strike" ? "strikethrough" : markName;
-      const markType = docxSchema.marks[schemaMarkName];
-      if (!markType) return;
-      const has = view.state.doc.rangeHasMark(from, to, markType);
-      const tx = has
-        ? view.state.tr.removeMark(from, to, markType)
-        : view.state.tr.addMark(from, to, markType.create());
-      view.dispatch(tx);
-    },
-    [pushToast]
-  );
-
-  const applyFormat = useCallback(
-    async (format: TextFormat) => {
-      const agent = agentRef.current;
-      const mount = mountRef.current;
-      if (!agent || !mount) return;
-      const view = mount.view;
-      if (view.state.selection.empty) {
-        pushToast("info", "Select some text first.");
-        return;
-      }
-      const range = pmSelectionToRange(view.state);
-      try {
-        await agent.applyCommand({
-          type: "docx:format-range",
-          payload: { range, format },
-          source: "human",
-        });
-      } catch (err) {
-        if (err instanceof NotImplementedError) {
-          pushToast("warn", "Not yet supported in this build.");
-          return;
-        }
-        pushToast("error", err instanceof Error ? err.message : String(err));
-      }
-    },
-    [pushToast]
-  );
 
   const setParagraphStyle = useCallback(
     async (style: string) => {
@@ -385,6 +402,56 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
     },
     [composer, pushToast]
   );
+
+  // Word-shortcut bridge: the keymap plugin can't open prompts /
+  // composers itself (it lives in the renderer layer), so it
+  // surfaces requests as `CustomEvent`s on the editor host. We
+  // route those into the existing comment-composer flow and a
+  // tiny URL prompt for hyperlink insertion. Both validate again
+  // on the React side so a stale event (e.g. selection collapsed
+  // before the user typed in the prompt) is a no-op.
+  useEffect(() => {
+    if (!hostEl) return;
+    const onAddComment = () => openCommentComposer();
+    const onInsertHyperlink = (event: Event) => {
+      const ce = event as CustomEvent<InsertHyperlinkDetail>;
+      const detail = ce.detail;
+      if (!detail) return;
+      const agent = agentRef.current;
+      if (!agent) return;
+      const url = window.prompt(
+        `Insert hyperlink for "${detail.selectionText.slice(0, 60)}":`,
+        "https://"
+      );
+      if (!url || !url.trim()) return;
+      void agent
+        .applyCommand({
+          type: "docx:insert-hyperlink",
+          payload: {
+            paragraphId: detail.paragraphId,
+            range: detail.range,
+            url: url.trim(),
+          },
+          source: "human",
+        })
+        .catch((err) => pushToast("error", err instanceof Error ? err.message : String(err)));
+    };
+    const onToggleFormattingMarks = () => handleToggleFormattingMarks();
+    hostEl.addEventListener(SHORTCUT_ADD_COMMENT_EVENT, onAddComment as EventListener);
+    hostEl.addEventListener(SHORTCUT_INSERT_HYPERLINK_EVENT, onInsertHyperlink as EventListener);
+    hostEl.addEventListener(
+      SHORTCUT_TOGGLE_FORMATTING_MARKS_EVENT,
+      onToggleFormattingMarks as EventListener
+    );
+    return () => {
+      hostEl.removeEventListener(SHORTCUT_ADD_COMMENT_EVENT, onAddComment as EventListener);
+      hostEl.removeEventListener(SHORTCUT_INSERT_HYPERLINK_EVENT, onInsertHyperlink as EventListener);
+      hostEl.removeEventListener(
+        SHORTCUT_TOGGLE_FORMATTING_MARKS_EVENT,
+        onToggleFormattingMarks as EventListener
+      );
+    };
+  }, [hostEl, openCommentComposer, pushToast, handleToggleFormattingMarks]);
 
   useEffect(() => {
     if (!hostEl) return;
@@ -667,60 +734,6 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
     [pushToast, hostEl]
   );
 
-  const replyComment = useCallback(
-    async (parentId: string, text: string) => {
-      const agent = agentRef.current;
-      if (!agent) return;
-      try {
-        await agent.applyCommand({
-          type: "docx:reply-comment",
-          payload: { parentId, text, author: "You", initials: "Y" },
-          source: "human",
-        });
-        pushToast("info", "Reply added.");
-      } catch (err) {
-        pushToast("error", err instanceof Error ? err.message : String(err));
-      }
-    },
-    [pushToast]
-  );
-
-  const resolveComment = useCallback(
-    async (commentId: string, resolved: boolean) => {
-      const agent = agentRef.current;
-      if (!agent) return;
-      try {
-        await agent.applyCommand({
-          type: "docx:resolve-comment",
-          payload: { commentId, resolved },
-          source: "human",
-        });
-        pushToast("info", resolved ? "Comment resolved." : "Comment reopened.");
-      } catch (err) {
-        pushToast("error", err instanceof Error ? err.message : String(err));
-      }
-    },
-    [pushToast]
-  );
-
-  const deleteComment = useCallback(
-    async (commentId: string) => {
-      const agent = agentRef.current;
-      if (!agent) return;
-      try {
-        await agent.applyCommand({
-          type: "docx:delete-comment",
-          payload: { commentId },
-          source: "human",
-        });
-        pushToast("info", "Comment deleted.");
-      } catch (err) {
-        pushToast("error", err instanceof Error ? err.message : String(err));
-      }
-    },
-    [pushToast]
-  );
-
   const acceptChange = useCallback(
     async (revisionId: string) => {
       const agent = agentRef.current;
@@ -768,25 +781,23 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
   // Derive toolbar UI state from the current PM view (re-runs on uiTick).
   void uiTick;
   const snapshot = agent?.getSnapshot() ?? null;
-  const activeMarks = view ? computeActiveMarks(view.state) : new Set<string>();
   const currentParaIndex = view ? currentParagraphIndex(view.state) : 0;
   const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
   // P3.1 / W3 — toolbar dropdowns fall back through the typed style
-  // cascade when no direct PM mark carries the attribute. Without this,
-  // selecting a Heading1 paragraph showed "Size" / "Font" placeholders
-  // instead of the inherited 16pt / Calibri.
-  const activeFontSize = view
-    ? activeRunAttr<number>(view.state, "font_size", "halfPoints", snapshot, (rPr) => rPr.fontSize)
-    : undefined;
-  const activeFontFamily = view
-    ? activeRunAttr<string>(view.state, "font_family", "family", snapshot, (rPr) => rPr.fontFamily)
-    : undefined;
-  const activeColor = view
-    ? activeRunAttr<string>(view.state, "color", "rgb", snapshot, (rPr) => rPr.color)
-    : undefined;
-  const activeHighlight = view
-    ? activeRunAttr<string>(view.state, "highlight", "name", snapshot, (rPr) => rPr.highlight)
-    : undefined;
+  // cascade when no direct PM mark carries the attribute. The shared
+  // text-formatting provider plumbs that through ActiveTextFormat so a
+  // Heading1 paragraph surfaces its inherited 16pt / Calibri.
+  // Provider is built once via useState's lazy initialiser. The
+  // closure stashes mountRef/agentRef and reads `.current` only at
+  // event-handler time (apply / getActive), which is safe — but the
+  // React Compiler can't see through the closure boundary, so we
+  // silence the rule for this construction site.
+  /* eslint-disable react-hooks/refs */
+  const [textFormatProvider] = useState(() =>
+    createDocxFormatProvider({ mountRef, agentRef, pushToast })
+  );
+  /* eslint-enable react-hooks/refs */
+  const textFormatActive = computeDocxActive(view, snapshot);
   const activeAlignment = view ? currentParagraphAlignment(view.state) : null;
   const activeParagraphIndex = view ? currentParagraphIndex(view.state) : -1;
   const activeSpacing = computeActiveSpacing(snapshot, activeParagraphIndex);
@@ -794,18 +805,56 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
   const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   void commentParagraphIndex;
 
+  // The side rail hosts the comments sidebar; tracked changes are no
+  // longer surfaced here — `<TrackedChangesMargin>` paints them as
+  // Word-style balloons in the page's right margin instead. The rail
+  // therefore only earns its 320px column when the document actually
+  // carries comments. The hover overlay over insertion spans is
+  // mounted separately (see `<TrackedChangesHover>` below) so its
+  // mouse listeners survive the rail being hidden.
+  const hasComments = snapshot ? commentThreads(snapshot).length > 0 : false;
+  // Build the shared CommentsProvider once per agent. The sidebar in
+  // `@officeai/ui` calls `provider.threads()` on every render and goes
+  // through the live agent snapshot, so we don't need to re-create the
+  // provider when comments change — only when the underlying agent
+  // instance does (i.e. on document load).
+  /* eslint-disable react-hooks/refs -- `pushToast` wraps a state setter
+     exposed via a stable callback; the provider only invokes it from
+     event handlers (sidebar clicks), never during render. */
+  const commentsProvider = useMemo(
+    () =>
+      agent
+        ? createDocxCommentsProvider({
+            agent,
+            onScrollTo: scrollToComment,
+            onToast: pushToast,
+          })
+        : null,
+    [agent, scrollToComment, pushToast]
+  );
+  /* eslint-enable react-hooks/refs */
+  const hasRevisions = snapshot ? collectRevisions(snapshot).length > 0 : false;
+  const showRail = hasComments;
+  // Width of the right-margin balloon column, used both to reserve
+  // empty space next to the page card so the balloons stay visible
+  // and to size the gap between page and balloons. Mirrors the
+  // BALLOON_WIDTH + BALLOON_GUTTER_PX constants in TrackedChangesUI.
+  const BALLOON_RESERVED_PX = 252;
+
   return (
-    <div className="docx-editor flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:grid-rows-1 lg:gap-6">
+    <div
+      className={cn(
+        "docx-editor flex h-full min-h-0 flex-col gap-3 lg:grid-rows-1 lg:gap-6",
+        showRail ? "lg:grid lg:grid-cols-[minmax(0,1fr)_320px]" : "lg:flex"
+      )}
+    >
       <section className="flex min-h-0 flex-col">
         <Toolbar
           agentReady={agentReady}
           docInfo={docInfo}
           activeStyle={activeStyle}
-          activeMarks={activeMarks}
-          activeFontSize={activeFontSize}
-          activeFontFamily={activeFontFamily}
-          activeColor={activeColor}
-          activeHighlight={activeHighlight}
+          textFormatProvider={textFormatProvider}
+          textFormatActive={textFormatActive}
           activeAlignment={activeAlignment}
           activeSpacing={activeSpacing}
           activeIndentLeft={activeIndentLeft}
@@ -814,14 +863,17 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
           onInsertImage={insertImageFromFile}
           onExport={() => void handleExport()}
           onSetParagraphStyle={(s) => void setParagraphStyle(s)}
-          onApplyFormat={(f) => void applyFormat(f)}
-          onToggleMark={toggleMark}
           onSetAlignment={(a) => void setAlignment(a)}
           onAdjustIndent={(d) => void adjustIndent(d)}
           onSetParagraphSpacing={(patch) => void setParagraphSpacing(patch)}
           onToggleList={(k) => void toggleList(k)}
           onAddComment={openCommentComposer}
           onUnsupported={surfaceUnsupported}
+          editMode={editMode}
+          onSetEditMode={setEditMode}
+          formattingMarksOn={formattingMarksOn}
+          onToggleFormattingMarks={handleToggleFormattingMarks}
+          onOpenShortcuts={() => shortcutsDialog.setOpen(true)}
         />
         <input
           ref={fileInputRef}
@@ -852,7 +904,10 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
           onError={(msg) => pushToast("error", msg)}
           onInfo={(msg) => pushToast("info", msg)}
         />
-        <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-[color-mix(in_srgb,var(--divider)_25%,var(--surface))] dark:bg-[#0e0e0e]">
+        <div
+          ref={setScrollEl}
+          className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-[color-mix(in_srgb,var(--divider)_25%,var(--surface))] dark:bg-[#0e0e0e]"
+        >
           {(() => {
             // Page geometry, derived once per render from the live snapshot.
             // - 1 inch = 1440 twips = 96 CSS px → 1 CSS px = 15 twips.
@@ -876,18 +931,32 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
               "--pm-page-margin-left": `${pageMarginLeftCssPx}px`,
               "--pm-page-margin-right": `${pageMarginRightCssPx}px`,
             } as React.CSSProperties;
+            // When the document carries tracked changes, reserve a
+            // right gutter inside the page wrapper so the Word-style
+            // balloons rendered by `<TrackedChangesMargin>` have
+            // guaranteed visual real estate alongside the page card
+            // (otherwise they would overflow the scroll container's
+            // visible area on narrower viewports).
+            const reservedGutter = hasRevisions ? BALLOON_RESERVED_PX : 0;
+            const wrapperWidthPx = pageWidthCssPx + reservedGutter;
             return (
               <div
                 className="mx-auto py-6"
                 style={{
                   ...cssVars,
-                  width: `${pageWidthCssPx * zoom}px`,
+                  width: `${wrapperWidthPx * zoom}px`,
                   transform: `scale(${zoom})`,
                   transformOrigin: "top center",
                 }}
               >
-                <PageRuler snapshot={snapshot} />
-                <div ref={setHostEl} className="prose-pm min-h-[60vh] outline-none" style={cssVars} />
+                <div style={{ width: `${pageWidthCssPx}px` }}>
+                  <PageRuler snapshot={snapshot} />
+                  <div
+                    ref={setHostEl}
+                    className="prose-pm min-h-[60vh] outline-none"
+                    style={cssVars}
+                  />
+                </div>
               </div>
             );
           })()}
@@ -897,6 +966,13 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
               Loading…
             </div>
           )}
+          <TrackedChangesMargin
+            snapshot={snapshot}
+            editorHost={hostEl}
+            scrollContainer={scrollEl}
+            onAccept={acceptChange}
+            onReject={rejectChange}
+          />
           {composer && (
             <CommentComposer
               selectionText={composer.selectionText}
@@ -938,56 +1014,61 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
         </div>
       </section>
 
-      {/* Drawer toggle — mobile / tablet only */}
-      <button
-        type="button"
-        onClick={() => setDrawerOpen((v) => !v)}
-        aria-label="Toggle comments and agent panel"
-        aria-expanded={drawerOpen}
-        className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-1.5 rounded-full border border-divider bg-surface px-3 py-2 text-xs font-medium text-foreground shadow-md hover:bg-hover lg:hidden"
-      >
-        <MessageCircle size={14} />
-        Comments
-      </button>
+      {/* Hover-only revision overlay — must stay mounted regardless
+       * of whether the side rail is visible (its mouseover listener
+       * lifecycle is bound to the editor host). */}
+      <TrackedChangesHover editorHost={hostEl} onAccept={acceptChange} onReject={rejectChange} />
 
-      <aside
-        data-testid="editor-side-panel"
-        className={cn(
-          "side-panel flex min-h-0 flex-col gap-4 border-divider pt-2 lg:border-l lg:pl-6 lg:pt-0",
-          // Below lg, the panel is a slide-up drawer triggered by the
-          // floating button. Above lg, it sits in the grid column.
-          drawerOpen
-            ? "fixed inset-x-0 bottom-0 z-40 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t bg-background p-4 shadow-2xl lg:static lg:max-h-none lg:border-t-0 lg:p-0 lg:shadow-none"
-            : "hidden lg:flex"
-        )}
-      >
-        <div className="flex items-center justify-between lg:hidden">
-          <span className="text-sm font-medium text-foreground">Side panel</span>
+      {showRail && (
+        <>
+          {/* Drawer toggle — mobile / tablet only. Only useful when
+           * the rail actually has content; on empty docs the
+           * floating button would tease panels that don't exist. */}
           <button
             type="button"
-            aria-label="Close side panel"
-            onClick={() => setDrawerOpen(false)}
-            className="rounded p-1 text-secondary hover:bg-hover"
+            onClick={() => setDrawerOpen((v) => !v)}
+            aria-label="Toggle comments and agent panel"
+            aria-expanded={drawerOpen}
+            className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-1.5 rounded-full border border-divider bg-surface px-3 py-2 text-xs font-medium text-foreground shadow-md hover:bg-hover lg:hidden"
           >
-            <X size={14} />
+            <MessageCircle size={14} />
+            Comments
           </button>
-        </div>
 
-        <CommentsSidebar
-          snapshot={snapshot}
-          onScrollTo={scrollToComment}
-          onReply={replyComment}
-          onResolve={resolveComment}
-          onDelete={deleteComment}
-        />
+          <aside
+            data-testid="editor-side-panel"
+            className={cn(
+              "side-panel flex min-h-0 flex-col gap-4 border-divider pt-2 lg:border-l lg:pl-6 lg:pt-0",
+              // Below lg, the panel is a slide-up drawer triggered by the
+              // floating button. Above lg, it sits in the grid column.
+              drawerOpen
+                ? "fixed inset-x-0 bottom-0 z-40 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t bg-background p-4 shadow-2xl lg:static lg:max-h-none lg:border-t-0 lg:p-0 lg:shadow-none"
+                : "hidden lg:flex"
+            )}
+          >
+            <div className="flex items-center justify-between lg:hidden">
+              <span className="text-sm font-medium text-foreground">Side panel</span>
+              <button
+                type="button"
+                aria-label="Close side panel"
+                onClick={() => setDrawerOpen(false)}
+                className="rounded p-1 text-secondary hover:bg-hover"
+              >
+                <X size={14} />
+              </button>
+            </div>
 
-        <TrackedChangesUI
-          snapshot={snapshot}
-          editorHost={hostEl}
-          onAccept={acceptChange}
-          onReject={rejectChange}
-        />
-      </aside>
+            {hasComments && commentsProvider && (
+              <CommentsSidebar provider={commentsProvider} onScrollTo={scrollToComment} />
+            )}
+          </aside>
+        </>
+      )}
+      <KeyboardShortcutsDialog
+        product="docx"
+        open={shortcutsDialog.open}
+        onClose={() => shortcutsDialog.setOpen(false)}
+      />
     </div>
   );
 }

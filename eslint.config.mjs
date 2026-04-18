@@ -60,6 +60,14 @@ const ARCH_RESTRICTED_IMPORTS = {
     { group: ["@officeai/*"], message: "design-tokens is a leaf — no internal deps." },
     { group: ["react", "react-dom", "next", "next/*"], message: "design-tokens has no runtime." },
   ],
+  "packages/text-formatting/**": [
+    { group: ["@officeai/*"], message: "text-formatting is a leaf — no internal deps." },
+    { group: ["react", "react-dom", "next", "next/*"], message: "text-formatting is headless — no React/Next imports." },
+  ],
+  "packages/comments/**": [
+    { group: ["@officeai/*"], message: "comments is a leaf — no internal deps." },
+    { group: ["react", "react-dom", "next", "next/*"], message: "comments is headless — no React/Next imports." },
+  ],
 };
 
 /**

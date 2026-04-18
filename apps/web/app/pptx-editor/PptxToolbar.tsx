@@ -10,28 +10,31 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
-  Bold,
   ChevronDown,
   Circle,
   Copy,
+  CornerDownRight,
   Diamond,
   Download,
   FileUp,
   Image as ImageIcon,
-  Italic,
+  Keyboard,
   Minus,
   MoveRight,
   Plus,
   Shapes,
+  Spline,
   Square,
   Trash2,
   Triangle,
   Type,
-  Underline,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import type { AlignMode, ShapePreset } from "@officeai/pptx";
+import { TextFormatBar } from "@officeai/ui";
+import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
+import type { AlignMode, LayoutKindPayload, ShapePreset } from "@officeai/pptx";
+import { LayoutTemplate } from "lucide-react";
 
 export interface PptxToolbarProps {
   readonly disabled: boolean;
@@ -40,29 +43,30 @@ export interface PptxToolbarProps {
   /** Total number of selected shapes; drives align/distribute enablement. */
   readonly selectionCount: number;
   readonly currentFill: string | null;
-  readonly currentFontPt: number | null;
+  readonly textFormatProvider: TextFormatProvider;
+  readonly textFormatActive: ActiveTextFormat;
   readonly onOpenFile: () => void;
   readonly onExport: () => void;
   readonly onAddSlide: () => void;
+  readonly onAddSlideWithLayout: (kind: LayoutKindPayload) => void;
+  readonly onSetSlideLayout: (kind: LayoutKindPayload) => void;
   readonly onDeleteSlide: () => void;
   readonly onDuplicateSlide: () => void;
   readonly onAddTextBox: () => void;
   readonly onAddShape: (preset: ShapePreset) => void;
+  readonly onAddConnector: (connectorType: "straight" | "elbow" | "curved") => void;
   readonly onInsertImage: (file: File) => void;
   readonly onDeleteShape: () => void;
   readonly onAlign: (mode: AlignMode) => void;
   readonly onDistribute: (axis: "horizontal" | "vertical") => void;
-  readonly onToggleBold: () => void;
-  readonly onToggleItalic: () => void;
-  readonly onToggleUnderline: () => void;
   readonly onChangeFill: (hex: string | null) => void;
-  readonly onChangeTextColor: (hex: string) => void;
-  readonly onChangeFontSize: (pt: number) => void;
   readonly zoom: number;
   readonly minZoom: number;
   readonly maxZoom: number;
   readonly onZoomChange: (zoom: number) => void;
   readonly onZoomReset: () => void;
+  /** Open the keyboard-shortcuts help dialog. */
+  readonly onOpenShortcuts: () => void;
 }
 
 interface ShapeOption {
@@ -81,15 +85,14 @@ const SHAPE_OPTIONS: ReadonlyArray<ShapeOption> = [
   { preset: "rightArrow", label: "Arrow", icon: <MoveRight size={14} /> },
 ];
 
-const FONT_SIZES: ReadonlyArray<number> = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 54, 66, 80, 96];
-
 export function PptxToolbar(props: PptxToolbarProps) {
   const {
     disabled,
     hasSelection,
     selectionCount,
     currentFill,
-    currentFontPt,
+    textFormatProvider,
+    textFormatActive,
     zoom,
     minZoom,
     maxZoom,
@@ -128,6 +131,12 @@ export function PptxToolbar(props: PptxToolbarProps) {
         label="Delete slide"
         disabled={disabled || props.slideCount <= 1}
       />
+      <LayoutMenu
+        disabled={disabled}
+        onAddWithLayout={props.onAddSlideWithLayout}
+        onSetLayout={props.onSetSlideLayout}
+        canSetLayout={props.slideCount > 0}
+      />
       <Sep />
       <ToolbarButton
         onClick={props.onAddTextBox}
@@ -136,6 +145,7 @@ export function PptxToolbar(props: PptxToolbarProps) {
         disabled={disabled}
       />
       <ShapeMenu disabled={disabled} onPick={props.onAddShape} />
+      <ConnectorMenu disabled={disabled} onPick={props.onAddConnector} />
       <ToolbarButton
         onClick={() => imageInputRef.current?.click()}
         icon={<ImageIcon size={14} />}
@@ -209,32 +219,21 @@ export function PptxToolbar(props: PptxToolbarProps) {
         disabled={!canDistribute}
       />
       <Sep />
-      <ToolbarButton
-        onClick={props.onToggleBold}
-        icon={<Bold size={14} />}
-        label="Bold"
-        disabled={disabled}
-      />
-      <ToolbarButton
-        onClick={props.onToggleItalic}
-        icon={<Italic size={14} />}
-        label="Italic"
-        disabled={disabled}
-      />
-      <ToolbarButton
-        onClick={props.onToggleUnderline}
-        icon={<Underline size={14} />}
-        label="Underline"
-        disabled={disabled}
-      />
-      <FontSizePicker disabled={disabled} valuePt={currentFontPt} onChange={props.onChangeFontSize} />
-      <ColorWell
-        label="Text color"
-        // Text color always represents the next-applied color; no current-state preview.
-        value="#111111"
-        disabled={disabled}
-        onChange={(hex) => props.onChangeTextColor(hex)}
-      />
+      {/*
+        The wrapper opts the entire shared text-format bar into the
+        contenteditable's "keep editing" guard (see TextEditOverlay's
+        onBlur in SlideCanvas). Without it, mousedown on a toggle would
+        blur the editable, commit a plain-text overwrite, and *also*
+        wipe the selection ref the provider depends on.
+      */}
+      <div data-pptx-keep-edit className="inline-flex items-center">
+        <TextFormatBar
+          provider={textFormatProvider}
+          active={textFormatActive}
+          disabled={disabled}
+          testIdPrefix="pptx-format"
+        />
+      </div>
       <ColorWell
         label="Fill"
         value={currentFill ?? "#ffffff"}
@@ -279,6 +278,12 @@ export function PptxToolbar(props: PptxToolbarProps) {
         >
           {zoomPct}%
         </button>
+        <ToolbarButton
+          onClick={props.onOpenShortcuts}
+          icon={<Keyboard size={14} />}
+          label="Keyboard shortcuts (⌘/)"
+          testId="pptx-shortcuts"
+        />
       </div>
     </div>
   );
@@ -293,15 +298,17 @@ interface ToolbarButtonProps {
   readonly icon: React.ReactNode;
   readonly label: string;
   readonly disabled?: boolean;
+  readonly testId?: string;
 }
 
-function ToolbarButton({ onClick, icon, label, disabled }: ToolbarButtonProps) {
+function ToolbarButton({ onClick, icon, label, disabled, testId }: ToolbarButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={label}
+      data-testid={testId}
       className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
     >
       {icon}
@@ -334,6 +341,178 @@ function IconButton({ onClick, icon, label, disabled }: ToolbarButtonProps) {
 interface ShapeMenuProps {
   readonly disabled: boolean;
   readonly onPick: (preset: ShapePreset) => void;
+}
+
+interface LayoutOption {
+  readonly kind: LayoutKindPayload;
+  readonly label: string;
+}
+
+const LAYOUT_OPTIONS: ReadonlyArray<LayoutOption> = [
+  { kind: "title", label: "Title Slide" },
+  { kind: "titleAndContent", label: "Title and Content" },
+  { kind: "sectionHeader", label: "Section Header" },
+  { kind: "twoContent", label: "Two Content" },
+  { kind: "comparison", label: "Comparison" },
+  { kind: "titleOnly", label: "Title Only" },
+  { kind: "blank", label: "Blank" },
+  { kind: "contentWithCaption", label: "Content with Caption" },
+  { kind: "pictureWithCaption", label: "Picture with Caption" },
+  { kind: "titleSlide", label: "Title with Body" },
+  { kind: "bigNumber", label: "Big Number" },
+];
+
+interface LayoutMenuProps {
+  readonly disabled: boolean;
+  readonly canSetLayout: boolean;
+  readonly onAddWithLayout: (kind: LayoutKindPayload) => void;
+  readonly onSetLayout: (kind: LayoutKindPayload) => void;
+}
+
+function LayoutMenu({ disabled, canSetLayout, onAddWithLayout, onSetLayout }: LayoutMenuProps) {
+  const [open, setOpen] = React.useState(false);
+  const [mode, setMode] = React.useState<"add" | "set">("add");
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title="Layout"
+        data-testid="pptx-layout-menu-trigger"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <LayoutTemplate size={14} />
+        <span className="hidden sm:inline">Layout</span>
+        <ChevronDown size={12} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          data-testid="pptx-layout-menu"
+          className="absolute left-0 top-full z-30 mt-1 w-64 rounded-md border border-divider bg-surface p-1 shadow-lg"
+        >
+          <div className="mb-1 inline-flex w-full overflow-hidden rounded border border-divider text-[10px]">
+            <button
+              type="button"
+              onClick={() => setMode("add")}
+              className={`flex-1 px-2 py-1 ${mode === "add" ? "bg-hover" : ""}`}
+            >
+              New slide
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("set")}
+              disabled={!canSetLayout}
+              className={`flex-1 px-2 py-1 disabled:opacity-40 ${mode === "set" ? "bg-hover" : ""}`}
+            >
+              Apply to current
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-0.5">
+            {LAYOUT_OPTIONS.map((opt) => (
+              <button
+                key={opt.kind}
+                type="button"
+                role="menuitem"
+                data-testid={`pptx-layout-${opt.kind}`}
+                onClick={() => {
+                  setOpen(false);
+                  if (mode === "add") onAddWithLayout(opt.kind);
+                  else onSetLayout(opt.kind);
+                }}
+                className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
+              >
+                <LayoutTemplate size={14} />
+                <span>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface ConnectorOption {
+  readonly type: "straight" | "elbow" | "curved";
+  readonly label: string;
+  readonly icon: React.ReactNode;
+}
+
+const CONNECTOR_OPTIONS: ReadonlyArray<ConnectorOption> = [
+  { type: "straight", label: "Straight", icon: <Minus size={14} /> },
+  { type: "elbow", label: "Elbow", icon: <CornerDownRight size={14} /> },
+  { type: "curved", label: "Curved", icon: <Spline size={14} /> },
+];
+
+interface ConnectorMenuProps {
+  readonly disabled: boolean;
+  readonly onPick: (type: "straight" | "elbow" | "curved") => void;
+}
+
+function ConnectorMenu({ disabled, onPick }: ConnectorMenuProps) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title="Connector"
+        data-testid="pptx-connector-menu-trigger"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Spline size={14} />
+        <span className="hidden sm:inline">Connector</span>
+        <ChevronDown size={12} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          data-testid="pptx-connector-menu"
+          className="absolute left-0 top-full z-30 mt-1 grid w-40 grid-cols-1 gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-lg"
+        >
+          {CONNECTOR_OPTIONS.map((opt) => (
+            <button
+              key={opt.type}
+              type="button"
+              role="menuitem"
+              data-testid={`pptx-connector-${opt.type}`}
+              onClick={() => {
+                setOpen(false);
+                onPick(opt.type);
+              }}
+              className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
+            >
+              {opt.icon}
+              <span>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -392,63 +571,6 @@ function ShapeMenu({ disabled, onPick }: ShapeMenuProps) {
           ))}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-interface FontSizePickerProps {
-  readonly disabled: boolean;
-  readonly valuePt: number | null;
-  readonly onChange: (pt: number) => void;
-}
-
-function FontSizePicker({ disabled, valuePt, onChange }: FontSizePickerProps) {
-  const initial = valuePt != null ? String(Math.round(valuePt)) : "";
-  const [draft, setDraft] = React.useState<string>(initial);
-  // Reset the local draft whenever the external selection switches to a
-  // different font size. Done inline (per React docs: "Adjusting state
-  // when a prop changes") rather than in an effect so we don't trip
-  // `react-hooks/set-state-in-effect`. We track the *prop* (not the
-  // derived string) so callers that change the rounded value reset us
-  // even if `valuePt` is a different unrounded number.
-  const [prevPt, setPrevPt] = React.useState(valuePt);
-  if (valuePt !== prevPt) {
-    setPrevPt(valuePt);
-    setDraft(initial);
-  }
-  const commit = React.useCallback(() => {
-    const n = Number(draft);
-    if (Number.isFinite(n) && n >= 1 && n <= 400) onChange(n);
-  }, [draft, onChange]);
-  return (
-    <div className="ml-1 flex items-center">
-      <input
-        type="number"
-        min={1}
-        max={400}
-        step={1}
-        list="pptx-font-sizes"
-        disabled={disabled}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commit();
-            (e.currentTarget as HTMLInputElement).blur();
-          }
-        }}
-        title="Font size (pt)"
-        data-testid="pptx-font-size"
-        className="h-7 w-14 rounded border border-divider bg-surface px-1 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-        placeholder="pt"
-      />
-      <datalist id="pptx-font-sizes">
-        {FONT_SIZES.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
     </div>
   );
 }

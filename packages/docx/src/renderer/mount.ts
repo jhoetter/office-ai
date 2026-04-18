@@ -23,11 +23,35 @@ export interface MountOptions {
    * the bus to keep the round-trip contract.
    */
   extraPlugins?: ReadonlyArray<Plugin>;
+  /**
+   * Editor interaction mode:
+   *   - `"edit"` (default) — direct editing; PM steps translate
+   *     to plain `insert-text` / `delete-range` commands.
+   *   - `"suggest"` — typing and deletions are routed through
+   *     `insert-text-tracked` / `delete-range-tracked`, producing
+   *     `<w:ins>` / `<w:del>` revision wrappers (the
+   *     "Suggesting" / "Track Changes" surface).
+   *   - `"view"` — read-only; PM rejects all user input.
+   */
+  editMode?: "edit" | "suggest" | "view";
+  /**
+   * Author attribution for Suggesting mode. Required when
+   * `editMode === "suggest"`; ignored otherwise.
+   */
+  trackedAuthor?: string;
 }
 
 export interface MountResult {
   view: EditorView;
   destroy: () => void;
+  /**
+   * Update the live edit mode without rebuilding the editor. The
+   * mount creates this once and the React layer flips it whenever
+   * the user picks a different mode in the toolbar. Returning a
+   * mutator (rather than re-mounting) keeps the cursor, scroll
+   * position, and selection intact across mode changes.
+   */
+  setEditMode: (mode: "edit" | "suggest" | "view", author?: string) => void;
 }
 
 /**
@@ -73,8 +97,15 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
   let pendingFunnelCount = 0;
   let isProjecting = false;
 
+  // Live-mutable mode + author state. Captured by closure so
+  // `dispatchTransaction` always sees the latest values without
+  // re-mounting the view (which would clobber selection / scroll).
+  let editMode: "edit" | "suggest" | "view" = opts.editMode ?? "edit";
+  let trackedAuthor: string = opts.trackedAuthor ?? "";
+
   const view = new EditorView(target, {
     state,
+    editable: () => editMode !== "view",
     dispatchTransaction(tx: Transaction) {
       // Projections initiated by the bus go through unmodified.
       if (tx.getMeta("from-bus") === true || isProjecting) {
@@ -92,6 +123,8 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       const result = transactionToCommands(tx, before, {
         ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
         source: opts.source ?? "human",
+        mode: editMode === "view" ? "edit" : editMode,
+        author: trackedAuthor,
       });
       if (result.unsupported.length > 0) opts.onUnsupported?.(result.unsupported);
       if (result.commands.length === 0) return;
@@ -147,6 +180,15 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
     destroy() {
       unsubscribe();
       view.destroy();
+    },
+    setEditMode(nextMode, nextAuthor) {
+      editMode = nextMode;
+      if (typeof nextAuthor === "string") trackedAuthor = nextAuthor;
+      // Trigger PM to recompute `editable()` (which it caches per
+      // dispatch). Pushing an empty meta-only transaction is the
+      // canonical "force a re-render without changing the doc" hack.
+      const tr = view.state.tr.setMeta("from-bus", true);
+      view.dispatch(tr);
     },
   };
 }

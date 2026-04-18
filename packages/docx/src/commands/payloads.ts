@@ -31,6 +31,8 @@ export const DOCX_COMMAND_TYPES = [
   "docx:set-section-different-first",
   "docx:insert-section-break",
   "docx:insert-page-break",
+  "docx:insert-text-tracked",
+  "docx:delete-range-tracked",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -262,4 +264,47 @@ export interface SetParagraphIndentPayload {
    * Standard Word toolbar steps use ±360 twips (¼ inch).
    */
   deltaTwips: number;
+}
+
+/**
+ * Tracked-changes ("Suggesting"-mode) variant of `docx:insert-text`.
+ * The inserted run is wrapped in a `<w:ins>` revision wrapper so the
+ * insertion shows up as a green underline in Word and Google Docs and
+ * can later be `accept`ed (folded into the body) or `reject`ed (the
+ * inserted text disappears).
+ *
+ * Author / date populate the wrapper's `<w:ins w:author w:date>`
+ * attributes so the existing `TrackedChangesUI` ribbon can attribute
+ * the suggestion. `revisionId` is optional; when omitted the handler
+ * mints a synthetic `mint-{n}` id derived from the existing revisions
+ * in the snapshot so it stays unique across the document.
+ */
+export interface InsertTextTrackedPayload {
+  at: DocxPosition;
+  text: string;
+  author: string;
+  /** ISO 8601 string. Defaults to "now" at handler time. */
+  date?: string;
+  /** Caller-controlled revision id; minted when absent. */
+  revisionId?: string;
+}
+
+/**
+ * Tracked-changes variant of `docx:delete-range`. Instead of removing
+ * the targeted text, the runs (or run segments) covering the range
+ * are wrapped in a `<w:del>` revision wrapper and their text leaves
+ * are flipped to `isDelText: true` so the serializer emits
+ * `<w:delText>` (Word's struck-through display).
+ *
+ * MVP scope: single-paragraph ranges only. Multi-paragraph deletions
+ * fall back to a `not-implemented` `CommandError`; tracked deletes
+ * across paragraph boundaries also need a `<w:p>` end-marker
+ * revision (`<w:rPr><w:del/></w:rPr>` on the paragraph mark) which is
+ * deferred to a follow-up.
+ */
+export interface DeleteRangeTrackedPayload {
+  range: DocxSelection;
+  author: string;
+  date?: string;
+  revisionId?: string;
 }

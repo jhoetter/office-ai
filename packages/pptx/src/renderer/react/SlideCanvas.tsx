@@ -9,8 +9,29 @@ import { snapToAnchor, type ShapeAnchor } from "../layout/anchors.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
-import { resolveSlideBackgroundColor } from "../svg/slide.js";
+import { buildShapesByCNvPrId, resolveSlideBackgroundColor } from "../svg/slide.js";
 import { useAgentSnapshot } from "./use-agent-snapshot.js";
+
+/**
+ * Live caret/selection inside the text edit overlay.
+ *
+ * - `shapeId` identifies the text shape currently being edited.
+ * - `paragraph` is the 0-based paragraph index inside that shape.
+ * - `start` / `end` are character offsets into the paragraph's flat
+ *   text (sum of all run text + line-break placeholder lengths).
+ *   `start === end` means the caret is collapsed.
+ *
+ * The shared `pptxFormatProvider` reads this every render to compute
+ * `ActiveTextFormat` and to dispatch `pptx:format-text` patches with
+ * the correct range. Cleared (`null`) when the overlay isn't open or
+ * the user blurs to a non-toolbar element.
+ */
+export interface PptxTextSelection {
+  readonly shapeId: string;
+  readonly paragraph: number;
+  readonly start: number;
+  readonly end: number;
+}
 
 export interface SlideCanvasProps {
   readonly agent: PptxAgent;
@@ -35,6 +56,13 @@ export interface SlideCanvasProps {
    * user can immediately drag, format, or delete it without an extra click.
    */
   readonly selectedShapeIds?: ReadonlyArray<string>;
+  /**
+   * Notified whenever the live text-editing selection changes (caret
+   * moves, selection expands, overlay closes). `null` when no shape is
+   * being edited. Used by the shared text-format toolbar to drive
+   * MIXED-state pickers and the `pptx:format-text` dispatch range.
+   */
+  readonly onTextSelectionChange?: (sel: PptxTextSelection | null) => void;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
@@ -52,6 +80,14 @@ interface DragState {
    * anchor snapping during corner-handle resizes.
    */
   readonly primaryIsLine: boolean;
+  /**
+   * True when the pointerdown landed on a text shape that was already
+   * the sole selection before this click. PointerUp uses this together
+   * with `noChange` to decide whether the gesture was actually a
+   * "second click" — which enters text-edit mode, matching PowerPoint
+   * (one click selects, one more click enters edit).
+   */
+  readonly mayEnterEditOnClick: boolean;
 }
 
 interface DragPreview {
@@ -118,9 +154,12 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
 
   const themeDefault = snap.root.themeDefault ?? DEFAULT_THEME;
   const charts = snap.root.charts;
+  const shapesByCNvPrId = React.useMemo(() => {
+    return slide ? buildShapesByCNvPrId(slide.shapes) : new Map();
+  }, [slide]);
   const ctx: SvgRenderCtx = React.useMemo(
-    () => ({ slideSize, mediaUrls: props.mediaUrls, theme: themeDefault, charts }),
-    [slideSize, props.mediaUrls, themeDefault, charts]
+    () => ({ slideSize, mediaUrls: props.mediaUrls, theme: themeDefault, charts, shapesByCNvPrId }),
+    [slideSize, props.mediaUrls, themeDefault, charts, shapesByCNvPrId]
   );
 
   // Hide every shape currently being dragged or text-edited from the
@@ -145,13 +184,32 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   // Capture the SVG snapshot of every dragged shape at drag start so we
   // don't recompute it on every pointermove. The transform is applied
   // via the wrapping <g> for sub-pixel updates without string churn.
+  //
+  // We also keep a reference to the live `Shape` so the ghost layer can
+  // re-emit text shapes at the live preview size during a resize. A
+  // simple `scale(sx sy)` transform is fine for rectangles/ellipses
+  // (the geometry stretches and looks identical to the post-commit
+  // result), but text rendered via `<foreignObject>` would visually
+  // stretch the glyphs — instead we want the text to reflow at the
+  // new width, matching PowerPoint/Google Slides behaviour.
   const dragGhosts = React.useMemo(() => {
-    if (!drag || !slide) return [] as ReadonlyArray<{ id: string; svg: string; origin: BoundingBox }>;
-    const out: { id: string; svg: string; origin: BoundingBox }[] = [];
+    if (!drag || !slide)
+      return [] as ReadonlyArray<{
+        id: string;
+        svg: string;
+        origin: BoundingBox;
+        shape: Shape;
+      }>;
+    const out: {
+      id: string;
+      svg: string;
+      origin: BoundingBox;
+      shape: Shape;
+    }[] = [];
     for (const t of drag.targets) {
       const sh = findShape(slide.shapes, t.id);
       if (!sh) continue;
-      out.push({ id: t.id, svg: shapeToSvg(sh, ctx), origin: t.origin });
+      out.push({ id: t.id, svg: shapeToSvg(sh, ctx), origin: t.origin, shape: sh });
     }
     return out;
   }, [drag, slide, ctx]);
@@ -219,6 +277,17 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
 
       const mode: DragMode = isResize ? { resize: handle as ResizeHandle } : "move";
       const primaryShape = findShape(slide.shapes, targets[0].id);
+      // Click-to-edit eligibility: this click landed on the only shape
+      // that was already selected (no shift, no resize, no edit overlay
+      // currently open), and the target is a text shape. PointerUp will
+      // enter edit mode if the gesture didn't turn into a drag.
+      const mayEnterEditOnClick =
+        !isResize &&
+        !shiftHeld &&
+        editingId === null &&
+        selectedIds.length === 1 &&
+        selectedIds[0] === shapeId &&
+        primaryShape?.kind === "text";
       const next: DragState = {
         mode,
         targets,
@@ -226,6 +295,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         startY: e.clientY,
         emuPerPx,
         primaryIsLine: primaryShape ? isLineShape(primaryShape) : false,
+        mayEnterEditOnClick,
       };
       setDrag(next);
       setPreview(computePreview(next, 0, 0, null));
@@ -235,7 +305,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       containerRef.current.setPointerCapture?.(e.pointerId);
       e.preventDefault();
     },
-    [slide, slideSize, setSelectedIds, selectedIds]
+    [slide, slideSize, setSelectedIds, selectedIds, editingId]
   );
 
   const onPointerMove = React.useCallback(
@@ -296,16 +366,68 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       const noChange = final.dx === 0 && final.dy === 0 && final.dw === 0 && final.dh === 0;
       const targets = drag.targets;
       const mode = drag.mode;
+      const mayEnterEditOnClick = drag.mayEnterEditOnClick;
       // Clear drag/preview FIRST so the React-managed ghost vanishes the
       // moment we hand off to the snapshot — otherwise there's a flicker
       // between command apply and snapshot re-render.
       setDrag(null);
       setPreview(null);
-      if (noChange) return;
+      if (noChange) {
+        // PowerPoint-style "second click enters edit": if the gesture
+        // started on the only-selected text shape and the user didn't
+        // actually drag, open the editing overlay so the user doesn't
+        // have to hunt for a double-click target.
+        if (mayEnterEditOnClick && targets[0]) {
+          setEditingId(targets[0].id);
+        }
+        return;
+      }
       try {
         for (const t of targets) {
           const box = final.boxes.get(t.id);
           if (!box) continue;
+          // Connector resize hits a different command path: dragging a
+          // corner handle moves one endpoint, and the snap result tells
+          // us whether to record an anchored or free endpoint. The
+          // serialised set-position/set-size commands wouldn't capture
+          // the new anchor relationship.
+          const draggedShape = slide ? findShape(slide.shapes, t.id) : null;
+          const resizeHandle =
+            mode !== "move" && typeof mode === "object" && "resize" in mode
+              ? (mode as { resize: ResizeHandle }).resize
+              : null;
+          if (
+            draggedShape?.kind === "connector" &&
+            resizeHandle &&
+            isCornerHandle(resizeHandle) &&
+            slide
+          ) {
+            const which = endpointForHandleSide(resizeHandle);
+            const snappedAnchor = final.anchorSnap;
+            const targetCNvPrId = snappedAnchor
+              ? findCNvPrIdByShapeId(slide.shapes, snappedAnchor.shapeId)
+              : null;
+            const endpointPt = endpointForHandle(resizeHandle, box);
+            const endpointPayload =
+              snappedAnchor && targetCNvPrId !== null
+                ? {
+                    kind: "anchored" as const,
+                    targetCNvPrId,
+                    side: snappedAnchor.side,
+                  }
+                : { kind: "free" as const, xEmu: endpointPt.x, yEmu: endpointPt.y };
+            await props.agent.applyCommand({
+              type: "pptx:set-connector-endpoint",
+              source: "human",
+              payload: {
+                slideIndex: props.slideIndex,
+                shapeId: t.id,
+                which,
+                endpoint: endpointPayload,
+              },
+            });
+            continue;
+          }
           if (mode === "move") {
             await props.agent.applyCommand({
               type: "pptx:set-position",
@@ -348,6 +470,8 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     [drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
   );
 
+  const onTextSelectionChange = props.onTextSelectionChange;
+
   const startEditing = React.useCallback(
     (shapeId: string) => {
       setEditingId(shapeId);
@@ -359,6 +483,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const finishEditing = React.useCallback(
     async (shape: TextShape, newText: string) => {
       setEditingId(null);
+      onTextSelectionChange?.(null);
       const original = textShapePlain(shape);
       if (original === newText) return;
       try {
@@ -371,7 +496,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         props.onError?.(err as Error);
       }
     },
-    [props]
+    [props, onTextSelectionChange]
   );
 
   if (!slide) {
@@ -421,7 +546,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         }}
       />
       {drag && preview ? (
-        <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} />
+        <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} ctx={ctx} />
       ) : null}
       {drag && preview && preview.guides.length > 0 ? (
         <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
@@ -443,7 +568,9 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       {marquee && containerRef.current ? (
         <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
       ) : null}
-      {editingId ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing) : null}
+      {editingId
+        ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing, onTextSelectionChange)
+        : null}
     </div>
   );
 }
@@ -481,7 +608,45 @@ function collectOtherBoxes(
  * everything decorative lives in the opaque tail to keep byte-roundtrip
  * cheap.
  */
+function isCornerHandle(h: ResizeHandle): boolean {
+  return h === "nw" || h === "ne" || h === "sw" || h === "se";
+}
+
+/**
+ * Map a resize handle to which connector endpoint (start vs end) it
+ * controls. The convention mirrors how the parser/serializer place
+ * endpoints on a connector's bounding box: start = nw corner, end =
+ * se corner. ne/sw map the same way (top-right ≈ start because
+ * connectors with `flipH` set start on the right, but we don't track
+ * flip in the canvas — both handles edit the same endpoint as if
+ * flip were absent, which lets the reflow logic re-pick flips).
+ */
+function endpointForHandleSide(h: ResizeHandle): "start" | "end" {
+  switch (h) {
+    case "nw":
+    case "ne":
+      return "start";
+    case "sw":
+    case "se":
+      return "end";
+    default:
+      return "end";
+  }
+}
+
+function findCNvPrIdByShapeId(shapes: ReadonlyArray<Shape>, id: string): number | null {
+  for (const s of shapes) {
+    if (s.id === id) return s.cNvPrId > 0 ? s.cNvPrId : null;
+    if (s.kind === "group") {
+      const inner = findCNvPrIdByShapeId(s.children, id);
+      if (inner !== null) return inner;
+    }
+  }
+  return null;
+}
+
 function isLineShape(shape: Shape): boolean {
+  if (shape.kind === "connector") return true;
   if (shape.kind !== "text") return false;
   for (const c of shape.spPrTail) {
     if (c.tag !== "a:prstGeom") continue;
@@ -754,22 +919,49 @@ function cursorForDrag(mode: DragMode): string {
 
 interface DragGhostLayerProps {
   readonly slideSize: SlideSize;
-  readonly ghosts: ReadonlyArray<{ id: string; svg: string; origin: BoundingBox }>;
+  readonly ghosts: ReadonlyArray<{
+    id: string;
+    svg: string;
+    origin: BoundingBox;
+    shape: Shape;
+  }>;
   readonly preview: DragPreview;
+  readonly ctx: SvgRenderCtx;
 }
 
 /**
- * Renders every dragged shape at its live position by reusing each
- * shape's baked SVG output and applying a translate (+ scale, when
- * resizing) via a wrapping <g>. This avoids re-emitting the static SVG
- * string on every pointer move while still giving the user pixel-
- * perfect feedback even for multi-shape group drags.
+ * Renders every dragged shape at its live position. For most shape
+ * kinds we reuse each shape's baked SVG output and apply a translate
+ * (+ scale, when resizing) via a wrapping <g> — this avoids re-emitting
+ * the static SVG string on every pointer move while still giving the
+ * user pixel-perfect feedback even for multi-shape group drags.
+ *
+ * Text shapes are special-cased: they render via `<foreignObject>` +
+ * HTML, and a CSS scale would visually stretch the glyphs instead of
+ * reflowing the text. To match PowerPoint/Google Slides behaviour
+ * during a resize, we re-emit the text shape's SVG at the live
+ * preview position+size on every pointer move so word-wrap kicks in
+ * at the new width. `shapeToSvg` is just string concat, so the cost
+ * is negligible compared to the visual quality win.
  */
-function DragGhostLayer({ slideSize, ghosts, preview }: DragGhostLayerProps): React.ReactElement {
+function DragGhostLayer({
+  slideSize,
+  ghosts,
+  preview,
+  ctx,
+}: DragGhostLayerProps): React.ReactElement {
   const inner = ghosts
     .map((g) => {
       const box = preview.boxes.get(g.id);
       if (!box) return "";
+      if (g.shape.kind === "text") {
+        const synth: TextShape = {
+          ...g.shape,
+          position: { xEmu: box.x, yEmu: box.y },
+          size: { cxEmu: box.cx, cyEmu: box.cy },
+        };
+        return shapeToSvg(synth, ctx);
+      }
       const tx = px(box.x - g.origin.x);
       const ty = px(box.y - g.origin.y);
       const sx = g.origin.cx > 0 ? box.cx / g.origin.cx : 1;
@@ -838,7 +1030,12 @@ function SelectionOverlaySvg({
   // For single-shape resizes the union/handles should track the live
   // preview box; for moves they follow the single shape too.
   const primary = entries[0];
-  const handleSize = 10;
+  // Visible handle is 12 user units (≈12 CSS px @ 96 DPI / 100 % zoom).
+  // The hit-zone is intentionally larger than the visible square so the
+  // user doesn't have to land precisely on a tiny target — matches what
+  // Figma / PowerPoint do (hit slop ~6 px on every side).
+  const handleSize = 12;
+  const handleHitSize = 24;
 
   const handles: { readonly h: ResizeHandle; readonly hx: number; readonly hy: number }[] = [];
   if (!isMulti) {
@@ -939,25 +1136,38 @@ function SelectionOverlaySvg({
         />
       ))}
       {/* Resize handles (single-select only). During a resize gesture we
-          keep them rendered so the user sees the corner they're pulling. */}
+          keep them rendered so the user sees the corner they're pulling.
+          We render two rects per handle: an invisible larger hit-zone
+          on top so pointer capture is forgiving, and the visible
+          purple-bordered square underneath. */}
       {handles.map((it) => (
-        <rect
-          key={it.h}
-          data-shape-id={escAttr(primary.id)}
-          data-handle={it.h}
-          x={it.hx}
-          y={it.hy}
-          width={handleSize}
-          height={handleSize}
-          transform={`translate(${-handleSize / 2} ${-handleSize / 2})`}
-          fill="#ffffff"
-          stroke="#7c3aed"
-          strokeWidth={1.5}
-          vectorEffect="non-scaling-stroke"
-          pointerEvents="auto"
-          style={{ cursor: cursorForHandle(it.h) }}
-          opacity={isResizing ? 0.6 : 1}
-        />
+        <g key={it.h}>
+          <rect
+            x={it.hx}
+            y={it.hy}
+            width={handleSize}
+            height={handleSize}
+            transform={`translate(${-handleSize / 2} ${-handleSize / 2})`}
+            fill="#ffffff"
+            stroke="#7c3aed"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+            opacity={isResizing ? 0.6 : 1}
+          />
+          <rect
+            data-shape-id={escAttr(primary.id)}
+            data-handle={it.h}
+            x={it.hx}
+            y={it.hy}
+            width={handleHitSize}
+            height={handleHitSize}
+            transform={`translate(${-handleHitSize / 2} ${-handleHitSize / 2})`}
+            fill="transparent"
+            pointerEvents="auto"
+            style={{ cursor: cursorForHandle(it.h) }}
+          />
+        </g>
       ))}
     </svg>
   );
@@ -1162,13 +1372,13 @@ function renderEditingOverlay(
   shapeId: string,
   slideSize: SlideSize,
   dpi: number,
-  onCommit: (shape: TextShape, text: string) => void
+  onCommit: (shape: TextShape, text: string) => void,
+  onTextSelectionChange: ((sel: PptxTextSelection | null) => void) | undefined
 ): React.ReactElement | null {
   const shape = findShape(slide.shapes, shapeId);
   if (!shape || shape.kind !== "text") return null;
   const box = shapeBoundingBox(shape);
   if (!box) return null;
-  const initial = textShapePlain(shape);
   const leftPct = (box.x / slideSize.cxEmu) * 100;
   const topPct = (box.y / slideSize.cyEmu) * 100;
   const widthPct = (box.cx / slideSize.cxEmu) * 100;
@@ -1177,7 +1387,7 @@ function renderEditingOverlay(
   return (
     <TextEditOverlay
       key={shapeId}
-      initial={initial}
+      shape={shape as TextShape}
       style={{
         position: "absolute",
         left: `${leftPct}%`,
@@ -1194,51 +1404,230 @@ function renderEditingOverlay(
         overflow: "auto",
       }}
       onCommit={(t) => onCommit(shape as TextShape, t)}
+      onSelectionChange={onTextSelectionChange}
     />
   );
 }
 
 interface TextEditOverlayProps {
-  readonly initial: string;
+  readonly shape: TextShape;
   readonly style: React.CSSProperties;
   readonly onCommit: (text: string) => void;
+  readonly onSelectionChange?: (sel: PptxTextSelection | null) => void;
 }
 
-function TextEditOverlay({ initial, style, onCommit }: TextEditOverlayProps): React.ReactElement {
+/**
+ * Selection-aware contenteditable overlay.
+ *
+ * Renders each paragraph as its own `<div data-paragraph={i}>` and
+ * each run as a `<span data-run={j}>` so we can preserve inline
+ * formatting visually AND map a DOM Selection back to a
+ * `PptxTextSelection` (paragraph + start/end character offsets) for
+ * the shared text-format toolbar.
+ *
+ * Text edits still commit through `pptx:set-text` on blur (lossy:
+ * collapses formatting). Format toolbar interactions are expected to
+ * `e.preventDefault()` mousedown so this overlay keeps focus and the
+ * selection ref stays valid while a `pptx:format-text` patch is
+ * dispatched.
+ */
+function TextEditOverlay({
+  shape,
+  style,
+  onCommit,
+  onSelectionChange,
+}: TextEditOverlayProps): React.ReactElement {
   const ref = React.useRef<HTMLDivElement>(null);
+  const initialPlain = React.useMemo(() => textShapePlain(shape), [shape]);
+
   React.useEffect(() => {
-    if (ref.current) {
-      ref.current.innerText = initial;
-      ref.current.focus();
-      const sel = window.getSelection?.();
-      if (sel && ref.current.firstChild) {
-        const range = document.createRange();
-        range.selectNodeContents(ref.current);
-        range.collapse(false);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
+    const node = ref.current;
+    if (!node) return;
+    node.focus();
+    const sel = window.getSelection?.();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
     }
-  }, [initial]);
+  }, [shape.id]);
+
+  // Mirror the live DOM selection into the shared callback so the
+  // text-format toolbar can compute MIXED-state and dispatch
+  // pptx:format-text against a real range.
+  //
+  // IMPORTANT — never report `null` here just because the native
+  // selection happens to be empty/outside the editable. Clicking a
+  // toolbar button (or opening a `<select>`) momentarily moves
+  // focus and may collapse the native Selection; if we cleared the
+  // ref the format dispatch would immediately see `selectionRef =
+  // null` and bail with a "Select some text first." toast.
+  // `null` is reserved for the explicit close path (commit/blur
+  // outside the keep-edit zone), which calls `onSelectionChange?.
+  // (null)` directly in the blur handler below.
+  React.useEffect(() => {
+    if (!onSelectionChange) return;
+    const handler = () => {
+      const node = ref.current;
+      if (!node) return;
+      const sel = window.getSelection?.();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) {
+        return;
+      }
+      const a = domPointToCharOffset(node, range.startContainer, range.startOffset);
+      const b = domPointToCharOffset(node, range.endContainer, range.endOffset);
+      if (!a || !b || a.paragraph !== b.paragraph) {
+        // Cross-paragraph selections aren't supported by the toolbar
+        // (pptx:format-text is per-paragraph) — leave the previously
+        // captured single-paragraph selection in place.
+        return;
+      }
+      const start = Math.min(a.offset, b.offset);
+      const end = Math.max(a.offset, b.offset);
+      onSelectionChange({ shapeId: shape.id, paragraph: a.paragraph, start, end });
+    };
+    document.addEventListener("selectionchange", handler);
+    handler();
+    return () => document.removeEventListener("selectionchange", handler);
+  }, [onSelectionChange, shape.id]);
+
   return (
     <div
       ref={ref}
       contentEditable
       suppressContentEditableWarning
+      data-testid="pptx-text-overlay"
       style={style}
-      onBlur={() => onCommit(ref.current?.innerText ?? "")}
+      onBlur={(e) => {
+        // Don't commit when focus moves to a sibling we explicitly
+        // marked as "keep editing focus" (the format toolbar). The
+        // toolbar suppresses mousedown so the relatedTarget stays
+        // null in most browsers; we still bail out if the user
+        // clicked a button that opted in via data-pptx-keep-edit.
+        const next = e.relatedTarget as HTMLElement | null;
+        if (next?.closest?.("[data-pptx-keep-edit]")) return;
+        onCommit(ref.current?.innerText ?? "");
+        onSelectionChange?.(null);
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           ref.current?.blur();
         } else if (e.key === "Escape") {
           e.preventDefault();
-          if (ref.current) ref.current.innerText = initial;
+          if (ref.current) ref.current.innerText = initialPlain;
           ref.current?.blur();
         }
       }}
-    />
+    >
+      {shape.txBody.paragraphs.map((p, pi) => (
+        <div key={pi} data-paragraph={pi}>
+          {paragraphToReact(p, pi)}
+        </div>
+      ))}
+    </div>
   );
+}
+
+function paragraphToReact(
+  p: TextShape["txBody"]["paragraphs"][number],
+  paragraphIndex: number
+): React.ReactNode {
+  const flatLen = p.runs.reduce((acc, r) => acc + (r.isLineBreak ? 0 : r.text.length), 0);
+  if (flatLen === 0) {
+    // Empty paragraphs need a <br> so contenteditable gives them a
+    // visible row + a stable caret target.
+    return <br data-paragraph-eol={paragraphIndex} />;
+  }
+  return p.runs.map((r, ri) => {
+    if (r.isLineBreak) return <br key={ri} data-run={ri} />;
+    return (
+      <span key={ri} data-run={ri} style={runStyle(r.properties)}>
+        {r.text}
+      </span>
+    );
+  });
+}
+
+function runStyle(props: TextShape["txBody"]["paragraphs"][number]["runs"][number]["properties"]): React.CSSProperties {
+  const out: React.CSSProperties = {};
+  if (props.bold) out.fontWeight = 700;
+  if (props.italic) out.fontStyle = "italic";
+  const decorations: string[] = [];
+  if (props.underline) decorations.push("underline");
+  if (props.strike) decorations.push("line-through");
+  if (decorations.length > 0) out.textDecoration = decorations.join(" ");
+  if (props.color) out.color = `#${props.color}`;
+  if (props.highlight) out.backgroundColor = `#${props.highlight}`;
+  if (props.fontFamily) out.fontFamily = props.fontFamily;
+  if (props.fontSizeHundredths !== undefined) {
+    const pt = props.fontSizeHundredths / 100;
+    out.fontSize = `${pt}pt`;
+  }
+  return out;
+}
+
+function domPointToCharOffset(
+  root: HTMLElement,
+  node: Node,
+  offset: number
+): { paragraph: number; offset: number } | null {
+  // Find the paragraph element containing `node` (or root, when
+  // selection is on the root itself).
+  let paraEl: HTMLElement | null = null;
+  let cursor: Node | null = node;
+  while (cursor && cursor !== root) {
+    if (cursor.nodeType === 1 && (cursor as HTMLElement).hasAttribute("data-paragraph")) {
+      paraEl = cursor as HTMLElement;
+      break;
+    }
+    cursor = cursor.parentNode;
+  }
+  if (!paraEl) {
+    // Selection landed on the root or between paragraphs. Map the
+    // root-level child index to the nearest paragraph index.
+    if (node === root) {
+      const child = root.children[Math.min(offset, root.children.length - 1)] as HTMLElement | undefined;
+      if (child?.hasAttribute("data-paragraph")) {
+        return { paragraph: Number(child.dataset.paragraph), offset: 0 };
+      }
+    }
+    return null;
+  }
+  const paragraph = Number(paraEl.dataset.paragraph);
+
+  // Walk all text nodes inside paraEl in document order and sum char
+  // counts up to (node, offset).
+  const walker = document.createTreeWalker(paraEl, NodeFilter.SHOW_TEXT, null);
+  let total = 0;
+  let n = walker.nextNode();
+  while (n) {
+    if (n === node) {
+      total += offset;
+      return { paragraph, offset: total };
+    }
+    total += (n.textContent ?? "").length;
+    n = walker.nextNode();
+  }
+  // The caller passed an element node — figure out how many chars
+  // precede it within the paragraph.
+  if (node.nodeType === 1) {
+    const el = node as HTMLElement;
+    let pre = 0;
+    const w2 = document.createTreeWalker(paraEl, NodeFilter.SHOW_TEXT, null);
+    let m = w2.nextNode();
+    while (m) {
+      if (el.contains(m)) break;
+      pre += (m.textContent ?? "").length;
+      m = w2.nextNode();
+    }
+    return { paragraph, offset: pre };
+  }
+  return { paragraph, offset: total };
 }
 
 function textShapePlain(shape: TextShape): string {

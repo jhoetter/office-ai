@@ -135,7 +135,7 @@ function computeState(agent: DocxAgent, state: EditorState, measure: Measure): P
   // we degrade gracefully to "honour hard + hint breaks only" — the
   // pre-measurement behaviour.
   const chunks = chunkIntoPages(snapshot, measure);
-  const decorations = buildDecorations(snapshot, chunks, state);
+  const decorations = buildDecorations(snapshot, chunks, state, measure);
   return { chunks, decorations };
 }
 
@@ -184,7 +184,8 @@ function remeasureAndForce(
 function buildDecorations(
   snapshot: DocxSnapshot,
   chunks: ReadonlyArray<PageChunk>,
-  state: EditorState
+  state: EditorState,
+  measure: Measure
 ): DecorationSet {
   if (chunks.length === 0) return DecorationSet.empty;
 
@@ -243,6 +244,42 @@ function buildDecorations(
         })
       );
     }
+
+    // Page filler — pads the page's body region down to the full
+    // content area (`pgSz.h - pgMar.top - pgMar.bottom`) so every
+    // sheet renders at the document's page height even when the
+    // chunk's content is short. Word does this implicitly because it
+    // paints fixed-size pages; we have to do it explicitly because PM
+    // is a flow editor that hugs content height by default.
+    //
+    // Sized in CSS pixels (twips ÷ TWIPS_PER_CSS_PX). Sum block
+    // heights from the live measurement cache; on the very first
+    // mount (cache empty) every block reports 0 and the filler paints
+    // the full content area — the next RAF re-runs `apply` with real
+    // measurements and the filler shrinks to its true size.
+    const contentAreaTwips = Math.max(
+      0,
+      chunk.geometry.pgSz.h - chunk.geometry.pgMar.top - chunk.geometry.pgMar.bottom
+    );
+    let measuredTwips = 0;
+    for (let b = chunk.startBlock; b < chunk.endBlock; b++) {
+      measuredTwips += measure(b);
+    }
+    const fillerTwips = Math.max(0, contentAreaTwips - measuredTwips);
+    const fillerCssPx = fillerTwips / TWIPS_PER_CSS_PX;
+    // The filler attaches to the position right after the chunk's
+    // last block — that's `childPositions[chunk.endBlock]` for any
+    // non-final chunk, and `docEnd` for the very last chunk. Use a
+    // more-negative `side` than the page-edge / cap-bottom widgets
+    // (which use `side: -1` / `side: 1`) so the filler always renders
+    // *above* the page break chrome that closes the page.
+    const fillerInsertAt = chunk.endBlock < childPositions.length ? childPositions[chunk.endBlock] : docEnd;
+    decos.push(
+      Decoration.widget(fillerInsertAt, () => renderPageFiller(fillerCssPx, chunk.pageNumber), {
+        side: -2,
+        key: `page-filler-${chunk.pageNumber}-${Math.round(fillerCssPx)}`,
+      })
+    );
 
     // Page-edge widget between this chunk and the next chunk. Owns
     // the footer of *this* page + the gap + the header of the next
@@ -303,6 +340,23 @@ function renderFooterCap(chunk: PageChunk, footerPart: HeaderFooterPart | undefi
   cap.setAttribute("contenteditable", "false");
   cap.appendChild(renderFooterZone(chunk, footerPart));
   return cap;
+}
+
+/**
+ * Padding widget rendered at the bottom of every page chunk so the
+ * visible sheet always reaches the document's full content area
+ * height (`pgSz.h - pgMar.top - pgMar.bottom`). When the chunk's
+ * measured content already fills the page, this widget collapses to
+ * zero. Marked `contenteditable="false"` so the cursor cannot land
+ * inside the dead space.
+ */
+function renderPageFiller(heightCssPx: number, pageNumber: number): HTMLElement {
+  const filler = document.createElement("div");
+  filler.className = "pm-page-filler";
+  filler.setAttribute("contenteditable", "false");
+  filler.setAttribute("data-page-number", String(pageNumber));
+  filler.style.height = `${Math.max(0, heightCssPx)}px`;
+  return filler;
 }
 
 function renderPageEdge(

@@ -1,6 +1,12 @@
 import type { CommandHandler } from "@officeai/core";
 import type { XlsxSnapshot } from "../model/types.js";
 import { addCommentHandler } from "./add-comment.js";
+import {
+  deleteCommentHandler,
+  editCommentHandler,
+  replyCommentHandler,
+  resolveCommentHandler,
+} from "./comment-crud.js";
 import { addSheetHandler } from "./add-sheet.js";
 import { deleteColumnHandler } from "./delete-column.js";
 import { deleteRowHandler } from "./delete-row.js";
@@ -53,6 +59,10 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   addSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   renameSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   addCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
+  replyCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
+  resolveCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
+  deleteCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
+  editCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
   setColumnWidthHandler as CommandHandler<unknown, XlsxSnapshot>,
   setRowHeightHandler as CommandHandler<unknown, XlsxSnapshot>,
   deleteSheetHandler as CommandHandler<unknown, XlsxSnapshot>,

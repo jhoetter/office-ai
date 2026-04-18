@@ -3,22 +3,18 @@
 import type { ReactNode } from "react";
 import { useCallback, useMemo } from "react";
 import {
-  Bold,
-  Italic,
-  Underline,
-  Strikethrough,
   AlignLeft,
   AlignCenter,
   AlignRight,
-  Paintbrush,
-  Type as TypeIcon,
   Merge,
   Split,
   Undo2,
   Redo2,
   TableProperties,
+  Keyboard,
 } from "lucide-react";
-import { cn } from "@officeai/ui";
+import { TextFormatBar, cn } from "@officeai/ui";
+import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
 import { flattenCellXf } from "@officeai/xlsx";
 import { NUMBER_FORMAT_PRESETS, type NumberFormatPresetId } from "./styles";
@@ -28,8 +24,8 @@ export interface ToolbarProps {
   readonly disabled: boolean;
   /**
    * The active anchor cell's effective style, used to flip toggle
-   * states (Bold pressed, etc.) so the toolbar reflects what's
-   * actually on the cell.
+   * states (Bold pressed, etc.) on the alignment buttons that aren't
+   * yet routed through the shared TextFormatBar.
    */
   readonly anchorStyleId: number | undefined;
   readonly styles: StyleTable;
@@ -40,6 +36,14 @@ export interface ToolbarProps {
    * presentational component.
    */
   readonly onApply: (patch: CellFormatPatch) => void;
+  /**
+   * Shared text-formatting plumbing. Bold / italic / underline /
+   * strike / font family / font size / font color / cell highlight
+   * are all routed through this so the spreadsheet ribbon shares
+   * pickers + MIXED-state UX with the document and slide editors.
+   */
+  readonly textFormatProvider: TextFormatProvider;
+  readonly textFormatActive: ActiveTextFormat;
   /** True iff the active selection range exactly matches an existing merge. */
   readonly canUnmerge: boolean;
   /** True iff the active selection covers ≥ 2 cells (eligible for merge). */
@@ -60,28 +64,24 @@ export interface ToolbarProps {
   readonly onTextToColumns: () => void;
   /** Disabled when no single-column selection is available. */
   readonly canTextToColumns: boolean;
+  /** Open the keyboard-shortcuts help dialog. */
+  readonly onOpenShortcuts: () => void;
 }
 
 /**
  * Excel-style formatting toolbar.
  *
  * Layout (left → right):
- *   [Undo / Redo] | [Bold / Italic / Underline / Strike] |
- *   [Font colour / Fill colour] | [Align L/C/R] |
- *   [Merge / Unmerge] | [Text-to-Columns] | [Number format]
+ *   [Undo / Redo] | [shared TextFormatBar — bold/italic/.../color/highlight] |
+ *   [Align L/C/R] | [Merge / Unmerge] | [Text-to-Columns] | [Number format]
  *
- * Structural row / column edits (Insert / Delete) live in the
- * right-click context menu (P13b) — the toolbar used to carry them
- * but two near-identical Trash icons were impossible to tell apart,
- * so they moved.
- *
- * Every action funnels through the parent's `onApply` (which
- * dispatches `xlsx:set-cell-format` on the active range) so the
- * agent path and the human path share the same command surface.
- *
- * Toggle state for the bold/italic/etc. buttons is derived from the
- * *anchor* cell's effective style (matches Excel — the active cell
- * decides what the ribbon looks like).
+ * The text-formatting cluster (font family + size, bold/italic/
+ * underline/strike, font color, cell highlight) is now the shared
+ * `<TextFormatBar />` from `@officeai/ui`, driven by an
+ * `xlsxFormatProvider`. The XLSX-specific bits below — alignment,
+ * merge/unmerge, structural row/column edits, undo/redo,
+ * text-to-columns, number format — stay local because they have no
+ * counterpart in DOCX or PPTX.
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
   const {
@@ -90,6 +90,8 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     styles,
     selection,
     onApply,
+    textFormatProvider,
+    textFormatActive,
     canMerge,
     canUnmerge,
     onMerge,
@@ -100,6 +102,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     onRedo,
     onTextToColumns,
     canTextToColumns,
+    onOpenShortcuts,
   } = props;
 
   const effective: EffectiveStyle = useMemo(
@@ -115,31 +118,9 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     [onApply, selection]
   );
 
-  const onToggle = useCallback(
-    (key: "bold" | "italic" | "underline" | "strike") => {
-      const current = !!effective.font[key];
-      apply({ font: { [key]: !current } });
-    },
-    [apply, effective]
-  );
-
   const onAlign = useCallback(
     (h: "left" | "center" | "right") => {
       apply({ alignment: { horizontal: h } });
-    },
-    [apply]
-  );
-
-  const onFontColor = useCallback(
-    (rrggbb: string) => {
-      apply({ font: { color: rrggbb } });
-    },
-    [apply]
-  );
-
-  const onFillColor = useCallback(
-    (rrggbb: string) => {
-      apply({ fill: { color: rrggbb, pattern: "solid" } });
     },
     [apply]
   );
@@ -175,54 +156,11 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <Divider />
 
-      <ToggleBtn
-        icon={<Bold size={14} />}
-        label="Bold (⌘B)"
-        testId="format-bold"
-        active={!!effective.font.bold}
+      <TextFormatBar
+        provider={textFormatProvider}
+        active={textFormatActive}
         disabled={disabled}
-        onClick={() => onToggle("bold")}
-      />
-      <ToggleBtn
-        icon={<Italic size={14} />}
-        label="Italic (⌘I)"
-        testId="format-italic"
-        active={!!effective.font.italic}
-        disabled={disabled}
-        onClick={() => onToggle("italic")}
-      />
-      <ToggleBtn
-        icon={<Underline size={14} />}
-        label="Underline (⌘U)"
-        testId="format-underline"
-        active={!!effective.font.underline}
-        disabled={disabled}
-        onClick={() => onToggle("underline")}
-      />
-      <ToggleBtn
-        icon={<Strikethrough size={14} />}
-        label="Strikethrough"
-        testId="format-strike"
-        active={!!effective.font.strike}
-        disabled={disabled}
-        onClick={() => onToggle("strike")}
-      />
-
-      <Divider />
-
-      <ColorPicker
-        icon={<TypeIcon size={14} />}
-        title="Font color"
-        testId="format-font-color"
-        disabled={disabled}
-        onPick={onFontColor}
-      />
-      <ColorPicker
-        icon={<Paintbrush size={14} />}
-        title="Fill color"
-        testId="format-fill-color"
-        disabled={disabled}
-        onPick={onFillColor}
+        testIdPrefix="format"
       />
 
       <Divider />
@@ -302,6 +240,16 @@ export function Toolbar(props: ToolbarProps): ReactNode {
           </option>
         ))}
       </select>
+
+      <div className="ml-auto flex items-center">
+        <ActionBtn
+          icon={<Keyboard size={14} />}
+          label="Keyboard shortcuts (⌘/)"
+          testId="action-shortcuts"
+          disabled={false}
+          onClick={onOpenShortcuts}
+        />
+      </div>
     </div>
   );
 }
@@ -371,78 +319,5 @@ function ActionBtn(props: ActionBtnProps): ReactNode {
     >
       {icon}
     </button>
-  );
-}
-
-interface ColorPickerProps {
-  readonly icon: ReactNode;
-  readonly title: string;
-  readonly testId: string;
-  readonly disabled: boolean;
-  readonly onPick: (rrggbb: string) => void;
-}
-
-const COLOR_SWATCHES: ReadonlyArray<{ id: string; rrggbb: string }> = [
-  { id: "black", rrggbb: "000000" },
-  { id: "white", rrggbb: "FFFFFF" },
-  { id: "red", rrggbb: "DC2626" },
-  { id: "orange", rrggbb: "EA580C" },
-  { id: "yellow", rrggbb: "FACC15" },
-  { id: "green", rrggbb: "16A34A" },
-  { id: "blue", rrggbb: "2563EB" },
-  { id: "violet", rrggbb: "7C3AED" },
-];
-
-/**
- * Tiny inline colour picker. Renders the trigger as a button with
- * the same visual rhythm as the toggles, then a small grid of
- * swatches in a `<details>` so we don't need a portal/popover stack
- * for the P0 toolbar. Each swatch carries `data-testid` so Playwright
- * can pick a deterministic colour.
- */
-function ColorPicker(props: ColorPickerProps): ReactNode {
-  const { icon, title, testId, disabled, onPick } = props;
-  return (
-    <details
-      data-testid={testId}
-      className="relative"
-      onToggle={(e) => {
-        // Auto-close after a swatch click — kept minimal.
-        void e;
-      }}
-    >
-      <summary
-        title={title}
-        aria-label={title}
-        className={cn(
-          "list-none inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded text-foreground hover:bg-hover",
-          disabled && "pointer-events-none opacity-50"
-        )}
-        onMouseDown={(e) => e.preventDefault()}
-      >
-        {icon}
-      </summary>
-      <div
-        role="menu"
-        className="absolute left-0 top-full z-50 mt-1 grid w-[160px] grid-cols-4 gap-1 rounded-md border border-divider bg-surface p-2 shadow-md"
-      >
-        {COLOR_SWATCHES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            data-testid={`${testId}-${s.id}`}
-            aria-label={`Color ${s.id}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={(e) => {
-              onPick(s.rrggbb);
-              const det = e.currentTarget.closest("details");
-              if (det) det.removeAttribute("open");
-            }}
-            style={{ background: `#${s.rrggbb}` }}
-            className="h-6 w-6 rounded border border-divider"
-          />
-        ))}
-      </div>
-    </details>
   );
 }

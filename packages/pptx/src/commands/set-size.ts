@@ -1,5 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type { PptxSnapshot, Shape } from "../model/types.js";
+import { reflowConnectorsForCNvPrId } from "./connector-helpers.js";
 import {
   buildDiff,
   evolveSnapshot,
@@ -29,10 +30,11 @@ export const setSizeHandler: CommandHandler<SetSizePayload, PptxSnapshot> = {
     const cyEmu = Math.round(payload.height);
     const updated: Shape = { ...shape, size: { cxEmu, cyEmu } };
 
-    const root = withSlide(snapshot.root, sIdx, (s) => ({
-      ...s,
-      shapes: replaceShape(s.shapes, path, updated),
-    }));
+    const root = withSlide(snapshot.root, sIdx, (s) => {
+      const resizedShapes = replaceShape(s.shapes, path, updated);
+      const reflowed = reflowConnectorsForCNvPrId(resizedShapes, shape.cNvPrId);
+      return { ...s, shapes: reflowed };
+    });
 
     const next = evolveSnapshot(snapshot, root, { slides: [slide.partPath] });
 

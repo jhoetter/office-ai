@@ -27,6 +27,33 @@ test.describe("xlsx editor: Excel-like keyboard editing", () => {
     await expect(page.getByTestId("revision-badge")).toContainText("rev 1");
   });
 
+  test("type-to-edit: typed keystrokes appear inside the cell, not just the formula bar", async ({
+    page,
+  }) => {
+    // Excel parity — when the user types into a selected cell, the
+    // characters must visibly fill the cell as they're typed. The
+    // <input> still lives in the formula bar (so click-to-insert-ref
+    // and autocomplete keep working), but the cell mirrors the draft
+    // through the `liveEditDraft` channel.
+    await gotoXlsxEditor(page);
+
+    await page.getByTestId("cell-B2").click();
+    await page.keyboard.press("4");
+    await page.keyboard.press("2");
+
+    const liveDraft = page.getByTestId("cell-B2-live-draft");
+    await expect(liveDraft).toBeVisible();
+    await expect(liveDraft).toHaveText("42");
+    // Formula bar still sees the same draft (single source of truth).
+    await expect(page.getByTestId("formula-input")).toHaveValue("42");
+
+    // Pressing Escape cancels the edit; the cell snaps back to its
+    // original value and the live-draft node is gone.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("cell-B2-live-draft")).toHaveCount(0);
+    await expect(page.getByTestId("cell-B2")).toContainText("42"); // pre-existing seed
+  });
+
   test("Backspace clears the active cell", async ({ page }) => {
     await gotoXlsxEditor(page);
 

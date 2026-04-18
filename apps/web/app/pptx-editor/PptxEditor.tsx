@@ -2,13 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { cn } from "@officeai/ui";
+import { CommentComposer, CommentsSidebar, cn } from "@officeai/ui";
+import { createPptxCommentsProvider } from "./pptxCommentsProvider";
 import { PptxAgent } from "@officeai/pptx/agent";
-import { SlideCanvas, SlidesSidebar } from "@officeai/pptx/renderer/react";
+import { SlideCanvas, SlidesSidebar, type PptxTextSelection } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
-import type { Shape, ShapePreset, TextShape } from "@officeai/pptx";
+import type {
+  LayoutKindPayload,
+  PptxSnapshot,
+  Shape,
+  ShapePreset,
+  TextShape,
+} from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
+import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
+import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
+import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
+import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 
 interface ToastMessage {
   id: number;
@@ -39,6 +50,15 @@ export function PptxEditor(): React.ReactNode {
   const [zoom, setZoom] = useState(1);
   const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
   const selectedShapeId = selectedShapeIds[0] ?? null;
+  const [textSelection, setTextSelection] = useState<PptxTextSelection | null>(null);
+  // Mutable mirrors used by the format provider so it can read live
+  // state without triggering rerenders inside its own callbacks.
+  const slideIndexRef = useRef(0);
+  const textSelectionRef = useRef<PptxTextSelection | null>(null);
+  const selectedShapeIdRef = useRef<string | null>(null);
+  const pushToastRef = useRef<((kind: ToastMessage["kind"], text: string) => void) | null>(null);
+  const slideSurfaceRef = useRef<HTMLElement | null>(null);
+  const shortcutsDialog = useShortcutsDialog();
 
   const onZoomChange = useCallback((next: number) => {
     setZoom(clampZoom(next));
@@ -49,6 +69,31 @@ export function PptxEditor(): React.ReactNode {
     setToasts((prev) => [...prev, { id, kind, text }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }, []);
+  useEffect(() => {
+    pushToastRef.current = pushToast;
+  }, [pushToast]);
+  // These refs back the format provider's call-time reads. We sync them
+  // *during render* (rather than in `useEffect`) so the provider sees
+  // the freshest state on the very first render after a state change —
+  // otherwise the toolbar's `provider.hasSelection()` evaluates against
+  // a stale ref and the controls render disabled for one frame and
+  // never re-render to recover (refs don't trigger renders themselves).
+  slideIndexRef.current = activeIndex;
+  textSelectionRef.current = textSelection;
+  selectedShapeIdRef.current = selectedShapeId;
+
+  /* eslint-disable react-hooks/refs -- the provider stores refs for
+     call-time reads; it never dereferences them during construction. */
+  const [textFormatProvider] = useState(() =>
+    createPptxFormatProvider({
+      agentRef,
+      slideIndexRef,
+      selectionRef: textSelectionRef,
+      selectedShapeIdRef,
+      pushToast: (kind, text) => pushToastRef.current?.(kind, text),
+    })
+  );
+  /* eslint-enable react-hooks/refs */
 
   const mountAgent = useCallback(async (buf: ArrayBuffer) => {
     const next = await PptxAgent.fromBuffer(buf);
@@ -134,13 +179,13 @@ export function PptxEditor(): React.ReactNode {
     return readSolidFill(selectedShape) ?? null;
   }, [selectedShape]);
 
-  const currentFontPt = useMemo(() => {
-    if (!selectedShape || selectedShape.kind !== "text") return null;
-    const r = selectedShape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak && x.text.length > 0);
-    if (!r) return null;
-    if (r.properties.fontSizeHundredths == null) return null;
-    return r.properties.fontSizeHundredths / 100;
-  }, [selectedShape]);
+  // ActiveTextFormat for the shared TextFormatBar. Recomputed on every
+  // render that touches the snapshot tick or text selection so the
+  // toolbar reflects the current run-level formatting at the caret.
+  const textFormatActive = useMemo(() => {
+    void tick;
+    return computePptxActive(agent, activeIndex, textSelection, selectedShapeId);
+  }, [agent, activeIndex, textSelection, selectedShapeId, tick]);
 
   const addSlide = useCallback(async () => {
     const a = agentRef.current;
@@ -152,6 +197,41 @@ export function PptxEditor(): React.ReactNode {
       onError(err);
     }
   }, [onError]);
+
+  const addSlideWithLayout = useCallback(
+    async (kind: LayoutKindPayload) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:add-slide",
+          payload: { layoutKind: kind },
+          source: "human",
+        });
+        setActiveIndex(a.getSnapshot().root.slides.length - 1);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError]
+  );
+
+  const setSlideLayout = useCallback(
+    async (kind: LayoutKindPayload) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-slide-layout",
+          payload: { slideIndex: activeIndex, layoutKind: kind },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError]
+  );
 
   const deleteSlide = useCallback(async () => {
     const a = agentRef.current;
@@ -242,6 +322,31 @@ export function PptxEditor(): React.ReactNode {
             y: off.y,
             width: isLine ? 3_000_000 : 2_500_000,
             height: isLine ? 0 : preset === "ellipse" ? 1_500_000 : 1_500_000,
+          },
+          source: "human",
+        });
+        const s = a.getSnapshot().root.slides[activeIndex];
+        setSelectedShapeIds([s.shapes[s.shapes.length - 1]!.id]);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, insertOffset, onError]
+  );
+
+  const addConnector = useCallback(
+    async (connectorType: "straight" | "elbow" | "curved") => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        const off = insertOffset();
+        await a.applyCommand({
+          type: "pptx:add-connector",
+          payload: {
+            slideIndex: activeIndex,
+            connectorType,
+            start: { kind: "free", xEmu: off.x, yEmu: off.y },
+            end: { kind: "free", xEmu: off.x + 3_000_000, yEmu: off.y + 1_000_000 },
           },
           source: "human",
         });
@@ -363,6 +468,23 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, onError, selectedShapeIds]
   );
 
+  const setSlideNotes = useCallback(
+    async (text: string) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-slide-notes",
+          payload: { slideIndex: activeIndex, text },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError]
+  );
+
   const changeFill = useCallback(
     async (hex: string | null) => {
       const a = agentRef.current;
@@ -380,72 +502,20 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, onError, selectedShapeId]
   );
 
-  // Picks the text shape to format: prefer the selected shape (if it is
-  // text); otherwise fall back to the first non-empty text shape on the
-  // slide. Allows formatting to apply to a freshly-added shape that has
-  // no body runs yet (the format goes to the empty paragraph).
-  const pickFormattingTarget = useCallback((): TextShape | null => {
-    const a = agentRef.current;
-    if (!a) return null;
-    const s = a.getSnapshot().root.slides[activeIndex];
-    if (!s) return null;
-    const isText = (sh: Shape | null | undefined): sh is TextShape => sh?.kind === "text";
-    if (selectedShapeId) {
-      const sel = findShape(s.shapes, selectedShapeId);
-      if (isText(sel)) return sel;
-    }
-    return s.shapes.find((sh): sh is TextShape => sh.kind === "text") ?? null;
-  }, [activeIndex, selectedShapeId]);
-
-  const applyFormat = useCallback(
-    async (format: {
-      bold?: boolean;
-      italic?: boolean;
-      underline?: boolean;
-      color?: string;
-      fontSizeHundredths?: number;
-    }) => {
-      const a = agentRef.current;
-      if (!a) return;
-      const ts = pickFormattingTarget();
-      if (!ts) {
-        pushToast("info", "Select a text shape first (or add one with the Text box button).");
-        return;
-      }
-      const p = ts.txBody.paragraphs[0];
-      const flatLen = p.runs.reduce((acc, r) => acc + (r.isLineBreak ? 0 : r.text.length), 0);
-      try {
-        await a.applyCommand({
-          type: "pptx:format-text",
-          payload: {
-            slideIndex: activeIndex,
-            shapeId: ts.id,
-            range: { paragraph: 0, start: 0, end: Math.max(flatLen, 0) },
-            format,
-          },
-          source: "human",
-        });
-      } catch (err) {
-        onError(err);
-      }
-    },
-    [activeIndex, onError, pickFormattingTarget, pushToast]
-  );
-
-  const toggleMark = useCallback(
-    (mark: "bold" | "italic" | "underline") => applyFormat({ [mark]: true }),
-    [applyFormat]
-  );
-
-  const changeTextColor = useCallback(
-    (hex: string) => applyFormat({ color: hex.replace(/^#/, "").toUpperCase() }),
-    [applyFormat]
-  );
-
-  const changeFontSize = useCallback(
-    (pt: number) => applyFormat({ fontSizeHundredths: Math.round(pt * 100) }),
-    [applyFormat]
-  );
+  usePptxShortcuts({
+    surfaceRef: slideSurfaceRef,
+    agentRef,
+    activeIndex,
+    slideCount: slides.length,
+    selectedShape,
+    selectedShapeIds,
+    textFormatProvider,
+    onAddSlide: () => void addSlide(),
+    onDuplicateSlide: () => void duplicateSlide(),
+    onDeleteShape: () => void deleteSelectedShape(),
+    onChangeSlide: setActiveIndex,
+    onError,
+  });
 
   // Build object-URL map for every embedded media part so the renderer
   // can paint <Picture> shapes inserted via the toolbar. We rebuild on
@@ -473,29 +543,29 @@ export function PptxEditor(): React.ReactNode {
         hasSelection={selectedShapeId != null}
         selectionCount={selectedShapeIds.length}
         currentFill={currentFill ? `#${currentFill}` : null}
-        currentFontPt={currentFontPt}
+        textFormatProvider={textFormatProvider}
+        textFormatActive={textFormatActive}
         onOpenFile={() => fileInputRef.current?.click()}
         onExport={() => void handleExport()}
         onAddSlide={() => void addSlide()}
+        onAddSlideWithLayout={(k) => void addSlideWithLayout(k)}
+        onSetSlideLayout={(k) => void setSlideLayout(k)}
         onDeleteSlide={() => void deleteSlide()}
         onDuplicateSlide={() => void duplicateSlide()}
         onAddTextBox={() => void addTextBox()}
         onAddShape={(p) => void addShape(p)}
+        onAddConnector={(t) => void addConnector(t)}
         onInsertImage={(f) => void insertImage(f)}
         onDeleteShape={() => void deleteSelectedShape()}
         onAlign={(mode) => void alignSelected(mode)}
         onDistribute={(axis) => void distributeSelected(axis)}
-        onToggleBold={() => void toggleMark("bold")}
-        onToggleItalic={() => void toggleMark("italic")}
-        onToggleUnderline={() => void toggleMark("underline")}
         onChangeFill={(h) => void changeFill(h)}
-        onChangeTextColor={(h) => void changeTextColor(h)}
-        onChangeFontSize={(pt) => void changeFontSize(pt)}
         zoom={zoom}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         onZoomChange={onZoomChange}
         onZoomReset={() => setZoom(1)}
+        onOpenShortcuts={() => shortcutsDialog.setOpen(true)}
       />
       <input
         ref={fileInputRef}
@@ -525,7 +595,12 @@ export function PptxEditor(): React.ReactNode {
             />
           ) : null}
         </aside>
-        <section className="relative flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-divider bg-background p-4">
+        <section
+          ref={slideSurfaceRef as React.RefObject<HTMLElement>}
+          tabIndex={-1}
+          data-testid="pptx-slide-surface"
+          className="relative flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-divider bg-background p-4"
+        >
           {agent ? (
             <div className="w-full max-w-[1100px]" style={{ alignSelf: "flex-start" }}>
               <SlideCanvas
@@ -535,6 +610,7 @@ export function PptxEditor(): React.ReactNode {
                 onError={onError}
                 zoom={zoom}
                 onSelectionChange={setSelectedShapeIds}
+                onTextSelectionChange={setTextSelection}
                 selectedShapeIds={selectedShapeIds}
               />
             </div>
@@ -546,7 +622,40 @@ export function PptxEditor(): React.ReactNode {
             </div>
           ) : null}
         </section>
+        {snap && agent ? (
+          <aside
+            data-testid="pptx-comments-sidebar"
+            className="hidden w-[260px] shrink-0 overflow-y-auto rounded-md border border-divider bg-surface p-2 lg:block"
+          >
+            <CommentsSidebar
+              key={`comments-${activeIndex}-${tick}`}
+              provider={createPptxCommentsProvider({ agent, slideIndex: activeIndex })}
+              author="You"
+              emptyHint="No comments on this slide yet."
+            />
+            <div className="mt-2">
+              <CommentComposer
+                provider={createPptxCommentsProvider({ agent, slideIndex: activeIndex })}
+                anchor={{
+                  kind: "pptx-pin",
+                  slideIndex: activeIndex,
+                  xEmu: Math.round(slideSize.cxEmu / 2),
+                  yEmu: Math.round(slideSize.cyEmu / 2),
+                }}
+                placeholder="Add a comment to this slide…"
+              />
+            </div>
+          </aside>
+        ) : null}
       </div>
+      {snap ? (
+        <NotesPanel
+          key={`notes-${activeIndex}-${tick}`}
+          notesText={readNotesText(snap, activeIndex)}
+          disabled={!ready}
+          onChange={(t) => void setSlideNotes(t)}
+        />
+      ) : null}
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
         {toasts.map((t) => (
           <div
@@ -564,7 +673,82 @@ export function PptxEditor(): React.ReactNode {
           </div>
         ))}
       </div>
+      <KeyboardShortcutsDialog
+        product="pptx"
+        open={shortcutsDialog.open}
+        onClose={() => shortcutsDialog.setOpen(false)}
+      />
     </div>
+  );
+}
+
+function readNotesText(snap: PptxSnapshot, slideIndex: number): string {
+  const slide = snap.root.slides[slideIndex];
+  if (!slide || !slide.notesSlidePartPath) return "";
+  const notes = snap.root.notesSlides.get(slide.notesSlidePartPath);
+  if (!notes) return "";
+  return notes.body.paragraphs
+    .map((p) => p.runs.map((r) => r.text).join(""))
+    .join("\n");
+}
+
+interface NotesPanelProps {
+  notesText: string;
+  disabled: boolean;
+  onChange: (text: string) => void;
+}
+
+function NotesPanel(props: NotesPanelProps): React.ReactNode {
+  // Local mirror of the textarea so per-keystroke typing is fluid; we
+  // commit to the snapshot on blur and on a 600 ms idle (debounced)
+  // rather than dispatching a command on every character — the typed
+  // notes part rebuild is cheap but the React re-render churn isn't.
+  const [draft, setDraft] = useState(props.notesText);
+  const [dirty, setDirty] = useState(false);
+  const lastSyncedRef = useRef(props.notesText);
+
+  useEffect(() => {
+    // Pull the upstream value when the slide changes (parent passes a
+    // fresh `key` on slide change, so this branch is mainly defensive).
+    if (lastSyncedRef.current !== props.notesText && !dirty) {
+      setDraft(props.notesText);
+      lastSyncedRef.current = props.notesText;
+    }
+  }, [props.notesText, dirty]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const handle = setTimeout(() => {
+      props.onChange(draft);
+      lastSyncedRef.current = draft;
+      setDirty(false);
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [draft, dirty, props]);
+
+  return (
+    <section
+      data-testid="pptx-notes-panel"
+      className="flex shrink-0 flex-col gap-1 rounded-md border border-divider bg-surface p-2"
+    >
+      <label className="text-xs font-medium text-secondary">Speaker notes</label>
+      <textarea
+        className="min-h-[64px] resize-y rounded border border-divider bg-background p-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+        placeholder="Add notes for this slide…"
+        disabled={props.disabled}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setDirty(true);
+        }}
+        onBlur={() => {
+          if (!dirty) return;
+          props.onChange(draft);
+          lastSyncedRef.current = draft;
+          setDirty(false);
+        }}
+      />
+    </section>
   );
 }
 

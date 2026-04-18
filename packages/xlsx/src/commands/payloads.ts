@@ -79,7 +79,15 @@ export interface CellFormatBorderSide {
 
 export interface CellFormatPatch {
   readonly font?: {
+    /**
+     * Font family name (e.g. "Calibri"). Maps to the OOXML `<name>`
+     * element on `<font>`. The legacy alias `family` is still
+     * accepted for backwards compatibility.
+     */
+    readonly fontFamily?: string;
+    /** @deprecated Use `fontFamily`. Kept so existing call sites keep working. */
     readonly family?: string;
+    /** Font size in points. */
     readonly size?: number;
     readonly bold?: boolean;
     readonly italic?: boolean;
@@ -196,6 +204,35 @@ export interface AddCommentPayload {
   /** Comment body. Plain text in P0 (rich-text formatting deferred). */
   readonly text: string;
   readonly author: string;
+}
+
+/** `xlsx:reply-comment` (§13) — appends a reply to an existing thread. */
+export interface ReplyCommentPayload {
+  readonly sheet: string;
+  /** Top-level comment id this reply attaches to. */
+  readonly parentId: string;
+  readonly author: string;
+  readonly text: string;
+}
+
+/** `xlsx:resolve-comment` (§13) — toggles a thread's resolved flag. */
+export interface ResolveCommentPayload {
+  readonly sheet: string;
+  readonly commentId: string;
+  readonly resolved: boolean;
+}
+
+/** `xlsx:delete-comment` (§13) — removes a comment (and any replies if top-level). */
+export interface DeleteCommentPayload {
+  readonly sheet: string;
+  readonly commentId: string;
+}
+
+/** `xlsx:edit-comment` (§13) — rewrites the plain-text body of a comment. */
+export interface EditCommentPayload {
+  readonly sheet: string;
+  readonly commentId: string;
+  readonly text: string;
 }
 
 /* ── P13: Clipboard / Fill / Text-to-Columns ─────────────────────────────── */

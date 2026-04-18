@@ -22,6 +22,9 @@
 | 2026-04-18 | `insert-image` SHA-256-dedups against `presentation.media`                             | Avoids ballooning the file when an LLM pastes the same screenshot into many slides; matches Word/PowerPoint behaviour.                    |
 | 2026-04-18 | Renderer split into `renderer/layout` (pure), `renderer/svg` (pure), `renderer/react`  | Keeps the headless invariant (`headless-invariant.test.ts`) honest: only `renderer/react` may import React.                               |
 | 2026-04-18 | `OFFICEAI_DETERMINISTIC_IDS=1` env var swaps the UUID minter for the deterministic one | Lets the CLI tests address shape NodeIds across multiple `office-agent pptx …` invocations without baking a deterministic mode into prod. |
+| 2026-04-19 | Typed `<a:highlight>` on `TextRunProperties`; parser/serializer round-trip                           | Promotes character highlight from opaque pass-through to a first-class run property so the shared `TextFormatBar` can read/write it via the `pptx:format-text` payload (`highlight: "RRGGBB"` to set, `""` to clear). Required to unify the highlight UX with DOCX/XLSX without forking the toolbar. |
+| 2026-04-19 | Run-aware `TextEditOverlay` with live `PptxTextSelection` plumbing                                    | Replaces the prior single-`<div contentEditable>` overlay (which committed plain text on blur) with one styled `<span data-run>` per run plus a `selectionchange` listener that maps DOM points → `(paragraph, start, end)`. Lets the shared toolbar dispatch `pptx:format-text` against the *real* selection and compute MIXED-state correctly across heterogeneous runs. The blur handler now respects a `data-pptx-keep-edit` guard so toolbar interactions don't lose the editable focus mid-format. |
+| 2026-04-19 | `pptxFormatProvider` adapter implements the shared `TextFormatProvider` contract                      | Brings PPTX onto the same `@officeai/text-formatting` contract as DOCX/XLSX. `capabilities.highlight = "native"` (real `<a:highlight>` round-trip) and `underlineVariants = false` (PPTX exposes underline as a single boolean today; the typed style is left to a follow-up). The provider stores live state via refs so the React Compiler doesn't trip on render-time access. |
 
 ## Deviations from spec
 
@@ -187,3 +190,60 @@ Resolved deviations recorded above:
   _Known issues_).
 
 SmartArt remains out of scope per the explicit non-goal in F4.0.
+
+## Session summary (2026-04-19, "connectors / layouts / notes / comments wave")
+
+Four cross-cutting features landed in a single wave (plan
+`pptx_connectors_layouts_notes_comments`):
+
+- **Connectors (F5).** Promotes `<p:cxnSp>` out of opaque shapes into a
+  typed `ConnectorShape` with anchor memory (start/end may bind to a
+  shape via `connSiteIdx` and reflow when the anchor moves). Adds a
+  native SVG renderer for straight / elbow / curved variants,
+  endpoint-snap persistence on the canvas, and four commands —
+  `pptx:add-connector`, `pptx:set-connector-endpoint`,
+  `pptx:set-connector-style`, plus reflow handled inline by
+  `pptx:move-shape`. Toolbar exposes a Connector menu.
+- **Layouts (F6).** Promotes slide layouts from `OpaquePart` into a
+  typed `SlideLayout { kind, name, placeholders, raw }` with a
+  `LayoutKind` union covering the 11 PowerPoint built-ins. Authors a
+  built-in template store so a deck without a requested layout part
+  can synthesise one on demand. `pptx:add-slide` clones the layout's
+  placeholders onto the new slide; new `pptx:set-slide-layout`
+  re-cascades placeholders while preserving overridden runs by
+  matching `idx`. Toolbar adds a Layout menu.
+- **Speaker notes (F7).** Promotes `notesSlides` from `OpaquePart` to
+  typed `NotesSlide { body, raw }`. Two commands —
+  `pptx:set-slide-notes` (creates the notes part on demand) and
+  `pptx:format-notes-text` — and a `NotesPanel` below the canvas in
+  `PptxEditor` for inline editing.
+- **Comments (F8).** Adds typed `PptxComment`, `PptxCommentAuthor`,
+  per-slide `PptxCommentsPart`, and workbook-wide
+  `PptxCommentAuthorsPart`. Round-trips through `ppt/commentAuthors.xml`
+  and `ppt/comments/comment{N}.xml`; threading (`parentId`) and
+  resolved state ride on `officeai-*` extension attributes that
+  PowerPoint preserves verbatim. Five commands: `pptx:add-comment`,
+  `pptx:reply-comment`, `pptx:resolve-comment`, `pptx:edit-comment`,
+  `pptx:delete-comment`. Free-pin and shape-anchored overlay in
+  `SlideCanvas`. The PPTX `pptxCommentsProvider` adapts to the new
+  shared `@officeai/comments` package so the same `CommentsSidebar`
+  primitive (in `@officeai/ui`) drives DOCX, XLSX, and PPTX.
+
+Cross-cutting work that landed alongside:
+
+- New `@officeai/comments` leaf package mirroring
+  `@officeai/text-formatting`: canonical `CommentBody` /
+  `CommentAnchor` / `CommentsProvider` types plus `groupThreads`
+  helper. Registered in `scripts/check-architecture.mjs` and
+  `eslint.config.mjs`. The shared `CommentsSidebar` and
+  `CommentComposer` moved into `@officeai/ui` as provider-driven
+  primitives; the DOCX, XLSX, and PPTX editors now all consume the
+  same UI through their respective adapters.
+- DOCX-side migration: `apps/web/app/editor/CommentsSidebar.tsx` is now
+  a thin wrapper around the shared sidebar driven by
+  `docxCommentsProvider`. Pre-existing testids
+  (`comments-sidebar`, `comment-thread`) are preserved so the existing
+  e2e suite keeps passing.
+
+See `spec/shared/comments.md` for the canonical contract and adapter
+reading order.

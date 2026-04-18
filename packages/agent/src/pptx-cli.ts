@@ -1009,6 +1009,7 @@ export interface PptxSnapshotSummary {
     group: number;
     table: number;
     chart: number;
+    connector: number;
     opaque: number;
   };
   /** F4: total typed entrance animations across all slides. */
@@ -1018,7 +1019,7 @@ export interface PptxSnapshotSummary {
 }
 
 export function inspectSnapshot(snap: PptxSnapshot): PptxSnapshotSummary {
-  const counts = { text: 0, pic: 0, group: 0, table: 0, chart: 0, opaque: 0 };
+  const counts = { text: 0, pic: 0, group: 0, table: 0, chart: 0, connector: 0, opaque: 0 };
   for (const slide of snap.root.slides) walkShapes(slide.shapes, (s) => bumpShapeKind(counts, s));
   let animations = 0;
   let transitions = 0;
@@ -1314,6 +1315,7 @@ function bumpShapeKind(
     group: number;
     table: number;
     chart: number;
+    connector: number;
     opaque: number;
   },
   s: Shape
@@ -1333,6 +1335,9 @@ function bumpShapeKind(
       return;
     case "chart":
       counts.chart++;
+      return;
+    case "connector":
+      counts.connector++;
       return;
     case "opaque":
       counts.opaque++;

@@ -223,7 +223,11 @@ textarea::placeholder {
 /* ── XLSX marching ants (copy/cut clipboard source overlay) ── */
 @keyframes xlsx-march {
   to {
-    background-position: 12px 0, -12px 100%, 0 -12px, 100% 12px;
+    background-position:
+      12px 0,
+      -12px 100%,
+      0 -12px,
+      100% 12px;
   }
 }
 
@@ -233,9 +237,17 @@ textarea::placeholder {
     linear-gradient(90deg, var(--ai-violet) 50%, transparent 50%),
     linear-gradient(0deg, var(--ai-violet) 50%, transparent 50%),
     linear-gradient(0deg, var(--ai-violet) 50%, transparent 50%);
-  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-position:
+    0 0,
+    0 100%,
+    0 0,
+    100% 0;
   background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
-  background-size: 12px 2px, 12px 2px, 2px 12px, 2px 12px;
+  background-size:
+    12px 2px,
+    12px 2px,
+    2px 12px,
+    2px 12px;
   animation: xlsx-march 0.6s linear infinite;
 }
 
@@ -243,6 +255,19 @@ textarea::placeholder {
   /* Cut uses a dimmer hue so the user can tell at a glance which
      mode is pending. */
   filter: hue-rotate(20deg) brightness(0.85);
+}
+
+/* Blinking caret rendered inside a cell while the user is typing
+   into the formula bar (type-to-edit / F2). The actual <input> lives
+   in the formula bar — this is purely a visual hint that the cell is
+   in edit mode and mirrors what's being typed, matching Excel. */
+@keyframes xlsx-cell-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.xlsx-cell-caret {
+  animation: xlsx-cell-caret-blink 1s steps(1, end) infinite;
 }
 
 /* ── ProseMirror DOCX editor surface ── */
@@ -295,6 +320,43 @@ textarea::placeholder {
 }
 
 /*
+ * Formatting marks ("show ¶" toggle). Rendered by the
+ * `formattingMarksPlugin` (apps/web/app/lib/formatting-marks-plugin.ts)
+ * as widget / inline decorations. All glyphs are non-selectable and
+ * sit at a muted accent so they don't fight with regular text.
+ */
+.prose-pm .ProseMirror .fmt-mark-pilcrow,
+.prose-pm .ProseMirror .fmt-mark-tab,
+.prose-pm .ProseMirror .fmt-mark-break {
+  color: var(--accent, #2563eb);
+  opacity: 0.45;
+  user-select: none;
+  pointer-events: none;
+  font-weight: normal;
+}
+.prose-pm .ProseMirror .fmt-mark-pilcrow {
+  margin-left: 1px;
+}
+.prose-pm .ProseMirror .fmt-mark-tab {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+.prose-pm .ProseMirror .fmt-mark-space {
+  position: relative;
+}
+.prose-pm .ProseMirror .fmt-mark-space::before {
+  content: "·";
+  position: absolute;
+  inset: 0;
+  color: var(--accent, #2563eb);
+  opacity: 0.45;
+  pointer-events: none;
+  text-align: center;
+  user-select: none;
+}
+
+/*
  * Heading typography. The renderer's `paragraph.toDOM` (in
  * `packages/docx/src/renderer/schema.ts`) emits `<h1>`-`<h6>` for
  * paragraphs whose `styleId` matches a known heading style. We also
@@ -302,9 +364,13 @@ textarea::placeholder {
  * path (and the German `berschrift1`-`berschrift9` aliases that fall
  * through to a generic <p>) still pick up the right typography.
  */
+/*
+ * Heading 1 baseline. Title overrides this with `.style-Title` /
+ * `[data-style="Title"]` further down so the picker visibly
+ * differentiates the two (Word renders Title as a much larger,
+ * lighter heading with a thin bottom border).
+ */
 .prose-pm .ProseMirror h1,
-.prose-pm .ProseMirror p[data-style="Title"],
-.prose-pm .ProseMirror p[data-style="Titel"],
 .prose-pm .ProseMirror p[data-style="Heading1"],
 .prose-pm .ProseMirror p[data-style="berschrift1"] {
   font-size: 1.875rem;
@@ -312,6 +378,27 @@ textarea::placeholder {
   letter-spacing: -0.01em;
   margin: 1.5rem 0 0.5rem;
   line-height: 1.25;
+}
+
+/*
+ * Word's "Title" style — visually the most prominent paragraph in
+ * the doc. We win specificity over the plain `h1` rule above by
+ * matching either the `.style-Title` class (current renderer) or the
+ * `data-style="Title"` attribute (legacy <p> path + the German
+ * `Titel` alias).
+ */
+.prose-pm .ProseMirror h1.style-Title,
+.prose-pm .ProseMirror h1.style-Titel,
+.prose-pm .ProseMirror [data-style="Title"],
+.prose-pm .ProseMirror [data-style="Titel"] {
+  font-size: 2.75rem;
+  font-weight: 300;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  margin: 1.75rem 0 0.75rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--divider);
+  color: var(--foreground);
 }
 
 .prose-pm .ProseMirror h2,
@@ -323,6 +410,24 @@ textarea::placeholder {
   font-weight: 600;
   margin: 1.25rem 0 0.5rem;
   line-height: 1.3;
+}
+
+/*
+ * Subtitle — sits visually under Title; smaller, lighter, and a
+ * muted color so the title/subtitle pair reads like Word's stock
+ * cover-page treatment.
+ */
+.prose-pm .ProseMirror h2.style-Subtitle,
+.prose-pm .ProseMirror h2.style-Untertitel,
+.prose-pm .ProseMirror [data-style="Subtitle"],
+.prose-pm .ProseMirror [data-style="Untertitel"] {
+  font-size: 1.375rem;
+  font-weight: 300;
+  font-style: italic;
+  color: var(--secondary);
+  margin: -0.25rem 0 1rem;
+  line-height: 1.35;
+  border-bottom: none;
 }
 
 .prose-pm .ProseMirror h3,
@@ -407,15 +512,35 @@ textarea::placeholder {
   cursor: pointer;
 }
 
+/*
+ * Word-style "All Markup" rendering for tracked changes.
+ *
+ * Insertions stay inline but are styled like Word: no background wash,
+ * just a coloured underline in the author's accent so the text reads
+ * as part of the running prose. The author colour falls back to the
+ * editor's --accent for now — a multi-author palette can hang off
+ * `--revision-author-color` later without touching this rule.
+ *
+ * Deletions are removed from the visual flow ("read as if applied")
+ * but the mark stays in the model so accept/reject still works.
+ * `font-size: 0` collapses the run to a 1px hot-zone instead of
+ * `display: none` so getBoundingClientRect on the span still returns
+ * a usable anchor for the right-margin balloons that surface the
+ * deleted text.
+ */
 .prose-pm .ProseMirror .pm-revision-ins {
-  background-color: rgba(76, 175, 80, 0.18);
   text-decoration: underline;
-  text-decoration-color: rgba(76, 175, 80, 0.6);
+  text-decoration-color: var(--revision-author-color, var(--accent));
+  text-underline-offset: 2px;
+  color: var(--revision-author-color, var(--accent));
 }
 
 .prose-pm .ProseMirror .pm-revision-del {
-  background-color: rgba(216, 75, 62, 0.18);
-  text-decoration: line-through;
+  font-size: 0;
+  color: transparent;
+  text-decoration: none;
+  pointer-events: none;
+  user-select: none;
 }
 
 .prose-pm .ProseMirror .pm-hyperlink {
@@ -626,12 +751,58 @@ textarea::placeholder {
   transition: background-color 1.4s ease-out;
 }
 
-/* Tracked-change spans: keep underline (already from base rules) plus
- * a small data-cursor affordance so the hover overlay reads as a hot
- * region. */
-.prose-pm .ProseMirror .pm-revision-ins,
-.prose-pm .ProseMirror .pm-revision-del {
+/* Tracked-change insertion spans stay interactive — the hover overlay
+ * surfaces the inline accept/reject pair when the mouse is over the
+ * coloured underline. Deletions are zero-width visual placeholders
+ * (see `.pm-revision-del` above) and do not need a cursor affordance. */
+.prose-pm .ProseMirror .pm-revision-ins {
   cursor: help;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Word-style tracked-changes margin surface.
+ *
+ * `TrackedChangesMargin` (apps/web/app/editor/TrackedChangesUI.tsx)
+ * paints two layers absolutely positioned over the page card area:
+ *
+ *   - `.pm-revision-changebar` segments in the LEFT page margin,
+ *     one per revision row. The segment is anchored to the revision
+ *     span's vertical extent and rendered as a solid 2px bar coloured
+ *     with the author accent.
+ *   - `.tracked-change-balloon` callouts in the RIGHT gutter,
+ *     vertically aligned with the change and stacked so adjacent
+ *     balloons never overlap.
+ *
+ * Both layers live inside the same scrolling container as the page
+ * card so they pan together with the document.
+ * ────────────────────────────────────────────────────────────────── */
+.pm-revision-changebar {
+  position: absolute;
+  width: 2px;
+  background-color: var(--revision-author-color, var(--accent));
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.tracked-change-balloon {
+  position: absolute;
+  width: 220px;
+  border: 1px solid var(--divider);
+  border-left: 3px solid var(--revision-author-color, var(--accent));
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 0.375rem 0.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  transition: top 120ms ease, box-shadow 120ms ease;
+}
+
+.tracked-change-balloon:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 /* Toolbar / side-panel polish — keep selectors namespaced so they don't
@@ -693,7 +864,7 @@ textarea::placeholder {
   border-radius: 4px;
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.05),
-    0 8px 24px -10px rgba(0, 0, 0, 0.10);
+    0 8px 24px -10px rgba(0, 0, 0, 0.1);
   padding: 0;
   min-height: 60vh;
   width: var(--pm-page-width, 720px);
@@ -776,6 +947,22 @@ html.dark .prose-pm .ProseMirror {
 .prose-pm .ProseMirror > .pm-page-edge {
   padding-left: 0;
   padding-right: 0;
+  background: transparent;
+}
+
+/* Page filler — invisible widget rendered at the bottom of every
+ * page chunk so the visible white sheet always reaches the
+ * document's full content area height (Word-style fixed page
+ * sheets). The inline `style="height: …px"` set in
+ * `renderPageFiller()` controls the actual size; the rules below
+ * neutralise the universal horizontal padding so the dead space is
+ * pure background, and forbid pointer / text-selection so the
+ * caret can never land inside it. */
+.prose-pm .ProseMirror > .pm-page-filler {
+  padding-left: 0;
+  padding-right: 0;
+  pointer-events: none;
+  user-select: none;
   background: transparent;
 }
 

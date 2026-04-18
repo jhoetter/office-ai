@@ -2,10 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Bold,
-  Italic,
-  Underline,
-  Strikethrough,
   Download,
   FileUp,
   Image as ImageIcon,
@@ -19,19 +15,17 @@ import {
   List,
   ListOrdered,
   ChevronDown,
-  Palette,
-  Highlighter,
+  Pencil,
+  PenLine,
+  Eye,
+  Pilcrow,
+  Keyboard,
 } from "lucide-react";
-import { Button, cn } from "@officeai/ui";
-import {
-  COLOR_PALETTE,
-  FONT_FAMILIES,
-  FONT_SIZES,
-  HIGHLIGHT_PALETTE,
-  MIXED,
-  type MaybeMixed,
-} from "@/lib/format-helpers";
-import type { TextFormat } from "@officeai/docx";
+import { Button, TextFormatBar, cn } from "@officeai/ui";
+import type {
+  ActiveTextFormat,
+  TextFormatProvider,
+} from "@officeai/text-formatting";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -56,16 +50,14 @@ export interface ToolbarProps {
   agentReady: boolean;
   docInfo: { paragraphs: number; revision: number; commentThreads: number } | null;
   activeStyle: string;
-  activeMarks: ReadonlySet<string>;
-  /** Half-points value of the run-level font-size mark active at the
-   *  selection. `MIXED` means the selection straddles different sizes;
-   *  `undefined` means no run carries a `font_size` mark. */
-  activeFontSize: MaybeMixed<number>;
-  activeFontFamily: MaybeMixed<string>;
-  /** Hex string (no `#`) of the active `color` mark. */
-  activeColor: MaybeMixed<string>;
-  /** OOXML highlight name (`yellow`, `green`, ...) of the active highlight mark. */
-  activeHighlight: MaybeMixed<string>;
+  /**
+   * Shared text-formatting provider. Owns selection-aware reads
+   * (B/I/U/S, font family/size/color/highlight) and dispatches the
+   * corresponding `docx:format-range` patches via the agent. Wired
+   * up in `DocxEditor.tsx` per render.
+   */
+  textFormatProvider: TextFormatProvider;
+  textFormatActive: ActiveTextFormat;
   /** Alignment of the paragraph containing the caret, or `null`. */
   activeAlignment: AlignmentValue | null;
   /**
@@ -87,8 +79,6 @@ export interface ToolbarProps {
   onInsertImage: () => void;
   onExport: () => void;
   onSetParagraphStyle: (style: string) => void;
-  onApplyFormat: (format: TextFormat) => void;
-  onToggleMark: (mark: "bold" | "italic" | "underline" | "strike") => void;
   onSetAlignment: (alignment: AlignmentValue) => void;
   onAdjustIndent: (deltaTwips: number) => void;
   /**
@@ -110,7 +100,26 @@ export interface ToolbarProps {
    * does not yet exist.
    */
   onUnsupported: (label: string) => void;
+  /**
+   * Editor interaction mode (Word "Track Changes" surface):
+   *   - `"edit"` — direct edits;
+   *   - `"suggest"` — every insert/delete becomes a tracked
+   *     `<w:ins>` / `<w:del>` revision (the Suggesting / redlining
+   *     mode);
+   *   - `"view"` — read-only.
+   * The picker writes through to PM's `setEditMode` without
+   * remounting so the cursor and selection survive mode changes.
+   */
+  editMode: EditModeValue;
+  onSetEditMode: (mode: EditModeValue) => void;
+  /** Word's pilcrow toggle — show/hide nonprinting characters. */
+  formattingMarksOn: boolean;
+  onToggleFormattingMarks: () => void;
+  /** Open the keyboard-shortcuts help dialog. */
+  onOpenShortcuts: () => void;
 }
+
+export type EditModeValue = "edit" | "suggest" | "view";
 
 /**
  * Editor toolbar. Layout is intentionally close to Word's: file/style on
@@ -151,71 +160,9 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         disabled={!props.agentReady}
       />
 
-      {/* Font family + size, both controlled. */}
-      <FontFamilyPicker
-        value={props.activeFontFamily}
-        onChange={(family) => props.onApplyFormat({ fontFamily: family })}
-        disabled={!props.agentReady}
-      />
-      <FontSizePicker
-        value={props.activeFontSize}
-        onChange={(halfPoints) => props.onApplyFormat({ fontSize: halfPoints })}
-        disabled={!props.agentReady}
-      />
-
-      <Divider />
-
-      {/* Inline marks */}
-      <ToolbarBtn
-        label="Bold"
-        active={props.activeMarks.has("bold")}
-        onClick={() => props.onToggleMark("bold")}
-      >
-        <Bold size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn
-        label="Italic"
-        active={props.activeMarks.has("italic")}
-        onClick={() => props.onToggleMark("italic")}
-      >
-        <Italic size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn
-        label="Underline"
-        active={props.activeMarks.has("underline")}
-        onClick={() => props.onToggleMark("underline")}
-      >
-        <Underline size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn
-        label="Strike"
-        active={props.activeMarks.has("strikethrough")}
-        onClick={() => props.onToggleMark("strike")}
-      >
-        <Strikethrough size={14} />
-      </ToolbarBtn>
-
-      <Divider />
-
-      {/* Color + highlight */}
-      <ColorPicker
-        label="Font color"
-        icon={<Palette size={14} />}
-        value={typeof props.activeColor === "string" ? `#${props.activeColor}` : undefined}
-        items={COLOR_PALETTE.map((c) => ({ value: c.hex, label: c.name, swatch: `#${c.hex}` }))}
-        onPick={(hex) => props.onApplyFormat({ color: hex })}
-        disabled={!props.agentReady}
-      />
-      <ColorPicker
-        label="Highlight"
-        icon={<Highlighter size={14} />}
-        value={
-          typeof props.activeHighlight === "string"
-            ? HIGHLIGHT_PALETTE.find((h) => h.name === props.activeHighlight)?.swatch
-            : undefined
-        }
-        items={HIGHLIGHT_PALETTE.map((h) => ({ value: h.name, label: h.label, swatch: h.swatch }))}
-        onPick={(name) => props.onApplyFormat({ highlight: name })}
+      <TextFormatBar
+        provider={props.textFormatProvider}
+        active={props.textFormatActive}
         disabled={!props.agentReady}
       />
 
@@ -285,6 +232,15 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         <ListOrdered size={14} />
       </ToolbarBtn>
 
+      {/* Show formatting marks (Word's pilcrow toggle) */}
+      <ToolbarBtn
+        label="Show formatting marks"
+        active={props.formattingMarksOn}
+        onClick={props.onToggleFormattingMarks}
+      >
+        <Pilcrow size={14} />
+      </ToolbarBtn>
+
       <Divider />
 
       {/* Image insert */}
@@ -304,6 +260,17 @@ export function Toolbar(props: ToolbarProps): ReactNode {
             {props.docInfo.commentThreads} comment{props.docInfo.commentThreads === 1 ? "" : "s"}
           </span>
         )}
+        <EditModePicker value={props.editMode} onChange={props.onSetEditMode} />
+        <button
+          type="button"
+          aria-label="Keyboard shortcuts"
+          title="Keyboard shortcuts (⌘/)"
+          onClick={props.onOpenShortcuts}
+          data-shortcuts-help
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-divider bg-surface text-secondary transition-colors hover:bg-hover hover:text-default"
+        >
+          <Keyboard size={14} />
+        </button>
         <Button variant="accent" size="sm" onClick={props.onExport}>
           <Download size={14} />
           Export
@@ -312,6 +279,129 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     </div>
   );
 }
+
+/**
+ * Edit-mode picker (Editing / Suggesting / Viewing — the Word and
+ * Google Docs surface). Visualises the current mode with a colored
+ * pill so the user always knows whether their next keystroke goes
+ * to plain text, becomes a tracked suggestion, or is rejected
+ * outright by the read-only surface.
+ *
+ * Click the pill to open a simple menu; the previously-selected
+ * option is highlighted. Mode changes are dispatched immediately
+ * (no confirm step) — the user can always revert by re-opening the
+ * picker.
+ */
+function EditModePicker(props: {
+  value: EditModeValue;
+  onChange: (v: EditModeValue) => void;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const meta = EDIT_MODE_META[props.value];
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        title={`Edit mode: ${meta.label}`}
+        aria-label={`Edit mode: ${meta.label}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors",
+          meta.pillClass
+        )}
+        data-testid="edit-mode-picker"
+        data-edit-mode={props.value}
+      >
+        <meta.Icon size={12} />
+        {meta.label}
+        <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-30 mt-1 w-56 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
+        >
+          {(Object.keys(EDIT_MODE_META) as EditModeValue[]).map((key) => {
+            const m = EDIT_MODE_META[key];
+            const active = key === props.value;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                onClick={() => {
+                  props.onChange(key);
+                  setOpen(false);
+                }}
+                data-testid={`edit-mode-option-${key}`}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-hover",
+                  active && "bg-hover"
+                )}
+              >
+                <m.Icon size={12} className={cn("mt-0.5 shrink-0", m.iconColorClass)} />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-foreground">{m.label}</span>
+                  <span className="block text-[11px] text-secondary">{m.description}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const EDIT_MODE_META: Record<
+  EditModeValue,
+  {
+    label: string;
+    description: string;
+    Icon: typeof Pencil;
+    pillClass: string;
+    iconColorClass: string;
+  }
+> = {
+  edit: {
+    label: "Editing",
+    description: "Type and delete directly. Changes apply immediately.",
+    Icon: Pencil,
+    pillClass: "border-divider bg-surface text-foreground hover:bg-hover",
+    iconColorClass: "text-foreground",
+  },
+  suggest: {
+    label: "Suggesting",
+    description:
+      "Every insert and delete is recorded as a tracked change you can accept or reject later.",
+    Icon: PenLine,
+    pillClass:
+      "border-[var(--ai-violet)] bg-[var(--ai-violet-light)] text-[var(--ai-violet)] hover:brightness-95",
+    iconColorClass: "text-[var(--ai-violet)]",
+  },
+  view: {
+    label: "Viewing",
+    description: "Read-only. Typing and edits are blocked.",
+    Icon: Eye,
+    pillClass: "border-divider bg-hover text-secondary hover:bg-divider",
+    iconColorClass: "text-secondary",
+  },
+};
 
 function Divider(): ReactNode {
   return <div className="mx-1 h-4 w-px bg-divider" aria-hidden />;
@@ -371,164 +461,6 @@ function ParagraphStylePicker(props: {
         ))}
       </select>
     </label>
-  );
-}
-
-function FontSizePicker(props: {
-  value: MaybeMixed<number>;
-  onChange: (halfPoints: number) => void;
-  disabled?: boolean;
-}): ReactNode {
-  const display = formatFontSize(props.value);
-  // Selected option must be a string in the option list. Use "" for the
-  // mixed/empty cases so the placeholder option remains selected.
-  const selectValue =
-    typeof props.value === "number" && FONT_SIZES.includes(props.value) ? String(props.value) : "";
-  return (
-    <label className="inline-flex items-center gap-1 text-xs text-secondary">
-      <span className="sr-only">Font size</span>
-      <select
-        title="Font size"
-        aria-label="Font size"
-        value={selectValue}
-        disabled={props.disabled}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (!Number.isFinite(n) || n <= 0) return;
-          props.onChange(n);
-        }}
-        className="h-7 w-16 rounded-md border border-divider bg-surface px-2 text-xs text-foreground hover:bg-hover focus:outline-none"
-      >
-        <option value="" disabled>
-          {display}
-        </option>
-        {FONT_SIZES.map((halfPts) => (
-          <option key={halfPts} value={halfPts}>
-            {halfPts / 2}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function formatFontSize(value: MaybeMixed<number>): string {
-  if (value === MIXED) return "—";
-  if (typeof value !== "number") return "Size";
-  return String(value / 2);
-}
-
-function FontFamilyPicker(props: {
-  value: MaybeMixed<string>;
-  onChange: (family: string) => void;
-  disabled?: boolean;
-}): ReactNode {
-  const families =
-    props.value && typeof props.value === "string" && !FONT_FAMILIES.includes(props.value)
-      ? [props.value, ...FONT_FAMILIES]
-      : FONT_FAMILIES;
-  const selectValue = typeof props.value === "string" ? props.value : "";
-  const placeholder = props.value === MIXED ? "—" : "Font";
-  return (
-    <label className="inline-flex items-center gap-1 text-xs text-secondary">
-      <span className="sr-only">Font family</span>
-      <select
-        title="Font family"
-        aria-label="Font family"
-        value={selectValue}
-        disabled={props.disabled}
-        onChange={(e) => {
-          if (!e.target.value) return;
-          props.onChange(e.target.value);
-        }}
-        className="h-7 w-32 rounded-md border border-divider bg-surface px-2 text-xs text-foreground hover:bg-hover focus:outline-none"
-      >
-        <option value="" disabled>
-          {placeholder}
-        </option>
-        {families.map((f) => (
-          <option key={f} value={f}>
-            {f}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-interface ColorItem {
-  value: string;
-  label: string;
-  swatch: string;
-}
-
-function ColorPicker(props: {
-  label: string;
-  icon: ReactNode;
-  /** Active swatch (hex including `#`, or a CSS-named color). Undefined → no stripe. */
-  value: string | undefined;
-  items: ReadonlyArray<ColorItem>;
-  onPick: (value: string) => void;
-  disabled?: boolean;
-}): ReactNode {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative inline-flex">
-      <button
-        type="button"
-        title={props.label}
-        aria-label={props.label}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={props.disabled}
-        onClick={() => setOpen((v) => !v)}
-        className="flex flex-col items-center gap-0 rounded-md p-1.5 text-secondary hover:bg-hover hover:text-foreground"
-      >
-        <span className="flex items-center gap-0.5">
-          {props.icon}
-          <ChevronDown size={10} />
-        </span>
-        <span
-          aria-hidden
-          className="mt-0.5 block h-0.5 w-4 rounded-sm"
-          style={{ background: props.value ?? "transparent" }}
-        />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute left-0 top-full z-30 mt-1 grid w-44 grid-cols-4 gap-1 rounded-md border border-divider bg-surface p-2 shadow-md"
-        >
-          {props.items.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              role="menuitem"
-              title={item.label}
-              aria-label={`${props.label}: ${item.label}`}
-              onClick={() => {
-                props.onPick(item.value);
-                setOpen(false);
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded border border-divider hover:scale-110"
-              style={{ background: item.swatch }}
-            />
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 

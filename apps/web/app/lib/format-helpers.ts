@@ -514,6 +514,63 @@ function walkInlines(children: ReadonlyArray<InlineNode>, out: RevisionWrapper[]
   }
 }
 
+/**
+ * Revision wrapper paired with the plain-text it carries.
+ *
+ * The Word-style margin balloons render as `<author> hat gelöscht: <text>`
+ * (or `eingefügt:` for insertions), so the UI needs the inline text the
+ * wrapper covers. Computing it once here keeps the React component free
+ * of model traversal.
+ */
+export interface RevisionWithPreview extends RevisionWrapper {
+  readonly previewText: string;
+}
+
+export function collectRevisionsWithPreview(snapshot: DocxSnapshot): RevisionWithPreview[] {
+  return collectRevisions(snapshot).map((rev) => ({
+    ...rev,
+    previewText: revisionPlainText(rev),
+  }));
+}
+
+function revisionPlainText(rev: RevisionWrapper): string {
+  let acc = "";
+  const visit = (children: ReadonlyArray<InlineNode>): void => {
+    for (const child of children) {
+      switch (child.kind) {
+        case "run":
+          for (const leaf of child.children) {
+            if (leaf.kind === "text") acc += leaf.text;
+          }
+          break;
+        case "revision":
+          visit(child.children);
+          break;
+        case "hyperlink":
+          for (const inner of child.children) {
+            if (inner.kind === "run") {
+              for (const leaf of inner.children) {
+                if (leaf.kind === "text") acc += leaf.text;
+              }
+            }
+          }
+          break;
+        case "comment-range-start":
+        case "comment-range-end":
+        case "comment-reference":
+        case "opaque-inline":
+          break;
+        default: {
+          const _exhaustive: never = child;
+          void _exhaustive;
+        }
+      }
+    }
+  };
+  visit(rev.children);
+  return acc;
+}
+
 /** "Welcome to officeAI" → "Welcome to officeAI" (trim + collapse whitespace). */
 export function snippet(text: string, max = 64): string {
   const t = text.replace(/\s+/g, " ").trim();

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import { FolderOpen, Loader2, Download } from "lucide-react";
-import { Button, cn } from "@officeai/ui";
+import { Button, CommentComposer, CommentsSidebar, TextFormatBar, cn } from "@officeai/ui";
+import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   XlsxAgent,
   assignRefColors,
@@ -16,8 +17,11 @@ import {
   type CellValue,
   type DisplayToken,
   type Sheet,
+  type StyleTable,
   type XlsxSnapshot,
 } from "@officeai/xlsx";
+import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
+import { computeXlsxActive, createXlsxFormatProvider } from "./xlsxFormatProvider";
 import { buildSampleXlsx } from "@/lib/sample-xlsx";
 import { Grid, type RefRect, type GridContextTarget, type MarchingAntsRect } from "./Grid";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
@@ -32,6 +36,8 @@ import {
 } from "./selection";
 import { FormulaSuggest, applySuggestion, getSuggestions } from "./FormulaSuggest";
 import { Toolbar } from "./Toolbar";
+import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
+import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { TextToColumnsPopover } from "./TextToColumnsPopover";
 import { sniffDelimiter } from "@officeai/xlsx";
 import { formatCellValue as renderCellValue } from "./styles";
@@ -94,6 +100,7 @@ export function XlsxEditor(): ReactNode {
   const [marchingAnts, setMarchingAnts] = useState<(MarchingAntsRect & { readonly sheet: string }) | null>(
     null
   );
+  const shortcutsDialog = useShortcutsDialog();
 
   const toastIdRef = useRef(0);
   const pushToast = useCallback((kind: ToastMessage["kind"], text: string) => {
@@ -101,6 +108,14 @@ export function XlsxEditor(): ReactNode {
     setToasts((prev) => [...prev, { id, kind, text }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }, []);
+
+  // Refs that mirror the latest selection / sheet / styles so the
+  // shared TextFormatBar provider can read them at event-handler
+  // time without us having to rebuild the provider on every render.
+  // Updated below after the relevant `useMemo`s have run.
+  const selectionRef = useRef<Selection | null>(selection);
+  const activeSheetRef = useRef<Sheet | null>(null);
+  const stylesRef = useRef<StyleTable | null>(null);
 
   // Holds the unsubscribe handle for the active agent's `subscribe()`
   // callback so we can swap agents (Open file) without leaking listeners.
@@ -202,6 +217,19 @@ export function XlsxEditor(): ReactNode {
     if (!snapshot || !activeSheetName) return null;
     return snapshot.root.sheets.find((s) => s.name === activeSheetName) ?? null;
   }, [snapshot, activeSheetName]);
+
+  // Mirror React state into refs so the shared TextFormatBar provider
+  // (built once via the lazy useState below) can read the latest
+  // selection / sheet / style table when the user clicks a control.
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
+  useEffect(() => {
+    activeSheetRef.current = activeSheet;
+  }, [activeSheet]);
+  useEffect(() => {
+    stylesRef.current = snapshot?.root.styles ?? null;
+  }, [snapshot]);
 
   const selectedCell = useMemo(() => {
     if (!activeSheet || !selection) return null;
@@ -787,6 +815,84 @@ export function XlsxEditor(): ReactNode {
         return;
       }
 
+      // Inline marks: Cmd/Ctrl + B / I / U toggle the mark over the
+      // current selection. The active anchor's effective style drives
+      // the toggle direction so a second press flips back, matching
+      // Excel exactly. Skipped when no real selection / no agent.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        const markKey =
+          e.key === "b" || e.key === "B"
+            ? "bold"
+            : e.key === "i" || e.key === "I"
+              ? "italic"
+              : e.key === "u" || e.key === "U"
+                ? "underline"
+                : null;
+        if (markKey && activeSheet && selection) {
+          e.preventDefault();
+          const a = agentRef.current;
+          if (!a) return;
+          const styleTable = stylesRef.current;
+          // Probe the anchor cell's effective style to flip the
+          // toggle direction. When the styles table isn't loaded
+          // (early frames) treat the mark as "off" so the first
+          // press always turns it on.
+          const eff = styleTable ? flattenCellXf(styleTable, selectedCell?.styleId) : null;
+          const currentlyOn = Boolean(
+            (eff?.font as { bold?: boolean; italic?: boolean; underline?: unknown } | undefined)?.[markKey]
+          );
+          const range = formatSelection(selection);
+          void a
+            .applyCommand({
+              type: "xlsx:set-cell-format",
+              payload: {
+                sheet: activeSheet.name,
+                range,
+                format: { font: { [markKey]: !currentlyOn } } as never,
+              },
+              source: "human",
+            })
+            .catch((err: unknown) =>
+              pushToast("error", err instanceof Error ? err.message : String(err))
+            );
+          return;
+        }
+      }
+
+      // Number-format shortcuts. Use `event.code` so Shift+Digit5
+      // (which yields "%") still maps to the physical "5" key. We
+      // dispatch the *built-in* numFmtId by id (as a numeric string)
+      // for Number/Percent so the grid renderer's `formatNumber()`
+      // recognises it via its 0..49 fast-path. Currency is a custom
+      // format string because no built-in id renders the prefix the
+      // way our toolbar advertises.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && activeSheet && selection) {
+        const numberFormat =
+          e.code === "Digit1"
+            ? "4" // #,##0.00 (built-in)
+            : e.code === "Digit4"
+              ? "$#,##0.00"
+              : e.code === "Digit5"
+                ? "9" // 0% (built-in)
+                : null;
+        if (numberFormat) {
+          e.preventDefault();
+          const a = agentRef.current;
+          if (!a) return;
+          const range = formatSelection(selection);
+          void a
+            .applyCommand({
+              type: "xlsx:set-cell-format",
+              payload: { sheet: activeSheet.name, range, format: { numberFormat } },
+              source: "human",
+            })
+            .catch((err: unknown) =>
+              pushToast("error", err instanceof Error ? err.message : String(err))
+            );
+          return;
+        }
+      }
+
       if (e.key === "Backspace" || e.key === "Delete") {
         if (!activeSheet || !selection) return;
         e.preventDefault();
@@ -875,6 +981,7 @@ export function XlsxEditor(): ReactNode {
       marchingAnts,
       moveSelection,
       pushToast,
+      selectedCell,
       selection,
       wholeColSelection,
       wholeRowSelection,
@@ -1454,6 +1561,29 @@ export function XlsxEditor(): ReactNode {
     [formulaDraft, suggestionSpan]
   );
 
+  // Shared text-formatting bar wiring. The provider is built once via
+  // useState's lazy initialiser; it closes over the refs above so it
+  // always sees the latest selection/sheet/styles when the user
+  // clicks a control. (Same pattern as DocxEditor — the React
+  // Compiler can't see through the closure boundary, so we silence
+  // the rule for this construction site.)
+  /* eslint-disable react-hooks/refs */
+  const [textFormatProvider] = useState<TextFormatProvider>(() =>
+    createXlsxFormatProvider({
+      agentRef,
+      selectionRef,
+      sheetRef: activeSheetRef,
+      stylesRef,
+      pushToast,
+    })
+  );
+  /* eslint-enable react-hooks/refs */
+  const textFormatActive: ActiveTextFormat = computeXlsxActive(
+    activeSheet,
+    snapshot?.root.styles ?? null,
+    selection
+  );
+
   return (
     <div
       ref={surfaceRef}
@@ -1545,6 +1675,8 @@ export function XlsxEditor(): ReactNode {
           styles={snapshot.root.styles}
           selection={selection}
           onApply={onApplyFormat}
+          textFormatProvider={textFormatProvider}
+          textFormatActive={textFormatActive}
           canMerge={canMerge}
           canUnmerge={canUnmerge}
           onMerge={onMerge}
@@ -1561,6 +1693,7 @@ export function XlsxEditor(): ReactNode {
           }}
           canTextToColumns={canTextToColumns}
           onTextToColumns={onTextToColumns}
+          onOpenShortcuts={() => shortcutsDialog.setOpen(true)}
         />
       ) : null}
 
@@ -1686,7 +1819,8 @@ export function XlsxEditor(): ReactNode {
         </div>
       </div>
 
-      <div className="relative flex-1 min-h-0">
+      <div className="relative flex flex-1 min-h-0 gap-2">
+        <div className="relative flex-1 min-h-0">
         {activeSheet && snapshot ? (
           <Grid
             sheet={activeSheet}
@@ -1711,6 +1845,15 @@ export function XlsxEditor(): ReactNode {
                 : null
             }
             onFill={onFill}
+            liveEditDraft={
+              formulaFocused && selection && isSingle(selection)
+                ? {
+                    row: selection.anchor.row,
+                    col: selection.anchor.col,
+                    draft: formulaDraft,
+                  }
+                : null
+            }
           />
         ) : (
           <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">
@@ -1718,6 +1861,31 @@ export function XlsxEditor(): ReactNode {
             Loading workbook…
           </div>
         )}
+        </div>
+        {agent && activeSheet ? (
+          <aside
+            data-testid="xlsx-comments-sidebar"
+            className="hidden w-[260px] shrink-0 flex-col gap-2 overflow-y-auto rounded-md border border-divider bg-surface p-2 lg:flex"
+          >
+            <CommentsSidebar
+              key={`xlsx-comments-${activeSheet.name}-${revision}`}
+              provider={createXlsxCommentsProvider({ agent, sheetName: activeSheet.name })}
+              author="You"
+              emptyHint="No comments on this sheet yet."
+            />
+            {selection ? (
+              <CommentComposer
+                provider={createXlsxCommentsProvider({ agent, sheetName: activeSheet.name })}
+                anchor={{
+                  kind: "xlsx-cell",
+                  sheet: activeSheet.name,
+                  ref: formatA1(selection.anchor),
+                }}
+                placeholder={`Comment on ${formatA1(selection.anchor)}…`}
+              />
+            ) : null}
+          </aside>
+        ) : null}
       </div>
 
       <div
@@ -1774,6 +1942,11 @@ export function XlsxEditor(): ReactNode {
           </div>
         ))}
       </div>
+      <KeyboardShortcutsDialog
+        product="xlsx"
+        open={shortcutsDialog.open}
+        onClose={() => shortcutsDialog.setOpen(false)}
+      />
     </div>
   );
 }

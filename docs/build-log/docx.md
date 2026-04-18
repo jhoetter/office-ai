@@ -12,6 +12,7 @@
 | 2026-04-17 | Comments staging tri-state lives in core, not docx                       | Same logic will serve XLSX/PPTX.                                                                                                          |
 | 2026-04-17 | The serializer trusts dirty flags rather than diffing snapshots          | Cheap, predictable, and matches our command-bus discipline.                                                                               |
 | 2026-04-17 | Touched parts may differ from input in attribute order / quote style     | Word and LibreOffice both accept either; we assert structural equivalence on touched parts and bytewise equality only on untouched parts. |
+| 2026-04-19 | DOCX toolbar consumes the shared `@officeai/text-formatting` `TextFormatBar` via a `docxFormatProvider` adapter | Replaces the bespoke Bold/Italic/Underline/Color buttons with the cross-product bar. Provider reads ProseMirror's active marks for `getActive` and dispatches `docx:format-range` patches for `apply`. `capabilities.highlight = "native"` (mapped to `<w:highlight>`) and `underlineVariants = true` so the picker exposes single/double/dotted/etc. |
 
 ## Deviations from spec
 
@@ -2225,3 +2226,37 @@ single-character text edit.
   flips the typed flag but does not synthesize the part. P4 will
   add an "auto-create-on-toggle" path that mints the part and
   registers the relationship.
+
+## Session summary (2026-04-19, "shared comments wave")
+
+DOCX-side migration of the comments sidebar onto the cross-product
+`@officeai/comments` adapter. Behaviour is unchanged from the user's
+perspective (same toolbar "Add comment" composer, same thread cards,
+same data-testid hooks); the underlying UI now lives in
+`@officeai/ui` and is shared with PPTX and XLSX.
+
+What landed:
+
+- New `apps/web/app/editor/docxCommentsProvider.ts` adapts `DocxAgent`
+  + `docx:add-comment` / `docx:reply-comment` / `docx:resolve-comment`
+  / `docx:delete-comment` to the canonical `CommentsProvider`
+  contract from `@officeai/comments`. The adapter normalises
+  `DocxComment` (rich `Block[]` body) into a plain-text `CommentBody`
+  while stashing the original on `nativeRef`, and lifts the live PM
+  `DocxSelection` off the `docx-range` anchor's opaque `range` field
+  so adds still land at the user's selection.
+- `apps/web/app/editor/CommentsSidebar.tsx` is now a 30-line wrapper
+  around the `CommentsSidebar` primitive in `@officeai/ui`. The old
+  Word-specific implementation (thread cards, reply input) was
+  promoted into the shared package alongside the PPTX/XLSX work in
+  the previous wave.
+- `DocxEditor.tsx` constructs the provider once per agent via
+  `useMemo` and passes it to the sidebar; the previous trio of
+  `replyComment` / `resolveComment` / `deleteComment` callbacks is
+  gone (toast feedback is forwarded to the provider via an optional
+  `onToast` hook).
+
+Pre-existing testids (`comments-sidebar`, `comment-thread`,
+`data-resolved`, `data-comment-id`) survive intact, so the existing
+`apps/web/e2e/comments-sidebar.spec.ts` suite still drives the same
+flows. See `spec/shared/comments.md` for the cross-product contract.

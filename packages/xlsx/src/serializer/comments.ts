@@ -36,7 +36,17 @@ export function serializeCommentsPart(
   }
   for (const c of comments) {
     const idx = authorIdx.get(c.author) ?? 0;
-    parts.push(`<comment ref="${escapeXmlAttr(c.ref)}" authorId="${idx}">`);
+    // P1: encode threaded-comment metadata (parentId, resolved,
+    // createdAt) as `officeai-*` attributes. Excel preserves unknown
+    // attributes when round-tripping the part, and our parser reads
+    // them back via `parser/comments.ts`. Modern Excel clients
+    // additionally surface these comments through their own
+    // `xl/threadedComments/*` parts; we don't author those (yet).
+    let attrs = `ref="${escapeXmlAttr(c.ref)}" authorId="${idx}"`;
+    if (c.parentId) attrs += ` officeai-parentId="${escapeXmlAttr(c.parentId)}"`;
+    if (c.resolved) attrs += ` officeai-resolved="1"`;
+    if (c.createdAt) attrs += ` officeai-createdAt="${escapeXmlAttr(c.createdAt)}"`;
+    parts.push(`<comment ${attrs}>`);
     parts.push("<text>");
     parts.push(`<r><t xml:space="preserve">${escapeXmlText(c.text)}</t></r>`);
     parts.push("</text>");

@@ -38,6 +38,10 @@ export type CellErrorCode = "#DIV/0!" | "#NAME?" | "#VALUE!" | "#NUM!" | "#N/A" 
  *  Mirrors the `TextFormatPayload` discipline from DOCX. */
 export interface CellFormat {
   font?: {
+    /** Font family name (e.g. "Calibri"). Maps to OOXML `<font><name/>`.
+     *  The legacy alias `family` is still accepted for backwards compatibility. */
+    fontFamily?: string;
+    /** @deprecated Use `fontFamily`. */
     family?: string;
     size?: number; //  pt
     bold?: boolean;
@@ -1150,6 +1154,89 @@ listed in the 13 P0 commands; the property test calls a private
 
 ---
 
+## 13a. Threaded-comment CRUD (P1)
+
+> Shipped after the P0 13 to round out the shared comments surface
+> (`@officeai/comments`). All four commands target the same
+> `Sheet.comments` list and dirty the same `xl/comments{N}.xml` part
+> as `xlsx:add-comment`. Threaded metadata (`parentId`, `resolved`,
+> `createdAt`) round-trips through `officeai-*` attributes on the
+> `<comment>` element — Excel preserves unknown attributes when it
+> re-saves the part, and modern Excel clients additionally surface
+> these threads via their own `xl/threadedComments/*` parts when
+> opened. Authoring those native parts is deferred.
+
+### `xlsx:reply-comment`
+
+```typescript
+type ReplyCommentPayload = {
+  sheet: string;
+  parentId: string; //  top-level comment id this reply attaches to
+  author: string;
+  text: string;
+};
+```
+
+1. Resolve sheet; reject `unknown-sheet`.
+2. Locate `parentId` in `sheet.comments`; reject `unknown-target`
+   when missing or `invalid-payload` when it's already a reply
+   (replies must target a top-level comment).
+3. Append a new `Comment` carrying `parentId`, the parent's `ref`,
+   and an ISO-8601 `createdAt`. Author registry is upserted.
+4. Dirty the sheet's `xl/comments{N}.xml`; emit a single
+   `node-inserted` change.
+
+### `xlsx:resolve-comment`
+
+```typescript
+type ResolveCommentPayload = {
+  sheet: string;
+  commentId: string; //  must be top-level
+  resolved: boolean;
+};
+```
+
+Toggles the synthetic `resolved` flag on the parent comment.
+Rejects `invalid-payload` if `commentId` is itself a reply (resolve
+the parent thread instead). Diff: one `node-updated` whose `field`
+is `"resolved"`.
+
+### `xlsx:delete-comment`
+
+```typescript
+type DeleteCommentPayload = {
+  sheet: string;
+  commentId: string;
+};
+```
+
+Removes the comment. If the target is top-level, every reply with
+`parentId === commentId` is dropped in the same diff entry
+(`node-deleted`). If the target is a reply, only that reply goes.
+
+### `xlsx:edit-comment`
+
+```typescript
+type EditCommentPayload = {
+  sheet: string;
+  commentId: string;
+  text: string; //  rewrites the body verbatim
+};
+```
+
+Plain-text body rewrite. Rejects `invalid-payload` if `text` is not
+a string. Diff: `node-updated` with `field: "text"`.
+
+### Inverses
+
+- `reply-comment` → `delete-comment` on the minted id.
+- `resolve-comment` → `resolve-comment` with the previous flag.
+- `delete-comment` (top-level) → re-issue `add-comment` plus the
+  original `reply-comment` sequence stored in `before`.
+- `edit-comment` → `edit-comment` with `text = before.text`.
+
+---
+
 ## Phase 11 additions — header sizing
 
 > Shipped in Phase 11g (`docs/build-log/xlsx.md`). Excel's
@@ -1385,6 +1472,9 @@ by `path` for deterministic serialisation. The kinds used:
 | `sheet-added`                   | §11                                                                                              |
 | `sheet-renamed`                 | §12                                                                                              |
 | `comment-added`                 | §13                                                                                              |
+| `node-inserted`                 | §13a (`reply-comment`)                                                                           |
+| `node-updated`                  | §13a (`resolve-comment`, `edit-comment`)                                                         |
+| `node-deleted`                  | §13a (`delete-comment`)                                                                          |
 | `part-added`                    | any command that creates a new OOXML part (e.g. §11 sheet, §13 comments part)                    |
 | `circular`                      | §2 (and any command whose recalc surfaces a cycle) — carries `meta.cycle: CellRef[]` per `EC-F1` |
 

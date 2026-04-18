@@ -11,7 +11,7 @@ and the OOXML file is the source of truth.
 | ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | DOCX   | active   | Spec complete. Parser/serializer with opaque-blob preservation. Agent commands + tracked changes. ProseMirror renderer. CLI + MCP.                                                                                                                                                                                                                                            |
 | XLSX   | active   | Spec complete. SheetJS-backed parser/serializer with opaque-blob preservation. **All 13 P0 commands** + column/row sizing. Sync formula engine (89 functions). Excel-flavoured `/xlsx-editor`: open .xlsx from disk, multi-cell selection, type-to-edit, click-to-insert-ref, formula autocomplete, styling toolbar, merge / insert / delete, drag-resize headers. CLI + MCP. |
-| PPTX   | deferred | Spec slot reserved; implementation in a follow-up.                                                                                                                                                                                                                                                                                                                            |
+| PPTX   | active   | Parser/serializer with opaque-blob preservation. Slide model (text shapes, tables, charts). Headless agent commands. SVG renderer with HTML edit overlay. Shared text-formatting toolbar with B/I/U/S, font family/size/color/highlight pickers and real text-range selection.                                                                                                |
 
 ## Stack
 
@@ -33,7 +33,8 @@ office-ai/
 │   ├── core/                    # command bus, plugin registry, OOXML utils, model abstractions
 │   ├── docx/                    # DOCX parser, model, serializer, agent, ProseMirror renderer
 │   ├── xlsx/                    # XLSX parser, model, serializer, agent, formula engine, virtualized grid
-│   ├── pptx/                    # deferred
+│   ├── pptx/                    # PPTX parser, model, serializer, agent, SVG renderer
+│   ├── text-formatting/         # shared run-level formatting contract (TextFormat, units, MIXED, providers)
 │   ├── agent/                   # office-agent CLI + MCP server (docx_* + xlsx_* tools)
 │   ├── ui/                      # shared React primitives
 │   └── design-tokens/           # brand colors, typography, spacing
@@ -79,12 +80,15 @@ The architecture check enforces this dep graph (see
 the source of truth):
 
 ```
-core            ← leaf (no internal deps)
-design-tokens   ← leaf
-ui              → design-tokens
-docx            → core
-agent           → core, docx
-web             → core, docx, agent, ui, design-tokens
+core             ← leaf (no internal deps)
+design-tokens    ← leaf
+text-formatting  ← leaf
+ui               → design-tokens, text-formatting
+docx             → core, text-formatting
+xlsx             → core, text-formatting
+pptx             → core, text-formatting
+agent            → core, docx, xlsx, pptx
+web              → core, docx, xlsx, pptx, agent, ui, design-tokens, text-formatting
 ```
 
 Headless packages (`core`, `docx`, `agent`, `design-tokens`) are

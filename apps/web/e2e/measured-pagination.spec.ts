@@ -65,4 +65,44 @@ test.describe("editor: measured pagination", () => {
     expect(width).toBeGreaterThan(810);
     expect(width).toBeLessThan(820);
   });
+
+  test("page sheet always renders at full page height (Word-style fixed sheets)", async ({ page }) => {
+    await gotoEditor(page);
+    const surface = page.locator(".ProseMirror").first();
+    await expect(surface).toBeVisible();
+
+    // The bundled welcome doc has only ~5 short paragraphs that
+    // collectively take far less vertical space than a US-Letter
+    // content area (~864 CSS px). Without the per-chunk filler the
+    // white card would hug the content and the sheet would end just
+    // below "command bus, the same path…". With the filler, every
+    // chunk pads its body region down to the full content area so
+    // the sheet visually matches a Word page even when it's mostly
+    // empty.
+    //
+    // Wait for the measurement RAF round-trip to settle before
+    // sampling: the filler shrinks from "full content area" to its
+    // true size on the second frame.
+    await expect
+      .poll(async () => surface.locator(".pm-page-filler").count(), {
+        timeout: 5_000,
+      })
+      .toBeGreaterThan(0);
+
+    const fillerHeight = await surface
+      .locator(".pm-page-filler")
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().height);
+    // For US-Letter @ 1" margins the content area is (15840 - 1440 -
+    // 1440) / 15 = 864 CSS px. The welcome body is ~150 CSS px so
+    // the filler should take up the lion's share of the remaining
+    // space — easily > 400 px.
+    expect(fillerHeight).toBeGreaterThan(400);
+
+    // And the white card itself must therefore be at least the
+    // content-area height (864 px) — taller still once cap-top /
+    // cap-bottom chrome is added on top.
+    const cardHeight = await surface.evaluate((el) => el.getBoundingClientRect().height);
+    expect(cardHeight).toBeGreaterThan(800);
+  });
 });

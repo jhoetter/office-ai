@@ -163,8 +163,16 @@ export interface Comment {
   readonly ref: string;
   readonly author: string;
   readonly text: string;
-  /** Reserved for P1 threaded-comment replies. */
+  /** Threaded-comment parent id; replies link back to a top-level comment. */
   readonly parentId?: string;
+  /**
+   * Synthetic resolved flag used by the shared comments UI. Round-trips
+   * via the `done` attribute on the corresponding `<threadedComment>`
+   * entry so it survives a serialise → re-parse cycle in Excel.
+   */
+  readonly resolved?: boolean;
+  /** ISO-8601 creation timestamp; shown in the comments sidebar. */
+  readonly createdAt?: string;
 }
 
 export interface Cell {

@@ -18,6 +18,7 @@
 | 2026-04-18 | Phase 4 ships a thin model: typed `Sheet` (id/name/index/path/state/kind) + opaque parts; cells exposed only via the SheetJS escape hatch | Phase 5 needs the typed cell model anyway; shipping the round-trip oracle first lets us verify byte-preservation against the synthetic corpus before any commands exist that could falsify it. |
 | 2026-04-18 | Phase 5 ships only the 5 P0 commands that don't depend on the formula engine or new OPC parts; the other 8 commands defer to Phase 6/7    | Lets us land the cell model + bus wiring + dirty-sheet serializer behind a passing test suite, instead of stubbing 8 handlers without recalc/style/comment infrastructure to back them.        |
 | 2026-04-18 | String cells written by Phase 5 commands are emitted inline (`bookSST: false`)                                                            | Avoids touching `xl/sharedStrings.xml`, which keeps that part byte-identical for partially-edited workbooks. SST coalescing is a Phase 6+ concern.                                             |
+| 2026-04-19 | XLSX toolbar consumes the shared `@officeai/text-formatting` `TextFormatBar` via an `xlsxFormatProvider` adapter                          | One toolbar across DOCX/XLSX/PPTX. Provider flattens each selected cell's `EffectiveStyle` (cellXf + named style + workbook default) and `collapse()`-s the values into `MaybeMixed<...>` so heterogeneous selections render the MIXED styling correctly. Highlight is reported as `"fill-fallback"` and patches are translated to `fill.color` + `pattern: "solid"`. Bonus: deprecated `CellFormatPatch.font.family` in favour of `font.fontFamily` to match the canonical `TextFormat` shape (alias kept for backwards compatibility). |
 
 ## Deviations from spec
 
@@ -2349,3 +2350,57 @@ order-dependent failure in `xlsx-keyboard.spec.ts` ("Tab and Enter
 commit the formula bar") that passes in isolation and is unrelated
 to this phase.
 
+
+### Phase 14 — Threaded comments + shared comments UI (2026-04-19)
+
+Filled in the remaining XLSX comment CRUD gaps and migrated the
+sidebar to the format-agnostic UI introduced by the
+`pptx_connectors_layouts_notes_comments` wave.
+
+#### 14a — Threaded model + commands
+
+The `Comment` interface gained three optional fields:
+
+- `parentId?: string` — top-level vs. reply discrimination.
+- `resolved?: boolean` — toggled per thread parent.
+- `createdAt?: string` — ISO-8601 timestamp set on `xlsx:add-comment`.
+
+Four new commands extend the §13 set and round-trip through the same
+`xl/comments{N}.xml` part:
+
+- `xlsx:reply-comment` — appends a reply under an existing top-level
+  comment id; rejects replies-to-replies.
+- `xlsx:resolve-comment` — toggles the synthetic resolved flag on a
+  thread parent.
+- `xlsx:edit-comment` — rewrites a comment's plain-text body (P0;
+  rich-text formatting deferred).
+- `xlsx:delete-comment` — removes a comment, cascading to replies if
+  the target is a top-level parent.
+
+Threading + resolved state ride on `officeai-parentId`,
+`officeai-resolved`, and `officeai-createdAt` attributes on
+`<comment>`. Excel preserves unknown attributes, so the round-trip
+survives a real save → re-load cycle in Excel; modern Excel clients
+additionally surface their own `xl/threadedComments/*` parts (the
+parser tolerates either source). See `spec/xlsx/agent-commands.md`
+§13a for command-level detail.
+
+#### 14b — Shared comments UI
+
+The XLSX editor now consumes `CommentsSidebar` and `CommentComposer`
+from `@officeai/ui` driven by a small
+`apps/web/app/xlsx-editor/xlsxCommentsProvider.ts` adapter. The same
+provider contract drives DOCX and PPTX, so all three products share
+the same thread cards, inline reply input, resolve / reopen, and
+delete affordances. The composer pulls the current cell selection's
+A1 ref to seed a new comment's anchor.
+
+#### 14c — Tests + docs
+
+- `packages/xlsx/src/commands/xlsx-comments-lifecycle.test.ts`
+  covers reply / resolve / edit / delete (incl. cascade) and a
+  threaded round-trip through serialise → re-parse.
+- `spec/xlsx/agent-commands.md` §13a documents the new commands and
+  their diff payloads.
+- `spec/shared/comments.md` is the cross-product canonical contract;
+  XLSX is one of three adapter implementations.

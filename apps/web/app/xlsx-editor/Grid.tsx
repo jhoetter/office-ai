@@ -105,6 +105,20 @@ export interface GridProps {
     target: { r1: number; c1: number; r2: number; c2: number };
     direction: "down" | "right" | "up" | "left";
   }) => void;
+  /**
+   * Live mirror of the formula-bar draft for the active anchor cell
+   * during type-to-edit / F2 / formula-bar editing. When non-null,
+   * the matching cell renders the draft text (with a thin caret
+   * indicator at the end) instead of the cell's committed display
+   * value — Excel parity, where the cell visibly fills with the
+   * keystrokes the user is typing even though the actual input
+   * element lives in the formula bar.
+   *
+   * The double-click "in-cell editor" path is independent and takes
+   * precedence: when the user is editing inside the cell directly,
+   * its own `<input>` runs the show.
+   */
+  readonly liveEditDraft?: { readonly row: number; readonly col: number; readonly draft: string } | null;
 }
 
 export interface MarchingAntsRect {
@@ -157,6 +171,7 @@ export function Grid(props: GridProps): ReactNode {
     onContextMenu,
     marchingAnts,
     onFill,
+    liveEditDraft,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -207,11 +222,21 @@ export function Grid(props: GridProps): ReactNode {
   // the active selection; `preview` is recomputed from the cursor as
   // the user drags. The Grid manages this end-to-end and only
   // surfaces the final result through `onFill`.
-  const [fillDrag, setFillDrag] = useState<{
+  type FillDragState = {
     source: { r1: number; c1: number; r2: number; c2: number };
     preview: { r1: number; c1: number; r2: number; c2: number };
     direction: "down" | "right" | "up" | "left" | null;
-  } | null>(null);
+  };
+  const [fillDrag, setFillDrag] = useState<FillDragState | null>(null);
+  // Mirror of the latest fillDrag so the global mouseup handler can
+  // read the freshest preview/direction without having to live inside
+  // a setState updater (where dispatching onFill — which ultimately
+  // fires setSnapshot on the parent — would trigger React's
+  // "setState while rendering" warning).
+  const fillDragRef = useRef<FillDragState | null>(null);
+  useEffect(() => {
+    fillDragRef.current = fillDrag;
+  }, [fillDrag]);
 
   // Global mousemove + mouseup for header resize. Tied to the
   // current `colDrag` / `rowDrag` so we drop the listeners when the
@@ -367,12 +392,21 @@ export function Grid(props: GridProps): ReactNode {
       });
     };
     const onUp = () => {
-      setFillDrag((prev) => {
-        if (prev && prev.direction && onFill) {
-          onFill({ source: prev.source, target: prev.preview, direction: prev.direction });
-        }
-        return null;
-      });
+      // Read the latest drag state from the ref (kept in sync via the
+      // effect above), then clear it via setState. `onFill` runs
+      // *outside* any setState updater so the downstream
+      // `applyCommand` -> `subscribe` -> `setSnapshot` chain on the
+      // parent doesn't fire during Grid reconciliation, which React
+      // flags as "setState while rendering a different component".
+      const finalDrag = fillDragRef.current;
+      setFillDrag(null);
+      if (finalDrag && finalDrag.direction && onFill) {
+        onFill({
+          source: finalDrag.source,
+          target: finalDrag.preview,
+          direction: finalDrag.direction,
+        });
+      }
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -422,6 +456,11 @@ export function Grid(props: GridProps): ReactNode {
         const inSel = !!selection && containsCell(selection, r, c);
         const anchorCell = !!selection && selection.anchor.row === r && selection.anchor.col === c;
         const isEditing = editing?.row === r && editing?.col === c;
+        // Live draft from the formula bar mirrored into the cell
+        // during type-to-edit. Only kicks in when the in-cell editor
+        // (`isEditing`) isn't already running the show — the in-cell
+        // editor owns the cell's contents while it's open.
+        const isLiveDrafting = !isEditing && !!liveEditDraft && liveEditDraft.row === r && liveEditDraft.col === c;
         out.push(
           <div
             key={`c-${r}-${c}`}
@@ -531,6 +570,24 @@ export function Grid(props: GridProps): ReactNode {
                   padding: 0,
                 }}
               />
+            ) : isLiveDrafting ? (
+              <span
+                data-testid={`cell-${colToLetter(c)}${r + 1}-live-draft`}
+                style={{ display: "inline-flex", alignItems: "center" }}
+              >
+                <span style={{ color: "var(--foreground)" }}>{liveEditDraft.draft}</span>
+                <span
+                  aria-hidden
+                  className="xlsx-cell-caret"
+                  style={{
+                    display: "inline-block",
+                    width: 1,
+                    height: "1em",
+                    marginLeft: 1,
+                    background: "var(--foreground)",
+                  }}
+                />
+              </span>
             ) : (
               <span>{display}</span>
             )}
@@ -554,6 +611,7 @@ export function Grid(props: GridProps): ReactNode {
     onSelect,
     onCommitEdit,
     onContextMenu,
+    liveEditDraft,
   ]);
 
   // Coloured borders for refs referenced by the formula currently

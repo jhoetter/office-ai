@@ -14,7 +14,7 @@ const XlsxEditor = dynamic(() => import("./XlsxEditor").then((m) => m.XlsxEditor
 
 export default function XlsxEditorPage() {
   return (
-    <main className="mx-auto flex h-screen max-w-[1200px] flex-col px-6 py-6">
+    <main className="flex h-screen w-full flex-col px-6 py-6">
       <header className="flex items-center justify-between pb-3">
         <div className="flex items-center gap-3">
           <Link

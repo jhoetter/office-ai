@@ -30,3 +30,5 @@ export { insertPageNumberHandler } from "./insert-page-number.js";
 export { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
 export { insertSectionBreakHandler } from "./insert-section-break.js";
 export { insertPageBreakHandler, type InsertPageBreakPayload } from "./insert-page-break.js";
+export { insertTextTrackedHandler } from "./insert-text-tracked.js";
+export { deleteRangeTrackedHandler } from "./delete-range-tracked.js";

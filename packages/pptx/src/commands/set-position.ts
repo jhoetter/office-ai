@@ -1,5 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type { PptxSnapshot, Shape } from "../model/types.js";
+import { reflowConnectorsForCNvPrId } from "./connector-helpers.js";
 import {
   buildDiff,
   evolveSnapshot,
@@ -26,10 +27,14 @@ export const setPositionHandler: CommandHandler<SetPositionPayload, PptxSnapshot
     const yEmu = Math.round(payload.y);
     const updated: Shape = { ...shape, position: { xEmu, yEmu } };
 
-    const root = withSlide(snapshot.root, sIdx, (s) => ({
-      ...s,
-      shapes: replaceShape(s.shapes, path, updated),
-    }));
+    const root = withSlide(snapshot.root, sIdx, (s) => {
+      const movedShapes = replaceShape(s.shapes, path, updated);
+      // Anchored connectors stay glued to the moved shape — recompute
+      // their derived bounding box so subsequent renders pick up the
+      // new endpoint coordinates.
+      const reflowed = reflowConnectorsForCNvPrId(movedShapes, shape.cNvPrId);
+      return { ...s, shapes: reflowed };
+    });
 
     const next = evolveSnapshot(snapshot, root, { slides: [slide.partPath] });
 

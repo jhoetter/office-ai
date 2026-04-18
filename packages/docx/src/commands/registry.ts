@@ -4,6 +4,7 @@ import { acceptChangeHandler } from "./accept-change.js";
 import { addCommentHandler } from "./add-comment.js";
 import { deleteCommentHandler } from "./delete-comment.js";
 import { deleteRangeHandler } from "./delete-range.js";
+import { deleteRangeTrackedHandler } from "./delete-range-tracked.js";
 import { formatRangeHandler } from "./format-range.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertHyperlinkHandler } from "./insert-hyperlink.js";
@@ -15,6 +16,7 @@ import { insertRowHandler } from "./insert-row.js";
 import { insertSectionBreakHandler } from "./insert-section-break.js";
 import { insertTableHandler } from "./insert-table.js";
 import { insertTextHandler } from "./insert-text.js";
+import { insertTextTrackedHandler } from "./insert-text-tracked.js";
 import { rejectChangeHandler } from "./reject-change.js";
 import { removeHyperlinkHandler } from "./remove-hyperlink.js";
 import { removeParagraphListHandler } from "./remove-paragraph-list.js";
@@ -60,6 +62,8 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setSectionDifferentFirstHandler as CommandHandler<unknown, DocxSnapshot>,
   insertSectionBreakHandler as CommandHandler<unknown, DocxSnapshot>,
   insertPageBreakHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertTextTrackedHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteRangeTrackedHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

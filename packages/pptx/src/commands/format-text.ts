@@ -130,6 +130,7 @@ function mergeProps(base: TextRunProperties, fmt: TextFormatPayload): TextRunPro
   if (fmt.fontFamily !== undefined) out.fontFamily = fmt.fontFamily;
   if (fmt.fontSizeHundredths !== undefined) out.fontSizeHundredths = fmt.fontSizeHundredths;
   if (fmt.color !== undefined) out.color = fmt.color;
+  if (fmt.highlight !== undefined) out.highlight = fmt.highlight;
   return out;
 }
 

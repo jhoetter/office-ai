@@ -1,6 +1,7 @@
 import type {
   ChartPart,
   ChartShape,
+  ConnectorShape,
   GroupShape,
   OpaqueShape,
   OpaqueXml,
@@ -12,6 +13,7 @@ import type {
   TextRun,
   TextShape,
 } from "../../model/types.js";
+import { resolveEndpoint } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME, type ThemeColorScheme } from "../layout/color.js";
 import { shapeBoundingBox } from "../layout/shape.js";
 import { SVG_UNIT_PER_EMU } from "../layout/slide.js";
@@ -40,6 +42,14 @@ export interface SvgRenderCtx {
   readonly mediaUrls?: ReadonlyMap<string, string>;
   /** F3: typed chart parts keyed by part path, used by chart renderer. */
   readonly charts?: ReadonlyMap<string, ChartPart>;
+  /**
+   * Map from `cNvPrId` → resolved shape (groups walked). Populated by the
+   * caller and consumed by the connector renderer to look up anchored
+   * endpoints. Optional so existing callers that only render a single
+   * shape (e.g. tests) keep working — anchored connectors then fall
+   * back to their stored bounding box corners.
+   */
+  readonly shapesByCNvPrId?: ReadonlyMap<number, Shape>;
 }
 
 export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
@@ -54,9 +64,73 @@ export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
       return tableToSvg(shape, ctx);
     case "chart":
       return chartToSvg(shape, ctx);
+    case "connector":
+      return connectorToSvg(shape, ctx);
     case "opaque":
       return opaqueShapeToSvg(shape);
   }
+}
+
+// ─── Connector renderer ───────────────────────────────────────────────────
+
+/**
+ * Render a `ConnectorShape` as native SVG. Resolves anchored endpoints
+ * via the slide's `shapesByCNvPrId` map (passed through `ctx`), or falls
+ * back to the connector's stored bounding-box corners for unresolved
+ * endpoints. We render straight lines as `<line>`, elbow connectors as a
+ * 3-segment `<polyline>` with a midpoint pivot, and curved connectors as
+ * a quadratic Bezier through the bounding box centre. Arrowheads are
+ * declared once per slide by `slideToSvgString` via `<defs>`; here we
+ * only reference them through `marker-start` / `marker-end`.
+ */
+function connectorToSvg(shape: ConnectorShape, ctx: SvgRenderCtx): string {
+  const map = ctx.shapesByCNvPrId ?? new Map<number, Shape>();
+  const startPt = resolveEndpoint(shape.start, map);
+  const endPt = resolveEndpoint(shape.end, map);
+  const fallbackStart = {
+    x: shape.position?.xEmu ?? 0,
+    y: shape.position?.yEmu ?? 0,
+  };
+  const fallbackEnd = {
+    x: (shape.position?.xEmu ?? 0) + (shape.size?.cxEmu ?? 0),
+    y: (shape.position?.yEmu ?? 0) + (shape.size?.cyEmu ?? 0),
+  };
+  const sp = startPt ?? fallbackStart;
+  const ep = endPt ?? fallbackEnd;
+  const stroke = shape.stroke?.color ?? "374151";
+  const widthEmu = shape.stroke?.widthEmu && shape.stroke.widthEmu > 0 ? shape.stroke.widthEmu : 9525; // ≈ 0.75pt
+  const strokeAttrs = ` stroke="#${stroke}" stroke-width="${u(widthEmu)}" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
+  const headAttr = shape.headEnd && shape.headEnd !== "none" ? ` marker-end="url(#cxn-arrow)"` : "";
+  const tailAttr = shape.tailEnd && shape.tailEnd !== "none" ? ` marker-start="url(#cxn-arrow)"` : "";
+  let pathSvg: string;
+  switch (shape.connectorType) {
+    case "elbow": {
+      // 3-segment elbow: horizontal then vertical (or vice versa) with a
+      // shared midpoint. We pick the axis based on the dominant
+      // displacement so the elbow sits closer to PowerPoint's default
+      // `bentConnector3` shape (which always has 1 bend).
+      const dx = ep.x - sp.x;
+      const dy = ep.y - sp.y;
+      const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
+      const midX = horizontalFirst ? sp.x + dx / 2 : sp.x;
+      const midY = horizontalFirst ? sp.y : sp.y + dy / 2;
+      const knee = horizontalFirst ? `${u(midX)},${u(sp.y)} ${u(midX)},${u(ep.y)}` : `${u(sp.x)},${u(midY)} ${u(ep.x)},${u(midY)}`;
+      pathSvg = `<polyline points="${u(sp.x)},${u(sp.y)} ${knee} ${u(ep.x)},${u(ep.y)}"${strokeAttrs}${headAttr}${tailAttr}/>`;
+      break;
+    }
+    case "curved": {
+      const cx = (sp.x + ep.x) / 2;
+      const cy = (sp.y + ep.y) / 2;
+      pathSvg = `<path d="M ${u(sp.x)} ${u(sp.y)} Q ${u(cx)} ${u(cy)} ${u(ep.x)} ${u(ep.y)}"${strokeAttrs}${headAttr}${tailAttr}/>`;
+      break;
+    }
+    case "straight":
+    case "unsupported":
+    default:
+      pathSvg = `<line x1="${u(sp.x)}" y1="${u(sp.y)}" x2="${u(ep.x)}" y2="${u(ep.y)}"${strokeAttrs}${headAttr}${tailAttr}/>`;
+      break;
+  }
+  return `${groupOpen("connector", shape.id)}${pathSvg}${groupClose()}`;
 }
 
 function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
@@ -91,17 +165,139 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
 
   const out = [groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }), geometry];
   if (hasText) {
-    const lines = shape.txBody.paragraphs.map((p) => paragraphToTSpan(p, theme));
-    const fontSizePx = u(estimateFontSizeEmu(shape.txBody.paragraphs[0]));
-    const defaultColor = pickContrastingTextColor(fill, theme);
-    out.push(
-      `<text x="0" y="${fontSizePx}" font-family="sans-serif" font-size="${fontSizePx}" fill="#${defaultColor}" xml:space="preserve">`,
-      lines.join(""),
-      `</text>`
-    );
+    out.push(renderWrappedTextHtml(shape, box.cx, box.cy, fill, theme));
   }
   out.push(groupClose());
   return out.join("");
+}
+
+/**
+ * Render a text shape's body as a `<foreignObject>` containing styled
+ * HTML so the browser word-wraps long runs to the shape's width. The
+ * older `<text>`/`<tspan>` path produced one unbroken line per
+ * paragraph and overflowed the geometry on anything longer than the
+ * box — exactly what users notice as "no automatic line breaks".
+ *
+ * Paragraph alignment, vertical anchor (`<a:bodyPr anchor>`), and per-
+ * run formatting (bold/italic/underline/strike, font-family/size,
+ * fill, highlight) are all honoured so the wrapped output matches the
+ * editing overlay's flow.
+ */
+function renderWrappedTextHtml(
+  shape: TextShape,
+  cxEmu: number,
+  cyEmu: number,
+  shapeFillHex: string | null,
+  theme: ThemeColorScheme
+): string {
+  const w = u(cxEmu);
+  const h = u(cyEmu);
+  const defaultColor = pickContrastingTextColor(shapeFillHex, theme);
+  const baseFontSizePx = u(estimateFontSizeEmu(shape.txBody.paragraphs[0]));
+  const anchor = readBodyAnchor(shape.txBody.bodyPrRaw);
+  const insets = readBodyInsets(shape.txBody.bodyPrRaw);
+  // `wrap="none"` (rare) means "let the text overflow". Default in
+  // PowerPoint's `<a:bodyPr>` is "square" → wrap.
+  const wrapMode = readBodyWrap(shape.txBody.bodyPrRaw);
+
+  const justifyContent =
+    anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
+
+  const paragraphs = shape.txBody.paragraphs.map((p) => paragraphToHtml(p, theme)).join("");
+
+  // foreignObject sits inside an SVG that's itself inside a `<g>` with
+  // the shape's `translate(x y)` already applied — so we anchor at
+  // (0, 0) here and use the shape's intrinsic cx/cy as our box.
+  const containerStyle = [
+    "width:100%",
+    "height:100%",
+    "display:flex",
+    "flex-direction:column",
+    `justify-content:${justifyContent}`,
+    `padding:${u(insets.t)}px ${u(insets.r)}px ${u(insets.b)}px ${u(insets.l)}px`,
+    "box-sizing:border-box",
+    `color:#${defaultColor}`,
+    "font-family:sans-serif",
+    `font-size:${baseFontSizePx}px`,
+    "line-height:1.2",
+    wrapMode === "none" ? "white-space:pre" : "white-space:pre-wrap",
+    "word-wrap:break-word",
+    "overflow:hidden",
+  ].join(";");
+  return [
+    `<foreignObject x="0" y="0" width="${w}" height="${h}">`,
+    `<div xmlns="http://www.w3.org/1999/xhtml" style="${containerStyle}">`,
+    paragraphs,
+    `</div>`,
+    `</foreignObject>`,
+  ].join("");
+}
+
+function paragraphToHtml(p: TextParagraph, theme: ThemeColorScheme): string {
+  const align =
+    p.properties.alignment === "center"
+      ? "center"
+      : p.properties.alignment === "right"
+        ? "right"
+        : p.properties.alignment === "justify"
+          ? "justify"
+          : "left";
+  const flatLen = p.runs.reduce((acc, r) => acc + (r.isLineBreak ? 0 : r.text.length), 0);
+  if (flatLen === 0) {
+    // Empty paragraph — emit a non-breaking space so the line takes up
+    // a row (matching how PowerPoint renders blank paragraphs).
+    return `<div style="text-align:${align}">&#160;</div>`;
+  }
+  const runs = p.runs.map((r) => runToHtml(r, theme)).join("");
+  return `<div style="text-align:${align}">${runs}</div>`;
+}
+
+function runToHtml(r: TextRun, theme: ThemeColorScheme): string {
+  if (r.isLineBreak) return "<br/>";
+  const styles: string[] = [];
+  if (r.properties.bold) styles.push("font-weight:bold");
+  if (r.properties.italic) styles.push("font-style:italic");
+  const decorations: string[] = [];
+  if (r.properties.underline) decorations.push("underline");
+  if (r.properties.strike) decorations.push("line-through");
+  if (decorations.length > 0) styles.push(`text-decoration:${decorations.join(" ")}`);
+  if (r.properties.fontFamily) styles.push(`font-family:${escXml(r.properties.fontFamily)}`);
+  styles.push(`color:#${resolveRunFill(r, theme)}`);
+  if (r.properties.fontSizeHundredths !== undefined) {
+    const pt = r.properties.fontSizeHundredths / 100;
+    styles.push(`font-size:${pt}pt`);
+  }
+  if (r.properties.highlight) styles.push(`background-color:#${escXml(r.properties.highlight)}`);
+  return `<span style="${styles.join(";")}">${escXml(r.text)}</span>`;
+}
+
+function readBodyAnchor(bodyPr: OpaqueXml | undefined): "t" | "ctr" | "b" {
+  const v = bodyPr?.attrs?.anchor ?? bodyPr?.rawAttrs?.["@_anchor"];
+  if (v === "ctr") return "ctr";
+  if (v === "b") return "b";
+  return "t";
+}
+
+function readBodyWrap(bodyPr: OpaqueXml | undefined): "square" | "none" {
+  const v = bodyPr?.attrs?.wrap ?? bodyPr?.rawAttrs?.["@_wrap"];
+  return v === "none" ? "none" : "square";
+}
+
+function readBodyInsets(bodyPr: OpaqueXml | undefined): { l: number; r: number; t: number; b: number } {
+  // PowerPoint defaults (ECMA-376 21.1.2.1.1 bodyPr): lIns/rIns 91440,
+  // tIns/bIns 45720 (in EMU). Honour explicit overrides when present.
+  const get = (key: string, dflt: number): number => {
+    const raw = bodyPr?.attrs?.[key] ?? bodyPr?.rawAttrs?.[`@_${key}`];
+    if (typeof raw !== "string") return dflt;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : dflt;
+  };
+  return {
+    l: get("lIns", 91440),
+    r: get("rIns", 91440),
+    t: get("tIns", 45720),
+    b: get("bIns", 45720),
+  };
 }
 
 /**
@@ -236,31 +432,6 @@ function pickContrastingTextColor(fillHex: string | null, theme: ThemeColorSchem
   const b = parseInt(v.slice(4, 6), 16);
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance < 0.5 ? theme.bg1 : theme.tx1;
-}
-
-function paragraphToTSpan(p: TextParagraph, theme: ThemeColorScheme): string {
-  if (p.runs.length === 0) {
-    return `<tspan x="0" dy="1em"></tspan>`;
-  }
-  const tspans = p.runs.map((r) => runToTSpan(r, theme)).join("");
-  return `<tspan x="0" dy="1em">${tspans}</tspan>`;
-}
-
-function runToTSpan(r: TextRun, theme: ThemeColorScheme): string {
-  if (r.isLineBreak) return "<tspan>\n</tspan>";
-  const attrs: string[] = [];
-  if (r.properties.bold) attrs.push('font-weight="bold"');
-  if (r.properties.italic) attrs.push('font-style="italic"');
-  if (r.properties.underline) attrs.push('text-decoration="underline"');
-  if (r.properties.strike) attrs.push('text-decoration="line-through"');
-  if (r.properties.fontFamily) attrs.push(`font-family="${escXml(r.properties.fontFamily)}"`);
-  attrs.push(`fill="#${resolveRunFill(r, theme)}"`);
-  if (r.properties.fontSizeHundredths !== undefined) {
-    // sz is hundredths of a point. EMU per point = 12700.
-    const sizeEmu = (r.properties.fontSizeHundredths / 100) * 12700;
-    attrs.push(`font-size="${u(sizeEmu)}"`);
-  }
-  return `<tspan ${attrs.join(" ")}>${escXml(r.text)}</tspan>`;
 }
 
 /**

@@ -16,13 +16,108 @@ export interface TextFormatPayload {
   readonly fontFamily?: string;
   readonly fontSizeHundredths?: number;
   readonly color?: string;
+  /**
+   * Character highlight (background colour behind glyphs). 6-character
+   * RRGGBB hex (no `#`). Pass the empty string to clear the highlight
+   * on the matched range; `undefined` leaves the existing highlight
+   * untouched (patch semantics).
+   */
+  readonly highlight?: string;
 }
 
 // ─── P0 payloads ──────────────────────────────────────────────────────────
 
+/**
+ * The 11 PowerPoint-standard layout kinds the agent / picker can request.
+ * `unknown` is intentionally excluded — agents shouldn't manufacture
+ * unclassified layouts.
+ */
+export type LayoutKindPayload =
+  | "title"
+  | "titleAndContent"
+  | "sectionHeader"
+  | "twoContent"
+  | "comparison"
+  | "titleOnly"
+  | "blank"
+  | "contentWithCaption"
+  | "pictureWithCaption"
+  | "titleSlide"
+  | "bigNumber";
+
 export interface AddSlidePayload {
   readonly at?: number;
   readonly layoutPartPath?: string;
+  /**
+   * Pick a built-in layout kind by classification rather than partPath.
+   * Resolved against the deck's existing layouts; if the deck doesn't
+   * have one of that kind we synthesise a minimal layout part on demand.
+   */
+  readonly layoutKind?: LayoutKindPayload;
+  /** Stamp the layout's placeholders as concrete shapes on the new slide. */
+  readonly clonePlaceholders?: boolean;
+}
+
+// ─── Comments ─────────────────────────────────────────────────────────────
+
+export interface AddCommentPayload {
+  readonly slideIndex: number;
+  readonly author: string;
+  readonly text: string;
+  /** Pin position on the slide, in EMU. Defaults to centre when omitted. */
+  readonly xEmu?: number;
+  readonly yEmu?: number;
+  /**
+   * Optional anchored shape id; reserved for future "shape-pinned"
+   * comments. Currently informational; the comment still persists at
+   * the supplied pin coordinates.
+   */
+  readonly shapeId?: string;
+}
+
+export interface ReplyCommentPayload {
+  readonly slideIndex: number;
+  /** Top-level comment id this reply belongs to (`${authorId}:${idx}`). */
+  readonly parentId: string;
+  readonly author: string;
+  readonly text: string;
+}
+
+export interface ResolveCommentPayload {
+  readonly slideIndex: number;
+  readonly commentId: string;
+  readonly resolved: boolean;
+}
+
+export interface DeleteCommentPayload {
+  readonly slideIndex: number;
+  readonly commentId: string;
+}
+
+export interface EditCommentPayload {
+  readonly slideIndex: number;
+  readonly commentId: string;
+  readonly text: string;
+}
+
+export interface SetSlideNotesPayload {
+  readonly slideIndex: number;
+  /**
+   * New plain-text body for the notes part. Each line becomes one
+   * paragraph (`<a:p>`); existing run-level formatting is dropped — the
+   * notes editor is intentionally plain-text for now. Pass an empty
+   * string to clear the notes (the part stays around so we don't churn
+   * relationships on every keystroke).
+   */
+  readonly text: string;
+}
+
+export interface SetSlideLayoutPayload {
+  readonly slideIndex: number;
+  readonly layoutPartPath?: string;
+  readonly layoutKind?: LayoutKindPayload;
+  /** Re-stamp placeholders, preserving content where idx matches. Defaults to true. */
+  readonly clonePlaceholders?: boolean;
 }
 
 export interface DeleteSlidePayload {
@@ -224,6 +319,62 @@ export interface SetChartTypePayload {
   readonly chartType: "bar" | "line" | "pie" | "area";
 }
 
+// ─── Connectors (lines) payloads ──────────────────────────────────────────
+
+/**
+ * One end of a connector. Mirrors the model's `ConnectorEndpoint` but
+ * uses `cNvPrId` only — the agent never deals in `NodeId`s for the
+ * target shape because connectors must survive shape re-mounting (which
+ * mints fresh NodeIds). `cNvPrId` is stable across the document
+ * lifetime.
+ *
+ * `side` is one of the five named anchor sides exposed by the renderer
+ * (`n`/`s`/`e`/`w`/`center`); the canvas's snap-to-anchor result can be
+ * passed straight through.
+ */
+export type ConnectorEndpointPayload =
+  | { readonly kind: "free"; readonly xEmu: number; readonly yEmu: number }
+  | {
+      readonly kind: "anchored";
+      readonly targetCNvPrId: number;
+      readonly side: "n" | "s" | "e" | "w" | "center";
+    };
+
+export type ConnectorTypePayload = "straight" | "elbow" | "curved";
+
+export type ConnectorEndShapePayload = "none" | "arrow" | "triangle" | "oval";
+
+export interface AddConnectorPayload {
+  readonly slideIndex: number;
+  readonly connectorType: ConnectorTypePayload;
+  readonly start: ConnectorEndpointPayload;
+  readonly end: ConnectorEndpointPayload;
+  /** 6-char hex (with or without leading `#`). Defaults to `374151` (slate-700). */
+  readonly strokeColor?: string;
+  /** EMU width. Defaults to ~0.75pt (`9525`). */
+  readonly strokeWidthEmu?: number;
+  readonly headEnd?: ConnectorEndShapePayload;
+  readonly tailEnd?: ConnectorEndShapePayload;
+  readonly name?: string;
+}
+
+export interface SetConnectorEndpointPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly which: "start" | "end";
+  readonly endpoint: ConnectorEndpointPayload;
+}
+
+export interface SetConnectorStylePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly connectorType?: ConnectorTypePayload;
+  readonly strokeColor?: string;
+  readonly strokeWidthEmu?: number;
+  readonly headEnd?: ConnectorEndShapePayload;
+  readonly tailEnd?: ConnectorEndShapePayload;
+}
+
 // ─── F4 (Animations) payloads ─────────────────────────────────────────────
 
 export interface SetSlideTransitionPayload {
@@ -283,6 +434,16 @@ export const PPTX_COMMAND_TYPES = {
   addShapeAnimation: "pptx:add-shape-animation",
   removeShapeAnimation: "pptx:remove-shape-animation",
   reorderShapeAnimations: "pptx:reorder-shape-animations",
+  addConnector: "pptx:add-connector",
+  setConnectorEndpoint: "pptx:set-connector-endpoint",
+  setConnectorStyle: "pptx:set-connector-style",
+  setSlideLayout: "pptx:set-slide-layout",
+  setSlideNotes: "pptx:set-slide-notes",
+  addComment: "pptx:add-comment",
+  replyComment: "pptx:reply-comment",
+  resolveComment: "pptx:resolve-comment",
+  deleteComment: "pptx:delete-comment",
+  editComment: "pptx:edit-comment",
 } as const;
 
 export type PptxCommandType = (typeof PPTX_COMMAND_TYPES)[keyof typeof PPTX_COMMAND_TYPES];

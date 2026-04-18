@@ -1,6 +1,11 @@
 import type { CommandHandler } from "@officeai/core";
-import type { OpaquePart, PptxPresentation, PptxSnapshot, Slide } from "../model/types.js";
-import { buildDiff, evolveSnapshot, makeError } from "./helpers.js";
+import type { PptxPresentation, PptxSnapshot, Slide, SlideLayout } from "../model/types.js";
+import {
+  applyAddedLayout,
+  clonePlaceholdersIntoSlide,
+  resolveLayoutForKind,
+} from "./layout-helpers.js";
+import { buildDiff, evolveSnapshot, makeError, maxCNvPrId } from "./helpers.js";
 import { resolveTarget } from "../parser/parse.js";
 import type { AddSlidePayload } from "./payloads.js";
 
@@ -12,21 +17,32 @@ const SLIDE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presen
 
 export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
   type: "pptx:add-slide",
-  apply(snapshot, payload) {
+  apply(snapshot, payload, ctx) {
     const slides = snapshot.root.slides;
     const at = payload.at ?? slides.length;
     if (at < 0 || at > slides.length) {
       throw makeError("invalid-position", `at ${at} out of range (0..${slides.length})`);
     }
 
-    let layout: OpaquePart | undefined;
+    let layout: SlideLayout | undefined;
+    let added: ReturnType<typeof applyAddedLayout> | null = null;
+    let resolvedLayoutPartPath: string | undefined;
     if (payload.layoutPartPath) {
-      layout = snapshot.root.layouts.get(payload.layoutPartPath);
-      if (!layout) {
+      const existing = snapshot.root.layouts.get(payload.layoutPartPath);
+      if (!existing) {
         throw makeError(
           "unknown-target",
           `layout part ${payload.layoutPartPath} not found in presentation.layouts`
         );
+      }
+      layout = existing;
+      resolvedLayoutPartPath = payload.layoutPartPath;
+    } else if (payload.layoutKind) {
+      const r = resolveLayoutForKind(snapshot, payload.layoutKind);
+      layout = r.layout;
+      resolvedLayoutPartPath = r.layout.partPath;
+      if (r.added) {
+        added = applyAddedLayout(snapshot, r.added, layout);
       }
     }
 
@@ -41,12 +57,12 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
     }
     const relId = nextRelId(presRels.entries.map((e) => e.id));
 
-    const slide: Slide = {
+    const baseSlide: Slide = {
       id: `slide-new-${partIndex}`,
       partPath,
       slideId,
       relId,
-      ...(payload.layoutPartPath ? { layoutPartPath: payload.layoutPartPath } : {}),
+      ...(resolvedLayoutPartPath ? { layoutPartPath: resolvedLayoutPartPath } : {}),
       shapes: [],
       animations: [],
       slideOpaqueTail: [defaultClrMapOvr()],
@@ -60,6 +76,17 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
       cSldHead: [],
     };
 
+    // Stamp placeholders if (a) caller asked, or (b) caller picked a layout
+    // by kind without explicitly opting out — kind-pick is the new path
+    // that's expected to give the user a populated slide.
+    const shouldClone =
+      payload.clonePlaceholders === true ||
+      (payload.clonePlaceholders === undefined && !!payload.layoutKind);
+    const slide: Slide =
+      layout && shouldClone
+        ? clonePlaceholdersIntoSlide(baseSlide, layout, ctx, maxCNvPrId(baseSlide.shapes))
+        : baseSlide;
+
     // Update relationships snapshot for presentation.xml.rels.
     const newPresEntries = [
       ...presRels.entries,
@@ -69,17 +96,18 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
         target: relativeFrom(PRES_RELS_PATH, partPath),
       },
     ];
-    const newRelationships = new Map(snapshot.relationships);
+    const newRelationships = new Map(added ? added.relationships : snapshot.relationships);
     newRelationships.set(PRES_RELS_PATH, { relsPath: PRES_RELS_PATH, entries: newPresEntries });
 
     // Slide rels (only if layout specified).
     const dirtyRelsPaths: string[] = [PRES_RELS_PATH];
-    if (payload.layoutPartPath) {
+    if (added) dirtyRelsPaths.push(...added.dirtyRels);
+    if (resolvedLayoutPartPath) {
       const slideRelsEntries = [
         {
           id: "rId1",
           type: REL_TYPE_LAYOUT,
-          target: relativeFrom(slideRelsPath, payload.layoutPartPath),
+          target: relativeFrom(slideRelsPath, resolvedLayoutPartPath),
         },
       ];
       newRelationships.set(slideRelsPath, { relsPath: slideRelsPath, entries: slideRelsEntries });
@@ -87,13 +115,14 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
     }
 
     // Content types: add Override for the new slide.
-    const overrideExists = snapshot.contentTypes.overrides.some((o) => o.partName === `/${partPath}`);
+    const baseContentTypes = added ? added.contentTypes : snapshot.contentTypes;
+    const overrideExists = baseContentTypes.overrides.some((o) => o.partName === `/${partPath}`);
     const newContentTypes = overrideExists
-      ? snapshot.contentTypes
+      ? baseContentTypes
       : {
-          ...snapshot.contentTypes,
+          ...baseContentTypes,
           overrides: [
-            ...snapshot.contentTypes.overrides,
+            ...baseContentTypes.overrides,
             { partName: `/${partPath}`, contentType: SLIDE_CONTENT_TYPE },
           ],
         };
@@ -105,6 +134,7 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
     const root: PptxPresentation = {
       ...snapshot.root,
       slides: newSlides,
+      layouts: added ? added.layouts : snapshot.root.layouts,
       idGen: {
         ...snapshot.root.idGen,
         nextSlideId: slideId + 1,
@@ -117,9 +147,10 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
       root,
       {
         presentation: true,
-        contentTypes: !overrideExists,
+        contentTypes: !overrideExists || (added?.dirtyContentTypes ?? false),
         slides: [partPath],
         relationships: dirtyRelsPaths,
+        layouts: added ? added.dirtyLayouts : [],
       },
       {
         relationships: newRelationships,

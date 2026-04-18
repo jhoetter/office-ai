@@ -44,10 +44,16 @@ const LEAF_DIRS = ["tests"];
 const ALLOWED_INTERNAL_DEPS = {
   "@officeai/core": [],
   "@officeai/design-tokens": [],
-  "@officeai/ui": ["@officeai/design-tokens"],
-  "@officeai/docx": ["@officeai/core"],
-  "@officeai/xlsx": ["@officeai/core"],
-  "@officeai/pptx": ["@officeai/core"],
+  "@officeai/text-formatting": [],
+  "@officeai/comments": [],
+  "@officeai/ui": [
+    "@officeai/design-tokens",
+    "@officeai/text-formatting",
+    "@officeai/comments",
+  ],
+  "@officeai/docx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
+  "@officeai/xlsx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
+  "@officeai/pptx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
   "@officeai/agent": [
     "@officeai/core",
     "@officeai/docx",
@@ -69,6 +75,8 @@ const ALLOWED_INTERNAL_DEPS = {
     "@officeai/agent",
     "@officeai/ui",
     "@officeai/design-tokens",
+    "@officeai/text-formatting",
+    "@officeai/comments",
   ],
 };
 
@@ -85,6 +93,7 @@ const FORBIDDEN_EXTERNAL_DEPS = {
   // to the renderer/react/ subtree (see src/headless-invariant.test.ts).
   "@officeai/agent": ["react", "react-dom", "next"],
   "@officeai/design-tokens": ["react", "react-dom", "next"],
+  "@officeai/text-formatting": ["react", "react-dom", "next"],
 };
 
 function tryReadPkg(pkgDir) {

@@ -54,7 +54,22 @@ export function parseCommentsPart(
       const author =
         Number.isInteger(authorIdx) && authorIdx >= 0 && authorIdx < authors.length ? authors[authorIdx] : "";
       const text = extractCommentText(c);
-      comments.push({ id: `comment-${i}`, ref, author, text });
+      // P1: round-trip threaded-comment metadata that
+      // `serializer/comments.ts` writes as `officeai-*` attributes.
+      // Excel preserves unknown attributes, so this survives a real
+      // Excel save → re-load too.
+      const parentId = c.attrs["officeai-parentId"];
+      const resolvedRaw = c.attrs["officeai-resolved"];
+      const createdAt = c.attrs["officeai-createdAt"];
+      comments.push({
+        id: `comment-${i}`,
+        ref,
+        author,
+        text,
+        ...(parentId ? { parentId } : {}),
+        ...(resolvedRaw === "1" ? { resolved: true } : {}),
+        ...(createdAt ? { createdAt } : {}),
+      });
     }
   }
 

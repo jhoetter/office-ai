@@ -70,6 +70,7 @@ export const addCommentHandler: CommandHandler<AddCommentPayload, XlsxSnapshot> 
       ref: payload.ref,
       author: payload.author,
       text: payload.text,
+      createdAt: new Date().toISOString(),
     };
     const comments = [...sheet.comments, newComment];
 

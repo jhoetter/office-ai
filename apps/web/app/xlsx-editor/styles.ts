@@ -35,6 +35,14 @@ export function styleForCell(
     const c = renderColor(effective.font.color);
     if (c) css.color = c;
   }
+  // Font family ↔ OOXML `<font><name val="..."/>` and font size in
+  // points ↔ `<font><sz val="..."/>`. Both are part of the shared
+  // `TextFormat` contract; without these the toolbar's font/size
+  // pickers dispatch correctly but the cell never repaints.
+  if (effective.font.name) css.fontFamily = effective.font.name;
+  if (typeof effective.font.size === "number" && effective.font.size > 0) {
+    css.fontSize = `${effective.font.size}pt`;
+  }
   if (effective.fill.kind === "pattern" && effective.fill.patternType === "solid") {
     const fg = renderColor(effective.fill.fgColor);
     if (fg) css.background = fg;

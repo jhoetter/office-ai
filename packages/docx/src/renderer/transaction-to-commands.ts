@@ -31,6 +31,23 @@ export interface TranslationResult {
 export interface TranslationOptions {
   agentId?: string;
   source?: "human" | "agent" | "system";
+  /**
+   * Edit mode for the transaction:
+   *   - `"edit"` (default) — insertions and deletions become plain
+   *     `docx:insert-text` / `docx:delete-range` commands; this is
+   *     the historical behaviour.
+   *   - `"suggest"` — insertions become `docx:insert-text-tracked`
+   *     and single-paragraph deletions become
+   *     `docx:delete-range-tracked` (`<w:ins>` / `<w:del>` revision
+   *     wrappers); the changes show up in the tracked-changes UI.
+   *     `author` MUST be supplied; multi-paragraph deletions and
+   *     paste-with-block-content fall back to the unsupported
+   *     channel because they need additional revision plumbing
+   *     (paragraph-mark deletes, multi-block tracked inserts).
+   */
+  mode?: "edit" | "suggest";
+  /** Author attribution for tracked changes; required when `mode === "suggest"`. */
+  author?: string;
 }
 
 export function transactionToCommands(
@@ -41,10 +58,12 @@ export function transactionToCommands(
   const out: TranslationResult = { commands: [], unsupported: [] };
   const source = opts.source ?? "human";
   const agentId = opts.agentId;
+  const mode = opts.mode ?? "edit";
+  const author = opts.author ?? "";
   let docCursor = before.doc;
 
   for (const step of tx.steps) {
-    const handled = handleStep(step, docCursor, before, out, source, agentId);
+    const handled = handleStep(step, docCursor, before, out, source, agentId, mode, author);
     if (!handled) {
       out.unsupported.push({ reason: "unsupported step", step });
     }
@@ -63,10 +82,12 @@ function handleStep(
   before: EditorState,
   out: TranslationResult,
   source: "human" | "agent" | "system",
-  agentId: string | undefined
+  agentId: string | undefined,
+  mode: "edit" | "suggest",
+  author: string
 ): boolean {
   if (step instanceof ReplaceStep) {
-    return handleReplaceStep(step, doc, before, out, source, agentId);
+    return handleReplaceStep(step, doc, before, out, source, agentId, mode, author);
   }
   if (step instanceof AddMarkStep || step instanceof RemoveMarkStep) {
     return handleMarkStep(step, doc, out, source, agentId);
@@ -84,7 +105,9 @@ function handleReplaceStep(
   before: EditorState,
   out: TranslationResult,
   source: "human" | "agent" | "system",
-  agentId: string | undefined
+  agentId: string | undefined,
+  mode: "edit" | "suggest",
+  author: string
 ): boolean {
   const { from, to } = step;
   const sliceContent = step.slice.content;
@@ -104,6 +127,74 @@ function handleReplaceStep(
   const blockSegments = sliceBlockSegments(sliceContent);
   const insertedHasBlocks = blockSegments.length > 1;
   const insertedText = blockSegments.length > 0 ? blockSegments[0] : "";
+
+  // Suggesting mode: route insert/delete through the tracked
+  // variants so they materialise as `<w:ins>` / `<w:del>` revision
+  // wrappers. Multi-block paste and multi-paragraph deletes are
+  // out of MVP scope (they need extra revision plumbing — paragraph
+  // mark deletes, multi-block tracked inserts) and fall through
+  // to the unsupported channel so the toolbar can warn the user.
+  if (mode === "suggest") {
+    if (!author) {
+      out.unsupported.push({
+        reason: "suggesting mode requires a non-empty author; falling back to direct edit",
+        step,
+      });
+      return false;
+    }
+    if (insertedHasBlocks) {
+      out.unsupported.push({
+        reason: "tracked multi-block paste is not yet supported in Suggesting mode",
+        step,
+      });
+      return false;
+    }
+    if (from === to) {
+      if (insertedText.length === 0) return true;
+      out.commands.push(
+        wrap(
+          {
+            type: "docx:insert-text-tracked",
+            payload: { at: startPos, text: insertedText, author },
+          },
+          source,
+          agentId
+        )
+      );
+      return true;
+    }
+    if (startPos.paragraph !== endPos.paragraph) {
+      out.unsupported.push({
+        reason:
+          "tracked deletes across paragraph boundaries are not yet supported in Suggesting mode",
+        step,
+      });
+      return false;
+    }
+    out.commands.push(
+      wrap(
+        {
+          type: "docx:delete-range-tracked",
+          payload: { range: makeRange(startPos, endPos), author },
+        },
+        source,
+        agentId
+      )
+    );
+    if (insertedText.length > 0) {
+      out.commands.push(
+        wrap(
+          {
+            type: "docx:insert-text-tracked",
+            payload: { at: startPos, text: insertedText, author },
+          },
+          source,
+          agentId
+        )
+      );
+    }
+    return true;
+  }
 
   // Insertion at a cursor (no range to delete).
   if (from === to) {

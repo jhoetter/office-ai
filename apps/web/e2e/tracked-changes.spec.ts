@@ -4,13 +4,13 @@ import { expect, test } from "@playwright/test";
 import { gotoEditor } from "./_helpers";
 
 /**
- * P1.2 / W5: tracked-changes inline UI.
+ * P1.2 / W5: tracked-changes margin UI.
  *
  * Both cases load `fixtures/docx/real-world/06-comments-and-changes.docx`
  * (one `<w:ins>` + one `<w:del>` revision) via the toolbar's hidden
- * file input. They then expand the tracked-changes ribbon and click
- * Accept (resp. Reject) on the first row, asserting the resulting
- * toast.
+ * file input. They then locate a Word-style balloon in the right-margin
+ * gutter and click its Accept (resp. Reject) button, asserting the
+ * resulting toast.
  *
  * If W4's handlers ever regress to `NotImplementedError` stubs the
  * editor surfaces a "Not yet supported in this build" toast instead;
@@ -38,12 +38,11 @@ test.describe("editor: tracked-changes UI", () => {
   test("clicking Accept on a tracked change dispatches docx:accept-change", async ({ page }) => {
     await loadTrackedFixture(page);
 
-    await page.getByRole("button", { name: /Tracked changes/ }).click();
-    const row = page.getByTestId("tracked-change-row").first();
-    await expect(row).toBeVisible();
-    const revisionId = (await row.getAttribute("data-revision-id")) ?? "";
+    const balloon = page.getByTestId("tracked-change-balloon").first();
+    await expect(balloon).toBeVisible();
+    const revisionId = (await balloon.getAttribute("data-revision-id")) ?? "";
     expect(revisionId).not.toEqual("");
-    await row.getByRole("button", { name: `Accept change ${revisionId}` }).click();
+    await balloon.getByRole("button", { name: `Accept change ${revisionId}` }).click();
 
     await expect(
       page.getByText(/Change accepted\./).or(page.getByText(/Not yet supported in this build/))
@@ -53,12 +52,11 @@ test.describe("editor: tracked-changes UI", () => {
   test("clicking Reject on a tracked change dispatches docx:reject-change", async ({ page }) => {
     await loadTrackedFixture(page);
 
-    await page.getByRole("button", { name: /Tracked changes/ }).click();
-    const rows = page.getByTestId("tracked-change-row");
-    await expect(rows.first()).toBeVisible();
+    const balloons = page.getByTestId("tracked-change-balloon");
+    await expect(balloons.first()).toBeVisible();
     // Pick the second revision (the deletion) so accept-then-reject
     // ordering across the two cases doesn't collide on a shared id.
-    const target = (await rows.count()) > 1 ? rows.nth(1) : rows.first();
+    const target = (await balloons.count()) > 1 ? balloons.nth(1) : balloons.first();
     const revisionId = (await target.getAttribute("data-revision-id")) ?? "";
     expect(revisionId).not.toEqual("");
     await target.getByRole("button", { name: `Reject change ${revisionId}` }).click();

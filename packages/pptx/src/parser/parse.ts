@@ -6,6 +6,12 @@ import type {
   ChartSeries,
   ChartShape,
   ChartType,
+  ConnectorEndShape,
+  ConnectorEndpoint,
+  ConnectorShape,
+  ConnectorSide,
+  ConnectorStroke,
+  ConnectorType,
   ContentTypesSnap,
   EntranceAnimation,
   EntranceEffect,
@@ -15,12 +21,21 @@ import type {
   OpaqueShape,
   OpaqueXml,
   Picture,
+  NotesSlide,
+  PlaceholderSpec,
+  PptxComment,
+  PptxCommentAuthor,
+  PptxCommentAuthorsPart,
+  PptxCommentsPart,
+  Position,
   PptxIdGen,
   PptxPresentation,
   PptxSnapshot,
   RelationshipsSnap,
   Shape,
+  Size,
   Slide,
+  SlideLayout,
   SlideSize,
   SlideTransition,
   TableCell,
@@ -60,6 +75,8 @@ const REL_TYPE_SLIDE_LAYOUT =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 const REL_TYPE_THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 const REL_TYPE_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const REL_TYPE_COMMENTS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const REL_TYPE_COMMENT_AUTHORS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
 const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const REL_TYPE_CHART = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 
@@ -187,9 +204,9 @@ export async function parsePptx(
   for (const p of masterPaths) {
     masters.set(p, opaquePartFor(container, p, "p:sldMaster"));
   }
-  const layouts = new Map<string, OpaquePart>();
+  const layouts = new Map<string, SlideLayout>();
   for (const p of layoutPaths) {
-    layouts.set(p, opaquePartFor(container, p, "p:sldLayout"));
+    layouts.set(p, parseSlideLayout(container, p));
   }
   const theme = new Map<string, OpaquePart>();
   let themeDefault: ThemeColorScheme = DEFAULT_THEME;
@@ -207,9 +224,29 @@ export async function parsePptx(
       }
     }
   }
-  const notesSlides = new Map<string, OpaquePart>();
+  const notesSlides = new Map<string, NotesSlide>();
   for (const p of notesSlidePaths) {
-    if (container.has(p)) notesSlides.set(p, opaquePartFor(container, p, "p:notes"));
+    if (container.has(p)) notesSlides.set(p, parseNotesSlide(container, p, mintNodeId));
+  }
+
+  // ── Comments ────────────────────────────────────────────────────────
+  const commentsByPart = new Map<string, PptxCommentsPart>();
+  for (const slide of slides) {
+    if (!slide.commentsPartPath || !container.has(slide.commentsPartPath)) continue;
+    if (commentsByPart.has(slide.commentsPartPath)) continue;
+    commentsByPart.set(
+      slide.commentsPartPath,
+      parseCommentsPart(container, slide.commentsPartPath, mintNodeId)
+    );
+  }
+  let commentAuthors: PptxCommentAuthorsPart | null = null;
+  // commentAuthors is referenced from the presentation rels.
+  for (const r of presRels.relationships) {
+    if (r.type !== REL_TYPE_COMMENT_AUTHORS) continue;
+    const p = resolveTarget(PRESENTATION_PART, r.target);
+    if (!container.has(p)) continue;
+    commentAuthors = parseCommentAuthorsPart(container, p);
+    break;
   }
 
   // Media: every binary under ppt/media/.
@@ -293,6 +330,8 @@ export async function parsePptx(
     theme,
     themeDefault,
     notesSlides,
+    commentsByPart,
+    commentAuthors,
     media,
     charts,
     presentationRootAttrs,
@@ -369,12 +408,15 @@ function parseSlide(
   const slideRelTargets = new Map<string, string>();
   let layoutPartPath: string | undefined;
   let notesSlidePartPath: string | undefined;
+  let commentsPartPath: string | undefined;
   for (const r of rels.relationships) {
     slideRelTargets.set(r.id, r.target);
     if (r.type === REL_TYPE_SLIDE_LAYOUT) {
       layoutPartPath = resolveTarget(partPath, r.target);
     } else if (r.type === REL_TYPE_NOTES_SLIDE) {
       notesSlidePartPath = resolveTarget(partPath, r.target);
+    } else if (r.type === REL_TYPE_COMMENTS) {
+      commentsPartPath = resolveTarget(partPath, r.target);
     }
   }
 
@@ -429,6 +471,7 @@ function parseSlide(
     relId,
     ...(layoutPartPath ? { layoutPartPath } : {}),
     ...(notesSlidePartPath ? { notesSlidePartPath } : {}),
+    ...(commentsPartPath ? { commentsPartPath } : {}),
     shapes,
     ...(transition ? { transition } : {}),
     animations,
@@ -455,6 +498,8 @@ function parseShape(
       return parseSp(entry, mintNodeId);
     case "p:pic":
       return parsePic(entry, mintNodeId, partPath, slideRelTargets);
+    case "p:cxnSp":
+      return parseCxnSp(entry, mintNodeId);
     case "p:grpSp":
       return parseGrpSp(entry, mintNodeId, partPath, slideRelTargets);
     case "p:graphicFrame": {
@@ -693,6 +738,224 @@ function parseSp(entry: Record<string, unknown>, mintNodeId: IdMinter): TextShap
     spPrTail,
     ...(styleEntry ? { styleRaw: captureOpaque(styleEntry) } : {}),
   };
+}
+
+/**
+ * Parse `<p:cxnSp>` ⇒ `ConnectorShape`. Endpoint anchoring is recovered
+ * from `<a:stCxn>` / `<a:endCxn>` inside `<p:spPr>`; when those are
+ * absent we fall back to the bounding-box corners (with `<a:xfrm>`'s
+ * `flipH`/`flipV` flags consulted to pick which corner). The connector
+ * type is read from `<a:prstGeom @prst>` (line / bentConnector* /
+ * curvedConnector*); anything else lands as `unsupported`.
+ */
+function parseCxnSp(entry: Record<string, unknown>, mintNodeId: IdMinter): ConnectorShape {
+  const children = (entry["p:cxnSp"] as unknown[] | undefined) ?? [];
+  const nvCxnSpPr = findElementEntry(children, "p:nvCxnSpPr");
+  const spPr = findElementEntry(children, "p:spPr");
+
+  let cNvPrId = 0;
+  let name = "";
+  const nvCxnSpPrTail: OpaqueXml[] = [];
+  let stCxnSpid: number | null = null;
+  let stCxnIdx: string | null = null;
+  let endCxnSpid: number | null = null;
+  let endCxnIdx: string | null = null;
+  if (nvCxnSpPr) {
+    for (const c of elementEntries((nvCxnSpPr["p:nvCxnSpPr"] as unknown[] | undefined) ?? [])) {
+      const tag = ooxml.getTag(c);
+      if (tag === "p:cNvPr") {
+        cNvPrId = Number(attrOf(c, "id") ?? "0");
+        name = attrOf(c, "name") ?? "";
+      }
+      if (tag === "p:cNvCxnSpPr") {
+        for (const cx of elementEntries((c["p:cNvCxnSpPr"] as unknown[] | undefined) ?? [])) {
+          const cxTag = ooxml.getTag(cx);
+          if (cxTag === "a:stCxn") {
+            const id = attrOf(cx, "id");
+            const idx = attrOf(cx, "idx");
+            if (id && /^-?\d+$/.test(id)) stCxnSpid = Number(id);
+            if (idx) stCxnIdx = idx;
+          } else if (cxTag === "a:endCxn") {
+            const id = attrOf(cx, "id");
+            const idx = attrOf(cx, "idx");
+            if (id && /^-?\d+$/.test(id)) endCxnSpid = Number(id);
+            if (idx) endCxnIdx = idx;
+          }
+        }
+      }
+      nvCxnSpPrTail.push(captureOpaque(c));
+    }
+  }
+
+  let position: { xEmu: number; yEmu: number } | undefined;
+  let size: { cxEmu: number; cyEmu: number } | undefined;
+  let flipH = false;
+  let flipV = false;
+  let connectorType: ConnectorType = "unsupported";
+  let stroke: ConnectorStroke | undefined;
+  let headEnd: ConnectorEndShape | undefined;
+  let tailEnd: ConnectorEndShape | undefined;
+  const spPrTail: OpaqueXml[] = [];
+  if (spPr) {
+    for (const c of elementEntries((spPr["p:spPr"] as unknown[] | undefined) ?? [])) {
+      const tag = ooxml.getTag(c);
+      if (tag === "a:xfrm") {
+        const xfrmAttrs = readRootAttrs(c);
+        flipH = xfrmAttrs.flipH === "1" || xfrmAttrs.flipH === "true";
+        flipV = xfrmAttrs.flipV === "1" || xfrmAttrs.flipV === "true";
+        const xfrmChildren = (c["a:xfrm"] as unknown[] | undefined) ?? [];
+        const off = findElementEntry(xfrmChildren, "a:off");
+        const ext = findElementEntry(xfrmChildren, "a:ext");
+        if (off) {
+          position = {
+            xEmu: Number(attrOf(off, "x") ?? "0"),
+            yEmu: Number(attrOf(off, "y") ?? "0"),
+          };
+        }
+        if (ext) {
+          size = {
+            cxEmu: Number(attrOf(ext, "cx") ?? "0"),
+            cyEmu: Number(attrOf(ext, "cy") ?? "0"),
+          };
+        }
+        continue;
+      }
+      if (tag === "a:prstGeom") {
+        const prst = attrOf(c, "prst") ?? "";
+        connectorType = mapPrstToConnectorType(prst);
+        continue;
+      }
+      if (tag === "a:ln") {
+        const lnAttrs = readRootAttrs(c);
+        const widthAttr = lnAttrs.w;
+        let widthEmu = 0;
+        if (widthAttr && /^\d+$/.test(widthAttr)) widthEmu = Number(widthAttr);
+        let color: string | undefined;
+        for (const ln of elementEntries((c["a:ln"] as unknown[] | undefined) ?? [])) {
+          const lnTag = ooxml.getTag(ln);
+          if (lnTag === "a:solidFill") {
+            const srgb = findElementEntry((ln["a:solidFill"] as unknown[] | undefined) ?? [], "a:srgbClr");
+            if (srgb) {
+              const v = attrOf(srgb, "val");
+              if (v) color = v;
+            }
+          } else if (lnTag === "a:headEnd") {
+            const t = attrOf(ln, "type");
+            if (t) headEnd = mapEndShape(t);
+          } else if (lnTag === "a:tailEnd") {
+            const t = attrOf(ln, "type");
+            if (t) tailEnd = mapEndShape(t);
+          }
+        }
+        if (color !== undefined || widthEmu > 0) {
+          stroke = { color: color ?? "000000", widthEmu };
+        }
+      }
+      spPrTail.push(captureOpaque(c));
+    }
+  }
+
+  // Resolve endpoints. PowerPoint encodes start/end in two places:
+  //   1) `<a:stCxn>` / `<a:endCxn>` carry an id + side index (anchored).
+  //   2) `<a:xfrm>` carries the bounding box; combined with `flipH`/
+  //      `flipV` this gives the actual start/end corners for free
+  //      endpoints (no anchor).
+  const start = resolveCxnEndpoint(stCxnSpid, stCxnIdx, "start", position, size, flipH, flipV);
+  const end = resolveCxnEndpoint(endCxnSpid, endCxnIdx, "end", position, size, flipH, flipV);
+
+  return {
+    kind: "connector",
+    id: mintNodeId(),
+    cNvPrId,
+    name,
+    ...(position ? { position } : {}),
+    ...(size ? { size } : {}),
+    connectorType,
+    start,
+    end,
+    ...(stroke ? { stroke } : {}),
+    ...(headEnd ? { headEnd } : {}),
+    ...(tailEnd ? { tailEnd } : {}),
+    nvCxnSpPrTail,
+    spPrTail,
+  };
+}
+
+function mapPrstToConnectorType(prst: string): ConnectorType {
+  if (prst === "line" || prst === "straightConnector1") return "straight";
+  if (prst.startsWith("bentConnector")) return "elbow";
+  if (prst.startsWith("curvedConnector")) return "curved";
+  return "unsupported";
+}
+
+function mapEndShape(t: string): ConnectorEndShape {
+  switch (t) {
+    case "none":
+      return "none";
+    case "triangle":
+      return "triangle";
+    case "oval":
+      return "oval";
+    case "arrow":
+    case "stealth":
+    case "diamond":
+      return "arrow";
+    default:
+      return "arrow";
+  }
+}
+
+function resolveCxnEndpoint(
+  cxnSpid: number | null,
+  cxnIdx: string | null,
+  which: "start" | "end",
+  position: { xEmu: number; yEmu: number } | undefined,
+  size: { cxEmu: number; cyEmu: number } | undefined,
+  flipH: boolean,
+  flipV: boolean
+): ConnectorEndpoint {
+  if (cxnSpid !== null) {
+    return {
+      kind: "anchored",
+      targetCNvPrId: cxnSpid,
+      side: connectorIdxToSide(cxnIdx),
+    };
+  }
+  // Free endpoints — derive from bounding box corners. PowerPoint stores
+  // a connector's two endpoints implicitly: when `flipH`/`flipV` are
+  // false, start = top-left and end = bottom-right; flips swap which
+  // corner each endpoint takes.
+  const x = position?.xEmu ?? 0;
+  const y = position?.yEmu ?? 0;
+  const cx = size?.cxEmu ?? 0;
+  const cy = size?.cyEmu ?? 0;
+  const startX = flipH ? x + cx : x;
+  const startY = flipV ? y + cy : y;
+  const endX = flipH ? x : x + cx;
+  const endY = flipV ? y : y + cy;
+  if (which === "start") return { kind: "free", xEmu: startX, yEmu: startY };
+  return { kind: "free", xEmu: endX, yEmu: endY };
+}
+
+/**
+ * `<a:stCxn @idx>` is shape-kind-specific (rectangles use 0..3, etc.).
+ * For our anchor model we collapse to the five named sides — 0/1/2/3
+ * are the four cardinal sides for rectangles in PowerPoint's standard
+ * connection-site ordering, anything else falls back to "center".
+ */
+function connectorIdxToSide(idx: string | null): ConnectorSide {
+  switch (idx) {
+    case "0":
+      return "n";
+    case "1":
+      return "e";
+    case "2":
+      return "s";
+    case "3":
+      return "w";
+    default:
+      return "center";
+  }
 }
 
 function parsePic(
@@ -1056,6 +1319,13 @@ function parseRunProperties(entry: Record<string, unknown>): TextRunProperties {
     } else if (tag === "a:latin") {
       const v = attrOf(c, "typeface");
       if (v) props.fontFamily = v;
+    } else if (tag === "a:highlight") {
+      const hl = (c["a:highlight"] as unknown[] | undefined) ?? [];
+      const srgb = findElementEntry(hl, "a:srgbClr");
+      if (srgb) {
+        const v = attrOf(srgb, "val");
+        if (v) props.highlight = v;
+      }
     }
     opaqueChildren.push(captureOpaque(c));
   }
@@ -1146,6 +1416,350 @@ function mediaContentType(ext: string): string {
     default:
       return "application/octet-stream";
   }
+}
+
+/**
+ * Parse a `<p:sldLayout>` part into a typed `SlideLayout`. We extract
+ * (a) the layout name from `<p:cSld name>`, (b) every `<p:ph>` declared
+ * inside `<p:sld>`/`<p:spTree>` (to know which placeholders new slides
+ * should clone), and (c) classify the layout into one of the standard
+ * 11 PowerPoint layouts so the picker UI can show consistent labels.
+ *
+ * The verbatim `<p:sldLayout>` blob is preserved in `raw` so unedited
+ * layouts round-trip byte-for-byte; the typed fields are derived.
+ */
+function parseSlideLayout(container: ooxml.OoxmlContainer, partPath: string): SlideLayout {
+  return parseSlideLayoutFromXml(partPath, container.readText(partPath));
+}
+
+/**
+ * String-input variant of `parseSlideLayout`. Used by the layout-cloning
+ * helper to materialise a `SlideLayout` from a built-in XML template
+ * without a backing container part.
+ */
+export function parseSlideLayoutFromXml(partPath: string, xml: string): SlideLayout {
+  let tree: unknown;
+  try {
+    tree = ooxml.parseXml(xml);
+  } catch (err) {
+    throw new PptxParseError("invalid-xml", `Failed to parse layout ${partPath}`, {
+      partPath,
+      cause: err,
+    });
+  }
+  if (!Array.isArray(tree)) {
+    throw new PptxParseError("invalid-xml", `Expected XML tree at ${partPath}`, { partPath });
+  }
+  const r = findElementEntry(tree as unknown[], "p:sldLayout");
+  if (!r) {
+    throw new PptxParseError("invalid-xml", `Missing <p:sldLayout> in ${partPath}`, {
+      partPath,
+    });
+  }
+  const raw: OpaqueXml = {
+    tag: "p:sldLayout",
+    attrs: readRootAttrs(r),
+    rawAttrs: readRawAttrs(r),
+    subtree: (r["p:sldLayout"] as unknown[] | undefined) ?? [],
+  };
+  const placeholders = collectLayoutPlaceholders(raw);
+  const name = readLayoutName(raw) ?? defaultLayoutName(placeholders);
+  const kind = classifyLayoutKind(raw, placeholders);
+  return { partPath, kind, name, placeholders, raw };
+}
+
+function collectLayoutPlaceholders(raw: OpaqueXml): PlaceholderSpec[] {
+  const cSld = findElementEntry(raw.subtree, "p:cSld");
+  if (!cSld) return [];
+  const spTree = findElementEntry((cSld["p:cSld"] as unknown[] | undefined) ?? [], "p:spTree");
+  if (!spTree) return [];
+  const out: PlaceholderSpec[] = [];
+  for (const child of elementEntries((spTree["p:spTree"] as unknown[] | undefined) ?? [])) {
+    const tag = ooxml.getTag(child);
+    if (tag !== "p:sp") continue;
+    const ph = readLayoutPlaceholder(child);
+    if (ph) out.push(ph);
+  }
+  return out;
+}
+
+function readLayoutPlaceholder(spEntry: Record<string, unknown>): PlaceholderSpec | null {
+  const spChildren = (spEntry["p:sp"] as unknown[] | undefined) ?? [];
+  const nvSpPr = findElementEntry(spChildren, "p:nvSpPr");
+  if (!nvSpPr) return null;
+  let phEntry: Record<string, unknown> | null = null;
+  for (const c of elementEntries((nvSpPr["p:nvSpPr"] as unknown[] | undefined) ?? [])) {
+    if (ooxml.getTag(c) !== "p:nvPr") continue;
+    for (const c2 of elementEntries((c["p:nvPr"] as unknown[] | undefined) ?? [])) {
+      if (ooxml.getTag(c2) === "p:ph") {
+        phEntry = c2;
+        break;
+      }
+    }
+    if (phEntry) break;
+  }
+  if (!phEntry) return null;
+  const type = attrOf(phEntry, "type") ?? "body";
+  const idxStr = attrOf(phEntry, "idx");
+  const sz = attrOf(phEntry, "sz");
+  const idx = idxStr !== undefined && /^\d+$/.test(idxStr) ? Number(idxStr) : 0;
+
+  let position: Position | undefined;
+  let size: Size | undefined;
+  const spPr = findElementEntry(spChildren, "p:spPr");
+  if (spPr) {
+    for (const c of elementEntries((spPr["p:spPr"] as unknown[] | undefined) ?? [])) {
+      if (ooxml.getTag(c) !== "a:xfrm") continue;
+      const xfrmChildren = (c["a:xfrm"] as unknown[] | undefined) ?? [];
+      const off = findElementEntry(xfrmChildren, "a:off");
+      const ext = findElementEntry(xfrmChildren, "a:ext");
+      if (off) {
+        position = {
+          xEmu: Number(attrOf(off, "x") ?? "0"),
+          yEmu: Number(attrOf(off, "y") ?? "0"),
+        };
+      }
+      if (ext) {
+        size = {
+          cxEmu: Number(attrOf(ext, "cx") ?? "0"),
+          cyEmu: Number(attrOf(ext, "cy") ?? "0"),
+        };
+      }
+    }
+  }
+  const out: PlaceholderSpec = {
+    type,
+    idx,
+    ...(sz ? { sz } : {}),
+    ...(position ? { position } : {}),
+    ...(size ? { size } : {}),
+  };
+  return out;
+}
+
+function readLayoutName(raw: OpaqueXml): string | null {
+  const cSld = findElementEntry(raw.subtree, "p:cSld");
+  if (!cSld) return null;
+  const attrs = readRootAttrs(cSld);
+  return attrs.name ?? null;
+}
+
+function defaultLayoutName(placeholders: ReadonlyArray<PlaceholderSpec>): string {
+  if (placeholders.length === 0) return "Blank";
+  if (placeholders.length === 1) return "Title Only";
+  return "Layout";
+}
+
+/**
+ * Classify a layout from its placeholder set + name. PowerPoint stores
+ * the layout's official type in `<p:sldLayout type="...">` (attribute on
+ * the root element), so we honour that when present and fall back to a
+ * heuristic over the placeholder shape otherwise.
+ *
+ * The `type` attribute → `LayoutKind` mapping mirrors the values the
+ * PowerPoint UI emits: `title`, `obj` (titleAndContent), `secHead`,
+ * `twoObj` (twoContent), `twoTxTwoObj` (comparison), `titleOnly`, `blank`,
+ * `objTx` (contentWithCaption), `picTx` (pictureWithCaption), `tx`
+ * (titleSlide). Unknowns surface as `unknown` so the picker can still
+ * round-trip them.
+ */
+function classifyLayoutKind(raw: OpaqueXml, placeholders: ReadonlyArray<PlaceholderSpec>): import("../model/types.js").LayoutKind {
+  const t = raw.attrs.type ?? raw.rawAttrs["@_type"];
+  switch (t) {
+    case "title":
+      return "title";
+    case "obj":
+      return "titleAndContent";
+    case "secHead":
+      return "sectionHeader";
+    case "twoObj":
+      return "twoContent";
+    case "twoTxTwoObj":
+    case "fourObj":
+      return "comparison";
+    case "titleOnly":
+      return "titleOnly";
+    case "blank":
+      return "blank";
+    case "objTx":
+      return "contentWithCaption";
+    case "picTx":
+      return "pictureWithCaption";
+    case "tx":
+      return "titleSlide";
+    default:
+      break;
+  }
+  // Heuristic fallback when no `type` attribute is set.
+  if (placeholders.length === 0) return "blank";
+  const types = new Set(placeholders.map((p) => p.type));
+  if (types.size === 1 && types.has("title")) return "titleOnly";
+  if (placeholders.length >= 4) return "comparison";
+  if (placeholders.length === 3) return "twoContent";
+  return "titleAndContent";
+}
+
+/**
+ * Parse a `<p:notes>` part into a typed `NotesSlide`. We pull out the
+ * `<p:txBody>` of the body placeholder so the speaker-notes panel can
+ * read/write it as structured text; everything else (slide image
+ * placeholder, header/footer placeholders, formatting) lives verbatim
+ * in `raw` for byte-faithful round-trip when nothing has changed.
+ */
+function parseNotesSlide(container: ooxml.OoxmlContainer, partPath: string, mintNodeId: IdMinter): NotesSlide {
+  const opaque = opaquePartFor(container, partPath, "p:notes");
+  const body = extractNotesBody(opaque.raw, mintNodeId) ?? { paragraphs: [] };
+  return { partPath, body, raw: opaque.raw };
+}
+
+function extractNotesBody(raw: OpaqueXml, mintNodeId: IdMinter): TextBody | null {
+  const cSld = findElementEntry(raw.subtree, "p:cSld");
+  if (!cSld) return null;
+  const spTree = findElementEntry((cSld["p:cSld"] as unknown[] | undefined) ?? [], "p:spTree");
+  if (!spTree) return null;
+  for (const child of elementEntries((spTree["p:spTree"] as unknown[] | undefined) ?? [])) {
+    if (ooxml.getTag(child) !== "p:sp") continue;
+    const spChildren = (child["p:sp"] as unknown[] | undefined) ?? [];
+    const nvSpPr = findElementEntry(spChildren, "p:nvSpPr");
+    if (!nvSpPr) continue;
+    let phType: string | null = null;
+    for (const c of elementEntries((nvSpPr["p:nvSpPr"] as unknown[] | undefined) ?? [])) {
+      if (ooxml.getTag(c) !== "p:nvPr") continue;
+      for (const c2 of elementEntries((c["p:nvPr"] as unknown[] | undefined) ?? [])) {
+        if (ooxml.getTag(c2) !== "p:ph") continue;
+        phType = attrOf(c2, "type") ?? "body";
+      }
+    }
+    if (phType !== "body") continue;
+    const txBody = findElementEntry(spChildren, "p:txBody");
+    if (txBody) return parseTextBody(txBody, mintNodeId);
+  }
+  return null;
+}
+
+/**
+ * Parse `ppt/comments/commentN.xml`. PowerPoint stores per-slide
+ * comments in a `<p:cmLst>` document; each `<p:cm>` carries
+ * `authorId`, `idx` (per-author monotonic), `dt` (creation time),
+ * a child `<p:pos x="…" y="…"/>` pin location and a `<p:text>` body.
+ *
+ * We synthesise stable comment ids from `${authorId}:${idx}` so they
+ * survive a round-trip without depending on PowerPoint minting global
+ * UUIDs (which the legacy format doesn't). Replies are encoded as
+ * extLst `<p:ext uri="parent">…</p:ext>` siblings — non-standard, but
+ * faithful to the way PowerPoint represents them in the modern
+ * "modernComments" schema we're shimming over the legacy one.
+ */
+function parseCommentsPart(
+  container: ooxml.OoxmlContainer,
+  partPath: string,
+  _mintNodeId: IdMinter
+): PptxCommentsPart {
+  let tree: unknown;
+  try {
+    tree = ooxml.parseXml(container.readText(partPath));
+  } catch (err) {
+    throw new PptxParseError("invalid-xml", `Failed to parse ${partPath}`, { partPath, cause: err });
+  }
+  if (!Array.isArray(tree)) return { partPath, comments: [] };
+  const cmLst = findElementEntry(tree as unknown[], "p:cmLst");
+  if (!cmLst) return { partPath, comments: [] };
+  const out: PptxComment[] = [];
+  for (const child of elementEntries((cmLst["p:cmLst"] as unknown[] | undefined) ?? [])) {
+    if (ooxml.getTag(child) !== "p:cm") continue;
+    const cm = child;
+    const authorId = Number(attrOf(cm, "authorId") ?? "0");
+    const idx = Number(attrOf(cm, "idx") ?? "1");
+    const createdAt = attrOf(cm, "dt") ?? undefined;
+    const cmChildren = (cm["p:cm"] as unknown[] | undefined) ?? [];
+    let xEmu = 0;
+    let yEmu = 0;
+    let text = "";
+    let parentId: string | undefined;
+    let resolved: boolean | undefined;
+    for (const ch of elementEntries(cmChildren)) {
+      const t = ooxml.getTag(ch);
+      if (t === "p:pos") {
+        // PowerPoint stores comment pin coordinates in 1/100 of a point;
+        // convert to EMU (1 pt = 12700 EMU, so 1/100 pt = 127 EMU).
+        const xRaw = Number(attrOf(ch, "x") ?? "0");
+        const yRaw = Number(attrOf(ch, "y") ?? "0");
+        xEmu = Math.round(xRaw * 127);
+        yEmu = Math.round(yRaw * 127);
+      } else if (t === "p:text") {
+        const inner = (ch["p:text"] as unknown[] | undefined) ?? [];
+        for (const tn of inner) {
+          if (tn && typeof tn === "object" && !Array.isArray(tn)) {
+            const obj = tn as Record<string, unknown>;
+            const v = obj["#text"];
+            if (typeof v === "string") text += v;
+          }
+        }
+      } else if (t === "p:extLst") {
+        // Walk extensions for our parent-ref/resolved flag.
+        for (const ext of elementEntries((ch["p:extLst"] as unknown[] | undefined) ?? [])) {
+          if (ooxml.getTag(ext) !== "p:ext") continue;
+          const uri = attrOf(ext, "uri");
+          if (uri === "officeai:parent") {
+            const pid = attrOf(ext, "id");
+            if (pid) parentId = pid;
+          } else if (uri === "officeai:resolved") {
+            resolved = attrOf(ext, "value") === "1";
+          }
+        }
+      }
+    }
+    out.push({
+      id: `${authorId}:${idx}`,
+      authorId,
+      idx,
+      ...(createdAt ? { createdAt } : {}),
+      xEmu,
+      yEmu,
+      text,
+      ...(parentId ? { parentId } : {}),
+      ...(resolved !== undefined ? { resolved } : {}),
+    });
+  }
+  return { partPath, comments: out };
+}
+
+/**
+ * Parse `ppt/commentAuthors.xml`. Authors are identified by a numeric
+ * `id`; PowerPoint additionally tracks `lastIdx` (highest comment idx
+ * minted by this author) and `clrIdx` (palette slot). We round-trip
+ * everything but only `name` and `id` matter to the UI.
+ */
+function parseCommentAuthorsPart(
+  container: ooxml.OoxmlContainer,
+  partPath: string
+): PptxCommentAuthorsPart {
+  let tree: unknown;
+  try {
+    tree = ooxml.parseXml(container.readText(partPath));
+  } catch (err) {
+    throw new PptxParseError("invalid-xml", `Failed to parse ${partPath}`, { partPath, cause: err });
+  }
+  if (!Array.isArray(tree)) return { partPath, authors: [] };
+  const root = findElementEntry(tree as unknown[], "p:cmAuthorLst");
+  if (!root) return { partPath, authors: [] };
+  const authors: PptxCommentAuthor[] = [];
+  for (const child of elementEntries((root["p:cmAuthorLst"] as unknown[] | undefined) ?? [])) {
+    if (ooxml.getTag(child) !== "p:cmAuthor") continue;
+    const id = Number(attrOf(child, "id") ?? "0");
+    const name = attrOf(child, "name") ?? "";
+    const initials = attrOf(child, "initials") ?? undefined;
+    const lastIdx = attrOf(child, "lastIdx");
+    const clrIdx = attrOf(child, "clrIdx");
+    authors.push({
+      id,
+      name,
+      ...(initials ? { initials } : {}),
+      ...(lastIdx ? { lastIdx: Number(lastIdx) } : {}),
+      ...(clrIdx ? { clrIdx: Number(clrIdx) } : {}),
+    });
+  }
+  return { partPath, authors };
 }
 
 function opaquePartFor(container: ooxml.OoxmlContainer, partPath: string, rootTag: string): OpaquePart {

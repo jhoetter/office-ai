@@ -2,6 +2,9 @@ import { ooxml } from "@officeai/core";
 import type {
   ChartPart,
   ChartShape,
+  ConnectorEndpoint,
+  ConnectorShape,
+  ConnectorSide,
   EntranceAnimation,
   GroupShape,
   OpaqueShape,
@@ -19,6 +22,7 @@ import type {
   TextRun,
   TextShape,
 } from "../model/types.js";
+import { connectorXfrm, resolveEndpoint } from "../model/connector-geometry.js";
 import { ATTR_KEY, ATTR_PREFIX, opaqueToEntry } from "../parser/xml-helpers.js";
 import { PptxSerializeError } from "./errors.js";
 
@@ -57,6 +61,75 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
       container.writeBytes(partPath, media.bytes);
     } else {
       container.addPart(partPath, media.bytes);
+    }
+  }
+
+  // 3a) Rewrite dirty layout parts. We always emit the layout's verbatim
+  // `raw` blob — the typed fields (`kind`, `name`, `placeholders`) are
+  // derived, so there's nothing to serialise from the typed model that
+  // isn't already captured in `raw`.
+  for (const layoutPath of snapshot.dirty.layouts) {
+    const layout = snapshot.root.layouts.get(layoutPath);
+    if (!layout) continue;
+    try {
+      const xml = serializeLayoutXml(layout.raw);
+      if (container.has(layoutPath)) container.writeText(layoutPath, xml);
+      else container.addPart(layoutPath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError("layout-failed", `Failed to serialize ${layoutPath}`, {
+        partPath: layoutPath,
+        cause: err,
+      });
+    }
+  }
+
+  // 3a2) Rewrite dirty notes parts. The typed `body` lives inside the
+  // verbatim `raw` blob (set-slide-notes rebuilds raw from body), so we
+  // simply emit raw — no extra reconciliation needed.
+  for (const notesPath of snapshot.dirty.notesSlides) {
+    const notes = snapshot.root.notesSlides.get(notesPath);
+    if (!notes) continue;
+    try {
+      const xml = serializeLayoutXml(notes.raw);
+      if (container.has(notesPath)) container.writeText(notesPath, xml);
+      else container.addPart(notesPath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError("notes-failed", `Failed to serialize ${notesPath}`, {
+        partPath: notesPath,
+        cause: err,
+      });
+    }
+  }
+
+  // 3a3) Rewrite dirty per-slide comments parts.
+  for (const partPath of snapshot.dirty.comments) {
+    const part = snapshot.root.commentsByPart.get(partPath);
+    if (!part) continue;
+    try {
+      const xml = serializeCommentsXml(part);
+      if (container.has(partPath)) container.writeText(partPath, xml);
+      else container.addPart(partPath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError("comments-failed", `Failed to serialize ${partPath}`, {
+        partPath,
+        cause: err,
+      });
+    }
+  }
+
+  // 3a4) Rewrite the deck-wide commentAuthors part if dirty.
+  if (snapshot.dirty.commentAuthors && snapshot.root.commentAuthors) {
+    const part = snapshot.root.commentAuthors;
+    try {
+      const xml = serializeCommentAuthorsXml(part);
+      if (container.has(part.partPath)) container.writeText(part.partPath, xml);
+      else container.addPart(part.partPath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError(
+        "comment-authors-failed",
+        `Failed to serialize ${part.partPath}`,
+        { partPath: part.partPath, cause: err }
+      );
     }
   }
 
@@ -121,9 +194,14 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
 // ─── Slide serialization ──────────────────────────────────────────────────
 
 function serializeSlideXml(slide: Slide): string {
+  // Resolve every shape (groups included) by its `cNvPrId` so connectors
+  // can find their anchored targets when emitting `<a:xfrm>`/start/end
+  // points without re-walking the tree per connector.
+  const shapesByCNvPrId = new Map<number, Shape>();
+  collectShapesByCNvPrId(slide.shapes, shapesByCNvPrId);
   const spTreeChildren: unknown[] = [];
   for (const head of slide.spTreeHead) spTreeChildren.push(opaqueToEntry(head));
-  for (const shape of slide.shapes) spTreeChildren.push(shapeToEntry(shape));
+  for (const shape of slide.shapes) spTreeChildren.push(shapeToEntry(shape, shapesByCNvPrId));
   const spTree = makeEntry("p:spTree", spTreeChildren);
 
   const cSldChildren: unknown[] = [];
@@ -247,20 +325,32 @@ function timingFromAnimations(animations: ReadonlyArray<EntranceAnimation>): Rec
   return makeEntry("p:timing", [makeEntry("p:tnLst", [tmRoot])]);
 }
 
-function shapeToEntry(shape: Shape): Record<string, unknown> {
+function shapeToEntry(
+  shape: Shape,
+  shapesByCNvPrId: ReadonlyMap<number, Shape>
+): Record<string, unknown> {
   switch (shape.kind) {
     case "text":
       return textShapeToEntry(shape);
     case "pic":
       return pictureToEntry(shape);
     case "group":
-      return groupShapeToEntry(shape);
+      return groupShapeToEntry(shape, shapesByCNvPrId);
     case "table":
       return tableShapeToEntry(shape);
     case "chart":
       return chartShapeToEntry(shape);
+    case "connector":
+      return connectorToEntry(shape, shapesByCNvPrId);
     case "opaque":
       return opaqueShapeToEntry(shape);
+  }
+}
+
+function collectShapesByCNvPrId(shapes: ReadonlyArray<Shape>, out: Map<number, Shape>): void {
+  for (const s of shapes) {
+    if (s.cNvPrId > 0) out.set(s.cNvPrId, s);
+    if (s.kind === "group") collectShapesByCNvPrId(s.children, out);
   }
 }
 
@@ -356,7 +446,10 @@ function pictureToEntry(shape: Picture): Record<string, unknown> {
   return makeEntry("p:pic", children);
 }
 
-function groupShapeToEntry(shape: GroupShape): Record<string, unknown> {
+function groupShapeToEntry(
+  shape: GroupShape,
+  shapesByCNvPrId: ReadonlyMap<number, Shape>
+): Record<string, unknown> {
   const nvChildren: unknown[] = [];
   let emittedCNvPr = false;
   for (const o of shape.nvGrpSpPrTail) {
@@ -388,12 +481,177 @@ function groupShapeToEntry(shape: GroupShape): Record<string, unknown> {
   const grpSpPr = makeEntry("p:grpSpPr", grpSpPrChildren);
 
   const children: unknown[] = [nvGrpSpPr, grpSpPr];
-  for (const c of shape.children) children.push(shapeToEntry(c));
+  for (const c of shape.children) children.push(shapeToEntry(c, shapesByCNvPrId));
   return makeEntry("p:grpSp", children);
 }
 
 function opaqueShapeToEntry(shape: OpaqueShape): Record<string, unknown> {
   return opaqueToEntry(shape.raw);
+}
+
+// ─── Connector serialization ──────────────────────────────────────────────
+
+const CONNECTOR_PRST_BY_TYPE: Readonly<Record<ConnectorShape["connectorType"], string>> = {
+  straight: "line",
+  elbow: "bentConnector3",
+  curved: "curvedConnector3",
+  // `unsupported` should never reach the serializer for a freshly authored
+  // connector — when round-tripping a parsed connector we still need a
+  // legal preset, so fall back to a straight line which renders as a
+  // single segment.
+  unsupported: "line",
+};
+
+const SIDE_TO_CXN_IDX: Readonly<Record<ConnectorSide, string>> = {
+  n: "0",
+  e: "1",
+  s: "2",
+  w: "3",
+  center: "0",
+};
+
+function connectorToEntry(
+  shape: ConnectorShape,
+  shapesByCNvPrId: ReadonlyMap<number, Shape>
+): Record<string, unknown> {
+  // ── p:nvCxnSpPr ─────────────────────────────────────────────────────
+  // We rebuild p:cNvPr from the model and rebuild p:cNvCxnSpPr from the
+  // typed start/end so anchor edits round-trip without us having to
+  // reach into opaque XML. p:nvPr (and any captured tail children we
+  // don't recognise) pass through verbatim.
+  const nvChildren: unknown[] = [];
+  let emittedCNvPr = false;
+  let emittedCNvCxnSpPr = false;
+  for (const o of shape.nvCxnSpPrTail) {
+    if (o.tag === "p:cNvPr" && !emittedCNvPr) {
+      nvChildren.push(rebuildCNvPr(shape.cNvPrId, shape.name, o));
+      emittedCNvPr = true;
+    } else if (o.tag === "p:cNvCxnSpPr" && !emittedCNvCxnSpPr) {
+      nvChildren.push(rebuildCNvCxnSpPr(shape, o));
+      emittedCNvCxnSpPr = true;
+    } else {
+      nvChildren.push(opaqueToEntry(o));
+    }
+  }
+  if (!emittedCNvPr) {
+    nvChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
+  }
+  if (!emittedCNvCxnSpPr) {
+    // Insert directly after p:cNvPr; PowerPoint mandates the order
+    // p:cNvPr → p:cNvCxnSpPr → p:nvPr inside p:nvCxnSpPr.
+    nvChildren.splice(1, 0, rebuildCNvCxnSpPr(shape, undefined));
+  }
+  if (!nvChildren.some((n) => isTag(n, "p:nvPr"))) {
+    nvChildren.push(makeEntry("p:nvPr", []));
+  }
+  const nvCxnSpPr = makeEntry("p:nvCxnSpPr", nvChildren);
+
+  // ── p:spPr (xfrm + prstGeom + tail) ─────────────────────────────────
+  const startPt = resolveEndpoint(shape.start, shapesByCNvPrId);
+  const endPt = resolveEndpoint(shape.end, shapesByCNvPrId);
+  // Fallback when an anchored target was deleted: re-use whatever the
+  // shape's stored bounding box says so we don't crash.
+  const fallbackStart = {
+    x: shape.position?.xEmu ?? 0,
+    y: shape.position?.yEmu ?? 0,
+  };
+  const fallbackEnd = {
+    x: (shape.position?.xEmu ?? 0) + (shape.size?.cxEmu ?? 0),
+    y: (shape.position?.yEmu ?? 0) + (shape.size?.cyEmu ?? 0),
+  };
+  const xfrmInfo = connectorXfrm(startPt ?? fallbackStart, endPt ?? fallbackEnd);
+  const xfrmAttrs: Record<string, string> = {};
+  if (xfrmInfo.flipH) xfrmAttrs.flipH = "1";
+  if (xfrmInfo.flipV) xfrmAttrs.flipV = "1";
+  const xfrmEntry: Record<string, unknown> = {
+    "a:xfrm": [
+      makeEntry("a:off", [], { x: String(xfrmInfo.box.x), y: String(xfrmInfo.box.y) }),
+      makeEntry("a:ext", [], { cx: String(xfrmInfo.box.cx), cy: String(xfrmInfo.box.cy) }),
+    ],
+  };
+  if (Object.keys(xfrmAttrs).length > 0) xfrmEntry[ATTR_KEY] = makeRawAttrs(xfrmAttrs);
+
+  const prstGeom = makeEntry("a:prstGeom", [makeEntry("a:avLst", [])], {
+    prst: CONNECTOR_PRST_BY_TYPE[shape.connectorType],
+  });
+
+  const spPrChildren: unknown[] = [xfrmEntry, prstGeom];
+  if (shape.stroke || shape.headEnd || shape.tailEnd) {
+    spPrChildren.push(buildConnectorLn(shape));
+  }
+  for (const o of shape.spPrTail) {
+    // The parser captured everything inside <p:spPr> (including the
+    // a:xfrm/a:prstGeom/a:ln we now rebuild typed), so skip those tags
+    // when re-emitting the tail to avoid duplicates.
+    if (o.tag === "a:xfrm" || o.tag === "a:prstGeom") continue;
+    if (o.tag === "a:ln" && (shape.stroke || shape.headEnd || shape.tailEnd)) continue;
+    spPrChildren.push(opaqueToEntry(o));
+  }
+  const spPr = makeEntry("p:spPr", spPrChildren);
+
+  return makeEntry("p:cxnSp", [nvCxnSpPr, spPr]);
+}
+
+function isTag(node: unknown, tag: string): boolean {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  return ooxml.getTag(node as Record<string, unknown>) === tag;
+}
+
+function rebuildCNvCxnSpPr(
+  shape: ConnectorShape,
+  captured: OpaqueXml | undefined
+): Record<string, unknown> {
+  const children: unknown[] = [];
+  if (shape.start.kind === "anchored") {
+    children.push(buildCxnEndpointEntry("a:stCxn", shape.start));
+  }
+  if (shape.end.kind === "anchored") {
+    children.push(buildCxnEndpointEntry("a:endCxn", shape.end));
+  }
+  // Pass through anything the parser stashed inside p:cNvCxnSpPr that
+  // isn't a stCxn/endCxn (e.g. a:extLst). When `captured` is `undefined`
+  // we emit a minimal element — that's the fresh-add case.
+  if (captured) {
+    for (const sub of captured.subtree) {
+      if (!sub || typeof sub !== "object" || Array.isArray(sub)) continue;
+      const tag = ooxml.getTag(sub as Record<string, unknown>);
+      if (tag === "a:stCxn" || tag === "a:endCxn") continue;
+      children.push(sub);
+    }
+  }
+  const entry: Record<string, unknown> = { "p:cNvCxnSpPr": children };
+  if (captured && Object.keys(captured.rawAttrs).length > 0) {
+    entry[ATTR_KEY] = { ...captured.rawAttrs };
+  }
+  return entry;
+}
+
+function buildCxnEndpointEntry(
+  tag: "a:stCxn" | "a:endCxn",
+  ep: Extract<ConnectorEndpoint, { kind: "anchored" }>
+): Record<string, unknown> {
+  return makeEntry(tag, [], {
+    id: String(ep.targetCNvPrId),
+    idx: SIDE_TO_CXN_IDX[ep.side],
+  });
+}
+
+function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
+  const lnAttrs: Record<string, string> = {};
+  if (shape.stroke && shape.stroke.widthEmu > 0) {
+    lnAttrs.w = String(shape.stroke.widthEmu);
+  }
+  const lnChildren: unknown[] = [];
+  if (shape.stroke) {
+    lnChildren.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: shape.stroke.color })]));
+  }
+  if (shape.headEnd) {
+    lnChildren.push(makeEntry("a:headEnd", [], { type: shape.headEnd }));
+  }
+  if (shape.tailEnd) {
+    lnChildren.push(makeEntry("a:tailEnd", [], { type: shape.tailEnd }));
+  }
+  return makeEntry("a:ln", lnChildren, lnAttrs);
 }
 
 function tableShapeToEntry(shape: TableShape): Record<string, unknown> {
@@ -476,6 +734,88 @@ function tableShapeToEntry(shape: TableShape): Record<string, unknown> {
  *    `<c:chartSpace>` subtree to keep axes, legend, embedded xlsx, and
  *    other unmodeled bits intact.
  */
+/**
+ * Serialise a `SlideLayout`'s opaque blob back into a `<p:sldLayout>`
+ * XML document. We don't introspect the placeholder shapes when
+ * writing — the parser captured every child verbatim, and built-in
+ * layouts arrive with their own pre-authored XML.
+ */
+function serializeCommentsXml(part: import("../model/types.js").PptxCommentsPart): string {
+  const cmEntries: unknown[] = [];
+  for (const c of part.comments) {
+    const attrs: Record<string, string> = {
+      "@_authorId": String(c.authorId),
+      "@_idx": String(c.idx),
+    };
+    if (c.createdAt) attrs["@_dt"] = c.createdAt;
+    const cmChildren: unknown[] = [
+      {
+        "p:pos": [],
+        ":@": {
+          "@_x": String(Math.round(c.xEmu / 127)),
+          "@_y": String(Math.round(c.yEmu / 127)),
+        },
+      },
+      { "p:text": [{ "#text": c.text }] },
+    ];
+    const ext: unknown[] = [];
+    if (c.parentId) {
+      ext.push({
+        "p:ext": [],
+        ":@": { "@_uri": "officeai:parent", "@_id": c.parentId },
+      });
+    }
+    if (c.resolved !== undefined) {
+      ext.push({
+        "p:ext": [],
+        ":@": { "@_uri": "officeai:resolved", "@_value": c.resolved ? "1" : "0" },
+      });
+    }
+    if (ext.length > 0) cmChildren.push({ "p:extLst": ext });
+    cmEntries.push({ "p:cm": cmChildren, ":@": attrs });
+  }
+  const root: Record<string, unknown> = {
+    "p:cmLst": cmEntries,
+    ":@": {
+      "@_xmlns:a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+      "@_xmlns:r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+      "@_xmlns:p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+    },
+  };
+  return ooxml.serializeXml([root]);
+}
+
+function serializeCommentAuthorsXml(
+  part: import("../model/types.js").PptxCommentAuthorsPart
+): string {
+  const authors: unknown[] = part.authors.map((a) => {
+    const attrs: Record<string, string> = {
+      "@_id": String(a.id),
+      "@_name": a.name,
+    };
+    if (a.initials) attrs["@_initials"] = a.initials;
+    if (a.lastIdx !== undefined) attrs["@_lastIdx"] = String(a.lastIdx);
+    if (a.clrIdx !== undefined) attrs["@_clrIdx"] = String(a.clrIdx);
+    return { "p:cmAuthor": [], ":@": attrs };
+  });
+  const root: Record<string, unknown> = {
+    "p:cmAuthorLst": authors,
+    ":@": {
+      "@_xmlns:r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+      "@_xmlns:p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+    },
+  };
+  return ooxml.serializeXml([root]);
+}
+
+function serializeLayoutXml(raw: import("../model/types.js").OpaqueXml): string {
+  const root: Record<string, unknown> = { [raw.tag]: raw.subtree };
+  if (Object.keys(raw.rawAttrs).length > 0) {
+    root[ATTR_KEY] = { ...raw.rawAttrs };
+  }
+  return ooxml.serializeXml([root]);
+}
+
 function serializeChartPartXml(part: ChartPart): string {
   const subtree = part.chartSpaceRaw.subtree as unknown[];
   const out: unknown[] = [];
@@ -817,16 +1157,25 @@ function buildRPrChildren(r: TextRun): unknown[] {
   const captured = r.properties.opaqueChildren ?? [];
   const wantsSolidFill = r.properties.color !== undefined;
   const wantsLatin = r.properties.fontFamily !== undefined;
+  const wantsHighlight = r.properties.highlight !== undefined;
+  const dropHighlight = r.properties.highlight === "";
 
-  // Emit fill first, then other children, then latin, matching OOXML order.
+  // Emit fill first, then highlight, then other children, then latin,
+  // matching OOXML's preferred a:rPr child order
+  // (a:ln, a:solidFill, a:highlight, a:effectLst, …, a:latin, …).
   if (wantsSolidFill) {
     out.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: String(r.properties.color) })]));
   }
+  if (wantsHighlight && !dropHighlight) {
+    out.push(makeEntry("a:highlight", [makeEntry("a:srgbClr", [], { val: String(r.properties.highlight) })]));
+  }
   for (const c of captured) {
-    // Drop captured a:solidFill / a:latin only when the model overrides them;
-    // otherwise pass through verbatim (preserves a:schemeClr etc.).
+    // Drop captured a:solidFill / a:latin / a:highlight when the model
+    // overrides them; otherwise pass through verbatim (preserves
+    // a:schemeClr etc.).
     if (c.tag === "a:solidFill" && wantsSolidFill) continue;
     if (c.tag === "a:latin" && wantsLatin) continue;
+    if (c.tag === "a:highlight" && wantsHighlight) continue;
     out.push(opaqueToEntry(c));
   }
   if (wantsLatin) {

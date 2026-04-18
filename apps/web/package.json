@@ -12,10 +12,12 @@
     "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
+    "@officeai/comments": "workspace:*",
     "@officeai/core": "workspace:^",
     "@officeai/design-tokens": "workspace:*",
     "@officeai/docx": "workspace:^",
     "@officeai/pptx": "workspace:^",
+    "@officeai/text-formatting": "workspace:*",
     "@officeai/ui": "workspace:*",
     "@officeai/xlsx": "workspace:^",
     "jszip": "^3.10.1",

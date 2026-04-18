@@ -23,12 +23,14 @@ describe("slideToSvgString", () => {
     expect(svg).toContain('fill="white"');
   });
 
-  it("renders text shapes with text content escaped", async () => {
+  it("renders text shapes via foreignObject HTML so the browser word-wraps long runs", async () => {
     const snap = await load("04-multi-shape.pptx");
     const slide = snap.root.slides[0];
     const svg = slideToSvgString(slide, { slideSize: snap.root.slideSize });
     expect(svg).toContain('class="shape text"');
-    expect(svg).toContain("<text");
+    expect(svg).toContain("<foreignObject");
+    expect(svg).toContain('xmlns="http://www.w3.org/1999/xhtml"');
+    expect(svg).toContain("white-space:pre-wrap");
   });
 
   it("renders pictures as <image> when a media URL is provided", async () => {
@@ -125,6 +127,87 @@ describe("slideToSvgString", () => {
       slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
       theme,
     });
-    expect(svg).toContain('fill="#FF0000"');
+    expect(svg).toContain("color:#FF0000");
+  });
+
+  it("keeps font-size constant when the same shape is resized (text reflows, doesn't stretch)", () => {
+    const make = (cxEmu: number, cyEmu: number): TextShape => ({
+      id: "node-1",
+      kind: "text",
+      cNvPrId: 1,
+      name: "title",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu, cyEmu },
+      nvSpPrTail: [],
+      spPrTail: [],
+      txBody: {
+        paragraphs: [
+          {
+            id: "node-2",
+            properties: {},
+            runs: [
+              {
+                id: "node-3",
+                text: "Welcome to officeAI",
+                properties: { fontSizeHundredths: 4400 },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const ctx = { slideSize: { cxEmu: 9144000, cyEmu: 6858000 } };
+    const wide = shapeToSvg(make(7_468_742, 1_389_742), ctx);
+    const narrow = shapeToSvg(make(800_000, 600_000), ctx);
+    // The run-level font-size MUST be identical across both renders —
+    // it's derived purely from `fontSizeHundredths` (44pt → "44pt") and
+    // doesn't depend on the geometry. This is the invariant a user
+    // notices when they drag a resize handle: glyphs stay the same
+    // height, the text just rewraps at the new width — same as
+    // PowerPoint and Google Slides. A regression to a CSS scale-stretch
+    // path would either change this token or wrap the whole shape in a
+    // `transform="scale(...)"` that visually distorts the text.
+    const runFontWide = /<span style="[^"]*font-size:(\d+(?:\.\d+)?)pt/.exec(wide);
+    const runFontNarrow = /<span style="[^"]*font-size:(\d+(?:\.\d+)?)pt/.exec(narrow);
+    expect(runFontWide?.[1]).toBe("44");
+    expect(runFontNarrow?.[1]).toBe("44");
+    expect(wide).not.toContain('transform="scale');
+    expect(narrow).not.toContain('transform="scale');
+    // foreignObject viewport scales with the box so the HTML inside
+    // gets a smaller wrap width — that's what triggers the reflow.
+    const widthWide = /<foreignObject[^>]*width="(\d+(?:\.\d+)?)"/.exec(wide);
+    const widthNarrow = /<foreignObject[^>]*width="(\d+(?:\.\d+)?)"/.exec(narrow);
+    expect(Number(widthWide?.[1])).toBeGreaterThan(700);
+    expect(Number(widthNarrow?.[1])).toBeLessThan(100);
+  });
+
+  it("wraps long text inside a narrow text shape (no overflow)", () => {
+    const longText = "This is a very long sentence that should wrap automatically across multiple lines inside a narrow text box.";
+    const shape: TextShape = {
+      id: "node-1",
+      kind: "text",
+      cNvPrId: 1,
+      name: "narrow",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 1_500_000, cyEmu: 2_000_000 },
+      nvSpPrTail: [],
+      spPrTail: [],
+      txBody: {
+        paragraphs: [
+          {
+            id: "node-2",
+            properties: {},
+            runs: [{ id: "node-3", text: longText, properties: {} }],
+          },
+        ],
+      },
+    };
+    const svg = shapeToSvg(shape, {
+      slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
+    });
+    expect(svg).toContain("<foreignObject");
+    expect(svg).toContain(longText);
+    expect(svg).toContain("white-space:pre-wrap");
+    expect(svg).toContain("word-wrap:break-word");
   });
 });

@@ -62,14 +62,21 @@ test.describe("pptx-editor route", () => {
       .toBeGreaterThan(before);
   });
 
-  test("'Bold' toolbar toggle survives without tossing an error toast", async ({ page }) => {
+  test("shared text-format bar disables Bold until there's a selection", async ({ page }) => {
     await gotoPptxEditor(page);
 
-    await page.getByRole("button", { name: "Bold", exact: true }).click();
-    // No error toast (the warn/error toasts have role="status" and are
-    // mounted in the bottom-center stack). We give the bus a beat to
-    // settle so the assertion isn't racy.
-    await page.waitForTimeout(300);
+    // The shared TextFormatBar (Phase 6) drives `disabled` from
+    // `provider.hasSelection()`. With no shape being edited the bar
+    // should expose Bold/Italic/Underline as visible-but-disabled so
+    // the toolbar remains discoverable, mirroring Word/Excel.
+    const bold = page.getByRole("button", { name: "Bold", exact: true });
+    await expect(bold).toBeVisible();
+    await expect(bold).toBeDisabled();
+
+    const italic = page.getByRole("button", { name: "Italic", exact: true });
+    await expect(italic).toBeDisabled();
+
+    // Sanity check: no error toast appeared just by mounting the bar.
     const errorToasts = page.getByRole("status").filter({ hasText: /error/i });
     await expect(errorToasts).toHaveCount(0);
   });

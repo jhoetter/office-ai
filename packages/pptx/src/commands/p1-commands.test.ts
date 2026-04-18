@@ -86,6 +86,79 @@ describe("P1: format-text", () => {
     expect(xml).toContain('typeface="Arial"');
   });
 
+  it("applies highlight and re-emits a:highlight from the model", async () => {
+    const agent = await loadAgent("04-multi-shape.pptx");
+    const slide = agent.getSnapshot().root.slides[0];
+    const ts = slide.shapes.find((s): s is TextShape => s.kind === "text" && s.txBody.paragraphs.length > 0)!;
+    const para = ts.txBody.paragraphs[0];
+    const flatLen = para.runs.reduce((a, r) => a + (r.isLineBreak ? 0 : r.text.length), 0);
+
+    await agent.applyCommand({
+      type: "pptx:format-text",
+      payload: {
+        slideIndex: 0,
+        shapeId: ts.id,
+        range: { paragraph: 0, start: 0, end: flatLen },
+        format: { highlight: "FFFF00" },
+      },
+      source: "system",
+    });
+
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
+    const firstRun = updated.txBody.paragraphs[0].runs[0];
+    expect(firstRun.properties.highlight).toBe("FFFF00");
+
+    const out = await agent.exportFile();
+    const c = await ooxml.OoxmlContainer.load(out);
+    const xml = c.readText(slide.partPath);
+    expect(xml).toContain("a:highlight");
+    expect(xml).toContain('val="FFFF00"');
+
+    // Round-trip through the parser to confirm we can read what we wrote.
+    const reparsed = await PptxAgent.fromBuffer(out);
+    const reShapes = reparsed.getSnapshot().root.slides[0].shapes;
+    const reTs = reShapes.find(
+      (s): s is TextShape => s.kind === "text" && s.txBody.paragraphs.length > 0
+    );
+    const reHighlights = (reTs?.txBody.paragraphs[0].runs ?? []).map((r) => r.properties.highlight);
+    expect(reHighlights).toContain("FFFF00");
+    void parsePptx;
+  });
+
+  it("clears highlight when format passes empty string", async () => {
+    const agent = await loadAgent("04-multi-shape.pptx");
+    const slide = agent.getSnapshot().root.slides[0];
+    const ts = slide.shapes.find((s): s is TextShape => s.kind === "text" && s.txBody.paragraphs.length > 0)!;
+    const para = ts.txBody.paragraphs[0];
+    const flatLen = para.runs.reduce((a, r) => a + (r.isLineBreak ? 0 : r.text.length), 0);
+
+    await agent.applyCommand({
+      type: "pptx:format-text",
+      payload: {
+        slideIndex: 0,
+        shapeId: ts.id,
+        range: { paragraph: 0, start: 0, end: flatLen },
+        format: { highlight: "FFFF00" },
+      },
+      source: "system",
+    });
+    await agent.applyCommand({
+      type: "pptx:format-text",
+      payload: {
+        slideIndex: 0,
+        shapeId: ts.id,
+        range: { paragraph: 0, start: 0, end: flatLen },
+        format: { highlight: "" },
+      },
+      source: "system",
+    });
+
+    const out = await agent.exportFile();
+    const c = await ooxml.OoxmlContainer.load(out);
+    const xml = c.readText(slide.partPath);
+    expect(xml).not.toContain("a:highlight");
+  });
+
   it("rejects out-of-bounds range", async () => {
     const agent = await loadAgent("04-multi-shape.pptx");
     const slide = agent.getSnapshot().root.slides[0];

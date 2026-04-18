@@ -28,6 +28,20 @@ import {
   reorderShapeAnimationsHandler,
   setSlideTransitionHandler,
 } from "./animation-commands.js";
+import {
+  addConnectorHandler,
+  setConnectorEndpointHandler,
+  setConnectorStyleHandler,
+} from "./connector-commands.js";
+import { setSlideLayoutHandler } from "./set-slide-layout.js";
+import { setSlideNotesHandler } from "./set-slide-notes.js";
+import {
+  addCommentHandler,
+  deleteCommentHandler,
+  editCommentHandler,
+  replyCommentHandler,
+  resolveCommentHandler,
+} from "./comment-commands.js";
 
 export * from "./payloads.js";
 export { addShapeHandler } from "./add-shape.js";
@@ -58,6 +72,20 @@ export {
   reorderShapeAnimationsHandler,
   setSlideTransitionHandler,
 } from "./animation-commands.js";
+export {
+  addConnectorHandler,
+  setConnectorEndpointHandler,
+  setConnectorStyleHandler,
+} from "./connector-commands.js";
+export { setSlideLayoutHandler } from "./set-slide-layout.js";
+export { setSlideNotesHandler } from "./set-slide-notes.js";
+export {
+  addCommentHandler,
+  deleteCommentHandler,
+  editCommentHandler,
+  replyCommentHandler,
+  resolveCommentHandler,
+} from "./comment-commands.js";
 
 export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot>> = [
   addSlideHandler,
@@ -87,6 +115,16 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   addShapeAnimationHandler,
   removeShapeAnimationHandler,
   reorderShapeAnimationsHandler,
+  addConnectorHandler,
+  setConnectorEndpointHandler,
+  setConnectorStyleHandler,
+  setSlideLayoutHandler,
+  setSlideNotesHandler,
+  addCommentHandler,
+  replyCommentHandler,
+  resolveCommentHandler,
+  deleteCommentHandler,
+  editCommentHandler,
 ] as ReadonlyArray<CommandHandler<unknown, PptxSnapshot>>;
 
 export const pptxHandlersById: ReadonlyMap<string, CommandHandler<unknown, PptxSnapshot>> = new Map(

@@ -14,7 +14,9 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@officeai/comments": "workspace:*",
     "@officeai/design-tokens": "workspace:*",
+    "@officeai/text-formatting": "workspace:*",
     "class-variance-authority": "^0.7",
     "clsx": "^2",
     "lucide-react": "^0.574.0",

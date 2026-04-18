@@ -1,6 +1,7 @@
 import { CommandError, type DiffChange, type DocumentDiff, type NodeId } from "@officeai/core";
 import type {
   ChartShape,
+  ConnectorShape,
   ContentTypesSnap,
   PptxDirty,
   PptxPresentation,
@@ -20,8 +21,11 @@ export interface DirtyMutator {
   slides?: ReadonlyArray<string>;
   removeSlides?: ReadonlyArray<string>;
   notesSlides?: ReadonlyArray<string>;
+  layouts?: ReadonlyArray<string>;
   media?: ReadonlyArray<string>;
   charts?: ReadonlyArray<string>;
+  comments?: ReadonlyArray<string>;
+  commentAuthors?: boolean;
   relationships?: ReadonlyArray<string>;
 }
 
@@ -40,10 +44,12 @@ export function evolveSnapshot(
     slides: extendSet(snapshot.dirty.slides, mut.slides ?? []),
     notesSlides: extendSet(snapshot.dirty.notesSlides, mut.notesSlides ?? []),
     masters: snapshot.dirty.masters,
-    layouts: snapshot.dirty.layouts,
+    layouts: extendSet(snapshot.dirty.layouts, mut.layouts ?? []),
     theme: snapshot.dirty.theme,
     media: extendSet(snapshot.dirty.media, mut.media ?? []),
     charts: extendSet(snapshot.dirty.charts, mut.charts ?? []),
+    comments: extendSet(snapshot.dirty.comments, mut.comments ?? []),
+    commentAuthors: snapshot.dirty.commentAuthors || (mut.commentAuthors ?? false),
     relationships: extendSet(snapshot.dirty.relationships, mut.relationships ?? []),
     contentTypes: snapshot.dirty.contentTypes || (mut.contentTypes ?? false),
   };
@@ -173,6 +179,59 @@ export function isTableShape(s: Shape): s is TableShape {
 
 export function isChartShape(s: Shape): s is ChartShape {
   return s.kind === "chart";
+}
+
+export function isConnectorShape(s: Shape): s is ConnectorShape {
+  return s.kind === "connector";
+}
+
+/**
+ * Walk every shape on the slide (including nested group children) and
+ * yield the connectors that have at least one endpoint anchored to
+ * `cNvPrId`. Used by `set-position`/`set-size`/`delete-shape` to reflow
+ * connectors when a target shape moves or disappears.
+ */
+export function collectConnectorsReferencing(
+  shapes: ReadonlyArray<Shape>,
+  cNvPrId: number
+): Array<{ shape: ConnectorShape; path: number[] }> {
+  const out: Array<{ shape: ConnectorShape; path: number[] }> = [];
+  walkWithPath(shapes, [], (s, path) => {
+    if (s.kind !== "connector") return;
+    const startMatches = s.start.kind === "anchored" && s.start.targetCNvPrId === cNvPrId;
+    const endMatches = s.end.kind === "anchored" && s.end.targetCNvPrId === cNvPrId;
+    if (startMatches || endMatches) out.push({ shape: s, path });
+  });
+  return out;
+}
+
+function walkWithPath(
+  shapes: ReadonlyArray<Shape>,
+  prefix: number[],
+  fn: (s: Shape, path: number[]) => void
+): void {
+  for (let i = 0; i < shapes.length; i++) {
+    const s = shapes[i];
+    const path = [...prefix, i];
+    fn(s, path);
+    if (s.kind === "group") walkWithPath(s.children, path, fn);
+  }
+}
+
+/**
+ * Resolve a shape by its `cNvPrId` anywhere on the slide (group-aware).
+ * Used to look up an anchored connector's target shape so we can
+ * recompute its bounding box from the current target geometry.
+ */
+export function findShapeByCNvPrId(shapes: ReadonlyArray<Shape>, cNvPrId: number): Shape | null {
+  for (const s of shapes) {
+    if (s.cNvPrId === cNvPrId) return s;
+    if (s.kind === "group") {
+      const inner = findShapeByCNvPrId(s.children, cNvPrId);
+      if (inner) return inner;
+    }
+  }
+  return null;
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────

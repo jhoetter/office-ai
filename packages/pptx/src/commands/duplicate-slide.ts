@@ -1,5 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type {
+  ConnectorShape,
   GroupShape,
   OpaqueShape,
   Picture,
@@ -243,6 +244,21 @@ function deepCloneShape(s: Shape, nextCNvPrId: () => number, mintNodeId: () => s
         id,
         cNvPrId,
         nvGraphicFramePrTail: s.nvGraphicFramePrTail.map(cloneOpaque),
+      };
+      return c;
+    }
+    case "connector": {
+      const c: ConnectorShape = {
+        ...s,
+        id,
+        cNvPrId,
+        nvCxnSpPrTail: s.nvCxnSpPrTail.map(cloneOpaque),
+        spPrTail: s.spPrTail.map(cloneOpaque),
+        start: { ...s.start },
+        end: { ...s.end },
+        ...(s.stroke ? { stroke: { ...s.stroke } } : {}),
+        ...(s.headEnd ? { headEnd: s.headEnd } : {}),
+        ...(s.tailEnd ? { tailEnd: s.tailEnd } : {}),
       };
       return c;
     }

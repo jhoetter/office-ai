@@ -183,6 +183,88 @@ describe("transactionToCommands — PM funnel", () => {
     });
   });
 
+  describe("suggesting mode", () => {
+    it("typing in suggesting mode emits docx:insert-text-tracked carrying the author", async () => {
+      const agent = await loadAgent([{ text: "alpha bravo" }]);
+      const state = stateFor(agent);
+      const tx = state.tr.insertText("X", 1, 1);
+      const result = transactionToCommands(tx, state, { mode: "suggest", author: "Alice" });
+      expect(result.unsupported).toHaveLength(0);
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].type).toBe("docx:insert-text-tracked");
+      expect(result.commands[0].payload).toMatchObject({
+        at: { paragraph: 0, offset: 0 },
+        text: "X",
+        author: "Alice",
+      });
+    });
+
+    it("single-paragraph delete in suggesting mode emits docx:delete-range-tracked", async () => {
+      const agent = await loadAgent([{ text: "alpha bravo" }]);
+      const state = stateFor(agent);
+      // Delete "alpha" — PM positions 1..6.
+      const tx = state.tr.delete(1, 6);
+      const result = transactionToCommands(tx, state, { mode: "suggest", author: "Alice" });
+      expect(result.unsupported).toHaveLength(0);
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].type).toBe("docx:delete-range-tracked");
+      expect(result.commands[0].payload).toMatchObject({
+        range: {
+          start: { paragraph: 0, offset: 0 },
+          end: { paragraph: 0, offset: 5 },
+        },
+        author: "Alice",
+      });
+    });
+
+    it("typing-over-selection in suggesting mode emits delete-tracked + insert-tracked", async () => {
+      const agent = await loadAgent([{ text: "alpha bravo" }]);
+      const state = stateFor(agent);
+      // Replace "alpha" (PM 1..6) with "Z".
+      const tx = state.tr.insertText("Z", 1, 6);
+      const result = transactionToCommands(tx, state, { mode: "suggest", author: "Alice" });
+      expect(result.unsupported).toHaveLength(0);
+      expect(result.commands.map((c) => c.type)).toEqual([
+        "docx:delete-range-tracked",
+        "docx:insert-text-tracked",
+      ]);
+      expect(result.commands[1].payload).toMatchObject({ text: "Z", author: "Alice" });
+    });
+
+    it("multi-paragraph delete in suggesting mode falls back to unsupported (with explanation)", async () => {
+      const agent = await loadAgent([{ text: "first paragraph" }, { text: "second paragraph" }]);
+      const state = stateFor(agent);
+      const fromPM = 1 + 6;
+      const toPM = 1 + 15 + 1 + 1 + 7;
+      const tx = state.tr.delete(fromPM, toPM);
+      const result = transactionToCommands(tx, state, { mode: "suggest", author: "Alice" });
+      expect(result.commands).toHaveLength(0);
+      // The handler pushes a specific reason then the funnel adds a
+      // generic "unsupported step" — first entry is the actionable one.
+      expect(result.unsupported.length).toBeGreaterThanOrEqual(1);
+      expect(result.unsupported[0].reason).toMatch(/cross paragraph/i);
+    });
+
+    it("missing author in suggesting mode falls back to unsupported", async () => {
+      const agent = await loadAgent([{ text: "alpha" }]);
+      const state = stateFor(agent);
+      const tx = state.tr.insertText("X", 1, 1);
+      const result = transactionToCommands(tx, state, { mode: "suggest" });
+      expect(result.commands).toHaveLength(0);
+      expect(result.unsupported.length).toBeGreaterThanOrEqual(1);
+      expect(result.unsupported[0].reason).toMatch(/author/i);
+    });
+
+    it("default mode (edit) still produces plain insert-text / delete-range", async () => {
+      const agent = await loadAgent([{ text: "alpha" }]);
+      const state = stateFor(agent);
+      const tx = state.tr.insertText("X", 1, 1);
+      const result = transactionToCommands(tx, state);
+      expect(result.commands).toHaveLength(1);
+      expect(result.commands[0].type).toBe("docx:insert-text");
+    });
+  });
+
   describe("multi-paragraph format", () => {
     it("addMark across two paragraphs emits a single docx:format-range with cross-paragraph endpoints", async () => {
       const agent = await loadAgent([{ text: "first paragraph" }, { text: "second paragraph" }]);

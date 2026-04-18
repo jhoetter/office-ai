@@ -1,4 +1,4 @@
-import type { OpaqueXml, Slide } from "../../model/types.js";
+import type { OpaqueXml, Shape, Slide } from "../../model/types.js";
 import { DEFAULT_THEME } from "../layout/color.js";
 import { slideViewBox } from "../layout/slide.js";
 import { resolveSchemeOrLiteralColor, shapeToSvg, type SvgRenderCtx } from "./shapes.js";
@@ -6,13 +6,37 @@ import { resolveSchemeOrLiteralColor, shapeToSvg, type SvgRenderCtx } from "./sh
 export function slideToSvgString(slide: Slide, ctx: SvgRenderCtx): string {
   const bg = resolveSlideBackgroundColor(slide.cSldHead, ctx.theme ?? DEFAULT_THEME);
   const fillAttr = bg ? `#${bg}` : "white";
+  const shapesByCNvPrId = ctx.shapesByCNvPrId ?? buildShapesByCNvPrId(slide.shapes);
+  const ctxWithMap: SvgRenderCtx = ctx.shapesByCNvPrId ? ctx : { ...ctx, shapesByCNvPrId };
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${slideViewBox(ctx.slideSize)}" preserveAspectRatio="xMidYMid meet">`,
+    CONNECTOR_DEFS_SVG,
     `<rect width="100%" height="100%" fill="${fillAttr}"/>`,
   ];
-  for (const s of slide.shapes) parts.push(shapeToSvg(s, ctx));
+  for (const s of slide.shapes) parts.push(shapeToSvg(s, ctxWithMap));
   parts.push(`</svg>`);
   return parts.join("");
+}
+
+/**
+ * `<defs>` block that's emitted once per slide — currently just the
+ * arrowhead marker every connector references via `marker-end` /
+ * `marker-start`. Marker units default to `strokeWidth` so arrow size
+ * scales with the line weight, matching PowerPoint's behaviour.
+ */
+const CONNECTOR_DEFS_SVG = `<defs><marker id="cxn-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs>`;
+
+export function buildShapesByCNvPrId(shapes: ReadonlyArray<Shape>): Map<number, Shape> {
+  const out = new Map<number, Shape>();
+  walk(shapes, out);
+  return out;
+}
+
+function walk(shapes: ReadonlyArray<Shape>, out: Map<number, Shape>): void {
+  for (const s of shapes) {
+    if (s.cNvPrId > 0) out.set(s.cNvPrId, s);
+    if (s.kind === "group") walk(s.children, out);
+  }
 }
 
 /**
