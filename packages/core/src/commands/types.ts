@@ -19,7 +19,7 @@ export interface CommandLite<TType extends string = string, TPayload = unknown> 
   readonly agentId?: string;
 }
 
-export type MutationStatus = "approved" | "pending" | "rejected" | "rolled-back";
+export type MutationStatus = "approved" | "pending" | "rejected" | "rolled-back" | "undone";
 
 export interface Mutation<TSnapshot = unknown> {
   readonly id: string;
