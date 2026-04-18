@@ -545,7 +545,17 @@ function positionFromPM(doc: PMNode, pos: number): DocxPosition | null {
       const end = nodePos + node.nodeSize - 1;
       if (pos >= nodePos && pos <= nodePos + node.nodeSize) {
         const offset = Math.max(0, Math.min(end, pos) - start);
-        result = { paragraph: paragraphIndex, run: 0, offset };
+        // We deliberately omit `run` so handlers treat `offset` as a
+        // global paragraph-text offset. The PM doc collapses runs +
+        // revision wrappers + other inline children into a single
+        // text stream (revision_mark is a Mark, not a Node), so we
+        // can't honestly point at a specific run from here. The
+        // insert / delete handlers walk paragraph children to find
+        // the right splice point. (Returning `run: 0` instead would
+        // make every tracked insertion land in run 0 and the bus
+        // would reverse character order — see Suggesting-mode
+        // regression test.)
+        result = { paragraph: paragraphIndex, offset };
         return false;
       }
       return false;
@@ -553,7 +563,7 @@ function positionFromPM(doc: PMNode, pos: number): DocxPosition | null {
     if (node.isBlock) {
       paragraphIndex++;
       if (pos >= nodePos && pos <= nodePos + node.nodeSize) {
-        result = { paragraph: paragraphIndex, run: 0, offset: 0 };
+        result = { paragraph: paragraphIndex, offset: 0 };
         return false;
       }
       return false;
@@ -561,7 +571,7 @@ function positionFromPM(doc: PMNode, pos: number): DocxPosition | null {
     return true;
   });
   if (result) return result;
-  return { paragraph: Math.max(0, paragraphIndex), run: 0, offset: 0 };
+  return { paragraph: Math.max(0, paragraphIndex), offset: 0 };
 }
 
 function extractPlainText(content: import("prosemirror-model").Fragment): string {

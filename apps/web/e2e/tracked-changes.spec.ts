@@ -1,5 +1,4 @@
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { gotoEditor } from "./_helpers";
 
@@ -18,17 +17,27 @@ import { gotoEditor } from "./_helpers";
  * resilient to that one stub-flip — the brief explicitly mandates the
  * graceful-toast fallback.
  */
+// Resolved relative to the playwright `cwd` (apps/web). Using
+// `process.cwd()` keeps the spec ESM-portable across the
+// Playwright CJS / ESM hybrid loader (using `import.meta.url`
+// crashed with `ReferenceError: require is not defined` when the
+// test file was loaded under the CJS pipeline).
 const FIXTURE_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../fixtures/docx/real-world/06-comments-and-changes.docx"
+  process.cwd(),
+  "../../fixtures/docx/real-world/06-comments-and-changes.docx"
 );
 
 async function loadTrackedFixture(page: import("@playwright/test").Page): Promise<void> {
   await gotoEditor(page);
   // The toolbar's "Open .docx" trigger forwards to a hidden <input>;
   // setInputFiles on it dispatches change synchronously and
-  // mountAgent re-mounts with the fixture.
-  await page.locator('input[type="file"]').setInputFiles(FIXTURE_PATH);
+  // mountAgent re-mounts with the fixture. We target the .docx
+  // input by its `accept` attribute because the toolbar also wires
+  // up an image-upload input that would otherwise clash on the
+  // bare `input[type="file"]` selector.
+  await page
+    .locator('input[type="file"][accept*=".docx"]')
+    .setInputFiles(FIXTURE_PATH);
   // Fixture's first paragraph reads "Draft" (Heading2). Wait for it
   // so we know mountAgent finished.
   await expect(page.getByText("Draft", { exact: false })).toBeVisible({ timeout: 15_000 });

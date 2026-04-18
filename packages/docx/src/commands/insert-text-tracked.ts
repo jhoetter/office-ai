@@ -133,8 +133,15 @@ function insertRevisionIntoParagraph(
   const wrapper = makeInsRevision(text, author, date, revisionId, mintNodeId);
 
   if (runIndex === undefined) {
-    // No run targeting → prepend the wrapper.
-    return { ...p, children: [wrapper, ...p.children] };
+    // Paragraph-global offset mode. Walk children counting visible
+    // text characters (treating revision wrappers, hyperlinks, and
+    // other inline containers as opaque text spans of their inner
+    // length) and splice the wrapper at the right boundary,
+    // splitting a run when the offset lands inside one. This is
+    // what callers from the PM funnel use because a paragraph's
+    // run/wrapper structure is a model concept that PM positions
+    // don't expose.
+    return spliceWrapperAtParagraphOffset(p, wrapper, offset, mintNodeId);
   }
 
   const target = p.children[runIndex];
@@ -167,6 +174,73 @@ function insertRevisionIntoParagraph(
   const children = [...p.children];
   children.splice(runIndex, 1, before, wrapper, after);
   return { ...p, children };
+}
+
+/**
+ * Splice a revision wrapper into a paragraph at a paragraph-global
+ * text offset (counting characters across all inline children,
+ * including ones inside existing revision wrappers and hyperlinks).
+ *
+ *   - If the offset lands on a child boundary, the wrapper is
+ *     spliced between children with no splitting.
+ *   - If the offset lands inside a run, the run is split at that
+ *     point (inheriting run properties on both halves) and the
+ *     wrapper goes between the halves.
+ *   - If the offset lands inside a non-run container (existing
+ *     revision wrapper, hyperlink, opaque inline), we splice the
+ *     wrapper in front of that container — splitting opaque
+ *     containers is out of scope and would change author
+ *     attribution semantics.
+ */
+function spliceWrapperAtParagraphOffset(
+  p: Paragraph,
+  wrapper: RevisionWrapper,
+  offset: number,
+  mintNodeId: () => string
+): Paragraph {
+  if (offset <= 0 || p.children.length === 0) {
+    return { ...p, children: [wrapper, ...p.children] };
+  }
+  let consumed = 0;
+  for (let i = 0; i < p.children.length; i++) {
+    const child = p.children[i];
+    const childLen = inlineTextLength(child);
+    const childEnd = consumed + childLen;
+    if (offset === consumed) {
+      const children = [...p.children];
+      children.splice(i, 0, wrapper);
+      return { ...p, children };
+    }
+    if (offset > consumed && offset < childEnd) {
+      if (child.kind === "run") {
+        const [before, after] = splitRunAt(child, offset - consumed, mintNodeId);
+        const children = [...p.children];
+        children.splice(i, 1, before, wrapper, after);
+        return { ...p, children };
+      }
+      // Opaque-ish container: don't split, splice in front of it.
+      const children = [...p.children];
+      children.splice(i, 0, wrapper);
+      return { ...p, children };
+    }
+    consumed = childEnd;
+  }
+  return { ...p, children: [...p.children, wrapper] };
+}
+
+function inlineTextLength(node: InlineNode): number {
+  if (node.kind === "run") return runTextLength(node);
+  if (node.kind === "revision") {
+    let n = 0;
+    for (const c of node.children) n += inlineTextLength(c);
+    return n;
+  }
+  if (node.kind === "hyperlink") {
+    let n = 0;
+    for (const c of node.children) n += inlineTextLength(c);
+    return n;
+  }
+  return 0;
 }
 
 function makeInsRevision(

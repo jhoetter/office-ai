@@ -27,38 +27,28 @@ test.describe("editor: suggesting mode", () => {
     await page.getByRole("menuitemradio", { name: /^Suggesting/ }).click();
     await expect(page.getByRole("button", { name: /Edit mode: Suggesting/ })).toBeVisible();
 
-    page.on("console", (msg) => {
-      const text = msg.text();
-      if (text.includes("[docx-mount]")) {
-        console.log("BROWSER:", text);
-      }
-    });
-
     await focusEditor(page);
-    // Land at the end of the document so we don't disturb existing
+    // Land at the end of the line so we don't disturb existing
     // headings (which would also exercise tracked deletions).
     await page.keyboard.press("End");
     await page.keyboard.type(" SUGGESTED", { delay: 50 });
 
-    // Debug: dump the editor DOM so we can see what landed.
-    const dump = await page.evaluate(() => {
-      const pm = document.querySelector(".ProseMirror");
-      return {
-        text: pm?.textContent ?? "<no .ProseMirror>",
-        revisionSpans: pm?.querySelectorAll(".pm-revision-ins").length ?? 0,
-        delSpans: pm?.querySelectorAll(".pm-revision-del").length ?? 0,
-        innerHTML: pm?.innerHTML?.slice(0, 1500) ?? "",
-      };
+    // Each keystroke produces its own `<w:ins>` revision wrapper —
+    // that matches Word's behaviour ("one revision per insertion
+    // event") and keeps the snapshot round-trippable. Assert that
+    // the concatenated text of every .pm-revision-ins span equals
+    // what the user typed so a regression that drops the marks
+    // (the original "Suggesting mode looks like Editing mode" bug)
+    // or reverses character order (the
+    // positionFromPM-pinned-to-run-0 regression) fails this test.
+    await expect(page.locator(".pm-revision-ins").first()).toBeVisible({
+      timeout: 5_000,
     });
-    console.log("DEBUG editor state:", JSON.stringify(dump, null, 2));
-
-    // The renderer should re-project from the snapshot, surfacing a
-    // .pm-revision-ins span carrying the freshly typed text. We
-    // assert against the underline-styled span rather than the raw
-    // page text so a regression that drops the mark fails this test.
-    const insertionSpan = page.locator(".pm-revision-ins").last();
-    await expect(insertionSpan).toBeVisible({ timeout: 5_000 });
-    await expect(insertionSpan).toContainText("SUGGESTED");
+    const insertedText = await page.evaluate(() => {
+      const spans = Array.from(document.querySelectorAll(".pm-revision-ins"));
+      return spans.map((s) => s.textContent ?? "").join("");
+    });
+    expect(insertedText).toBe(" SUGGESTED");
 
     // The Word-style margin balloon should land in the right gutter
     // with the German "hat eingefügt" label and an Accept button.

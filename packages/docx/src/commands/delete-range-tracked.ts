@@ -151,13 +151,22 @@ function paragraphTextOffset(p: Paragraph, runIndex: number | undefined, localOf
 
 function paragraphTextLength(p: Paragraph): number {
   let n = 0;
-  for (const child of p.children) {
-    if (child.kind !== "run") continue;
-    for (const c of child.children) {
-      if (c.kind === "text") n += c.text.length;
-    }
-  }
+  for (const child of p.children) n += inlineTextLength(child);
   return n;
+}
+
+function inlineTextLength(node: InlineNode): number {
+  if (node.kind === "run") {
+    let n = 0;
+    for (const c of node.children) if (c.kind === "text") n += c.text.length;
+    return n;
+  }
+  if (node.kind === "revision" || node.kind === "hyperlink") {
+    let n = 0;
+    for (const c of node.children) n += inlineTextLength(c);
+    return n;
+  }
+  return 0;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
-import type { DocxSnapshot, Paragraph, Run, RunChild, TextLeaf } from "../model/types.js";
+import type { DocxSnapshot, InlineNode, Paragraph, Run, RunChild, TextLeaf } from "../model/types.js";
 import { buildDiff, emptyRun, evolveSnapshot, textLeaf, withParagraph } from "./helpers.js";
 import type { InsertTextPayload } from "./payloads.js";
 
@@ -54,15 +54,14 @@ function insertTextIntoParagraph(
   mintNodeId: () => string
 ): Paragraph {
   if (runIndex === undefined) {
-    // No run targeting → prepend a new run with the inserted text.
-    const newRun: Run = {
-      kind: "run",
-      id: mintNodeId(),
-      properties: {},
-      children: [textLeaf(mintNodeId, text)],
-    };
-    const children = [newRun, ...p.children];
-    return { ...p, children };
+    // Paragraph-global offset: walk children and pick the right run
+    // to splice into. If the offset lands inside an opaque container
+    // (existing revision wrapper, hyperlink, etc.), splice a fresh
+    // run in front of it (we don't crack open opaque containers from
+    // the plain-edit path). If it lands at a child boundary, we
+    // splice a new run there. If it lands inside a run, we extend
+    // that run's text leaves.
+    return spliceTextAtParagraphOffset(p, offset, text, mintNodeId);
   }
 
   const target = p.children[runIndex];
@@ -83,6 +82,87 @@ function insertTextIntoParagraph(
   const children = [...p.children];
   children[runIndex] = updatedRun;
   return { ...p, children };
+}
+
+function spliceTextAtParagraphOffset(
+  p: Paragraph,
+  offset: number,
+  text: string,
+  mintNodeId: () => string
+): Paragraph {
+  if (p.children.length === 0 || offset <= 0) {
+    const newRun: Run = {
+      kind: "run",
+      id: mintNodeId(),
+      properties: {},
+      children: [textLeaf(mintNodeId, text)],
+    };
+    return { ...p, children: [newRun, ...p.children] };
+  }
+  let consumed = 0;
+  for (let i = 0; i < p.children.length; i++) {
+    const child = p.children[i];
+    const childLen = inlineTextLength(child);
+    const childEnd = consumed + childLen;
+    if (offset === consumed) {
+      const newRun: Run = {
+        kind: "run",
+        id: mintNodeId(),
+        properties: {},
+        children: [textLeaf(mintNodeId, text)],
+      };
+      const children = [...p.children];
+      children.splice(i, 0, newRun);
+      return { ...p, children };
+    }
+    if (offset > consumed && offset <= childEnd) {
+      if (child.kind === "run") {
+        const updated = insertTextIntoRun(child, offset - consumed, text, mintNodeId);
+        const children = [...p.children];
+        children[i] = updated;
+        return { ...p, children };
+      }
+      // Opaque container — splice in front (or after if at the end of it).
+      const newRun: Run = {
+        kind: "run",
+        id: mintNodeId(),
+        properties: {},
+        children: [textLeaf(mintNodeId, text)],
+      };
+      const children = [...p.children];
+      const insertAt = offset === childEnd ? i + 1 : i;
+      children.splice(insertAt, 0, newRun);
+      return { ...p, children };
+    }
+    consumed = childEnd;
+  }
+  // Beyond all children → append.
+  const newRun: Run = {
+    kind: "run",
+    id: mintNodeId(),
+    properties: {},
+    children: [textLeaf(mintNodeId, text)],
+  };
+  return { ...p, children: [...p.children, newRun] };
+}
+
+function inlineTextLength(node: InlineNode): number {
+  if (node.kind === "run") {
+    let n = 0;
+    for (const c of node.children) if (c.kind === "text") n += c.text.length;
+    return n;
+  }
+  if (node.kind === "revision") {
+    let n = 0;
+    for (const c of node.children) n += inlineTextLength(c);
+    return n;
+  }
+  if (node.kind === "hyperlink") {
+    let n = 0;
+    for (const c of node.children) n += inlineTextLength(c);
+    return n;
+  }
+  return 0;
 }
 
 function insertTextIntoRun(run: Run, offset: number, text: string, mintNodeId: () => string): Run {
