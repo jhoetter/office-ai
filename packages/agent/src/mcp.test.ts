@@ -106,6 +106,7 @@ describe("OfficeAI MCP server", () => {
       "xlsx_list_sheets",
       "xlsx_load",
       "xlsx_merge",
+      "xlsx_redo",
       "xlsx_reject",
       "xlsx_rename_sheet",
       "xlsx_save",
@@ -114,6 +115,7 @@ describe("OfficeAI MCP server", () => {
       "xlsx_set_format",
       "xlsx_set_formula",
       "xlsx_set_range",
+      "xlsx_undo",
       "xlsx_unmerge",
     ]);
   });
@@ -802,6 +804,57 @@ describe("OfficeAI MCP server — xlsx tools", () => {
       })
     );
     expect((projection.cells as Array<{ value: unknown }>)[0].value).toBe(99);
+  });
+
+  it("xlsx_undo reverts the last mutation; xlsx_redo reapplies it", async () => {
+    const client = await makeClient();
+    const { handle, sheet } = await loadFixture(client, "01-single-sheet-numbers.xlsx");
+
+    // Establish a known "after" value so the round-trip is observable.
+    await client.callTool({
+      name: "xlsx_set_cell",
+      arguments: { handle, sheet, ref: "AD1", value: 42 },
+    });
+    const before = structured(
+      await client.callTool({
+        name: "xlsx_get_text",
+        arguments: { handle, format: "json", sheet, range: "AD1:AD1" },
+      })
+    );
+    expect((before.cells as Array<{ value: unknown }>)[0].value).toBe(42);
+
+    const undone = structured(
+      await client.callTool({ name: "xlsx_undo", arguments: { handle } })
+    );
+    expect(undone.did_undo).toBe(true);
+    expect(undone.can_redo).toBe(true);
+    const after = structured(
+      await client.callTool({
+        name: "xlsx_get_text",
+        arguments: { handle, format: "json", sheet, range: "AD1:AD1" },
+      })
+    );
+    // Cell is now empty; the projection drops the cell entirely.
+    expect((after.cells as Array<unknown>).length).toBe(0);
+
+    const redone = structured(
+      await client.callTool({ name: "xlsx_redo", arguments: { handle } })
+    );
+    expect(redone.did_redo).toBe(true);
+    const restored = structured(
+      await client.callTool({
+        name: "xlsx_get_text",
+        arguments: { handle, format: "json", sheet, range: "AD1:AD1" },
+      })
+    );
+    expect((restored.cells as Array<{ value: unknown }>)[0].value).toBe(42);
+
+    // Empty undo / redo are no-ops, not errors.
+    await client.callTool({ name: "xlsx_redo", arguments: { handle } });
+    const noopRedo = structured(
+      await client.callTool({ name: "xlsx_redo", arguments: { handle } })
+    );
+    expect(noopRedo.did_redo).toBe(false);
   });
 
   it("xlsx_save writes the modified workbook to disk", async () => {

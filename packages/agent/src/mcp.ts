@@ -1023,6 +1023,56 @@ function registerXlsxTools(server: McpServer): void {
     }
   );
 
+  // ── xlsx_undo ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "xlsx_undo",
+    {
+      description:
+        "Undo the most recent approved mutation on this xlsx handle. No-op when the history is empty. Returns the resulting revision and a `did_undo` flag.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        const agent = lookupXlsxAgent(handle);
+        const m = agent.undo();
+        return ok({
+          did_undo: m !== null,
+          revision: agent.getSnapshot().revision,
+          can_undo: agent.canUndo(),
+          can_redo: agent.canRedo(),
+          undone: m ? { id: m.id, type: m.command.type } : null,
+        });
+      } catch (err) {
+        return fail(`xlsx_undo failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── xlsx_redo ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "xlsx_redo",
+    {
+      description:
+        "Re-apply the most recently undone mutation on this xlsx handle. No-op when the redo stack is empty (e.g. immediately after a fresh authored mutation, which kills the redo trail).",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        const agent = lookupXlsxAgent(handle);
+        const m = agent.redo();
+        return ok({
+          did_redo: m !== null,
+          revision: agent.getSnapshot().revision,
+          can_undo: agent.canUndo(),
+          can_redo: agent.canRedo(),
+          redone: m ? { id: m.id, type: m.command.type, status: m.status } : null,
+        });
+      } catch (err) {
+        return fail(`xlsx_redo failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
   // ── xlsx_diff ─────────────────────────────────────────────────────────
   server.registerTool(
     "xlsx_diff",

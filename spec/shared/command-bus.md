@@ -97,6 +97,42 @@ Rules:
   recomputed from approved + remaining pending.
 - `rollback(toRevision)` rewinds approved; pending stack is dropped.
 
+## Undo / Redo (Phase 13h)
+
+The bus exposes a per-author Undo / Redo trail layered on top of the
+approved history. The contract mirrors Excel's behaviour exactly:
+
+- `canUndo(): boolean` — true iff at least one approved mutation
+  exists in the history.
+- `canRedo(): boolean` — true iff `redoStack` is non-empty.
+- `undo(): Mutation | null` — pops the most recent approved mutation,
+  flips its `status` to `"undone"`, restores `approved = mutation.before`,
+  and pushes the mutation onto `redoStack`. `pending` mutations are
+  re-applied atop the rolled-back approved snapshot so the working
+  view stays consistent. Subscribers fire with the new working snapshot.
+  Returns `null` (no-op) when the history has no approved entries.
+- `redo(): Mutation | null` — pops `redoStack` and **re-runs the
+  handler** against the current `approved` snapshot rather than blindly
+  restoring the recorded `after`. This keeps redo correct after the
+  pending stack has rebased the world out from under the undone
+  mutation. The fresh mutation is appended to `history` with
+  `status: "approved"`. Returns `null` when nothing to redo.
+- Any new authored mutation (human / system / agent-then-approved)
+  **clears** `redoStack`. Branching the timeline kills the redo trail;
+  this is the same rule Word, Excel, PowerPoint, VS Code and every
+  other tree-undo system uses.
+
+The `MutationStatus` union therefore gains `"undone"` alongside
+`"approved" | "pending" | "rejected" | "rolled-back"`.
+
+`XlsxAgent` and `DocxAgent` proxy `canUndo`, `canRedo`, `undo`, and
+`redo` directly to the bus. The MCP server exposes `xlsx_undo` and
+`xlsx_redo` tools that return `{ did_undo, can_undo, can_redo,
+undone: { id, type } | null }` for symmetry. The `oa xlsx apply-file`
+CLI accepts an optional `--undo <n>` flag that peels back the last `n`
+approved mutations after a batch apply, useful for batch-then-revert
+diffing workflows.
+
 ## MutationStore
 
 ```typescript

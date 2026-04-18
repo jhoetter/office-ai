@@ -1,4 +1,4 @@
-# XLSX phase summary (P0 → P12)
+# XLSX phase summary (P0 → P13)
 
 > Status: 2026-04-18. Thirteen phases shipped against
 > [`prompt.md`](../prompt.md) lines 396–410 and the spec corpus
@@ -67,6 +67,7 @@ The XLSX track now has:
 | 10    | Browser smoke + close-out                        | `## Phase 10`                 | Manual flow-through (open `/xlsx-editor` → edit A2 → set `=B3*2` and watch B4 cascade) + README refresh.                                                                                                                                                                                                           |
 | 11    | Excel-flavoured UX                               | `## Phase 11`                 | Open `.xlsx` from disk, multi-cell selection, type-to-edit, click-to-insert-ref, autocomplete, styling toolbar, structural buttons, drag-resize, +2 sizing commands.                                                                                                                                               |
 | 12    | Excel parity polish: ref highlighting + keyboard | `## Phase 12`                 | Coloured ref tokens in the formula bar, matching coloured borders on referenced cells in the grid, full Excel-style keyboard nav (arrows + Shift extend + Ctrl jump-to-data-edge + Tab/Enter commit-and-move + F2/Escape), row/col header click selection + Delete-deletes-row/col. +13 e2e tests, +14 unit tests. |
+| 13    | Clipboard, fill, undo, UX cleanup                | `## Phase 13`                 | Toolbar de-clutter; Excel-style right-click menus; `XlsxClipboardSnapshot` + `xlsx:paste-range` (relative-ref shift, transpose, paste-special modes); Cmd+C/X/V system-clipboard bridge with marching-ants overlay; headless external-clipboard parsers (Excel Desktop, Google Sheets, Numbers, CSV/TSV); `xlsx:text-to-columns` + delimiter wizard; smart fill handle (`xlsx:fill-range` + 6 series detectors); CommandBus-level Undo/Redo (Cmd+Z / Cmd+Shift+Z, toolbar buttons, agent + MCP tools, CLI `--undo`); 4 new e2e suites. +12 commands tests, +8 undo round-trips, +10 e2e tests, +1 MCP test. |
 
 The full per-batch log lives in
 [`docs/build-log/xlsx.md`](build-log/xlsx.md). Each section follows
@@ -77,9 +78,9 @@ caveats**.
 
 | Package                               |   Tests |
 | ------------------------------------- | ------: |
-| `@officeai/xlsx` (model + engine)     |     624 |
-| `@officeai/web` Playwright (xlsx e2e) |      19 |
-| **XLSX-relevant total**               | **643** |
+| `@officeai/xlsx` (model + engine)     |     740 |
+| `@officeai/web` Playwright (xlsx e2e) |      36 |
+| **XLSX-relevant total**               | **776** |
 
 The same `@officeai/agent` (CLI + MCP) and `@officeai/integration-tests`
 suites that gate DOCX also exercise the `xlsx_*` tool family; see

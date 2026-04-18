@@ -37,20 +37,13 @@ function detectPreset(delim: string): Preset {
   return "custom";
 }
 
-export function TextToColumnsPopover(props: TextToColumnsPopoverProps): ReactNode {
+function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode {
   const { open, defaultDelimiter = ",", onCancel, onConfirm } = props;
   const [preset, setPreset] = useState<Preset>(() => detectPreset(defaultDelimiter));
   const [custom, setCustom] = useState<string>(defaultDelimiter);
   const [collapse, setCollapse] = useState<boolean>(false);
   const customRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setPreset(detectPreset(defaultDelimiter));
-    setCustom(defaultDelimiter);
-    setCollapse(false);
-  }, [open, defaultDelimiter]);
 
   useEffect(() => {
     if (!open) return;
@@ -176,4 +169,14 @@ export function TextToColumnsPopover(props: TextToColumnsPopoverProps): ReactNod
       </div>
     </div>
   );
+}
+
+/**
+ * Wrapper that remounts the inner dialog whenever it opens so the
+ * preset / custom / collapse state always re-derives from
+ * `defaultDelimiter` without resorting to a setState-in-effect.
+ */
+export function TextToColumnsPopover(props: TextToColumnsPopoverProps): ReactNode {
+  if (!props.open) return null;
+  return <TextToColumnsPopoverInner {...props} />;
 }

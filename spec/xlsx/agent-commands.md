@@ -1233,6 +1233,138 @@ symmetrical.
 
 ---
 
+## Phase 13 additions — clipboard, fill, text-to-columns
+
+> Shipped in Phase 13c–g (`docs/build-log/xlsx.md`). The three new
+> commands cover the clipboard / fill paths that bring `/xlsx-editor`
+> in line with native Excel keyboard / mouse parity. The matching
+> bus-level Undo / Redo mechanism is documented in
+> `spec/core/command-bus.md` (§undo).
+
+### `xlsx:paste-range`  ·  §14
+
+```typescript
+type PasteRangePayload = {
+  sheet: string;
+  target: string; //  A1 single-cell ref pointing at the destination top-left
+  source: XlsxClipboardSnapshot; //  produced by `XlsxAgent.getClipboardSnapshot`
+  mode?: "all" | "values" | "formats"; //  defaults to "all"
+  transpose?: boolean; //  Excel's Paste Special → Transpose
+};
+```
+
+#### Behaviour
+
+1. Resolve sheet by name (`unknown-sheet` if missing).
+2. Validate `target` is a single A1 cell (`bad-target`).
+3. Validate that the rectangle implied by `source.height × source.width`
+   (transposed if `transpose: true`) fits inside the worksheet
+   (`out-of-bounds`).
+4. Reject when the destination *partially* overlaps an existing merge
+   (`merge-overlap`); a merge-anchored target that fully contains the
+   pre-existing merge is accepted (the existing merge is dropped first).
+5. For each source cell, project into the target rectangle:
+   - `mode === "values"` → write `value` only; do not copy `styleId` or
+     `formula`.
+   - `mode === "formats"` → write `styleId` only; preserve any existing
+     value / formula at the destination.
+   - `mode === "all"` (default) → copy everything. Formula text is
+     rewritten via `rewriteFormulaRefs` so relative refs shift by the
+     `(rowDelta, colDelta)` between source-anchor and `target`; absolute
+     (`$`-prefixed) refs are preserved verbatim.
+6. Re-emit fully-contained merges with the same `(rowDelta, colDelta)`
+   shift.
+7. Trigger one full recalc pass after the paste so newly-shifted
+   formulas have correct values.
+
+#### `precheck`
+
+| `reason`         | When                                                              |
+| ---------------- | ----------------------------------------------------------------- |
+| `unknown-sheet`  | `sheet` not found                                                 |
+| `bad-target`     | `target` is not a valid single-cell A1 ref                        |
+| `empty-source`   | `source.height === 0 || source.width === 0`                       |
+| `out-of-bounds`  | the projected rectangle exceeds 1048576×16384                     |
+| `merge-overlap`  | the rectangle clips a pre-existing merge it doesn't fully contain |
+
+### `xlsx:fill-range`  ·  §15
+
+```typescript
+type FillRangePayload = {
+  sheet: string;
+  source: string; //  A1 range — the cells the user grabbed before dragging
+  target: string; //  A1 range — must enclose `source` and extend exactly one direction
+  direction: "down" | "right" | "up" | "left";
+};
+```
+
+#### Behaviour
+
+1. Resolve `source` and `target`. Reject if `target` does not enclose
+   `source`, or if the extension is along an axis that contradicts
+   `direction` (`bad-geometry`).
+2. For each "lane" perpendicular to `direction` (rows for vertical,
+   columns for horizontal), extract the source cells via
+   `cellsToSamples` and pick the highest-priority detector via
+   `pickSeries` from `packages/xlsx/src/fill/series.ts`. Detectors in
+   priority order:
+   - `numericDetector` — arithmetic progression
+   - `dateDetector` — ISO dates with uniform day-step
+   - `weekdayDetector` / `monthDetector` — preserves casing + long/short form
+   - `textNumericDetector` — `"Item 1"` / `"Item 2"` style strings
+   - `repeatDetector` — fallback that cycles the source samples
+3. Generate values for the new cells. Formula cells are re-shifted via
+   `rewriteFormulaRefs` exactly like §14 paste.
+4. Trigger one recalc after the fill if any of the new cells contain
+   formulas.
+
+#### `precheck`
+
+| `reason`        | When                                                       |
+| --------------- | ---------------------------------------------------------- |
+| `unknown-sheet` | `sheet` not found                                          |
+| `bad-source`    | `source` is not a valid A1 range                           |
+| `bad-target`    | `target` is not a valid A1 range                           |
+| `bad-geometry`  | `target` does not enclose `source`, or extends wrong axis  |
+
+### `xlsx:text-to-columns`  ·  §16
+
+```typescript
+type TextToColumnsPayload = {
+  sheet: string;
+  range: string; //  A1 range — each row is split independently
+  delimiter: string; //  one or more chars; "" is rejected
+  treatConsecutiveAsOne?: boolean; //  Excel: "Treat consecutive delimiters as one"
+  destination?: string; //  A1 single-cell ref; defaults to range.start
+};
+```
+
+#### Behaviour
+
+1. Resolve `range` and validate `delimiter !== ""` (`bad-delimiter`).
+2. For each row in `range`:
+   - Read the leftmost cell value (coerced to string via the standard
+     `displayValue` projection).
+   - Split on `delimiter`. With `treatConsecutiveAsOne === true`, drop
+     all empty fields (matches Excel exactly — *not* "collapse runs").
+   - Coerce each part via the literal coercion rules: numeric strings
+     become numbers, `"TRUE"` / `"FALSE"` (any case) become booleans,
+     everything else is kept as text.
+3. Write the resulting parts horizontally starting at the destination
+   row's first column. Cells beyond the new split width are cleared so
+   stale data from a wider previous run doesn't survive.
+
+#### `precheck`
+
+| `reason`         | When                                |
+| ---------------- | ----------------------------------- |
+| `unknown-sheet`  | `sheet` not found                   |
+| `bad-range`      | `range` is not a valid A1 range     |
+| `bad-delimiter`  | `delimiter === ""`                  |
+| `bad-destination`| `destination` is not a single cell  |
+
+---
+
 ## Diff format per command — summary
 
 Every handler returns a `DocumentDiff` whose `changes` are sorted

@@ -2218,3 +2218,134 @@ and unrelated).
   (Chromium zoom). `Cmd+Shift+L` (filter), `Ctrl+Shift+L` (slicer
   in Excel) etc. are also out for similar reasons. We picked
   conflict-free shortcuts where Excel's would clash.
+
+### Phase 13 — Excel parity: clipboard, fill, undo, UX cleanup
+
+**Goal.** Close the remaining usability gap to native Excel for the
+in-browser editor: real Cut/Copy/Paste with system-clipboard
+roundtrip, Excel's smart fill handle, multi-step Undo/Redo, an
+Excel-style right-click menu, a "Text to Columns" wizard, and a
+toolbar that no longer exposes confusing one-shot row/column buttons.
+
+#### 13a — Toolbar cleanup
+
+Removed the six insert/delete row/column toolbar buttons (the same
+operations are now reachable from the right-click menu and Delete on
+a whole-row/col selection from P12). Added Undo/Redo + "Text to
+Columns" entry slots so the spacing reads like Excel's Home tab.
+
+#### 13b — `ContextMenu` component
+
+A portal-free, anchored-at-mouse div with outside-click / Escape /
+scroll dismissal. `Grid.tsx` raises an `onContextMenu` callback on
+body cells, row headers, and col headers; `XlsxEditor.tsx` renders
+context-specific items (Cut/Copy/Paste, Insert/Delete row/col, Clear
+contents/formats, Text to Columns).
+
+#### 13c — `XlsxClipboardSnapshot` + `xlsx:paste-range`
+
+`packages/xlsx/src/clipboard/snapshot.ts` defines an internal
+`XlsxClipboardSnapshot` (origin, dimensions, sparse cell matrix with
+optional `formula`/`styleId`, relative merges) and the
+`extractClipboardSnapshot` projector. The new `xlsx:paste-range`
+handler (`packages/xlsx/src/commands/paste-range.ts`) supports
+`mode: "all" | "values" | "formats"` and `transpose`, rewrites
+relative formula refs by `(rowDelta, colDelta)`, preserves absolute
+refs, re-emits fully-contained merges, and rejects partial overlaps.
+13 round-trip tests in `paste-range.test.ts`.
+
+#### 13d — System-clipboard bridge + marching ants
+
+`apps/web/app/xlsx-editor/clipboard.ts` marshals selection ↔ TSV +
+HTML-with-data-fingerprint and uses `e.clipboardData` synchronously
+inside `onCopy` / `onCut` / `onPaste` (with an async
+`navigator.clipboard.read/write` fallback for context-menu paths).
+`Grid.tsx` renders a CSS-animated dashed border (the "marching
+ants") over the source rectangle for `copy` (violet) and `cut`
+(slightly desaturated). Escape clears it, mirroring Excel.
+
+#### 13e — Headless external-clipboard parsers
+
+`packages/xlsx/src/clipboard/external.ts` decodes payloads pasted
+*from* Excel Desktop, Google Sheets, Apple Numbers, and plain CSV /
+TSV without touching the DOM. The parser recovers our embedded
+fingerprint when present (zero-loss internal round-trip), falls back
+to a custom regex/state-machine `<table>` reader (handles `colspan`,
+HTML entities, `<br>`), and then to `delimitedToSnapshot` with
+`sniffDelimiter` heuristics for raw text. Fixtures live in
+`__fixtures__/` (excel-desktop.html, google-sheets.html, numbers.html,
+csv-de.csv, multiline.csv).
+
+#### 13f — `xlsx:text-to-columns` + delimiter wizard
+
+Splits each row of an A1 range on a delimiter, coerces literal
+numbers/booleans, supports "treat consecutive delimiters as one"
+(matching Excel's *drop-empty-fields* rule, not "collapse runs"), and
+clears stale cells beyond the new split width. A `TextToColumnsPopover`
+mimics Excel's wizard: tab/comma/semicolon/space/custom radios,
+pre-filled by sniffing the selected cell. Toolbar + cell + col-header
+context-menu entries dispatch.
+
+#### 13g — Smart fill handle
+
+`packages/xlsx/src/fill/series.ts` ships six detectors in priority
+order: `numericDetector` (arithmetic progression),
+`dateDetector` (ISO dates with uniform day-step),
+`weekdayDetector`, `monthDetector` (preserves casing + long/short
+form), `textNumericDetector` (`Item 1` → `Item 2` …), and
+`repeatDetector` (cycles samples). The `xlsx:fill-range` handler
+(`packages/xlsx/src/commands/fill-range.ts`) validates that `target`
+encloses `source` and the extension matches `direction`, then walks
+each lane via `pickSeries`. Formula cells re-shift through
+`rewriteFormulaRefs`. Visually, `Grid.tsx` paints a 7×7 violet
+fill-handle on the bottom-right of the marquee; mouse-down starts a
+drag that renders a dashed `grid-fill-preview` rectangle and
+dispatches `xlsx:fill-range` on mouse-up.
+
+#### 13h — Undo / Redo on the CommandBus
+
+Extended `packages/core/src/commands/bus.ts` with `redoStack` plus
+`canUndo`, `canRedo`, `undo`, and `redo` (see
+`spec/shared/command-bus.md` §Undo/Redo for the full contract).
+`MutationStatus` gains `"undone"`. Both `XlsxAgent` and `DocxAgent`
+proxy the four methods, so anything (CLI, MCP, web UI) gets a
+multi-step trail for free. The web editor wires Cmd/Ctrl+Z and
+Cmd/Ctrl+Shift+Z (plus Cmd/Ctrl+Y) on the editor surface, and the
+toolbar grows `action-undo` / `action-redo` buttons that disable when
+the stacks are empty. Per-handler round-trip tests in
+`packages/xlsx/src/agent/undo.test.ts` cover set-cell-value,
+set-cell-formula, paste-range, fill-range, text-to-columns, merge,
+insert-row, and the redo-trail-clear-on-fresh-edit invariant. Five
+new bus-level tests in `bus.test.ts` lock down the contract itself.
+
+#### 13j — Playwright coverage
+
+Four new specs in `apps/web/e2e/`:
+
+- `xlsx-undo.spec.ts` (3): Cmd+Z / Cmd+Shift+Z, toolbar enable/disable,
+  redo-trail-killed-by-edit.
+- `xlsx-context-menu.spec.ts` (3): right-click renders, Escape
+  dismisses, Clear contents dispatches.
+- `xlsx-clipboard.spec.ts` (2): Cmd+C → Cmd+V duplicates, Escape
+  clears the marching ants. Uses `test.use({ permissions:
+  ["clipboard-read", "clipboard-write"] })` so `navigator.clipboard`
+  works in headless Chromium.
+- `xlsx-fill.spec.ts` (2): drag-down extrapolates a numeric series,
+  preview overlay visible during the drag.
+
+#### 13k — CLI + MCP
+
+The MCP server registers `xlsx_undo` and `xlsx_redo` tools that
+return `{ did_undo / did_redo, can_undo, can_redo, undone / redone }`.
+The `oa xlsx apply-file` CLI accepts an optional `--undo <n>` to
+peel back N approved mutations after the batch apply completes —
+useful for diff-then-restore experiments.
+
+**Suite at close.** 740 xlsx unit tests, 17 core unit tests, 85
+agent tests (incl. one new MCP undo/redo round-trip), and 36 xlsx
+e2e tests pass. The `chore/ci-green-holistic-parity` baseline ships
+green; the only flake observed during development was a known
+order-dependent failure in `xlsx-keyboard.spec.ts` ("Tab and Enter
+commit the formula bar") that passes in isolation and is unrelated
+to this phase.
+

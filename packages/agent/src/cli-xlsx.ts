@@ -858,6 +858,11 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
     .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
     .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
     .option("--out <path>", "Path to write the resulting .xlsx file (defaults to --file, in place)")
+    .option(
+      "--undo <n>",
+      "After applying, peel back the last N approved mutations via the bus's undo stack. Useful for batch-then-revert workflows.",
+      parseIntOpt
+    )
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
       async (opts: {
@@ -865,6 +870,7 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
         commands?: string;
         fromStdin: boolean;
         out?: string;
+        undo?: number;
         pretty: boolean;
       }) => {
         if (opts.fromStdin === Boolean(opts.commands)) {
@@ -879,6 +885,17 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
         const muts = await agent.applyCommands(cmds);
         const ids = agent.getPendingMutations().map((m) => m.id);
         for (const id of ids) agent.approveMutation(id);
+        let undone = 0;
+        if (opts.undo !== undefined) {
+          if (opts.undo < 0) {
+            throw new CliError(64, "xlsx apply-file: --undo must be non-negative");
+          }
+          for (let i = 0; i < opts.undo; i++) {
+            if (!agent.canUndo()) break;
+            agent.undo();
+            undone++;
+          }
+        }
         const out = opts.out ?? opts.file;
         await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
         io.stdout.write(
@@ -891,6 +908,7 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
                 status: m.status === "rejected" ? "rejected" : "approved",
                 ...(m.rejection ? { rejection: m.rejection } : {}),
               })),
+              ...(opts.undo !== undefined ? { undone } : {}),
             },
             opts.pretty
           ) + "\n"
