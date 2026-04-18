@@ -8,6 +8,7 @@ import { SlideCanvas, SlidesSidebar } from "@officeai/pptx/renderer/react";
 import type { Mutation } from "@officeai/core";
 import type { TextShape } from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
+import { dispatchToLlmPptx } from "@/lib/llm-client-pptx";
 import { PptxToolbar } from "./PptxToolbar";
 import { PptxAgentPanel, type PptxAgentDispatch } from "./PptxAgentPanel";
 
@@ -209,63 +210,22 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, onError, pushToast]
   );
 
-  // Demo agent dispatcher: parses a few simple intents into commands.
-  // In production this would call the LLM bridge similar to docx.
+  // Routes prompts through the shared `/api/llm` bridge with `format: "pptx"`.
+  // When no `OPENAI_API_KEY` is configured server-side the helper transparently
+  // falls back to the in-process intent parser so the editor stays usable
+  // without any env vars.
   const promptDispatch: PptxAgentDispatch = useCallback(
     async (text: string) => {
       const a = agentRef.current;
       if (!a) return;
-      const trimmed = text.trim().toLowerCase();
-      const commands: Array<Parameters<typeof a.applyCommand>[0]> = [];
-      if (/^add (a )?slide/.test(trimmed)) {
-        commands.push({ type: "pptx:add-slide", payload: {}, source: "agent", agentId: "demo" });
-      } else if (/^delete (the )?slide/.test(trimmed)) {
-        commands.push({
-          type: "pptx:delete-slide",
-          payload: { slideIndex: activeIndex },
-          source: "agent",
-          agentId: "demo",
-        });
-      } else if (/bold|italic|underline/.test(trimmed)) {
-        const slide = a.getSnapshot().root.slides[activeIndex];
-        const ts = slide?.shapes.find((s): s is TextShape => s.kind === "text");
-        if (ts && ts.txBody.paragraphs.length > 0) {
-          const p = ts.txBody.paragraphs[0];
-          const flatLen = p.runs.reduce((acc, r) => acc + (r.isLineBreak ? 0 : r.text.length), 0);
-          const fmt: { bold?: boolean; italic?: boolean; underline?: boolean } = {};
-          if (trimmed.includes("bold")) fmt.bold = true;
-          if (trimmed.includes("italic")) fmt.italic = true;
-          if (trimmed.includes("underline")) fmt.underline = true;
-          commands.push({
-            type: "pptx:format-text",
-            payload: {
-              slideIndex: activeIndex,
-              shapeId: ts.id,
-              range: { paragraph: 0, start: 0, end: flatLen },
-              format: fmt,
-            },
-            source: "agent",
-            agentId: "demo",
-          });
-        }
-      } else {
-        // Fallback: append a text box with the prompt.
-        commands.push({
-          type: "pptx:add-text-box",
-          payload: {
-            slideIndex: activeIndex,
-            text,
-            x: 500000,
-            y: 4500000,
-            width: 6000000,
-            height: 800000,
-          },
-          source: "agent",
-          agentId: "demo",
-        });
+      const result = await dispatchToLlmPptx(text, a, activeIndex);
+      if (result.note) pushToast("warn", result.note);
+      if (result.commands.length === 0) {
+        pushToast("info", result.rationale || "No commands proposed.");
+        return;
       }
-      await a.applyCommands(commands);
-      pushToast("info", `Applied ${commands.length} command(s).`);
+      await a.applyCommands(result.commands);
+      pushToast("info", `Applied ${result.commands.length} command(s).`);
     },
     [activeIndex, pushToast]
   );

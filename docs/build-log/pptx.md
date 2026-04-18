@@ -21,11 +21,13 @@
 | ---------- | --------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2026-04-18 | `agent-commands.md` (`pptx:format-text`) | Re-emits only `a:solidFill` and `a:latin` from typed properties; other captured `a:rPr` children pass through verbatim | Keeps `schemeClr`/`hlinkClick`/etc. round-tripping; we'd need a typed model for every child of `a:rPr` to fully own the element, which is out-of-scope for P1.|
 | 2026-04-18 | `renderer.md` (theme colors) | `resolveColor` falls back to a fixed default theme map for `kind: "scheme"` references            | We don't parse `theme1.xml` colors yet; the renderer renders them with the default palette. Spec calls this an explicit follow-up.                            |
-| 2026-04-18 | `feature-scope.md` (LLM bridge) | The `/pptx-editor` agent panel parses simple natural-language intents in-process (add slide / delete / B/I/U / drop-as-text-box), not via the shared LLM bridge | Bridge wiring is the same as DOCX (`apps/web/.env.local` keys); deferred to a follow-up to keep this session shippable without new env vars. |
+| 2026-04-18 | `feature-scope.md` (LLM bridge) | _(resolved 2026-04-19, F1.1)_ The `/pptx-editor` agent panel now routes through `/api/llm` with `format: "pptx"`; the in-process intent parser is the offline fallback when no `OPENAI_API_KEY` is set | Brings PPTX to parity with DOCX. |
 
 ### Resolved deviations
 
-_None yet._
+| Date (UTC) | Item                                  | Resolution                                                                                                  |
+| ---------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 2026-04-19 | LLM bridge wiring for `/pptx-editor` | F1.1 — extended `/api/llm` to switch system prompt + allow-list on `format`, added `lib/llm-client-pptx.ts`. |
 
 ## Deferred to a follow-up session
 
@@ -36,7 +38,7 @@ _None yet._
 | SmartArt (`dgm:*`)                                          | `agent-commands.md` | Stays opaque.                                         |
 | Animations / transitions                                   | `feature-scope.md`  | Untouched-bytes only; spec defers typed model.        |
 | Theme color resolution (`a:schemeClr` → `theme1.xml`)       | `renderer.md`       | Default palette only; theme parser is a follow-up.    |
-| LLM bridge wiring for `/pptx-editor` agent panel           | `feature-scope.md`  | Demo intent parser only.                              |
+| ~~LLM bridge wiring for `/pptx-editor` agent panel~~       | ~~`feature-scope.md`~~ | **Resolved (F1.1)** — uses `/api/llm` with `format: "pptx"`. |
 | Real-world PPTX fixtures (PowerPoint / Google Slides / Keynote exports) | `feature-scope.md`  | Slots reserved in `fixtures/pptx/MANIFEST.md`.        |
 
 ## Phase summary
@@ -88,9 +90,9 @@ Final test/build totals at the close of P10:
 
 ## Known issues
 
-- The `/pptx-editor` agent panel uses an in-process intent parser only.
-  Wiring it to the shared LLM bridge (same one DOCX uses) is queued
-  behind P10. The route is fully usable today via the toolbar.
+- ~~The `/pptx-editor` agent panel uses an in-process intent parser only.~~
+  Resolved in F1.1: routes through `/api/llm` with `format: "pptx"`. The
+  in-process intent parser is the offline fallback when no API key is set.
 - `dpi` is hard-coded to 96 in the renderer's pixel conversions; an
   override hook is exported (`emuToPx(emu, dpi)`) but unused. Will
   matter once we expose a zoom slider.
