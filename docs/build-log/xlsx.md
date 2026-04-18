@@ -753,3 +753,165 @@ SWITCH`) need lazy to skip un-chosen branches; lookup helpers
   slide-transition metadata, etc.) will want the same hook. The
   field is optional and ignored by older readers, so existing
   `docx` consumers are unaffected.
+
+## 2026-04-18 — Phase 7g: `xlsx:set-cell-format` command + typed style table
+
+**Shipped**
+
+- `packages/xlsx/src/model/style-table.ts` — typed in-memory model
+  for `xl/styles.xml` (`StyleNumberFormat`, `StyleFont`, `StyleFill`,
+  `StyleBorder`, `StyleCellXf`, plus the top-level `StyleTable` and
+  a `defaultStyleTable()` factory). Anything we don't model (cell
+  styles, `dxfs`, `tableStyles`, `extLst`, …) round-trips verbatim
+  via `opaqueExtras: ReadonlyArray<{section, xml}>` so byte-clean
+  re-emit holds for every untouched workbook.
+- `packages/xlsx/src/parser/styles.ts` — schema-aware parser that
+  walks `<numFmts>`, `<fonts>`, `<fills>`, `<borders>`, `<cellXfs>`
+  in document order, captures font run properties (bold, italic,
+  size, color, name, family, scheme, strike, underline), pattern
+  fills (`patternType`, `fgColor`, `bgColor`), every border edge
+  with style + color + diagonal flags, and the full `xf` cross-
+  product (numFmtId / fontId / fillId / borderId / xfId + the four
+  `applyXxx` flags + alignment + protection). Unknown sections are
+  serialised back into `opaqueExtras` as raw XML strings.
+- `packages/xlsx/src/serializer/styles.ts` — symmetric re-emitter
+  that reconstructs `<styleSheet>` from the typed table. Round-trip
+  is **semantic**, not byte-identical: attribute order can drift,
+  but re-parsing the output yields a structurally equivalent table.
+  Opaque sections are spliced back at the end of the sheet.
+- `packages/xlsx/src/model/style-mutate.ts` — content-hash
+  deduplication layer. `flattenCellXf(table, id)` resolves an `xf`
+  index to an `EffectiveStyle` (the merged number-format /
+  font / fill / border / alignment / protection bundle).
+  `internStyle(table, eff)` returns `{table, xfId}`; reusing an
+  identical xf hits the cache and never grows `cellXfs`. Component
+  hashes (`hashFont`, `hashFill`, `hashBorder`, `hashXf`) are
+  canonical JSON sorts, so `bold` after `italic` interns to the
+  same id as `italic` after `bold`. This is what lets bulk
+  formatting (e.g. bolding 10k cells with `font: { bold: true }`)
+  add **at most one new font + one new xf** to the table — the
+  "small constant" property in `agent-commands.md §4`.
+- `Cell.styleId?: number` added to the typed cell. `undefined` =
+  the implicit default xf (id 0). Plumbed through:
+  - `parser/parse.ts` — for each worksheet we now scan the raw
+    `xl/worksheets/sheetN.xml` ourselves to recover each cell's
+    `s="N"` attribute. SheetJS overwrites `cell.s` with a resolved
+    fill object when loaded with `cellStyles: true`, dropping the
+    original index, so we cannot get it back from the dense store.
+    A 30-line regex over `<c r="REF" s="N">` rebuilds the map
+    before we materialise typed cells.
+  - `serializer/sheet-sync.ts` — `typedCellToSheetJS` carries
+    `cell.styleId` over to the SheetJS dense cell as `s: N`, with
+    `prev.s` as the fallback so untouched styled cells keep their
+    style on round-trip.
+  - `serializer/serialize.ts` — after SheetJS emits the worksheet
+    XML, we post-process every `<c r="REF" ...>` to inject `s="N"`
+    from the typed cells (and strip any spurious `s` SheetJS
+    invented from `cell.z`). This is the only practical way to
+    reconcile our owned styles part with SheetJS's writer, which
+    re-derives `s` from its own internal `cellXfs` table and
+    ignores whatever we put on the cell.
+  - `dirty.styles` is now a recognised dirty flag; `serializeXlsx`
+    re-emits `xl/styles.xml` from the typed table when set.
+- `packages/xlsx/src/commands/set-cell-format.ts` — the seventh
+  P0 command. Validates the patch (RRGGBB hex colors, color names
+  must be hex not "red", no diagonal-up/down without a side, etc.),
+  resolves each target cell's current `EffectiveStyle`, applies
+  the patch field-by-field (clear-to-default with `null`, deep
+  merge otherwise), interns the result, and writes the new
+  `styleId` onto the cell. Range form (`A1:C3`) iterates every
+  cell in the rectangle; missing cells are materialised as
+  blank-but-styled cells. Emits one `cell-updated` diff per
+  cell that changed `styleId`, plus a single `style-table-grew`
+  diff entry when new fonts / fills / borders / xfs are interned.
+- `packages/xlsx/src/commands/payloads.ts` — `CellFormatPatch` is
+  the friendly agent-facing shape (`font.bold`, `fill.color`,
+  `border.top.style`, `numberFormat: "0.00"` or `numFmtId: 14`),
+  translated to the OOXML field layout inside the handler. Border
+  sides accept the 14 OOXML line styles; alignment accepts
+  `horizontal: "center" | "left" | "right" | "justify" | "fill"`
+  and the friendly `vertical: "top" | "middle" | "bottom"`
+  (mapped to OOXML's `center` token internally).
+- Wired into `commands/registry.ts` (now **7/13 P0 commands
+  shipped**) and re-exported from `commands/index.ts` and the
+  package root `src/index.ts`.
+
+**Tests landed**
+
+- `packages/xlsx/src/parser/__tests__/styles.test.ts` — **7 tests**
+  covering: parse → emit → re-parse structural equivalence on the
+  fixture corpus styles parts; default-table factory shape; opaque
+  section preservation; missing-`numFmts` graceful fallback to the
+  17 built-in formats; xf with `applyFont:0` round-trips the flag
+  off; alignment + protection survival; full table → empty workbook
+  → reload round-trip.
+- `packages/xlsx/src/commands/set-cell-format.test.ts` — **9 tests**
+  covering: bolding a single cell mints exactly one new font + one
+  new xf; bolding 100 cells mints **the same one** font + xf
+  (dedup); range form `A1:C3` styles every cell including blank
+  ones; `font.color = "FFEEAA"` survives; clearing with
+  `numberFormat: null` reverts the cell to `numFmtId: 0`; agent-side
+  validation rejects malformed colors (`"red"`, `"#FF00FF"`,
+  `"FF00FFAA"`), unknown sheets, invalid ranges, and unknown
+  `numberFormat` strings; full parse → format → serialize → reparse
+  round-trip preserves the `styleId` and the resolved bold flag.
+
+**Totals after 7g**
+
+- `@officeai/xlsx` unit tests: **502 passing** (+27: 9 set-cell-
+  format + 7 styles parser + others picked up across the model
+  layer; xlsx test count went 475 → 486 → 502).
+- 7/13 P0 commands now wired through the bus. `xlsx:set-cell-
+format` joins `set-cell-value`, `clear-range`, `delete-range`,
+  `merge-cells`, `unmerge-cells`, and `set-cell-formula`.
+- All xlsx + xlsx round-trip tests green; pre-existing
+  `validate-ooxml-schemas` failures (real-world docx fixture
+  count) are unrelated.
+
+**Decisions**
+
+- **Own the styles part end-to-end; ignore SheetJS's writer.**
+  SheetJS's `write_ws_xml_cell` calls `get_cell_style(cellXfs,
+cell, opts)` which derives the `s` attribute from `cell.z` (the
+  number-format string) against SheetJS's own internal cellXfs
+  table — it ignores any `s` we set on the SheetJS cell. We
+  considered round-tripping styles through SheetJS but its style
+  index space is incompatible with ours (we re-emit
+  `xl/styles.xml` from the typed table; SheetJS would emit a
+  different one). The post-process injection in
+  `serialize.ts` is ~25 lines, fully tested, and isolates the
+  workaround to one function.
+- **Recover `s` from raw XML, not from SheetJS.** With
+  `cellStyles: true` SheetJS replaces `cell.s` with a resolved
+  fill object (line 15835 in `xlsx.mjs`), permanently losing the
+  numeric index. Reading the worksheet XML once during parse and
+  scanning `<c r="..." s="...">` is O(file size) and runs alongside
+  the existing parse without measurable overhead on the §17
+  fixture corpus.
+- **Round-trip is semantic, not byte-identical, for `xl/styles.xml`.**
+  Untouched workbooks still round-trip bit-identical (we only
+  re-emit the styles part when `dirty.styles` is set). Once
+  `set-cell-format` fires, the styles part is regenerated from the
+  typed table; attribute order, whitespace, and unknown-section
+  ordering can drift. Re-parsing the output yields a structurally
+  equivalent table — that's the contract.
+- **Friendly agent shape, OOXML-shaped storage.** The
+  `CellFormatPatch` interface uses agent-friendly names
+  (`font.bold`, `fill.color`, `border.top.style`) so an LLM can
+  author it without reading the OOXML schema. The translation to
+  `numFmtId` / `fontId` / `fillId` / `borderId` / `applyXxx`
+  happens in the handler, exactly once, against the typed
+  `StyleTable`. The typed model stays OOXML-shaped so the
+  serializer is a straight projection.
+- **Content-hash dedup over reference counting.** Excel's styles
+  table is append-only in practice; we never garbage-collect
+  unused entries. Hashing fonts/fills/borders/xfs by canonical
+  JSON before insertion gives us O(1) "is this style already
+  here?" without tracking refcounts. This is what makes bulk
+  formatting cheap: bold-100-cells touches the table twice
+  (one new font, one new xf), regardless of whether the source
+  workbook already had bold or not.
+- **Default xf (id 0) is implicit.** Cells with `styleId === 0` or
+  `undefined` get no `s` attribute in the worksheet XML; this
+  matches Excel's own emission and keeps untouched cells
+  byte-clean. The serializer's injector strips `s="0"` defensively.

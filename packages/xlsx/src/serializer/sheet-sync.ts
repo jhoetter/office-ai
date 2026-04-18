@@ -90,7 +90,8 @@ const ERR_NUM_BY_CODE: Record<CellErrorCode, number> = {
 };
 
 function typedCellToSheetJS(cell: Cell, prev: SheetJSCell | undefined): SheetJSCell | undefined {
-  const carriedStyle = prev?.s !== undefined ? { s: prev.s } : {};
+  const carriedStyle =
+    cell.styleId !== undefined ? { s: cell.styleId } : prev?.s !== undefined ? { s: prev.s } : {};
   const carriedFmt = prev?.z !== undefined ? { z: prev.z } : {};
   const v = cell.value;
 
@@ -115,7 +116,8 @@ function typedCellToSheetJS(cell: Cell, prev: SheetJSCell | undefined): SheetJSC
     return { t: "b", v, ...carriedStyle, ...carriedFmt };
   }
   if (v === null) {
-    if (prev?.s !== undefined) return { t: "z", ...carriedStyle, ...carriedFmt };
+    if (cell.styleId !== undefined || prev?.s !== undefined)
+      return { t: "z", ...carriedStyle, ...carriedFmt };
     return undefined;
   }
   if (typeof v === "object" && (v as { kind?: string }).kind === "error") {

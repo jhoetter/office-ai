@@ -1,6 +1,7 @@
 import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core";
 import * as XLSX from "xlsx";
-import { cellKey } from "../model/refs.js";
+import { cellKey, formatA1 } from "../model/refs.js";
+import { defaultStyleTable, type StyleTable } from "../model/style-table.js";
 import {
   emptyDirty,
   type Cell,
@@ -14,6 +15,7 @@ import {
   type XlsxWorkbook,
 } from "../model/types.js";
 import { XlsxParseError } from "./errors.js";
+import { parseStylesXml } from "./styles.js";
 
 const WORKBOOK_PART = "xl/workbook.xml";
 const WORKBOOK_RELS_PART = "xl/_rels/workbook.xml.rels";
@@ -125,6 +127,10 @@ export async function parseXlsx(
     });
   }
 
+  const styles: StyleTable = container.has("xl/styles.xml")
+    ? parseStylesXml(container.readText("xl/styles.xml"))
+    : defaultStyleTable();
+
   const workbook: XlsxWorkbook = {
     id: mintNodeId(),
     sheets,
@@ -132,6 +138,7 @@ export async function parseXlsx(
     opaqueParts,
     date1904,
     workbookRootAttrs,
+    styles,
     sheetjs: sheetjsBook,
   };
 
@@ -247,7 +254,12 @@ function resolveSheet(
   const kind: Sheet["kind"] = rel.type === DOC_REL_TYPES.worksheet ? "worksheet" : "non-worksheet";
 
   const ws = sheetjsBook.Sheets[entry.name];
-  const { cells, merges } = kind === "worksheet" && ws ? extractCellsAndMerges(ws) : EMPTY_CELL_DATA;
+  const styleIdByRef =
+    kind === "worksheet" && container.has(partPath)
+      ? extractStyleIdsFromXml(container.readText(partPath))
+      : undefined;
+  const { cells, merges } =
+    kind === "worksheet" && ws ? extractCellsAndMerges(ws, styleIdByRef) : EMPTY_CELL_DATA;
 
   return {
     id: mintNodeId(),
@@ -272,6 +284,8 @@ interface SheetJSCellLike {
   readonly t?: string;
   readonly v?: unknown;
   readonly f?: string;
+  /** Style index when the workbook was loaded with `cellStyles: true`. */
+  readonly s?: number;
 }
 
 interface SheetJSWorksheetLike {
@@ -279,7 +293,10 @@ interface SheetJSWorksheetLike {
   readonly "!merges"?: ReadonlyArray<{ s: { r: number; c: number }; e: { r: number; c: number } }>;
 }
 
-function extractCellsAndMerges(ws: XLSX.WorkSheet): {
+function extractCellsAndMerges(
+  ws: XLSX.WorkSheet,
+  styleIdByRef?: ReadonlyMap<string, number>
+): {
   cells: ReadonlyMap<string, Cell>;
   merges: ReadonlyArray<MergedCell>;
 } {
@@ -294,7 +311,8 @@ function extractCellsAndMerges(ws: XLSX.WorkSheet): {
       for (let c = 0; c < row.length; c++) {
         const raw = row[c];
         if (!raw) continue;
-        const cell = sheetjsCellToTyped(raw, r, c);
+        const styleId = styleIdByRef?.get(formatA1({ row: r, col: c }));
+        const cell = sheetjsCellToTyped(raw, r, c, styleId);
         if (cell) cells.set(cellKey(r, c), cell);
       }
     }
@@ -310,7 +328,12 @@ function extractCellsAndMerges(ws: XLSX.WorkSheet): {
   return { cells, merges };
 }
 
-function sheetjsCellToTyped(raw: SheetJSCellLike, row: number, col: number): Cell | null {
+function sheetjsCellToTyped(
+  raw: SheetJSCellLike,
+  row: number,
+  col: number,
+  styleIdFromXml: number | undefined
+): Cell | null {
   const t = raw.t;
   let value: CellValue;
 
@@ -341,9 +364,45 @@ function sheetjsCellToTyped(raw: SheetJSCellLike, row: number, col: number): Cel
   }
 
   const formula: Formula | undefined = raw.f ? { text: raw.f } : undefined;
-  if (value === null && !formula) return null;
+  const styleId = styleIdFromXml ?? (typeof raw.s === "number" ? raw.s : undefined);
+  if (value === null && !formula && styleId === undefined) return null;
 
-  return formula ? { row, col, value, formula } : { row, col, value };
+  const cell: Cell = {
+    row,
+    col,
+    value,
+    ...(formula ? { formula } : {}),
+    ...(styleId !== undefined ? { styleId } : {}),
+  };
+  return cell;
+}
+
+/**
+ * Extract per-cell style indices (`s` attribute on `<c>`) directly from
+ * the worksheet XML. SheetJS replaces `cell.s` with a resolved fill
+ * object when loaded with `cellStyles: true`, so the original numeric
+ * index is lost from the dense store. We need the index to drive our
+ * typed `StyleTable`; SheetJS's resolved fills/fonts are not enough
+ * because we own the styles part end-to-end.
+ *
+ * The regex tolerates attribute order, single or double quotes, and
+ * self-closing `<c .../>` cells.
+ */
+function extractStyleIdsFromXml(xml: string): Map<string, number> {
+  const result = new Map<string, number>();
+  const re = /<c\b([^/>]*?)\/?>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const attrs = m[1];
+    const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+    if (!refMatch) continue;
+    const sMatch = /\bs=("|')([^"']+)\1/.exec(attrs);
+    if (!sMatch) continue;
+    const idx = Number(sMatch[2]);
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    result.set(refMatch[2], idx);
+  }
+  return result;
 }
 
 const ERROR_CODE_BY_NUM: Record<number, CellErrorCode> = {

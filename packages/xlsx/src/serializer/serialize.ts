@@ -1,10 +1,13 @@
 import { ooxml } from "@officeai/core";
 import * as XLSX from "xlsx";
-import type { Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
+import { formatA1 } from "../model/refs.js";
+import type { Cell, Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
 import { XlsxSerializeError } from "./errors.js";
 import { syncSheetToSheetJS } from "./sheet-sync.js";
+import { serializeStylesXml } from "./styles.js";
 
 const WORKBOOK_PART = "xl/workbook.xml";
+const STYLES_PART = "xl/styles.xml";
 
 /**
  * Serialize an `XlsxSnapshot` back to bytes.
@@ -38,7 +41,6 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   const dirtySheetPaths = dirty.sheets;
   const unsupportedDirty =
     dirty.sharedStrings ||
-    dirty.styles ||
     dirty.contentTypes ||
     dirty.rels ||
     dirty.comments.size > 0 ||
@@ -48,7 +50,7 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   if (unsupportedDirty) {
     throw new XlsxSerializeError(
       "container-failed",
-      "Phase 5 serializer supports only dirty `sheets` + `workbook`; sst/styles/rels/comments rewrites land in later phases"
+      "Phase 5 serializer supports only dirty `sheets` + `workbook` + `styles`; sst/rels/comments rewrites land in later phases"
     );
   }
 
@@ -58,6 +60,10 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
 
   if (dirty.workbook) {
     rewriteWorkbookSheetNames(snapshot.root, container);
+  }
+
+  if (dirty.styles) {
+    rewriteStylesXml(snapshot.root, container);
   }
 
   try {
@@ -130,9 +136,45 @@ async function rewriteDirtySheets(
         { partPath: emittedPath }
       );
     }
-    const newBytes = emittedContainer.readBytes(emittedPath);
-    master.writeBytes(path, newBytes);
+    let xml = emittedContainer.readText(emittedPath);
+    xml = injectStyleIds(xml, sheet.cells);
+    master.writeText(path, xml);
   }
+}
+
+/**
+ * SheetJS's `write_ws_xml_cell` regenerates the `s` (style) attribute
+ * from `cell.z` (number-format string) using its own internal cellXfs
+ * table — it ignores any `s` we put on the SheetJS cell object. Since
+ * we author our own `xl/styles.xml` from the typed `StyleTable`, we
+ * post-process the emitted worksheet XML to inject `s="N"` for every
+ * typed cell that carries a `styleId`, and to strip any spurious `s`
+ * SheetJS may have added for cells we don't style.
+ *
+ * Cells without `styleId` get any existing `s` attribute removed so
+ * the worksheet XML reflects exactly what's in our typed model. The
+ * default xf (index 0) is implicit in OOXML and never written.
+ */
+function injectStyleIds(xml: string, cells: ReadonlyMap<string, Cell>): string {
+  const styleByRef = new Map<string, number>();
+  for (const cell of cells.values()) {
+    if (cell.styleId !== undefined && cell.styleId !== 0) {
+      styleByRef.set(formatA1({ row: cell.row, col: cell.col }), cell.styleId);
+    }
+  }
+
+  return xml.replace(/<c\b([^/>]*?)(\/?)>/g, (_match, attrs: string, selfClose: string) => {
+    const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+    if (!refMatch) return `<c${attrs}${selfClose}>`;
+    const ref = refMatch[2];
+    const stripped = attrs.replace(/\s+s=("|')[^"']*\1/, "");
+    const styleId = styleByRef.get(ref);
+    if (styleId === undefined) {
+      return `<c${stripped}${selfClose}>`;
+    }
+    const newAttrs = `${stripped} s="${styleId}"`;
+    return `<c${newAttrs}${selfClose}>`;
+  });
 }
 
 /**
@@ -176,6 +218,20 @@ function rewriteWorkbookSheetNames(workbook: XlsxWorkbook, master: ooxml.OoxmlCo
   }
 
   master.writeText(WORKBOOK_PART, xml);
+}
+
+/**
+ * Re-emit `xl/styles.xml` from the typed style table. Round-trip is
+ * **semantic** (not byte-identical): attribute order can drift, but
+ * re-parsing the output yields a structurally equivalent table.
+ */
+function rewriteStylesXml(workbook: XlsxWorkbook, master: ooxml.OoxmlContainer): void {
+  const xml = serializeStylesXml(workbook.styles);
+  if (master.has(STYLES_PART)) {
+    master.writeText(STYLES_PART, xml);
+  } else {
+    master.writeText(STYLES_PART, xml);
+  }
 }
 
 function escapeRegex(s: string): string {

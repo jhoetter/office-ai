@@ -4,6 +4,7 @@ export type XlsxParseErrorCode =
   | "missing-content-types"
   | "invalid-xml"
   | "invalid-workbook"
+  | "invalid-styles"
   | "missing-sheet-target"
   | "sheetjs-failure";
 

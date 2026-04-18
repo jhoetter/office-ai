@@ -63,3 +63,55 @@ export interface RenameSheetPayload {
   /** New sheet name. Validated against Excel naming rules. */
   readonly newName: string;
 }
+
+/* ── `xlsx:set-cell-format` (§4) ──────────────────────────────────────────
+ * Patch-style format payload — undefined fields are left unchanged.
+ * Per spec/xlsx/agent-commands.md §4, `format` carries the friendly
+ * agent-facing names (`bold`, `RRGGBB` colours, etc.); the handler
+ * translates to the OOXML style table shape internally.
+ */
+
+export interface CellFormatBorderSide {
+  readonly style?: "thin" | "medium" | "thick" | "double" | "dashed" | "dotted" | "none";
+  /** RRGGBB hex without `#`. */
+  readonly color?: string;
+}
+
+export interface CellFormatPatch {
+  readonly font?: {
+    readonly family?: string;
+    readonly size?: number;
+    readonly bold?: boolean;
+    readonly italic?: boolean;
+    readonly underline?: boolean;
+    readonly strike?: boolean;
+    /** RRGGBB hex without `#`. */
+    readonly color?: string;
+  };
+  readonly fill?: {
+    /** RRGGBB hex without `#`. */
+    readonly color?: string;
+    readonly pattern?: "solid" | "none";
+  };
+  readonly border?: {
+    readonly top?: CellFormatBorderSide;
+    readonly right?: CellFormatBorderSide;
+    readonly bottom?: CellFormatBorderSide;
+    readonly left?: CellFormatBorderSide;
+  };
+  readonly alignment?: {
+    readonly horizontal?: "left" | "center" | "right" | "fill" | "justify";
+    readonly vertical?: "top" | "middle" | "bottom";
+    readonly wrapText?: boolean;
+    readonly indent?: number;
+  };
+  /** Built-in numFmtId as a string, or a custom format string. */
+  readonly numberFormat?: string;
+}
+
+export interface SetCellFormatPayload {
+  readonly sheet: string;
+  /** A1 single cell or A1 range, e.g. `"B2"` or `"A1:E1"`. */
+  readonly range: string;
+  readonly format: CellFormatPatch;
+}
