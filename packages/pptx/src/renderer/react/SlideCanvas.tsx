@@ -5,6 +5,7 @@ import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
 import { computeSnap, type SnapGuide } from "../layout/snap.js";
+import { snapToAnchor, type ShapeAnchor } from "../layout/anchors.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
@@ -46,6 +47,11 @@ interface DragState {
   readonly startX: number;
   readonly startY: number;
   readonly emuPerPx: number;
+  /**
+   * True when the primary target is a line shape — enables endpoint
+   * anchor snapping during corner-handle resizes.
+   */
+  readonly primaryIsLine: boolean;
 }
 
 interface DragPreview {
@@ -57,6 +63,13 @@ interface DragPreview {
   readonly dh: number;
   /** Smart-guide lines to draw alongside the dragged shape(s). */
   readonly guides: ReadonlyArray<SnapGuide>;
+  /**
+   * Connection anchors near the active line endpoint while resizing a
+   * line shape. The renderer draws every candidate as a faded ring and
+   * `anchorSnap` (if set) as a solid filled dot.
+   */
+  readonly anchorCandidates: ReadonlyArray<ShapeAnchor>;
+  readonly anchorSnap: ShapeAnchor | null;
 }
 
 interface MarqueeState {
@@ -205,12 +218,14 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (targets.length === 0) return;
 
       const mode: DragMode = isResize ? { resize: handle as ResizeHandle } : "move";
+      const primaryShape = findShape(slide.shapes, targets[0].id);
       const next: DragState = {
         mode,
         targets,
         startX: e.clientX,
         startY: e.clientY,
         emuPerPx,
+        primaryIsLine: primaryShape ? isLineShape(primaryShape) : false,
       };
       setDrag(next);
       setPreview(computePreview(next, 0, 0, null));
@@ -228,17 +243,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (drag) {
         const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
         const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
-        // Snap threshold ≈ 6 CSS pixels at the current zoom — matches
-        // Figma's "feel" of a magnetic gutter while staying off the way
-        // when the user is intentionally placing a shape.
-        const snapCtx: SnapContext | null =
-          drag.mode === "move" && slide
-            ? {
-                slideSize,
-                others: collectOtherBoxes(slide.shapes, new Set(drag.targets.map((t) => t.id))),
-                thresholdEmu: Math.round(6 * drag.emuPerPx),
-              }
-            : null;
+        const snapCtx = makeSnapContext(drag, slide, slideSize);
         setPreview(computePreview(drag, dxEmu, dyEmu, snapCtx));
         return;
       }
@@ -286,14 +291,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (!drag) return;
       const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
       const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
-      const snapCtx: SnapContext | null =
-        drag.mode === "move" && slide
-          ? {
-              slideSize,
-              others: collectOtherBoxes(slide.shapes, new Set(drag.targets.map((t) => t.id))),
-              thresholdEmu: Math.round(6 * drag.emuPerPx),
-            }
-          : null;
+      const snapCtx = makeSnapContext(drag, slide, slideSize);
       const final = computePreview(drag, dxEmu, dyEmu, snapCtx);
       const noChange = final.dx === 0 && final.dy === 0 && final.dw === 0 && final.dh === 0;
       const targets = drag.targets;
@@ -428,6 +426,13 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       {drag && preview && preview.guides.length > 0 ? (
         <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
       ) : null}
+      {drag && preview && preview.anchorCandidates.length > 0 ? (
+        <AnchorOverlay
+          slideSize={slideSize}
+          candidates={preview.anchorCandidates}
+          snapped={preview.anchorSnap}
+        />
+      ) : null}
       <SelectionOverlaySvg
         slide={slide}
         slideSize={slideSize}
@@ -469,6 +474,23 @@ function collectOtherBoxes(
   return out;
 }
 
+/**
+ * Detect whether a shape is a `prstGeom` line (or arrow-style line).
+ * We peek at its `spPrTail` for the `<a:prstGeom prst="line">` marker
+ * since the model layer doesn't expose preset as a typed field —
+ * everything decorative lives in the opaque tail to keep byte-roundtrip
+ * cheap.
+ */
+function isLineShape(shape: Shape): boolean {
+  if (shape.kind !== "text") return false;
+  for (const c of shape.spPrTail) {
+    if (c.tag !== "a:prstGeom") continue;
+    const prst = c.attrs?.prst ?? c.rawAttrs?.["@_prst"];
+    if (prst === "line") return true;
+  }
+  return false;
+}
+
 function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
   for (const s of shapes) {
     if (s.id === id) return s;
@@ -502,6 +524,33 @@ interface SnapContext {
   readonly slideSize: SlideSize;
   readonly others: ReadonlyArray<{ id: string; box: BoundingBox }>;
   readonly thresholdEmu: number;
+  /**
+   * Threshold for connection-anchor snapping (used when resizing a
+   * line endpoint). Slightly larger than `thresholdEmu` because
+   * snapping a tiny line endpoint to a fixed dot benefits from a more
+   * forgiving target.
+   */
+  readonly anchorThresholdEmu: number;
+}
+
+function makeSnapContext(
+  drag: DragState,
+  slide: Slide | undefined,
+  slideSize: SlideSize
+): SnapContext | null {
+  if (!slide) return null;
+  // We always build a SnapContext when a slide is present; computePreview
+  // decides per-mode whether to consume the alignment guides vs the
+  // anchor candidates. Threshold ≈ 6 CSS pixels at the current zoom —
+  // matches Figma's "feel" of a magnetic gutter while staying off the
+  // way when the user is intentionally placing a shape. Anchors get a
+  // slightly larger 10 px threshold because they're discrete targets.
+  return {
+    slideSize,
+    others: collectOtherBoxes(slide.shapes, new Set(drag.targets.map((t) => t.id))),
+    thresholdEmu: Math.round(6 * drag.emuPerPx),
+    anchorThresholdEmu: Math.round(10 * drag.emuPerPx),
+  };
 }
 
 /**
@@ -551,28 +600,62 @@ function computePreview(
         cy: t.origin.cy,
       });
     }
-    return { boxes, dx: totalDx, dy: totalDy, dw: 0, dh: 0, guides };
+    return {
+      boxes,
+      dx: totalDx,
+      dy: totalDy,
+      dw: 0,
+      dh: 0,
+      guides,
+      anchorCandidates: [],
+      anchorSnap: null,
+    };
   }
-  // Resize: only the first target participates.
   const t = drag.targets[0];
   const o = t.origin;
   const h = drag.mode.resize;
+  // Lines have a single useful dimension (cx OR cy); the standard MIN
+  // would force a minimum cy on a horizontal line, which would visually
+  // "thicken" it. Use 0 as the floor for lines and let the user drag
+  // freely.
+  const minSize = drag.primaryIsLine ? 0 : MIN;
   let nx = o.x;
   let ny = o.y;
   let nw = o.cx;
   let nh = o.cy;
-  if (h.includes("e")) nw = Math.max(MIN, o.cx + dxEmu);
-  if (h.includes("s")) nh = Math.max(MIN, o.cy + dyEmu);
+  if (h.includes("e")) nw = Math.max(minSize, o.cx + dxEmu);
+  if (h.includes("s")) nh = Math.max(minSize, o.cy + dyEmu);
   if (h.includes("w")) {
-    const newCx = Math.max(MIN, o.cx - dxEmu);
+    const newCx = Math.max(minSize, o.cx - dxEmu);
     nx = o.x + (o.cx - newCx);
     nw = newCx;
   }
   if (h.includes("n")) {
-    const newCy = Math.max(MIN, o.cy - dyEmu);
+    const newCy = Math.max(minSize, o.cy - dyEmu);
     ny = o.y + (o.cy - newCy);
     nh = newCy;
   }
+
+  // Anchor snap: lines have endpoints at the NW (start) and SE (end)
+  // corners of their bounding box (the parser/serializer pair handles
+  // flipH/flipV transparently). When the user drags one of those
+  // corners we try to glue it onto a nearby shape's anchor.
+  let anchorCandidates: ReadonlyArray<ShapeAnchor> = [];
+  let anchorSnap: ShapeAnchor | null = null;
+  if (drag.primaryIsLine && snap && (h === "nw" || h === "se" || h === "ne" || h === "sw")) {
+    const endpoint = endpointForHandle(h, { x: nx, y: ny, cx: nw, cy: nh });
+    const r = snapToAnchor(endpoint, snap.others, snap.anchorThresholdEmu);
+    anchorCandidates = r.nearby;
+    anchorSnap = r.anchor;
+    if (r.anchor) {
+      const adj = applyAnchorDelta(h, { x: nx, y: ny, cx: nw, cy: nh }, r.dx, r.dy);
+      nx = adj.x;
+      ny = adj.y;
+      nw = adj.cx;
+      nh = adj.cy;
+    }
+  }
+
   boxes.set(t.id, { x: nx, y: ny, cx: nw, cy: nh });
   return {
     boxes,
@@ -581,7 +664,60 @@ function computePreview(
     dw: nw - o.cx,
     dh: nh - o.cy,
     guides: [],
+    anchorCandidates,
+    anchorSnap,
   };
+}
+
+function endpointForHandle(
+  h: ResizeHandle,
+  box: BoundingBox
+): { x: number; y: number } {
+  switch (h) {
+    case "nw":
+      return { x: box.x, y: box.y };
+    case "ne":
+      return { x: box.x + box.cx, y: box.y };
+    case "sw":
+      return { x: box.x, y: box.y + box.cy };
+    case "se":
+      return { x: box.x + box.cx, y: box.y + box.cy };
+    case "n":
+    case "s":
+    case "e":
+    case "w":
+      return { x: box.x + box.cx / 2, y: box.y + box.cy / 2 };
+  }
+}
+
+function applyAnchorDelta(
+  h: ResizeHandle,
+  box: BoundingBox,
+  dx: number,
+  dy: number
+): BoundingBox {
+  // Translating a corner means changing both that corner's coordinate
+  // AND the bounding box dimension on that axis (the opposite corner
+  // stays anchored).
+  let { x, y, cx, cy } = box;
+  if (h === "nw") {
+    x += dx;
+    y += dy;
+    cx -= dx;
+    cy -= dy;
+  } else if (h === "ne") {
+    y += dy;
+    cx += dx;
+    cy -= dy;
+  } else if (h === "sw") {
+    x += dx;
+    cx -= dx;
+    cy += dy;
+  } else if (h === "se") {
+    cx += dx;
+    cy += dy;
+  }
+  return { x, y, cx, cy };
 }
 
 function unionOf(boxes: ReadonlyArray<BoundingBox>): BoundingBox {
@@ -871,6 +1007,48 @@ function SmartGuidesOverlay({ slideSize, guides }: SmartGuidesOverlayProps): Rea
             stroke={colour}
             strokeWidth={1}
             strokeDasharray="3 2"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+interface AnchorOverlayProps {
+  readonly slideSize: SlideSize;
+  readonly candidates: ReadonlyArray<ShapeAnchor>;
+  readonly snapped: ShapeAnchor | null;
+}
+
+/**
+ * Renders connection-anchor dots while a line endpoint is being
+ * dragged near other shapes. Candidate anchors appear as small hollow
+ * rings; the one we'd snap to (if the user releases now) renders as a
+ * solid filled dot. Sky-blue matches our slide-snap guides for visual
+ * consistency.
+ */
+function AnchorOverlay({ slideSize, candidates, snapped }: AnchorOverlayProps): React.ReactElement {
+  const r = 80_000; // ≈ 8.4 px @ 96 DPI; readable but not invasive
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      {candidates.map((a, i) => {
+        const isSnapped = snapped !== null && a.shapeId === snapped.shapeId && a.side === snapped.side;
+        return (
+          <circle
+            key={`${a.shapeId}-${a.side}-${i}`}
+            cx={px(a.x)}
+            cy={px(a.y)}
+            r={px(r)}
+            fill={isSnapped ? "#0ea5e9" : "white"}
+            stroke="#0ea5e9"
+            strokeWidth={1.5}
             vectorEffect="non-scaling-stroke"
           />
         );
