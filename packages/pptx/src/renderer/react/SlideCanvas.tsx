@@ -39,9 +39,10 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const themeDefault = snap.root.themeDefault;
+  const charts = snap.root.charts;
   const ctx: SvgRenderCtx = React.useMemo(
-    () => ({ slideSize, mediaUrls: props.mediaUrls, theme: themeDefault }),
-    [slideSize, props.mediaUrls, themeDefault]
+    () => ({ slideSize, mediaUrls: props.mediaUrls, theme: themeDefault, charts }),
+    [slideSize, props.mediaUrls, themeDefault, charts]
   );
 
   const svgInner = React.useMemo(() => {

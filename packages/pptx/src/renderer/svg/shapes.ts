@@ -277,24 +277,255 @@ function cellToFlatText(paragraphs: ReadonlyArray<TextParagraph>): string {
 }
 
 /**
- * Render a `ChartShape` as a placeholder rectangle with its title and
- * type. F3.4 will replace this with actual bar/line/pie/area glyphs;
- * for F3.1 we just need the renderer to not crash and to surface the
- * fact that the slide contains a typed chart.
+ * Render a `ChartShape` as native SVG. Bar / line / pie / area chart
+ * types get a minimal native rendering; unknown types fall back to a
+ * labeled placeholder rectangle. Visual fidelity is intentionally
+ * simple — the goal is "you can tell at a glance which kind of chart
+ * this is and what the magnitude of each series looks like", not
+ * pixel-perfect parity with PowerPoint's renderer.
  */
 function chartToSvg(shape: ChartShape, ctx: SvgRenderCtx): string {
   const box = shapeBoundingBox(shape);
   if (!box) return groupOpen("chart", shape.id) + groupClose();
   const part = ctx.charts?.get(shape.chartPartPath);
-  const label = part
-    ? `${part.title ?? "chart"} · ${part.chartType}`
-    : "chart";
+  if (!part) return chartPlaceholder(shape, box, "chart");
+
+  const palette = chartPalette(ctx.theme ?? DEFAULT_THEME);
+  switch (part.chartType) {
+    case "bar":
+      return chartBarSvg(shape, box, part, palette);
+    case "line":
+      return chartLineSvg(shape, box, part, palette);
+    case "area":
+      return chartAreaSvg(shape, box, part, palette);
+    case "pie":
+      return chartPieSvg(shape, box, part, palette);
+    case "unsupported":
+      return chartPlaceholder(shape, box, `${part.title ?? "chart"} · unsupported`);
+  }
+}
+
+interface ChartBox {
+  readonly x: number;
+  readonly y: number;
+  readonly cx: number;
+  readonly cy: number;
+}
+
+function chartPlaceholder(shape: ChartShape, box: ChartBox, label: string): string {
   return [
     groupOpen("chart", shape.id),
     `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="#f9fafb" stroke="#9CA3AF"/>`,
     `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${estimateLabelSizeEmu(box.cx, box.cy)}" fill="#374151">${escXml(label)}</text>`,
     groupClose(),
   ].join("");
+}
+
+function chartPalette(theme: ThemeColorScheme): ReadonlyArray<string> {
+  return [
+    `#${theme.accent1}`,
+    `#${theme.accent2}`,
+    `#${theme.accent3}`,
+    `#${theme.accent4}`,
+    `#${theme.accent5}`,
+    `#${theme.accent6}`,
+  ];
+}
+
+interface PlotArea {
+  readonly inner: ChartBox;
+  readonly titleHeight: number;
+  readonly titleY: number;
+  readonly valueMax: number;
+  readonly valueMin: number;
+}
+
+function plotAreaFor(box: ChartBox, part: ChartPart): PlotArea {
+  const padX = box.cx * 0.06;
+  const padY = box.cy * 0.06;
+  const titleHeight = part.title ? box.cy * 0.12 : 0;
+  const inner: ChartBox = {
+    x: box.x + padX,
+    y: box.y + padY + titleHeight,
+    cx: box.cx - 2 * padX,
+    cy: box.cy - 2 * padY - titleHeight,
+  };
+  let max = 0;
+  let min = 0;
+  for (const s of part.series) {
+    for (const v of s.values) {
+      if (v > max) max = v;
+      if (v < min) min = v;
+    }
+  }
+  if (max === min) max = min + 1;
+  return { inner, titleHeight, titleY: box.y + padY, valueMax: max, valueMin: min };
+}
+
+function chartTitleSvg(box: ChartBox, part: ChartPart): string {
+  if (!part.title) return "";
+  const fs = estimateLabelSizeEmu(box.cx, box.cy);
+  return `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy * 0.06 + fs}" text-anchor="middle" font-family="sans-serif" font-size="${fs}" fill="#111827">${escXml(part.title)}</text>`;
+}
+
+function chartBarSvg(
+  shape: ChartShape,
+  box: ChartBox,
+  part: ChartPart,
+  palette: ReadonlyArray<string>
+): string {
+  const pa = plotAreaFor(box, part);
+  const out: string[] = [groupOpen("chart", shape.id)];
+  out.push(
+    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="white" stroke="#E5E7EB"/>`
+  );
+  out.push(chartTitleSvg(box, part));
+  const groupCount = Math.max(1, part.categories.length || part.series[0]?.values.length || 1);
+  const seriesCount = Math.max(1, part.series.length);
+  const groupGap = pa.inner.cx / groupCount;
+  const barGap = groupGap / (seriesCount + 1);
+  const barWidth = barGap * 0.8;
+  const range = pa.valueMax - pa.valueMin;
+  const baselineY = pa.inner.y + pa.inner.cy;
+  for (let g = 0; g < groupCount; g++) {
+    const groupX = pa.inner.x + g * groupGap;
+    for (let si = 0; si < seriesCount; si++) {
+      const v = part.series[si]?.values[g] ?? 0;
+      const h = (Math.max(0, v) / range) * pa.inner.cy;
+      const x = groupX + barGap * (si + 0.5) - barWidth / 2;
+      const y = baselineY - h;
+      const fill = palette[si % palette.length];
+      out.push(
+        `<rect x="${x}" y="${y}" width="${barWidth}" height="${h}" fill="${escXml(fill)}"/>`
+      );
+    }
+  }
+  out.push(
+    `<line x1="${pa.inner.x}" y1="${baselineY}" x2="${pa.inner.x + pa.inner.cx}" y2="${baselineY}" stroke="#9CA3AF"/>`
+  );
+  out.push(groupClose());
+  return out.join("");
+}
+
+function chartLineSvg(
+  shape: ChartShape,
+  box: ChartBox,
+  part: ChartPart,
+  palette: ReadonlyArray<string>
+): string {
+  return chartLineOrAreaSvg(shape, box, part, palette, false);
+}
+
+function chartAreaSvg(
+  shape: ChartShape,
+  box: ChartBox,
+  part: ChartPart,
+  palette: ReadonlyArray<string>
+): string {
+  return chartLineOrAreaSvg(shape, box, part, palette, true);
+}
+
+function chartLineOrAreaSvg(
+  shape: ChartShape,
+  box: ChartBox,
+  part: ChartPart,
+  palette: ReadonlyArray<string>,
+  filled: boolean
+): string {
+  const pa = plotAreaFor(box, part);
+  const out: string[] = [groupOpen("chart", shape.id)];
+  out.push(
+    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="white" stroke="#E5E7EB"/>`
+  );
+  out.push(chartTitleSvg(box, part));
+  const range = pa.valueMax - pa.valueMin;
+  const baselineY = pa.inner.y + pa.inner.cy;
+  for (let si = 0; si < part.series.length; si++) {
+    const series = part.series[si]!;
+    const n = series.values.length;
+    if (n === 0) continue;
+    const stepX = n === 1 ? 0 : pa.inner.cx / (n - 1);
+    const points: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const v = series.values[i] ?? 0;
+      const x = pa.inner.x + (n === 1 ? pa.inner.cx / 2 : i * stepX);
+      const y = baselineY - ((Math.max(0, v) - pa.valueMin) / range) * pa.inner.cy;
+      points.push(`${x},${y}`);
+    }
+    const stroke = palette[si % palette.length];
+    if (filled) {
+      const polyPoints = [
+        ...points,
+        `${pa.inner.x + pa.inner.cx},${baselineY}`,
+        `${pa.inner.x},${baselineY}`,
+      ].join(" ");
+      out.push(
+        `<polygon points="${polyPoints}" fill="${escXml(stroke)}" fill-opacity="0.35" stroke="${escXml(stroke)}" stroke-width="${Math.max(2, pa.inner.cy / 200)}"/>`
+      );
+    } else {
+      out.push(
+        `<polyline points="${points.join(" ")}" fill="none" stroke="${escXml(stroke)}" stroke-width="${Math.max(2, pa.inner.cy / 150)}"/>`
+      );
+    }
+  }
+  out.push(
+    `<line x1="${pa.inner.x}" y1="${baselineY}" x2="${pa.inner.x + pa.inner.cx}" y2="${baselineY}" stroke="#9CA3AF"/>`
+  );
+  out.push(groupClose());
+  return out.join("");
+}
+
+function chartPieSvg(
+  shape: ChartShape,
+  box: ChartBox,
+  part: ChartPart,
+  palette: ReadonlyArray<string>
+): string {
+  const out: string[] = [groupOpen("chart", shape.id)];
+  out.push(
+    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="white" stroke="#E5E7EB"/>`
+  );
+  out.push(chartTitleSvg(box, part));
+  // Pie uses the first series only.
+  const series = part.series[0];
+  const titleHeight = part.title ? box.cy * 0.12 : 0;
+  const padX = box.cx * 0.06;
+  const padY = box.cy * 0.06;
+  const innerCx = box.cx - 2 * padX;
+  const innerCy = box.cy - 2 * padY - titleHeight;
+  const r = Math.min(innerCx, innerCy) / 2;
+  const cxc = box.x + padX + innerCx / 2;
+  const cyc = box.y + padY + titleHeight + innerCy / 2;
+  if (!series || series.values.length === 0) {
+    out.push(
+      `<circle cx="${cxc}" cy="${cyc}" r="${r}" fill="#F3F4F6" stroke="#9CA3AF"/>`
+    );
+    out.push(groupClose());
+    return out.join("");
+  }
+  const total = series.values.reduce((a, b) => a + Math.max(0, b), 0) || 1;
+  let startAngle = -Math.PI / 2;
+  for (let i = 0; i < series.values.length; i++) {
+    const v = Math.max(0, series.values[i] ?? 0);
+    const sweep = (v / total) * Math.PI * 2;
+    const endAngle = startAngle + sweep;
+    const x1 = cxc + r * Math.cos(startAngle);
+    const y1 = cyc + r * Math.sin(startAngle);
+    const x2 = cxc + r * Math.cos(endAngle);
+    const y2 = cyc + r * Math.sin(endAngle);
+    const largeArc = sweep > Math.PI ? 1 : 0;
+    const fill = palette[i % palette.length];
+    if (sweep >= Math.PI * 2 - 1e-9) {
+      out.push(`<circle cx="${cxc}" cy="${cyc}" r="${r}" fill="${escXml(fill)}"/>`);
+    } else {
+      out.push(
+        `<path d="M ${cxc} ${cyc} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z" fill="${escXml(fill)}"/>`
+      );
+    }
+    startAngle = endAngle;
+  }
+  out.push(groupClose());
+  return out.join("");
 }
 
 function opaqueShapeToSvg(shape: OpaqueShape): string {

@@ -1,5 +1,10 @@
 import * as React from "react";
-import type { Slide, SlideSize, ThemeColorScheme } from "../../model/types.js";
+import type {
+  ChartPart,
+  Slide,
+  SlideSize,
+  ThemeColorScheme,
+} from "../../model/types.js";
 import { SlideThumbnail } from "./SlideThumbnail.js";
 
 export interface SlidesSidebarProps {
@@ -7,13 +12,14 @@ export interface SlidesSidebarProps {
   readonly slideSize: SlideSize;
   readonly mediaUrls?: ReadonlyMap<string, string>;
   readonly theme?: ThemeColorScheme;
+  readonly charts?: ReadonlyMap<string, ChartPart>;
   readonly activeIndex: number;
   readonly onSelect: (index: number) => void;
   readonly thumbnailWidth?: number;
 }
 
 export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
-  const { slides, slideSize, mediaUrls, theme, activeIndex, onSelect, thumbnailWidth = 180 } = props;
+  const { slides, slideSize, mediaUrls, theme, charts, activeIndex, onSelect, thumbnailWidth = 180 } = props;
   return (
     <ul
       className="officeai-pptx-sidebar"
@@ -38,6 +44,7 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
             slideSize={slideSize}
             mediaUrls={mediaUrls}
             theme={theme}
+            charts={charts}
             width={thumbnailWidth}
             active={i === activeIndex}
             onClick={() => onSelect(i)}

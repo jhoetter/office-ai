@@ -17,6 +17,11 @@ import {
   tableDeleteRowHandler,
   tableSetCellTextHandler,
 } from "./table-commands.js";
+import {
+  setChartDataHandler,
+  setChartTitleHandler,
+  setChartTypeHandler,
+} from "./chart-commands.js";
 
 export * from "./payloads.js";
 export { addSlideHandler } from "./add-slide.js";
@@ -36,6 +41,11 @@ export {
   tableDeleteRowHandler,
   tableSetCellTextHandler,
 } from "./table-commands.js";
+export {
+  setChartDataHandler,
+  setChartTitleHandler,
+  setChartTypeHandler,
+} from "./chart-commands.js";
 
 export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot>> = [
   addSlideHandler,
@@ -53,6 +63,9 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   tableDeleteRowHandler,
   tableAddColumnHandler,
   tableDeleteColumnHandler,
+  setChartTitleHandler,
+  setChartDataHandler,
+  setChartTypeHandler,
 ] as ReadonlyArray<CommandHandler<unknown, PptxSnapshot>>;
 
 export const pptxHandlersById: ReadonlyMap<string, CommandHandler<unknown, PptxSnapshot>> =

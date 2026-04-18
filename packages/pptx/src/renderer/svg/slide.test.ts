@@ -53,6 +53,20 @@ describe("slideToSvgString", () => {
     expect(svg).toContain(">image<");
   });
 
+  it("renders a typed bar chart with native SVG bars", async () => {
+    const snap = await load("09-with-chart.pptx");
+    const slide = snap.root.slides[0];
+    const svg = slideToSvgString(slide, {
+      slideSize: snap.root.slideSize,
+      charts: snap.root.charts,
+      theme: snap.root.themeDefault,
+    });
+    expect(svg).toContain('class="shape chart"');
+    // bar / line / area should at least render rect or polyline glyphs.
+    const hasBars = svg.includes("<rect") || svg.includes("<polyline") || svg.includes("<polygon");
+    expect(hasBars).toBe(true);
+  });
+
   it("resolves <a:schemeClr val='accent1'> via the supplied theme", () => {
     const theme = {
       tx1: "111111",

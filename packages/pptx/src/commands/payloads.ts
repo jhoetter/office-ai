@@ -125,6 +125,31 @@ export interface TableDeleteColumnPayload {
   readonly column: number;
 }
 
+// ─── F3 (Charts) payloads ─────────────────────────────────────────────────
+
+export interface SetChartTitlePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  /** New title; pass `null` to remove the title. */
+  readonly title: string | null;
+}
+
+export interface SetChartDataPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly categories: ReadonlyArray<string>;
+  readonly series: ReadonlyArray<{
+    readonly name?: string;
+    readonly values: ReadonlyArray<number>;
+  }>;
+}
+
+export interface SetChartTypePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly chartType: "bar" | "line" | "pie" | "area";
+}
+
 // ─── Type tags ────────────────────────────────────────────────────────────
 
 export const PPTX_COMMAND_TYPES = {
@@ -143,6 +168,9 @@ export const PPTX_COMMAND_TYPES = {
   tableDeleteRow: "pptx:table-delete-row",
   tableAddColumn: "pptx:table-add-column",
   tableDeleteColumn: "pptx:table-delete-column",
+  setChartTitle: "pptx:set-chart-title",
+  setChartData: "pptx:set-chart-data",
+  setChartType: "pptx:set-chart-type",
 } as const;
 
 export type PptxCommandType = (typeof PPTX_COMMAND_TYPES)[keyof typeof PPTX_COMMAND_TYPES];
