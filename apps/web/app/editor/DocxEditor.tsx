@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
-import { DocxAgent, mountDocxEditor, docxSchema } from "@officeai/docx";
-import type { MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
+import { DocxAgent, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
+import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
 import type { EditorView } from "prosemirror-view";
 import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
 import {
   activeMarkAttr,
   activeMarks as computeActiveMarks,
+  activeRunAttr,
   commentParagraphIndex,
   commentThreads,
   currentParagraphAlignment,
@@ -21,7 +22,7 @@ import {
   paragraphStyleOptions,
   pmSelectionToRange,
 } from "@/lib/format-helpers";
-import { Toolbar, type AlignmentValue } from "./Toolbar";
+import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
@@ -441,6 +442,34 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     [pushToast]
   );
 
+  const setParagraphSpacing = useCallback(
+    async (patch: {
+      line?: number | null;
+      lineRule?: "auto" | "exact" | "atLeast" | null;
+      before?: number | null;
+      after?: number | null;
+    }) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-spacing",
+          payload: { paragraphId, ...patch },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
   const toggleList = useCallback(
     async (kind: "bullet" | "ordered") => {
       const agent = agentRef.current;
@@ -669,11 +698,26 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const activeMarks = view ? computeActiveMarks(view.state) : new Set<string>();
   const currentParaIndex = view ? currentParagraphIndex(view.state) : 0;
   const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
-  const activeFontSize = view ? activeMarkAttr<number>(view.state, "font_size", "halfPoints") : undefined;
-  const activeFontFamily = view ? activeMarkAttr<string>(view.state, "font_family", "family") : undefined;
-  const activeColor = view ? activeMarkAttr<string>(view.state, "color", "rgb") : undefined;
-  const activeHighlight = view ? activeMarkAttr<string>(view.state, "highlight", "name") : undefined;
+  // P3.1 / W3 — toolbar dropdowns fall back through the typed style
+  // cascade when no direct PM mark carries the attribute. Without this,
+  // selecting a Heading1 paragraph showed "Size" / "Font" placeholders
+  // instead of the inherited 16pt / Calibri.
+  const activeFontSize = view
+    ? activeRunAttr<number>(view.state, "font_size", "halfPoints", snapshot, (rPr) => rPr.fontSize)
+    : undefined;
+  const activeFontFamily = view
+    ? activeRunAttr<string>(view.state, "font_family", "family", snapshot, (rPr) => rPr.fontFamily)
+    : undefined;
+  const activeColor = view
+    ? activeRunAttr<string>(view.state, "color", "rgb", snapshot, (rPr) => rPr.color)
+    : undefined;
+  const activeHighlight = view
+    ? activeRunAttr<string>(view.state, "highlight", "name", snapshot, (rPr) => rPr.highlight)
+    : undefined;
   const activeAlignment = view ? currentParagraphAlignment(view.state) : null;
+  const activeParagraphIndex = view ? currentParagraphIndex(view.state) : -1;
+  const activeSpacing = computeActiveSpacing(snapshot, activeParagraphIndex);
+  const activeIndentLeft = computeActiveIndentLeft(snapshot, activeParagraphIndex);
   const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   void commentParagraphIndex;
 
@@ -715,6 +759,8 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           activeColor={activeColor}
           activeHighlight={activeHighlight}
           activeAlignment={activeAlignment}
+          activeSpacing={activeSpacing}
+          activeIndentLeft={activeIndentLeft}
           styleOptions={styleOptions}
           onOpenFile={() => fileInputRef.current?.click()}
           onInsertImage={insertImageFromFile}
@@ -724,6 +770,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           onToggleMark={toggleMark}
           onSetAlignment={(a) => void setAlignment(a)}
           onAdjustIndent={(d) => void adjustIndent(d)}
+          onSetParagraphSpacing={(patch) => void setParagraphSpacing(patch)}
           onToggleList={(k) => void toggleList(k)}
           onAddComment={openCommentComposer}
           onUnsupported={surfaceUnsupported}
@@ -874,4 +921,38 @@ function pickImageFile(files: FileList | null | undefined): File | null {
     if (mime.startsWith("image/")) return f;
   }
   return null;
+}
+
+/**
+ * P3.1 / W4 — derive the effective spacing for the paragraph at the
+ * caret. Reads the resolved cascade so an inherited "Heading1 → 1.5
+ * line" surfaces in the toolbar even when the paragraph has no direct
+ * `<w:spacing>`.
+ */
+function computeActiveSpacing(
+  snapshot: DocxSnapshot | null,
+  paragraphIndex: number
+): ResolvedSpacingDisplay | null {
+  if (!snapshot || paragraphIndex < 0) return null;
+  const block = snapshot.root.body[paragraphIndex];
+  if (!block || block.kind !== "paragraph") return null;
+  const resolved = resolveEffectivePpr(snapshot, paragraphIndex);
+  const s = resolved.spacing;
+  if (!s) return {};
+  const out: ResolvedSpacingDisplay = {};
+  if (s.line !== undefined) (out as { line: number }).line = s.line;
+  if (s.lineRule !== undefined) {
+    (out as { lineRule: ResolvedSpacingDisplay["lineRule"] }).lineRule = s.lineRule;
+  }
+  if (s.before !== undefined) (out as { before: number }).before = s.before;
+  if (s.after !== undefined) (out as { after: number }).after = s.after;
+  return out;
+}
+
+function computeActiveIndentLeft(snapshot: DocxSnapshot | null, paragraphIndex: number): number | null {
+  if (!snapshot || paragraphIndex < 0) return null;
+  const block = snapshot.root.body[paragraphIndex];
+  if (!block || block.kind !== "paragraph") return null;
+  const resolved = resolveEffectivePpr(snapshot, paragraphIndex);
+  return resolved.indentation?.left ?? 0;
 }

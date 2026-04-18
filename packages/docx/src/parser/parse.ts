@@ -26,6 +26,7 @@ import { parseDrawing } from "./images.js";
 import { parseMediaParts } from "./media.js";
 import { parseNumberingPart } from "./numbering.js";
 import { parseRelationshipsParts } from "./relationships.js";
+import { parseStylesPart } from "./styles.js";
 import { parseTable as parseTableTyped } from "./tables.js";
 import {
   attrOf,
@@ -136,6 +137,7 @@ export async function parseDocx(
   const media = parseMediaParts(container);
   const relationships = parseRelationshipsParts(container);
   const numbering = parseNumberingPart(container);
+  const styles = parseStylesPart(container);
 
   const root: DocxDocument = {
     id: mintNodeId(),
@@ -145,6 +147,7 @@ export async function parseDocx(
     media,
     relationships,
     ...(numbering ? { numbering } : {}),
+    ...(styles ? { styles } : {}),
     documentRootAttrs,
   };
 
@@ -163,6 +166,7 @@ export async function parseDocx(
     media: new Set<string>(),
     relationships: new Set<string>(),
     numbering: false,
+    styles: false,
   };
 
   return {
@@ -319,7 +323,13 @@ function parseParagraph(entry: Record<string, unknown>, mintNodeId: IdMinter): P
   };
 }
 
-function parseParagraphProperties(entry: Record<string, unknown>): ParagraphProperties {
+/**
+ * Parse a `<w:pPr>` entry into typed paragraph properties. Exported
+ * (alongside `parseRunProperties`) so the styles parser can reuse the
+ * same OOXML → typed shape — the cascade resolver expects identical
+ * shapes for `docDefaults.pPrDefault`, `style.pPr`, and `paragraph.pPr`.
+ */
+export function parseParagraphProperties(entry: Record<string, unknown>): ParagraphProperties {
   const children = (entry["w:pPr"] as unknown[] | undefined) ?? [];
   const props: {
     -readonly [K in keyof ParagraphProperties]: ParagraphProperties[K];
@@ -436,7 +446,8 @@ function parseRun(entry: Record<string, unknown>, mintNodeId: IdMinter): Run {
   return { kind: "run", id: mintNodeId(), properties, children: runChildren };
 }
 
-function parseRunProperties(entry: Record<string, unknown>): RunProperties {
+/** See `parseParagraphProperties` for why this is exported. */
+export function parseRunProperties(entry: Record<string, unknown>): RunProperties {
   const children = (entry["w:rPr"] as unknown[] | undefined) ?? [];
   const props: { -readonly [K in keyof RunProperties]: RunProperties[K] } = {};
   const opaqueProps: ReturnType<typeof captureOpaque>[] = [];

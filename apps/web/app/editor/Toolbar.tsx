@@ -40,6 +40,18 @@ export interface ToolbarStyleOption {
 
 export type AlignmentValue = "left" | "center" | "right" | "justify";
 
+/**
+ * Effective spacing values surfaced to the toolbar for display. All
+ * fields are optional because the cascade may not resolve them (e.g. a
+ * paragraph in a synthetic doc with no styles part may have no `line`).
+ */
+export interface ResolvedSpacingDisplay {
+  readonly line?: number;
+  readonly lineRule?: "auto" | "exact" | "atLeast";
+  readonly before?: number;
+  readonly after?: number;
+}
+
 export interface ToolbarProps {
   agentReady: boolean;
   docInfo: { paragraphs: number; revision: number; commentThreads: number } | null;
@@ -56,6 +68,19 @@ export interface ToolbarProps {
   activeHighlight: MaybeMixed<string>;
   /** Alignment of the paragraph containing the caret, or `null`. */
   activeAlignment: AlignmentValue | null;
+  /**
+   * Effective `<w:spacing>` for the paragraph containing the caret, after
+   * the style cascade has been resolved. Drives the line-spacing dropdown
+   * and the before/after numeric readouts. `null` when no paragraph is
+   * focused.
+   */
+  activeSpacing: ResolvedSpacingDisplay | null;
+  /**
+   * Effective left indent in twips for the paragraph containing the
+   * caret. `null` when no paragraph is focused. Pure display — the
+   * existing ±360 buttons mutate via `onAdjustIndent`.
+   */
+  activeIndentLeft: number | null;
   /** Style picker contents derived from the loaded document. */
   styleOptions: ReadonlyArray<ToolbarStyleOption>;
   onOpenFile: () => void;
@@ -66,6 +91,18 @@ export interface ToolbarProps {
   onToggleMark: (mark: "bold" | "italic" | "underline" | "strike") => void;
   onSetAlignment: (alignment: AlignmentValue) => void;
   onAdjustIndent: (deltaTwips: number) => void;
+  /**
+   * Apply a `docx:set-paragraph-spacing` to the paragraph the caret is in.
+   * Each field follows the command's `null = clear` / `undefined = leave`
+   * semantics. The toolbar always sends `lineRule` alongside `line` to
+   * keep the OOXML pair consistent.
+   */
+  onSetParagraphSpacing: (patch: {
+    line?: number | null;
+    lineRule?: "auto" | "exact" | "atLeast" | null;
+    before?: number | null;
+    after?: number | null;
+  }) => void;
   onToggleList: (kind: "bullet" | "ordered") => void;
   onAddComment: () => void;
   /**
@@ -223,6 +260,19 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <ToolbarBtn label="Increase indent" onClick={() => props.onAdjustIndent(360)}>
         <Indent size={14} />
       </ToolbarBtn>
+      {props.activeIndentLeft !== null && props.activeIndentLeft > 0 && (
+        <span className="px-1 text-[11px] tabular-nums text-secondary" title="Left indent">
+          {twipsToInches(props.activeIndentLeft)}"
+        </span>
+      )}
+
+      <Divider />
+
+      <SpacingMenu
+        spacing={props.activeSpacing}
+        onApply={props.onSetParagraphSpacing}
+        disabled={!props.agentReady || props.activeSpacing === null}
+      />
 
       <Divider />
 
@@ -479,4 +529,152 @@ function ColorPicker(props: {
       )}
     </div>
   );
+}
+
+/**
+ * Spacing dropdown — line spacing (single / 1.15 / 1.5 / double) and
+ * per-paragraph before/after spacing in points. Reads the resolved
+ * effective spacing for display so a Heading style's inherited "1.5
+ * line" surfaces here even when the paragraph has no direct
+ * `<w:spacing>`.
+ *
+ * Word stores `<w:spacing w:line>` in twentieths of a line for
+ * `lineRule="auto"` (so 240 = 1.0, 360 = 1.5) and in twips for
+ * `exact` / `atLeast`. We mutate the `auto` family from the picker
+ * because that covers the >95% case; the existing exact/atLeast
+ * value is shown but the picker resets `lineRule` to `auto` on
+ * change. Before/after stay as twips for OOXML parity (1pt = 20
+ * twips); inputs accept points and convert.
+ */
+function SpacingMenu(props: {
+  spacing: ResolvedSpacingDisplay | null;
+  onApply: (patch: {
+    line?: number | null;
+    lineRule?: "auto" | "exact" | "atLeast" | null;
+    before?: number | null;
+    after?: number | null;
+  }) => void;
+  disabled?: boolean;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const lineDisplay = formatLineSpacing(props.spacing);
+  const beforePts = toPoints(props.spacing?.before);
+  const afterPts = toPoints(props.spacing?.after);
+
+  return (
+    <div ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        title="Line and paragraph spacing"
+        aria-label="Line and paragraph spacing"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={props.disabled}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-secondary hover:bg-hover hover:text-foreground disabled:opacity-50"
+      >
+        <span className="tabular-nums">{lineDisplay}</span>
+        <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-divider bg-surface p-2 text-xs shadow-md"
+        >
+          <div className="mb-2 font-medium text-foreground">Line spacing</div>
+          {LINE_SPACING_PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                props.onApply({ line: preset.line, lineRule: "auto" });
+                setOpen(false);
+              }}
+              className={cn(
+                "flex w-full items-center justify-between rounded px-2 py-1 text-left hover:bg-hover",
+                isActiveLine(props.spacing, preset.line) && "bg-accent-light text-foreground"
+              )}
+            >
+              <span>{preset.label}</span>
+              <span className="text-secondary tabular-nums">{(preset.line / 240).toFixed(2)}×</span>
+            </button>
+          ))}
+          <div className="mt-3 border-t border-divider pt-2">
+            <div className="mb-1 font-medium text-foreground">Paragraph spacing (pt)</div>
+            <label className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-secondary">Before</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                defaultValue={beforePts ?? ""}
+                onBlur={(e) => {
+                  const v = e.target.value === "" ? null : Number(e.target.value);
+                  if (v === null) props.onApply({ before: null });
+                  else if (Number.isFinite(v) && v >= 0) props.onApply({ before: Math.round(v * 20) });
+                }}
+                className="h-6 w-16 rounded border border-divider bg-surface px-1 text-right tabular-nums focus:outline-none"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2">
+              <span className="text-secondary">After</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                defaultValue={afterPts ?? ""}
+                onBlur={(e) => {
+                  const v = e.target.value === "" ? null : Number(e.target.value);
+                  if (v === null) props.onApply({ after: null });
+                  else if (Number.isFinite(v) && v >= 0) props.onApply({ after: Math.round(v * 20) });
+                }}
+                className="h-6 w-16 rounded border border-divider bg-surface px-1 text-right tabular-nums focus:outline-none"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LINE_SPACING_PRESETS: ReadonlyArray<{ label: string; line: number }> = [
+  { label: "Single", line: 240 },
+  { label: "1.15", line: 276 },
+  { label: "1.5", line: 360 },
+  { label: "Double", line: 480 },
+];
+
+function formatLineSpacing(s: ResolvedSpacingDisplay | null): string {
+  if (!s || s.line === undefined) return "Spacing";
+  if (s.lineRule && s.lineRule !== "auto") return `${(s.line / 20).toFixed(1)}pt`;
+  return `${(s.line / 240).toFixed(2)}×`;
+}
+
+function isActiveLine(s: ResolvedSpacingDisplay | null, line: number): boolean {
+  if (!s) return false;
+  if (s.lineRule && s.lineRule !== "auto") return false;
+  return s.line === line;
+}
+
+function toPoints(twips: number | undefined): number | undefined {
+  if (twips === undefined) return undefined;
+  return Math.round(twips / 20);
+}
+
+function twipsToInches(twips: number): string {
+  return (twips / 1440).toFixed(2);
 }

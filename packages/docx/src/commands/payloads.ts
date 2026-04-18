@@ -26,6 +26,7 @@ export const DOCX_COMMAND_TYPES = [
   "docx:remove-hyperlink",
   "docx:set-paragraph-alignment",
   "docx:set-paragraph-indent",
+  "docx:set-paragraph-spacing",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];

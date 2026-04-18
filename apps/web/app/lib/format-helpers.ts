@@ -1,5 +1,14 @@
 import type { EditorState } from "prosemirror-state";
-import type { DocxComment, DocxSnapshot, RevisionWrapper, InlineNode, Paragraph, Run } from "@officeai/docx";
+import {
+  resolveEffectiveRpr,
+  type DocxComment,
+  type DocxSnapshot,
+  type RevisionWrapper,
+  type InlineNode,
+  type Paragraph,
+  type Run,
+  type RunProperties,
+} from "@officeai/docx";
 
 /**
  * Pure helpers used by the editor toolbar / sidebars.
@@ -135,6 +144,69 @@ export function activeMarkAttr<T = unknown>(
   if (mixed) return MIXED;
   if (!sawMark) return undefined;
   return seen;
+}
+
+/**
+ * P3.1 / W3 — selection-aware run attribute lookup that falls back to
+ * the typed style cascade when no direct PM mark carries the attribute.
+ *
+ * Word inherits run formatting from a four-level cascade
+ * (`docDefaults.rPrDefault` → `paragraph.styleId` chain → paragraph's
+ * own `pPr.rPr` → run's `rPr`). The PM mark check above only sees the
+ * leaf; the rest lives in `word/styles.xml`. When a paragraph carries
+ * `styleId="Heading1"` and the run inside has empty `<w:rPr/>`, the
+ * resolver returns the inherited `Calibri 16pt` and the toolbar shows
+ * `16` / `Calibri` instead of the placeholder.
+ *
+ * Behaviour:
+ *   - Direct PM mark found → identical to `activeMarkAttr`.
+ *   - No direct mark → resolve effective rPr per paragraph in the
+ *     selection, project to `inheritedSelector(rPr)`, return MIXED if
+ *     paragraphs disagree.
+ *   - Empty selection collapses to "the paragraph the caret is in".
+ */
+export function activeRunAttr<T>(
+  state: EditorState,
+  markName: string,
+  attrName: string,
+  snapshot: DocxSnapshot | null,
+  inheritedSelector: (rPr: RunProperties) => T | undefined
+): MaybeMixed<T> {
+  const direct = activeMarkAttr<T>(state, markName, attrName);
+  if (direct !== undefined) return direct;
+  if (!snapshot) return undefined;
+
+  const paragraphIndices = collectSelectionParagraphIndices(state);
+  if (paragraphIndices.length === 0) return undefined;
+
+  let seen: T | undefined;
+  let mixed = false;
+  for (const idx of paragraphIndices) {
+    const resolved = resolveEffectiveRpr(snapshot, idx, 0);
+    const value = inheritedSelector(resolved);
+    if (value === undefined) continue;
+    if (seen === undefined) seen = value;
+    else if (seen !== value) {
+      mixed = true;
+      break;
+    }
+  }
+  if (mixed) return MIXED;
+  return seen;
+}
+
+function collectSelectionParagraphIndices(state: EditorState): number[] {
+  const { from, to } = state.selection;
+  const indices: number[] = [];
+  let paragraphIndex = -1;
+  state.doc.descendants((node, nodePos) => {
+    if (node.type.name !== "paragraph") return true;
+    paragraphIndex++;
+    const nodeEnd = nodePos + node.nodeSize;
+    if (nodeEnd >= from && nodePos <= to) indices.push(paragraphIndex);
+    return false;
+  });
+  return indices;
 }
 
 /** Style id of a paragraph in the snapshot. Returns "Normal" if missing. */

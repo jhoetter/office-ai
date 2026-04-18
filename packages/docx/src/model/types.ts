@@ -56,6 +56,14 @@ export interface DocxDirtyFlags {
    * `ilvl` lives in `word/document.xml` and only dirties `body`.
    */
   numbering: boolean;
+  /**
+   * Whether `word/styles.xml` itself has been mutated and must be
+   * re-emitted on save. Added in P3.1 / W1 alongside the typed
+   * `StylesPart`. P3 ships only a read-only cascade resolver, so the
+   * flag is always `false` in this milestone; mutating commands that
+   * write to `StylesPart` (R10 / P4) would flip it.
+   */
+  styles: boolean;
 }
 
 export interface DocxDocument {
@@ -100,7 +108,58 @@ export interface DocxDocument {
    * all). Added in P1.4 / W10.
    */
   readonly numbering?: NumberingDefinitions;
+  /**
+   * Typed `word/styles.xml` projection (P3.1 / W1). `undefined` when the
+   * part is absent (synthetic test fixtures usually omit it).
+   *
+   * The cascade resolver in `agent/style-resolver.ts` walks
+   * `docDefaults.rPrDefault` → the paragraph's `styleId` chain
+   * (basedOn) → the paragraph's own `pPr.rPr` → the run's `rPr` to
+   * compute the effective formatting at any selection. The toolbar
+   * dropdowns read this so that "Heading 1" text shows `16` / `Calibri`
+   * even when the run carries no direct `<w:rPr>` of its own.
+   */
+  readonly styles?: StylesPart;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+}
+
+/* ── Styles part (P3.1) ──────────────────────────────────────────────────── */
+
+/**
+ * Typed projection of `word/styles.xml`. Mirrors the OOXML
+ * `<w:styles>` shape: a flat collection of style definitions plus the
+ * `<w:docDefaults>` root that supplies the bottom of the cascade.
+ *
+ * Round-trip contract: `raw` is the original `<w:styles>` subtree at
+ * load time. The serializer emits `raw` verbatim while `dirty.styles
+ * === false`. P3 ships read-only style cascade — no mutation commands
+ * for styles — so `dirty.styles` is always `false` and the part
+ * round-trips byte-identical.
+ */
+export interface StylesPart {
+  readonly docDefaults: {
+    readonly rPrDefault?: RunProperties;
+    readonly pPrDefault?: ParagraphProperties;
+  };
+  /** Keyed by styleId. Iteration order matches load order. */
+  readonly styles: ReadonlyMap<string, StyleDefinition>;
+  /** Captured but not modeled bits (latentStyles, doc parts, etc.). */
+  readonly raw?: OpaqueXml;
+}
+
+export interface StyleDefinition {
+  readonly id: string;
+  readonly type: "paragraph" | "character" | "table" | "numbering";
+  readonly name?: string;
+  readonly basedOn?: string;
+  readonly next?: string;
+  readonly link?: string;
+  readonly hidden?: boolean;
+  readonly default?: boolean;
+  readonly rPr?: RunProperties;
+  readonly pPr?: ParagraphProperties;
+  /** Anything we don't model on this `<w:style>` (uiPriority, qFormat, …). */
+  readonly opaqueProps?: ReadonlyArray<OpaqueXml>;
 }
 
 /**

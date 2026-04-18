@@ -163,3 +163,98 @@ describe("docx:set-paragraph-indent", () => {
     expect(m.rejection?.code).toBe("invalid-payload");
   });
 });
+
+describe("docx:set-paragraph-spacing", () => {
+  it("sets line + before + after spacing on the paragraph", async () => {
+    const agent = await loadAgent([{ text: "abc" }]);
+    const paragraphId = firstParagraphId(agent);
+    const before = agent.getSnapshot();
+    const m = await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, line: 360, lineRule: "auto", before: 240, after: 120 },
+      source: "human",
+    });
+    expect(m.status).toBe("approved");
+    const after = agent.getSnapshot();
+    expect(after.revision).toBe(before.revision + 1);
+    expect(after.dirty.body).toBe(true);
+    const p0 = after.root.body[0];
+    if (p0.kind !== "paragraph") throw new Error();
+    expect(p0.properties.spacing?.line).toBe(360);
+    expect(p0.properties.spacing?.lineRule).toBe("auto");
+    expect(p0.properties.spacing?.before).toBe(240);
+    expect(p0.properties.spacing?.after).toBe(120);
+  });
+
+  it("clears individual spacing fields when null is passed", async () => {
+    const agent = await loadAgent([{ text: "abc" }]);
+    const paragraphId = firstParagraphId(agent);
+    await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, line: 360, lineRule: "auto", before: 240, after: 120 },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, before: null, after: null },
+      source: "human",
+    });
+    const p0 = agent.getSnapshot().root.body[0];
+    if (p0.kind !== "paragraph") throw new Error();
+    expect(p0.properties.spacing?.before).toBeUndefined();
+    expect(p0.properties.spacing?.after).toBeUndefined();
+    expect(p0.properties.spacing?.line).toBe(360);
+  });
+
+  it("is a no-op when nothing changes", async () => {
+    const agent = await loadAgent([{ text: "abc" }]);
+    const paragraphId = firstParagraphId(agent);
+    await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, line: 360, lineRule: "auto" },
+      source: "human",
+    });
+    const beforeRev = agent.getSnapshot().revision;
+    await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, line: 360, lineRule: "auto" },
+      source: "human",
+    });
+    expect(agent.getSnapshot().revision).toBe(beforeRev);
+  });
+
+  it("rejects non-integer twips", async () => {
+    const agent = await loadAgent([{ text: "abc" }]);
+    const paragraphId = firstParagraphId(agent);
+    const m = await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, line: 12.5 },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("invalid-payload");
+  });
+
+  it("rejects negative twips", async () => {
+    const agent = await loadAgent([{ text: "abc" }]);
+    const paragraphId = firstParagraphId(agent);
+    const m = await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId, before: -1 },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("invalid-payload");
+  });
+
+  it("rejects unknown paragraphIds", async () => {
+    const agent = await loadAgent([{ text: "abc" }]);
+    const m = await agent.applyCommand({
+      type: "docx:set-paragraph-spacing",
+      payload: { paragraphId: "p:does-not-exist", line: 360 },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("unknown-target");
+  });
+});
