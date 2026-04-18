@@ -295,10 +295,35 @@ export interface SectionBreak {
   readonly raw: OpaqueXml;
 }
 
+/**
+ * A `<w:sdt>` / `<w:fldSimple>` / `<mc:AlternateContent>` / `<w:smartTag>` /
+ * `<w:customXml>` wrapper at the body level. The wrapper itself is preserved
+ * verbatim through `raw` (so byte-identical round-trip is unaffected), but
+ * its inner content is **also** parsed into typed `children` so the
+ * renderer can surface the underlying paragraphs as real
+ * `<h1>`/`<p>` nodes instead of a single italic preview chip.
+ *
+ * Dirty-tracking contract (P2.3 / W15):
+ *
+ *   - `subtreeDirty === false` (default) → serializer re-emits `raw`
+ *     verbatim. `children` is purely a render-side projection.
+ *   - `subtreeDirty === true` → serializer reconstructs the wrapper by
+ *     splicing serialized `children` into the wrapper's content slot
+ *     (e.g. `<w:sdtContent>`). Mutations that touch a child of an
+ *     opaque carrier MUST flip this flag and clear `raw` derivatives.
+ *
+ * No mutating command currently writes through an opaque carrier, so
+ * `subtreeDirty` is always `false` in this iteration. The flag and the
+ * dirty serializer path are introduced now so that a future "edit
+ * inside an SDT" mutation can flip them without changing the carrier
+ * shape again.
+ */
 export interface OpaqueBlock {
   readonly kind: "opaque-block";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+  readonly children?: ReadonlyArray<BlockNode>;
+  readonly subtreeDirty?: boolean;
 }
 
 /* ── Inline ──────────────────────────────────────────────────────────────── */
@@ -458,10 +483,17 @@ export interface RevisionWrapper {
   readonly children: ReadonlyArray<InlineNode>;
 }
 
+/**
+ * Inline analogue of `OpaqueBlock`. See that type for the dirty-tracking
+ * contract; the same rules apply for inline carriers (mostly `<w:sdt>`,
+ * `<w:fldSimple>`, `<w:smartTag>` appearing inside a paragraph).
+ */
 export interface OpaqueInline {
   readonly kind: "opaque-inline";
   readonly id: NodeId;
   readonly raw: OpaqueXml;
+  readonly children?: ReadonlyArray<InlineNode>;
+  readonly subtreeDirty?: boolean;
 }
 
 /* ── Header / footer parts ───────────────────────────────────────────────── */

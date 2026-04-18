@@ -88,10 +88,11 @@ describe("renderer opaque display", () => {
     expect(JSON.stringify(pm.toJSON())).not.toContain("[opaque]");
   });
 
-  it("surfaces SDT content text instead of the [w:sdt] chip", async () => {
+  it("surfaces SDT content text via the unwrapped opaque_block_wrapper node", async () => {
     // A minimal SDT block wraps a paragraph that holds the user-visible
-    // TOC text. Pre-fix, this rendered as a single "[w:sdt]" chip and the
-    // user could not see (let alone search) the TOC contents.
+    // TOC text. Pre-P2.3, this rendered as a single "[w:sdt]" chip; with
+    // SDT/TOC unwrapping the parser exposes the inner paragraphs and the
+    // renderer produces a structured `opaque_block_wrapper` carrying them.
     const sdt =
       "<w:sdt>" +
       '<w:sdtPr><w:alias w:val="Inhaltsverzeichnis"/></w:sdtPr>' +
@@ -107,12 +108,12 @@ describe("renderer opaque display", () => {
     // (synthetic helper always appends `<w:sectPr>`).
     expect(pm.childCount).toBe(2);
     const block = pm.child(0);
-    expect(block.type.name).toBe("opaque_block");
+    expect(block.type.name).toBe("opaque_block_wrapper");
     expect(block.attrs.tag).toBe("w:sdt");
-    const preview = String(block.attrs.previewText ?? "");
-    expect(preview).toContain("Inhaltsverzeichnis");
-    expect(preview).toContain("1 Einleitung");
-    expect(JSON.stringify(pm.toJSON())).not.toContain("[w:sdt]");
+    const json = JSON.stringify(pm.toJSON());
+    expect(json).toContain("Inhaltsverzeichnis");
+    expect(json).toContain("1 Einleitung");
+    expect(json).not.toContain("[w:sdt]");
   });
 
   it("falls back to the [<tag>] placeholder for unclassified opaque blocks", async () => {

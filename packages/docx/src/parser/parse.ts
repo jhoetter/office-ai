@@ -218,8 +218,87 @@ function parseSectionBreak(entry: Record<string, unknown>, mintNodeId: IdMinter)
   return { kind: "section-break", id: mintNodeId(), raw: captureOpaque(entry) };
 }
 
+/**
+ * Tags whose inner content (or the content of a designated child slot) is
+ * regular block-level OOXML and can be parsed as typed `BlockNode`s. The
+ * wrapper itself is still preserved verbatim through `OpaqueBlock.raw`; we
+ * only attach the typed projection so the renderer can show the wrapped
+ * paragraphs as real headings/paragraphs instead of an opaque chip.
+ *
+ * Returns `null` when the entry is not an unwrappable carrier (so the
+ * caller falls back to the legacy "no children" path).
+ */
+function blockContentSlot(entry: Record<string, unknown>): Array<Record<string, unknown>> | null {
+  const tag = ooxml.getTag(entry);
+  const children = (entry[tag] as unknown[] | undefined) ?? [];
+  switch (tag) {
+    case "w:sdt": {
+      const content = findElementEntry(children, "w:sdtContent");
+      if (!content) return null;
+      return elementEntries((content["w:sdtContent"] as unknown[] | undefined) ?? []);
+    }
+    case "mc:AlternateContent": {
+      const choice = findElementEntry(children, "mc:Choice") ?? findElementEntry(children, "mc:Fallback");
+      if (!choice) return null;
+      const choiceTag = ooxml.getTag(choice);
+      return elementEntries((choice[choiceTag] as unknown[] | undefined) ?? []);
+    }
+    case "w:sdtContent":
+    case "mc:Choice":
+    case "mc:Fallback":
+    case "w:fldSimple":
+    case "w:smartTag":
+    case "w:customXml":
+      return elementEntries(children);
+    default:
+      return null;
+  }
+}
+
 function parseOpaqueBlock(entry: Record<string, unknown>, mintNodeId: IdMinter): OpaqueBlock {
-  return { kind: "opaque-block", id: mintNodeId(), raw: captureOpaque(entry) };
+  const raw = captureOpaque(entry);
+  const slot = blockContentSlot(entry);
+  if (slot === null || slot.length === 0) {
+    return { kind: "opaque-block", id: mintNodeId(), raw };
+  }
+  const children: BlockNode[] = [];
+  for (const child of slot) {
+    const childTag = ooxml.getTag(child);
+    switch (childTag) {
+      case "w:p":
+        children.push(parseParagraph(child, mintNodeId));
+        break;
+      case "w:tbl":
+        children.push(parseTableTyped(child, mintNodeId, parseParagraph));
+        break;
+      case "w:sectPr":
+        children.push(parseSectionBreak(child, mintNodeId));
+        break;
+      default:
+        children.push(parseOpaqueBlock(child, mintNodeId));
+        break;
+    }
+  }
+  if (children.length === 0) {
+    return { kind: "opaque-block", id: mintNodeId(), raw };
+  }
+  return { kind: "opaque-block", id: mintNodeId(), raw, children };
+}
+
+function parseOpaqueInline(entry: Record<string, unknown>, mintNodeId: IdMinter): OpaqueInline {
+  const raw = captureOpaque(entry);
+  const slot = blockContentSlot(entry);
+  if (slot === null || slot.length === 0) {
+    return { kind: "opaque-inline", id: mintNodeId(), raw };
+  }
+  const children: InlineNode[] = [];
+  for (const child of slot) {
+    children.push(parseInline(child, mintNodeId));
+  }
+  if (children.length === 0) {
+    return { kind: "opaque-inline", id: mintNodeId(), raw };
+  }
+  return { kind: "opaque-inline", id: mintNodeId(), raw, children };
 }
 
 function parseParagraph(entry: Record<string, unknown>, mintNodeId: IdMinter): Paragraph {
@@ -340,11 +419,7 @@ function parseInline(entry: Record<string, unknown>, mintNodeId: IdMinter): Inli
         commentId: attrOf(entry, "w:id") ?? "",
       } satisfies CommentRangeEnd;
     default:
-      return {
-        kind: "opaque-inline",
-        id: mintNodeId(),
-        raw: captureOpaque(entry),
-      } satisfies OpaqueInline;
+      return parseOpaqueInline(entry, mintNodeId);
   }
 }
 

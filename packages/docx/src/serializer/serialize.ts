@@ -6,6 +6,7 @@ import type {
   DocxSnapshot,
   Hyperlink,
   InlineNode,
+  OpaqueXml,
   Paragraph,
   ParagraphProperties,
   RevisionWrapper,
@@ -13,7 +14,7 @@ import type {
   RunChild,
   RunProperties,
 } from "../model/types.js";
-import { opaqueToEntry } from "../parser/xml-helpers.js";
+import { ATTR_KEY, opaqueToEntry } from "../parser/xml-helpers.js";
 import { DocxSerializeError } from "./errors.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
 import { serializeInlineImageDrawing } from "./images.js";
@@ -205,7 +206,17 @@ function serializeBlock(block: BlockNode): unknown {
       if (block.raw) return serializeTableFromRaw(block.raw);
       return serializeTable(block, serializeBlock);
     case "section-break":
+      return opaqueToEntry(block.raw);
     case "opaque-block":
+      // P2.3: when a content-wrapper carrier (SDT / fldSimple / mc:* /
+      // smartTag / customXml) was unwrapped at parse time and a mutation
+      // later flipped `subtreeDirty`, splice the typed `children` back into
+      // the carrier's content slot. Otherwise re-emit the cached subtree
+      // verbatim — that is what preserves byte-identical round-trip for
+      // documents whose SDTs are read but never edited.
+      if (block.subtreeDirty === true && block.children) {
+        return reemitOpaqueBlockWithChildren(block.raw, block.children);
+      }
       return opaqueToEntry(block.raw);
     default: {
       const _exhaustive: never = block;
@@ -294,6 +305,9 @@ function serializeInline(node: InlineNode): unknown {
     case "revision":
       return serializeRevisionWrapper(node);
     case "opaque-inline":
+      if (node.subtreeDirty === true && node.children) {
+        return reemitOpaqueInlineWithChildren(node.raw, node.children);
+      }
       return opaqueToEntry(node.raw);
     default: {
       const _exhaustive: never = node;
@@ -420,6 +434,90 @@ function serializeRevisionWrapper(rev: RevisionWrapper): unknown {
     "w:date": rev.date,
   };
   return makeEntry(tag, children, attrs);
+}
+
+/**
+ * Serialize an `OpaqueBlock` whose `subtreeDirty` flag was flipped by a
+ * mutation: walk the cached `raw` subtree, locate the wrapper's content
+ * slot (e.g. `<w:sdtContent>` for `<w:sdt>`), and replace its element
+ * children with freshly-serialized typed `BlockNode` children. Non-element
+ * markup (comments, processing instructions, attributes) inside the slot
+ * is preserved.
+ *
+ * Tags whose direct children are the content slot (e.g. `<w:fldSimple>`,
+ * `<w:smartTag>`) get their own children replaced. For wrappers that
+ * carry siblings adjacent to the content slot (`<w:sdt>` has `<w:sdtPr>`
+ * + `<w:sdtEndPr>` + `<w:sdtContent>`), only the slot is rewritten.
+ */
+function reemitOpaqueBlockWithChildren(raw: OpaqueXml, children: ReadonlyArray<BlockNode>): unknown {
+  const newChildren: unknown[] = children.map((c) => serializeBlock(c));
+  const rewritten = rewriteContentSlot(raw, newChildren);
+  return rewritten;
+}
+
+function reemitOpaqueInlineWithChildren(raw: OpaqueXml, children: ReadonlyArray<InlineNode>): unknown {
+  const newChildren: unknown[] = children.map((c) => serializeInline(c));
+  return rewriteContentSlot(raw, newChildren);
+}
+
+function rewriteContentSlot(raw: OpaqueXml, newChildren: unknown[]): unknown {
+  const tag = raw.tag;
+  switch (tag) {
+    case "w:sdt": {
+      // Walk the subtree array, replace `<w:sdtContent>`'s inner children.
+      const subtree = raw.subtree.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+        const obj = entry as Record<string, unknown>;
+        const keys = Object.keys(obj).filter((k) => k !== ATTR_KEY);
+        if (keys.length === 1 && keys[0] === "w:sdtContent") {
+          const next: Record<string, unknown> = { "w:sdtContent": newChildren };
+          if (obj[ATTR_KEY]) next[ATTR_KEY] = obj[ATTR_KEY];
+          return next;
+        }
+        return entry;
+      });
+      const out: Record<string, unknown> = { [tag]: subtree };
+      if (Object.keys(raw.rawAttrs).length > 0) out[ATTR_KEY] = { ...raw.rawAttrs };
+      return out;
+    }
+    case "mc:AlternateContent": {
+      // Rewrite the first <mc:Choice> (or <mc:Fallback>) we find.
+      let replaced = false;
+      const subtree = raw.subtree.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+        const obj = entry as Record<string, unknown>;
+        const keys = Object.keys(obj).filter((k) => k !== ATTR_KEY);
+        if (keys.length !== 1) return entry;
+        const childTag = keys[0];
+        if (replaced) return entry;
+        if (childTag === "mc:Choice" || childTag === "mc:Fallback") {
+          replaced = true;
+          const next: Record<string, unknown> = { [childTag]: newChildren };
+          if (obj[ATTR_KEY]) next[ATTR_KEY] = obj[ATTR_KEY];
+          return next;
+        }
+        return entry;
+      });
+      const out: Record<string, unknown> = { [tag]: subtree };
+      if (Object.keys(raw.rawAttrs).length > 0) out[ATTR_KEY] = { ...raw.rawAttrs };
+      return out;
+    }
+    case "w:sdtContent":
+    case "mc:Choice":
+    case "mc:Fallback":
+    case "w:fldSimple":
+    case "w:smartTag":
+    case "w:customXml": {
+      const out: Record<string, unknown> = { [tag]: newChildren };
+      if (Object.keys(raw.rawAttrs).length > 0) out[ATTR_KEY] = { ...raw.rawAttrs };
+      return out;
+    }
+    default:
+      // No known content slot for this tag — fall back to the cached subtree
+      // verbatim. This shouldn't happen in practice because the parser only
+      // attaches `children` when `blockContentSlot` returned non-null.
+      return opaqueToEntry(raw);
+  }
 }
 
 function serializeCommentsXml(comments: ReadonlyArray<DocxComment>): string {

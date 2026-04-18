@@ -137,6 +137,77 @@ const nodes: Record<string, NodeSpec> = {
       return ["table", { class: "pm-table", contenteditable: "false" }, tbody];
     },
   },
+  opaque_block_wrapper: {
+    group: "block",
+    atom: true,
+    attrs: {
+      blockId: { default: null },
+      rawJson: { default: null },
+      tag: { default: null },
+      /**
+       * Structured projection of the children of an unwrapped content-wrapper
+       * carrier (SDT / fldSimple / mc:AlternateContent / smartTag /
+       * customXml). Same shape as the `table` node's `tableJson`: a list of
+       * lightweight `{ kind, text, styleId?, alignment? }` records, so the
+       * renderer can surface the wrapped paragraphs as real `<h1>` / `<p>`
+       * nodes instead of collapsing the whole subtree into a single italic
+       * preview chip.
+       *
+       * Read-only on purpose for this iteration — editing inside an opaque
+       * carrier still requires the dirty-flag plumbing landed in P2.3 to be
+       * exercised by mutating commands, which is deferred.
+       */
+      contentJson: { default: null },
+    },
+    toDOM(node) {
+      const data = parseWrapperContent(node.attrs.contentJson);
+      const tag = typeof node.attrs.tag === "string" ? node.attrs.tag : "";
+      const children: unknown[] = [];
+      if (data && data.blocks.length > 0) {
+        for (const b of data.blocks) {
+          const html = paragraphHtmlTag(b.styleId ?? "");
+          const attrs: Record<string, string> = {
+            class: "pm-opaque-wrapper-p",
+            "data-style": b.styleId ?? "",
+          };
+          if (b.alignment) attrs.style = `text-align:${b.alignment}`;
+          children.push([html, attrs, b.text]);
+        }
+      } else {
+        children.push(["div", { class: "pm-opaque-wrapper-empty" }, `[${tag}]`]);
+      }
+      return [
+        "div",
+        {
+          class: "pm-opaque-wrapper-block",
+          "data-tag": tag,
+          contenteditable: "false",
+        },
+        ...children,
+      ] as unknown as import("prosemirror-model").DOMOutputSpec;
+    },
+  },
+  opaque_inline_wrapper: {
+    group: "inline",
+    inline: true,
+    atom: true,
+    attrs: {
+      inlineId: { default: null },
+      rawJson: { default: null },
+      tag: { default: null },
+      /** `{ text: string }` — flattened text of the wrapped run children. */
+      contentJson: { default: null },
+    },
+    toDOM(node) {
+      const tag = typeof node.attrs.tag === "string" ? node.attrs.tag : "";
+      const text = parseInlineWrapperContent(node.attrs.contentJson);
+      return [
+        "span",
+        { class: "pm-opaque-wrapper-inline", "data-tag": tag },
+        text.length > 0 ? text : `[${tag}]`,
+      ];
+    },
+  },
   opaque_block: {
     group: "block",
     atom: true,
@@ -319,6 +390,42 @@ export interface RenderableTableRow {
 
 export interface RenderableTable {
   readonly rows: ReadonlyArray<RenderableTableRow>;
+}
+
+export interface WrapperContentBlock {
+  readonly kind: "paragraph";
+  readonly text: string;
+  readonly styleId?: string;
+  readonly alignment?: string;
+}
+
+export interface WrapperContent {
+  readonly blocks: ReadonlyArray<WrapperContentBlock>;
+}
+
+function parseWrapperContent(value: unknown): WrapperContent | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const blocks = (parsed as { blocks?: unknown }).blocks;
+    if (!Array.isArray(blocks)) return null;
+    return parsed as WrapperContent;
+  } catch {
+    return null;
+  }
+}
+
+function parseInlineWrapperContent(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) return "";
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return "";
+    const text = (parsed as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  } catch {
+    return "";
+  }
 }
 
 function parseTableJson(value: unknown): RenderableTable | null {

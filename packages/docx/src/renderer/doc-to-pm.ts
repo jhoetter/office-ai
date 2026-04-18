@@ -56,7 +56,7 @@ function blockToPM(block: BlockNode): PMNode | null {
     case "section-break":
       return docxSchema.nodes.section_break.create({ blockId: block.id, rawJson: encode(block.raw) });
     case "opaque-block":
-      return opaqueBlockToPM(block.id, block.raw);
+      return opaqueBlockToPM(block.id, block.raw, block.children);
     default: {
       const _exhaustive: never = block;
       void _exhaustive;
@@ -74,7 +74,19 @@ function blockToPM(block: BlockNode): PMNode | null {
  * The model still carries the full subtree byte-for-byte; only the *display*
  * is smartened, so round-trip integrity is unaffected.
  */
-function opaqueBlockToPM(blockId: string, raw: OpaqueXml): PMNode | null {
+function opaqueBlockToPM(
+  blockId: string,
+  raw: OpaqueXml,
+  children?: ReadonlyArray<BlockNode>
+): PMNode | null {
+  if (children && children.length > 0) {
+    return docxSchema.nodes.opaque_block_wrapper.create({
+      blockId,
+      rawJson: encode(raw),
+      tag: raw.tag,
+      contentJson: encode({ blocks: children.map(blockToWrapperBlock).filter((b) => b !== null) }),
+    });
+  }
   const display = classifyOpaqueTag(raw.tag);
   if (display === "metadata") {
     // A metadata-only block (extremely rare at the body level, but possible
@@ -161,7 +173,7 @@ function inlinesForChild(node: InlineNode, out: PMNode[], activeCommentIds: stri
       }
       return;
     case "opaque-inline": {
-      const pmNode = opaqueInlineToPM(node.id, node.raw, []);
+      const pmNode = opaqueInlineToPM(node.id, node.raw, [], node.children);
       if (pmNode) out.push(pmNode);
       return;
     }
@@ -235,7 +247,25 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
  * variant. Metadata-only carriers (bookmarks, field characters,
  * `lastRenderedPageBreak`, …) return `null` so the caller emits nothing.
  */
-function opaqueInlineToPM(inlineId: string, raw: OpaqueXml, marks: Mark[]): PMNode | null {
+function opaqueInlineToPM(
+  inlineId: string,
+  raw: OpaqueXml,
+  marks: Mark[],
+  children?: ReadonlyArray<InlineNode>
+): PMNode | null {
+  if (children && children.length > 0) {
+    const text = children.map(inlinePlainText).join("");
+    return docxSchema.nodes.opaque_inline_wrapper.create(
+      {
+        inlineId,
+        rawJson: encode(raw),
+        tag: raw.tag,
+        contentJson: encode({ text }),
+      },
+      null,
+      marks
+    );
+  }
   const display = classifyOpaqueTag(raw.tag);
   if (display === "metadata") return null;
   const previewText = display === "content-wrapper" ? extractOpaqueText(raw) : "";
@@ -249,6 +279,46 @@ function opaqueInlineToPM(inlineId: string, raw: OpaqueXml, marks: Mark[]): PMNo
     null,
     marks
   );
+}
+
+/**
+ * Project a block child of an unwrapped content-wrapper carrier into the
+ * lightweight `WrapperContentBlock` shape consumed by the wrapper node's
+ * `toDOM`. Tables and section breaks render as their tag chip; nested
+ * opaque-blocks render as their previewText if available.
+ */
+function blockToWrapperBlock(
+  block: BlockNode
+): { kind: "paragraph"; text: string; styleId?: string; alignment?: string } | null {
+  switch (block.kind) {
+    case "paragraph": {
+      const out: { kind: "paragraph"; text: string; styleId?: string; alignment?: string } = {
+        kind: "paragraph",
+        text: paragraphPlainText(block),
+      };
+      if (block.properties.styleId) out.styleId = block.properties.styleId;
+      if (block.properties.alignment) out.alignment = block.properties.alignment;
+      return out;
+    }
+    case "table":
+      return { kind: "paragraph", text: "[table]" };
+    case "section-break":
+      return null;
+    case "opaque-block": {
+      if (block.children && block.children.length > 0) {
+        const flat = block.children.map(blockToWrapperBlock).filter((b) => b !== null);
+        const text = flat.map((b) => b!.text).join("\n");
+        return { kind: "paragraph", text };
+      }
+      const t = extractOpaqueText(block.raw);
+      return { kind: "paragraph", text: t.length > 0 ? t : `[${block.raw.tag}]` };
+    }
+    default: {
+      const _exhaustive: never = block;
+      void _exhaustive;
+      return null;
+    }
+  }
 }
 
 function runMarks(props: RunProperties): Mark[] {
@@ -344,6 +414,9 @@ function inlinePlainText(node: InlineNode): string {
     case "comment-reference":
       return "";
     case "opaque-inline":
+      if (node.children && node.children.length > 0) {
+        return node.children.map(inlinePlainText).join("");
+      }
       return "";
     default: {
       const _exhaustive: never = node;
