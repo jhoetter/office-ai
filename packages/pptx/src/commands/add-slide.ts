@@ -50,6 +50,7 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
       relId,
       ...(payload.layoutPartPath ? { layoutPartPath: payload.layoutPartPath } : {}),
       shapes: [],
+      animations: [],
       slideOpaqueTail: [defaultClrMapOvr()],
       slideRootAttrs: {
         "xmlns:a": "http://schemas.openxmlformats.org/drawingml/2006/main",

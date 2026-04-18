@@ -170,6 +170,35 @@ describe("targeted-edit roundtrip", () => {
     expect(partB.categories).toEqual(partA.categories);
   });
 
+  it("rebuilds a slide with typed transition + animations and preserves them", async () => {
+    const path = join(FIXTURES_DIR.pathname, "10-with-anim.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+    const slide = snap.root.slides[0];
+    expect(slide.transition?.kind).toBe("fade");
+    expect(slide.animations.length).toBe(2);
+
+    const dirtied: PptxSnapshot = {
+      ...snap,
+      dirty: { ...snap.dirty, slides: new Set([slide.partPath]) },
+    };
+    const out = await serializePptx(dirtied);
+    const snap2 = await parsePptx(out);
+    const slide2 = snap2.root.slides[0];
+
+    // Transition + animations survive the rebuild via the preserved
+    // raw <p:transition> blob and the verbatim <p:timing> tail.
+    expect(slide2.transition?.kind).toBe("fade");
+    expect(slide2.transition?.speed).toBe("med");
+    expect(slide2.animations.length).toBe(2);
+    expect(slide2.animations[0]).toMatchObject({ effect: "appear", targetCNvPrId: 2 });
+    expect(slide2.animations[1]).toMatchObject({
+      effect: "fly-in",
+      targetCNvPrId: 3,
+      durationMs: 500,
+    });
+  });
+
   it("re-emits a text edit while leaving other parts byte-identical", async () => {
     const path = join(FIXTURES_DIR.pathname, "02-title-only.pptx");
     const buf = await readFile(path);

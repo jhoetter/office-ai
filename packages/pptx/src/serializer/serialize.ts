@@ -11,6 +11,7 @@ import type {
   RelationshipsSnap,
   Shape,
   Slide,
+  SlideTransition,
   TableShape,
   TextBody,
   TextParagraph,
@@ -133,9 +134,24 @@ function serializeSlideXml(slide: Slide): string {
 
   const sldChildren: unknown[] = [cSld];
   for (const tail of slide.slideOpaqueTail) sldChildren.push(opaqueToEntry(tail));
+  // F4: re-emit the typed transition (verbatim if untouched, rebuilt if
+  // dirty) and the raw timing tail. Both live AFTER any other slide tail
+  // children to mirror PowerPoint's element order: cSld → clrMapOvr →
+  // transition → timing → extLst.
+  if (slide.transition) sldChildren.push(transitionToEntry(slide.transition));
+  if (slide.timingTailRaw) sldChildren.push(opaqueToEntry(slide.timingTailRaw));
   const sld = makeEntry("p:sld", sldChildren, slide.slideRootAttrs);
 
   return ooxml.serializeXml([sld]);
+}
+
+function transitionToEntry(t: SlideTransition): Record<string, unknown> {
+  if (t.raw) return opaqueToEntry(t.raw);
+  const inner: unknown[] = [];
+  if (t.kind !== "none" && t.kind !== "unsupported") {
+    inner.push(makeEntry(`p:${t.kind}`, []));
+  }
+  return makeEntry("p:transition", inner, t.speed ? { spd: t.speed } : {});
 }
 
 function shapeToEntry(shape: Shape): Record<string, unknown> {

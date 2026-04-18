@@ -7,6 +7,8 @@ import type {
   ChartShape,
   ChartType,
   ContentTypesSnap,
+  EntranceAnimation,
+  EntranceEffect,
   GroupShape,
   MediaPart,
   OpaquePart,
@@ -20,6 +22,7 @@ import type {
   Shape,
   Slide,
   SlideSize,
+  SlideTransition,
   TableCell,
   TableRow,
   TableShape,
@@ -29,6 +32,8 @@ import type {
   TextRun,
   TextRunProperties,
   TextShape,
+  TransitionKind,
+  TransitionSpeed,
 } from "../model/types.js";
 import { emptyDirty } from "../model/types.js";
 import { PptxParseError } from "./errors.js";
@@ -365,12 +370,28 @@ function parseSlide(
     cSldHead.push(captureOpaque(c));
   }
   // Anything in <p:sld> after <p:cSld> we capture as opaque tail
-  // (e.g. <p:clrMapOvr>, <p:transition>, <p:timing>).
+  // (e.g. <p:clrMapOvr>, <p:transition>, <p:timing>). F4 promotes
+  // <p:transition> and the typed pieces of <p:timing> into typed
+  // model fields below.
   const slideOpaqueTail: OpaqueXml[] = [];
+  let transition: SlideTransition | undefined;
+  let timingTailRaw: OpaqueXml | undefined;
+  const animations: EntranceAnimation[] = [];
   let pastCsld = false;
   for (const c of elementEntries(sldChildren)) {
     if (!pastCsld) {
       if (ooxml.getTag(c) === "p:cSld") pastCsld = true;
+      continue;
+    }
+    const tag = ooxml.getTag(c);
+    if (tag === "p:transition") {
+      transition = parseSlideTransition(c, mintNodeId);
+      continue;
+    }
+    if (tag === "p:timing") {
+      const parsedTiming = parseSlideTiming(c, mintNodeId);
+      animations.push(...parsedTiming.animations);
+      if (parsedTiming.tail) timingTailRaw = parsedTiming.tail;
       continue;
     }
     slideOpaqueTail.push(captureOpaque(c));
@@ -413,6 +434,9 @@ function parseSlide(
     ...(layoutPartPath ? { layoutPartPath } : {}),
     ...(notesSlidePartPath ? { notesSlidePartPath } : {}),
     shapes,
+    ...(transition ? { transition } : {}),
+    animations,
+    ...(timingTailRaw ? { timingTailRaw } : {}),
     slideOpaqueTail,
     slideRootAttrs,
     cSldAttrs,
@@ -1428,4 +1452,119 @@ function readStringCache(entry: Record<string, unknown>, parentTag: string): str
     }
   }
   return out;
+}
+
+// ── F4: animations & transitions parsers ─────────────────────────────────
+
+const TRANSITION_KIND_TAGS: ReadonlyArray<{ tag: string; kind: TransitionKind }> = [
+  { tag: "p:fade", kind: "fade" },
+  { tag: "p:push", kind: "push" },
+  { tag: "p:wipe", kind: "wipe" },
+  { tag: "p:split", kind: "split" },
+  { tag: "p:cut", kind: "cut" },
+];
+
+const ENTRANCE_PRESET_CLASS = "entr";
+const ENTRANCE_PRESET_IDS: ReadonlyMap<number, EntranceEffect> = new Map([
+  [1, "appear"],
+  [2, "fly-in"],
+  [3, "fade"],
+  [10, "wipe"],
+]);
+
+function parseSlideTransition(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter
+): SlideTransition {
+  const children = (entry["p:transition"] as unknown[] | undefined) ?? [];
+  const speedAttr = attrOf(entry, "spd");
+  const speed: TransitionSpeed | undefined =
+    speedAttr === "slow" || speedAttr === "med" || speedAttr === "fast"
+      ? speedAttr
+      : undefined;
+  let kind: TransitionKind = "unsupported";
+  for (const cand of TRANSITION_KIND_TAGS) {
+    if (findElementEntry(children, cand.tag)) {
+      kind = cand.kind;
+      break;
+    }
+  }
+  return {
+    id: mintNodeId(),
+    kind,
+    ...(speed ? { speed } : {}),
+    raw: captureOpaque(entry),
+  };
+}
+
+/**
+ * Parse `<p:timing>` and promote a flat list of typed entrance animations.
+ * Anything we can't model is preserved as the raw `<p:timing>` blob — the
+ * serializer re-emits the raw verbatim when no commands have touched the
+ * typed list.
+ *
+ * The walk is intentionally tolerant: PowerPoint nests timing nodes deeply
+ * (`p:tnLst` → `p:par` → multiple `p:childTnLst` → … → `p:set` / `p:anim`),
+ * so we recursively look for `p:cTn @presetClass="entr"` carriers and
+ * resolve their `<p:spTgt @spid>` in any descendant.
+ */
+function parseSlideTiming(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter
+): { animations: EntranceAnimation[]; tail: OpaqueXml | undefined } {
+  const animations: EntranceAnimation[] = [];
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    const e = node as Record<string, unknown>;
+    const tag = ooxml.getTag(e);
+    if (tag === "p:cTn") {
+      const presetClass = attrOf(e, "presetClass");
+      const presetId = Number(attrOf(e, "presetID") ?? "0");
+      if (presetClass === ENTRANCE_PRESET_CLASS && ENTRANCE_PRESET_IDS.has(presetId)) {
+        const spid = findSpTgtSpid(e);
+        if (spid !== null) {
+          const dur = attrOf(e, "dur");
+          const effect = ENTRANCE_PRESET_IDS.get(presetId);
+          if (effect) {
+            animations.push({
+              id: mintNodeId(),
+              targetCNvPrId: spid,
+              effect,
+              ...(dur && /^\d+$/.test(dur) ? { durationMs: Number(dur) } : {}),
+              order: animations.length,
+            });
+          }
+        }
+      }
+    }
+    const children = e[tag] as unknown[] | undefined;
+    if (Array.isArray(children)) {
+      for (const c of children) visit(c);
+    }
+  };
+  visit(entry);
+  return { animations, tail: captureOpaque(entry) };
+}
+
+/**
+ * Find the first `<p:spTgt @spid>` value anywhere under the given timing
+ * node. This is intentionally a recursive scan because `p:spTgt` can sit
+ * many levels deep inside `p:tgtEl` → `p:cBhvr` → … wrappers.
+ */
+function findSpTgtSpid(node: unknown): number | null {
+  if (!node || typeof node !== "object") return null;
+  const e = node as Record<string, unknown>;
+  const tag = ooxml.getTag(e);
+  if (tag === "p:spTgt") {
+    const spid = attrOf(e, "spid");
+    if (spid && /^-?\d+$/.test(spid)) return Number(spid);
+  }
+  const children = e[tag] as unknown[] | undefined;
+  if (Array.isArray(children)) {
+    for (const c of children) {
+      const found = findSpTgtSpid(c);
+      if (found !== null) return found;
+    }
+  }
+  return null;
 }

@@ -114,6 +114,36 @@ describe("parsePptx", () => {
     expect(part.categories.length).toBeGreaterThan(0);
   });
 
+  it("parses <p:transition> + <p:timing> entrances as typed Slide.transition / animations", async () => {
+    const path = join(FIXTURES_DIR.pathname, "10-with-anim.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+    const slide = snap.root.slides[0];
+
+    expect(slide.transition).toBeDefined();
+    if (slide.transition) {
+      expect(slide.transition.kind).toBe("fade");
+      expect(slide.transition.speed).toBe("med");
+      expect(slide.transition.raw).toBeDefined();
+    }
+
+    expect(slide.animations.length).toBe(2);
+    expect(slide.animations[0]).toMatchObject({
+      effect: "appear",
+      targetCNvPrId: 2,
+      order: 0,
+    });
+    expect(slide.animations[1]).toMatchObject({
+      effect: "fly-in",
+      targetCNvPrId: 3,
+      order: 1,
+      durationMs: 500,
+    });
+
+    // The opaque <p:timing> tail is preserved for verbatim re-emit.
+    expect(slide.timingTailRaw?.tag).toBe("p:timing");
+  });
+
   it("captures multiple slides in order", async () => {
     const path = join(FIXTURES_DIR.pathname, "07-multi-slide.pptx");
     const buf = await readFile(path);

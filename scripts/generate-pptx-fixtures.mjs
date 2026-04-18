@@ -27,8 +27,10 @@ const FIXED_ISO = "2026-04-01T00:00:00Z";
  * which makes byte-equality non-deterministic across runs. We post-process
  * the generated zip to normalize those timestamps + the zip entry mtimes.
  */
-async function normalize(buf) {
+async function normalize(buf, patchZip) {
   const zip = await JSZip.loadAsync(buf);
+  // Optional caller patch (e.g. inject <p:transition>/<p:timing> bytes).
+  if (patchZip) await patchZip(zip);
   // Override docProps/core.xml dcterms timestamps.
   const core = await zip.file("docProps/core.xml")?.async("string");
   if (core) {
@@ -45,7 +47,7 @@ async function normalize(buf) {
   return Buffer.from(await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } }));
 }
 
-async function write(name, deckBuilder) {
+async function write(name, deckBuilder, patchZip) {
   await mkdir(outRoot, { recursive: true });
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE"; // 13.333 x 7.5 in (16:9)
@@ -54,7 +56,7 @@ async function write(name, deckBuilder) {
   pptx.title = name;
   await deckBuilder(pptx);
   const raw = Buffer.from(await pptx.write({ outputType: "nodebuffer" }));
-  const buf = await normalize(raw);
+  const buf = await normalize(raw, patchZip);
   const path = resolve(outRoot, `${name}.pptx`);
   await writeFile(path, buf);
   console.log(`✓ wrote ${path} (${buf.length} bytes)`);
@@ -262,20 +264,50 @@ async function withChart() {
 
 async function withAnimations() {
   // F4: slide-transition + simple per-shape entrance animations fixture.
-  // pptxgenjs doesn't expose a high-level animations API, so this fixture
-  // is built minimally and the F4 implementation will use a real-world
-  // deck (added under fixtures/pptx/real/) for full animation coverage.
-  await write("10-with-anim", async (pptx) => {
-    const slide = pptx.addSlide();
-    slide.addText("Animated title", {
-      x: 0.5, y: 0.5, w: 12, h: 1.5,
-      fontSize: 44, bold: true, color: "111827",
-    });
-    slide.addText("Body line that should appear after the title.", {
-      x: 0.5, y: 2.5, w: 12, h: 1.0,
-      fontSize: 24, color: "1F2937",
-    });
-  });
+  // pptxgenjs doesn't expose a high-level animations API, so we inject a
+  // realistic <p:transition> + <p:timing> tail directly into ppt/slides/
+  // slide1.xml after pptxgenjs writes the deck. This gives us a typed
+  // fade transition and two entrance animations (appear on shape 2,
+  // fly-in on shape 3) for parser/serializer round-tripping.
+  await write(
+    "10-with-anim",
+    async (pptx) => {
+      const slide = pptx.addSlide();
+      slide.addText("Animated title", {
+        x: 0.5, y: 0.5, w: 12, h: 1.5,
+        fontSize: 44, bold: true, color: "111827",
+      });
+      slide.addText("Body line that should appear after the title.", {
+        x: 0.5, y: 2.5, w: 12, h: 1.0,
+        fontSize: 24, color: "1F2937",
+      });
+    },
+    async (zip) => {
+      const slidePath = "ppt/slides/slide1.xml";
+      const slideXml = await zip.file(slidePath)?.async("string");
+      if (!slideXml) return;
+      const insert =
+        `<p:transition spd="med"><p:fade/></p:transition>` +
+        `<p:timing>` +
+        `<p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">` +
+        `<p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq">` +
+        `<p:childTnLst>` +
+        // First entrance: appear on shape with cNvPrId=2 (the title body)
+        `<p:par><p:cTn id="3" presetID="1" presetClass="entr" presetSubtype="0" fill="hold" nodeType="clickEffect">` +
+        `<p:childTnLst><p:set><p:cBhvr><p:cTn id="4" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set></p:childTnLst>` +
+        `</p:cTn></p:par>` +
+        // Second entrance: fly-in on shape with cNvPrId=3 (the second body)
+        `<p:par><p:cTn id="5" presetID="2" presetClass="entr" presetSubtype="4" fill="hold" nodeType="afterEffect" dur="500">` +
+        `<p:childTnLst><p:set><p:cBhvr><p:cTn id="6" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="3"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set></p:childTnLst>` +
+        `</p:cTn></p:par>` +
+        `</p:childTnLst>` +
+        `</p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst>` +
+        `</p:timing>`;
+      // Splice before </p:sld>.
+      const patched = slideXml.replace("</p:sld>", `${insert}</p:sld>`);
+      zip.file(slidePath, patched);
+    }
+  );
 }
 
 await blank();

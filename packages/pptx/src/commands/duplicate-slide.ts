@@ -47,6 +47,21 @@ export const duplicateSlideHandler: CommandHandler<DuplicateSlidePayload, PptxSn
       relId,
       ...(src.layoutPartPath ? { layoutPartPath: src.layoutPartPath } : {}),
       shapes: newShapes,
+      ...(src.transition
+        ? {
+            transition: {
+              id: ctx.mintNodeId(),
+              kind: src.transition.kind,
+              ...(src.transition.speed ? { speed: src.transition.speed } : {}),
+              ...(src.transition.raw ? { raw: cloneOpaque(src.transition.raw) } : {}),
+            },
+          }
+        : {}),
+      animations: src.animations.map((a) => ({
+        ...a,
+        id: ctx.mintNodeId(),
+      })),
+      ...(src.timingTailRaw ? { timingTailRaw: cloneOpaque(src.timingTailRaw) } : {}),
       slideOpaqueTail: src.slideOpaqueTail.map(cloneOpaque),
       slideRootAttrs: { ...src.slideRootAttrs },
       cSldAttrs: { ...src.cSldAttrs },

@@ -187,6 +187,27 @@ export interface Slide {
   readonly layoutPartPath?: string;
   readonly notesSlidePartPath?: string;
   readonly shapes: ReadonlyArray<Shape>;
+  /**
+   * F4: typed slide transition (`<p:transition>`). Optional — slides
+   * without a transition have no field. Unsupported transitions still
+   * land here with `kind: "unsupported"` plus their verbatim raw blob.
+   */
+  readonly transition?: SlideTransition;
+  /**
+   * F4: typed simple per-shape entrance animations parsed from
+   * `<p:timing>`. Anything we don't model stays in `timingTailRaw`.
+   */
+  readonly animations: ReadonlyArray<EntranceAnimation>;
+  /**
+   * F4: opaque remainder of `<p:timing>` we don't introspect (build,
+   * advanced sequences, custom paths, behaviors). Re-emitted verbatim.
+   */
+  readonly timingTailRaw?: OpaqueXml;
+  /**
+   * Tail children of `<p:sld>` we don't introspect (clrMapOvr, extLst, …).
+   * `<p:transition>` and `<p:timing>` are removed iff promoted above;
+   * otherwise they remain here verbatim.
+   */
   readonly slideOpaqueTail: ReadonlyArray<OpaqueXml>;
   readonly slideRootAttrs: Readonly<Record<string, string>>;
   readonly cSldAttrs: Readonly<Record<string, string>>;
@@ -194,6 +215,49 @@ export interface Slide {
   readonly spTreeHead: ReadonlyArray<OpaqueXml>;
   /** Optional <p:bg> captured if present (sits inside <p:cSld>). */
   readonly cSldHead: ReadonlyArray<OpaqueXml>;
+}
+
+// ─── Animations / transitions (F4) ───────────────────────────────────────
+
+export type TransitionKind =
+  | "none"
+  | "fade"
+  | "push"
+  | "wipe"
+  | "split"
+  | "cut"
+  | "unsupported";
+
+export type TransitionSpeed = "slow" | "med" | "fast";
+
+/**
+ * F4: typed slide transition. Only the six listed kinds round-trip
+ * cleanly; anything else stays as `kind: "unsupported"` with its
+ * verbatim `<p:transition>` blob preserved in `raw`.
+ */
+export interface SlideTransition {
+  readonly id: NodeId;
+  readonly kind: TransitionKind;
+  readonly speed?: TransitionSpeed;
+  /** Verbatim `<p:transition>` blob for unsupported kinds and tail. */
+  readonly raw?: OpaqueXml;
+}
+
+export type EntranceEffect = "appear" | "fade" | "fly-in" | "wipe";
+
+/**
+ * F4: typed per-shape entrance animation. Targets a shape by `cNvPrId`
+ * (which is what `<p:spTgt @spid>` references). Only the four named
+ * effects are typed; anything else stays in `timingTailRaw` verbatim.
+ */
+export interface EntranceAnimation {
+  readonly id: NodeId;
+  readonly targetCNvPrId: number;
+  readonly effect: EntranceEffect;
+  /** `<p:cTn @dur>` in milliseconds. */
+  readonly durationMs?: number;
+  /** Trigger order in the main entrance sequence (0-based). */
+  readonly order: number;
 }
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
