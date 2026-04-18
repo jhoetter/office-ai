@@ -65,6 +65,7 @@ export {
   mergeCellsHandler,
   unmergeCellsHandler,
   renameSheetHandler,
+  addSheetHandler,
   type SetCellValuePayload,
   type SetCellFormulaPayload,
   type SetCellFormatPayload,

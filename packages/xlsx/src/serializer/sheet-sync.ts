@@ -33,6 +33,14 @@ export function syncSheetToSheetJS(sheet: Sheet, ws: XLSX.WorkSheet): void {
     }
     newData[r] = newRow;
   }
+  if (newData.length === 0) {
+    // SheetJS's `write_ws_xml_data` reads `data[R]` for every row in
+    // the declared `!ref` range; an empty dense store paired with
+    // `!ref="A1"` crashes its writer with a `Cannot read properties
+    // of undefined` error. Seed a single empty row so the iteration
+    // sees a defined slot and emits no `<c>` children.
+    newData.push([]);
+  }
   dense["!data"] = newData;
 
   if (sheet.merges.length > 0) {

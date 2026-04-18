@@ -8,19 +8,25 @@ import { serializeStylesXml } from "./styles.js";
 
 const WORKBOOK_PART = "xl/workbook.xml";
 const STYLES_PART = "xl/styles.xml";
+const WORKSHEET_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
+const WORKSHEET_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 
 /**
  * Serialize an `XlsxSnapshot` back to bytes.
  *
- * Phase 5 contract:
- *   - No dirty flags set → byte-content-identical re-emit, identical
- *     to Phase 4. Untouched workbooks always round-trip exactly.
+ * Phase 5+ contract:
+ *   - No dirty flags set → byte-content-identical re-emit. Untouched
+ *     workbooks always round-trip exactly.
  *   - Dirty sheets → for each dirty sheet, sync the typed cells +
  *     merges back onto the SheetJS WorkSheet, then ask SheetJS to
  *     emit a single-sheet workbook for that sheet, and substitute the
  *     emitted `xl/worksheets/sheetN.xml` into the master container.
- *     Other parts (workbook.xml, sst, styles, opaque parts, …) stay
- *     byte-identical.
+ *     Brand-new sheets reach this same path because the handler has
+ *     already added them to `book.SheetNames` + `book.Sheets`.
+ *   - Dirty workbook / rels / contentTypes → re-emit the affected
+ *     parts from the typed `XlsxWorkbook.sheets` array. Renames,
+ *     insertions, and the matching workbook-rels + content-types
+ *     overrides all flow through these three rewrites.
  *
  * Trade-offs documented in `docs/build-log/xlsx.md`:
  *   - String cells written by Phase 5 commands are emitted inline
@@ -41,8 +47,6 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   const dirtySheetPaths = dirty.sheets;
   const unsupportedDirty =
     dirty.sharedStrings ||
-    dirty.contentTypes ||
-    dirty.rels ||
     dirty.comments.size > 0 ||
     dirty.threadedComments.size > 0 ||
     dirty.sheetRels.size > 0;
@@ -50,7 +54,7 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   if (unsupportedDirty) {
     throw new XlsxSerializeError(
       "container-failed",
-      "Phase 5 serializer supports only dirty `sheets` + `workbook` + `styles`; sst/rels/comments rewrites land in later phases"
+      "Serializer supports `sheets` + `workbook` + `styles` + `rels` + `contentTypes`; sst/comments/sheet-rels rewrites land in later phases"
     );
   }
 
@@ -58,8 +62,16 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
     await rewriteDirtySheets(snapshot, container, dirtySheetPaths);
   }
 
+  if (dirty.contentTypes) {
+    rewriteContentTypes(snapshot.root, container);
+  }
+
+  if (dirty.rels) {
+    rewriteWorkbookRels(snapshot.root, container);
+  }
+
   if (dirty.workbook) {
-    rewriteWorkbookSheetNames(snapshot.root, container);
+    rewriteWorkbookSheets(snapshot.root, container);
   }
 
   if (dirty.styles) {
@@ -178,46 +190,97 @@ function injectStyleIds(xml: string, cells: ReadonlyMap<string, Cell>): string {
 }
 
 /**
- * Phase 5 surgical patch: only the `<sheet name="...">` attributes
- * inside `<sheets>` change. We re-emit the workbook XML by
- * search-and-replace over the original text so every other byte
- * (namespaces, comments, ordering, attribute order, custom views,
- * defined names, calc props, …) stays byte-identical. Sheet names are
- * uniquely identified by their `r:id`, which is stable across renames.
+ * Ensure `[Content_Types].xml` carries an `<Override>` entry for every
+ * worksheet currently in the model. We only re-emit the part when an
+ * entry was actually added; an unchanged content-types file is left
+ * byte-identical to keep the round-trip oracle honest.
  */
-function rewriteWorkbookSheetNames(workbook: XlsxWorkbook, master: ooxml.OoxmlContainer): void {
-  if (!master.has(WORKBOOK_PART)) return;
-  let xml = master.readText(WORKBOOK_PART);
-
-  const tree = ooxml.parseXml(xml);
-  const root = (tree as unknown[]).map((n) => ooxml.asElement(n)).find((el) => el?.tag === "workbook");
-  if (!root) return;
-  const sheetsEl = ooxml.findChild(root.children, "sheets");
-  if (!sheetsEl) return;
-
-  const sheetEls = ooxml.filterChildren(sheetsEl.children, "sheet");
-  const renamesByRid = new Map<string, { oldName: string; newName: string }>();
+function rewriteContentTypes(workbook: XlsxWorkbook, container: ooxml.OoxmlContainer): void {
+  const ct = ooxml.ContentTypes.load(container);
+  let mutated = false;
   for (const sheet of workbook.sheets) {
-    const matching = sheetEls.find((el) => el.attrs.sheetId === sheet.sheetId);
-    if (!matching) continue;
-    const oldName = matching.attrs.name;
-    if (oldName !== undefined && oldName !== sheet.name) {
-      const rid = matching.attrs["r:id"] ?? matching.attrs["r:Id"] ?? "";
-      renamesByRid.set(rid, { oldName, newName: sheet.name });
+    if (sheet.kind !== "worksheet") continue;
+    const partName = `/${sheet.partPath}`;
+    if (!ct.hasOverride(partName)) {
+      ct.addOverride(partName, WORKSHEET_CONTENT_TYPE);
+      mutated = true;
     }
   }
-  if (renamesByRid.size === 0) return;
+  if (mutated) ct.writeBack(container);
+}
 
-  for (const [rid, { oldName, newName }] of renamesByRid) {
-    const ridEsc = escapeRegex(rid);
-    const oldEsc = escapeRegex(escapeXmlAttr(oldName));
-    const re = new RegExp(`(<sheet\\b[^>]*\\bname=")${oldEsc}("[^>]*\\br:id="${ridEsc}")`, "g");
-    const re2 = new RegExp(`(<sheet\\b[^>]*\\br:id="${ridEsc}"[^>]*\\bname=")${oldEsc}(")`, "g");
-    const replaced = xml.replace(re, `$1${escapeXmlAttr(newName)}$2`);
-    xml = replaced.replace(re2, `$1${escapeXmlAttr(newName)}$2`);
+/**
+ * Ensure `xl/_rels/workbook.xml.rels` carries a `<Relationship>` for
+ * every worksheet. New sheets get a freshly minted `rId`; existing
+ * relationships (sharedStrings, styles, theme, calcChain, …) are
+ * preserved verbatim. As with content-types we only write back when
+ * something was actually added.
+ */
+function rewriteWorkbookRels(workbook: XlsxWorkbook, container: ooxml.OoxmlContainer): void {
+  const rels = ooxml.RelationshipGraph.loadFor(container, WORKBOOK_PART);
+  const covered = new Set<string>();
+  for (const r of rels.relationships) covered.add(normalizeRelTarget(r.target));
+
+  let mutated = false;
+  for (const sheet of workbook.sheets) {
+    if (sheet.kind !== "worksheet") continue;
+    const target = workbookRelTarget(sheet.partPath);
+    if (!covered.has(target)) {
+      rels.add({ type: WORKSHEET_REL_TYPE, target });
+      covered.add(target);
+      mutated = true;
+    }
+  }
+  if (mutated) rels.writeBack(container);
+}
+
+/**
+ * Re-emit just the `<sheets>` element of `xl/workbook.xml` from the
+ * typed `workbook.sheets` array. Every other byte of the workbook
+ * part (namespaces, comments, attribute order on `<workbook>` itself,
+ * `<bookViews>`, `<definedNames>`, `<calcPr>`, …) is left untouched
+ * via a string-level splice.
+ *
+ * The rebuild covers the three commands that currently dirty the
+ * workbook part: rename, add-sheet, and (eventually) reorder. The
+ * `r:id` for each sheet is looked up via the workbook rels, which
+ * the caller is responsible for refreshing first when new sheets
+ * have been added.
+ */
+function rewriteWorkbookSheets(workbook: XlsxWorkbook, container: ooxml.OoxmlContainer): void {
+  if (!container.has(WORKBOOK_PART)) return;
+  const xml = container.readText(WORKBOOK_PART);
+
+  const rels = ooxml.RelationshipGraph.loadFor(container, WORKBOOK_PART);
+  const ridByTarget = new Map<string, string>();
+  for (const r of rels.relationships) {
+    ridByTarget.set(normalizeRelTarget(r.target), r.id);
   }
 
-  master.writeText(WORKBOOK_PART, xml);
+  const sheetEntries: string[] = [];
+  for (const sheet of workbook.sheets) {
+    const target = workbookRelTarget(sheet.partPath);
+    const rid = ridByTarget.get(target);
+    if (!rid) {
+      throw new XlsxSerializeError(
+        "workbook-failed",
+        `No workbook relationship for sheet "${sheet.name}" (target=${target}); did the rels rewrite run?`
+      );
+    }
+    const stateAttr = sheet.state !== "visible" ? ` state="${sheet.state}"` : "";
+    sheetEntries.push(
+      `<sheet name="${escapeXmlAttr(sheet.name)}" sheetId="${escapeXmlAttr(sheet.sheetId)}"${stateAttr} r:id="${escapeXmlAttr(rid)}"/>`
+    );
+  }
+  const newSheetsBlock = `<sheets>${sheetEntries.join("")}</sheets>`;
+
+  const sheetsRe = /<sheets\b[^>]*?(?:\/>|>[\s\S]*?<\/sheets>)/;
+  const match = sheetsRe.exec(xml);
+  if (!match) {
+    throw new XlsxSerializeError("workbook-failed", "Could not locate <sheets> block in xl/workbook.xml");
+  }
+  const next = xml.slice(0, match.index) + newSheetsBlock + xml.slice(match.index + match[0].length);
+  container.writeText(WORKBOOK_PART, next);
 }
 
 /**
@@ -234,8 +297,12 @@ function rewriteStylesXml(workbook: XlsxWorkbook, master: ooxml.OoxmlContainer):
   }
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function workbookRelTarget(partPath: string): string {
+  return partPath.startsWith("xl/") ? partPath.slice(3) : partPath;
+}
+
+function normalizeRelTarget(target: string): string {
+  return target.startsWith("/") ? target.slice(1) : target;
 }
 
 function escapeXmlAttr(s: string): string {

@@ -7,5 +7,6 @@ export { setRangeValuesHandler } from "./set-range-values.js";
 export { mergeCellsHandler } from "./merge-cells.js";
 export { unmergeCellsHandler } from "./unmerge-cells.js";
 export { renameSheetHandler } from "./rename-sheet.js";
+export { addSheetHandler } from "./add-sheet.js";
 export { evolveSnapshot, mergeDirty, findSheet, replaceSheet, buildDiff } from "./helpers.js";
 export { resolveSheet, parseCellRef, parseRangeRef, validateSheetName } from "./validation.js";

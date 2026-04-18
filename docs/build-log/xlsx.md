@@ -915,3 +915,143 @@ cell, opts)` which derives the `s` attribute from `cell.z` (the
   `undefined` get no `s` attribute in the worksheet XML; this
   matches Excel's own emission and keeps untouched cells
   byte-clean. The serializer's injector strips `s="0"` defensively.
+
+## 2026-04-18 — Phase 7h: `xlsx:add-sheet` command + multi-part rewrite
+
+**Shipped**
+
+- `packages/xlsx/src/commands/add-sheet.ts` — eighth P0 command.
+  Validates the proposed name (Excel rules: 1–31 chars, no
+  `[ ] * ? : / \`, not "History", case-insensitive uniqueness)
+  and the optional `at` insert position (`[0, sheets.length]`),
+  mints a fresh `sheetId` (smallest unused positive integer) and
+  a fresh part path (smallest free `xl/worksheets/sheetN.xml`
+  that does not collide with any existing part — including
+  opaque ones), splices the typed `Sheet` into `workbook.sheets`
+  and re-derives the `index` of every shifted neighbour, mints
+  a parallel SheetJS `WorkSheet` (`{ "!ref": "A1", "!data": [] }`)
+  so the existing `rewriteDirtySheets` pipeline emits the bytes
+  without a special case, and sets four dirty flags: `workbook`,
+  `rels`, `contentTypes`, and the new `sheets[partPath]`. Diff
+  is a single `node-inserted` change carrying
+  `{ name, at, sheetId, partPath }` in `meta` so undo/redo or
+  agent UIs can reconstruct the insertion.
+- `packages/xlsx/src/serializer/serialize.ts` — promoted
+  `dirty.contentTypes` and `dirty.rels` from "unsupported" to
+  first-class:
+  - `rewriteContentTypes` walks `workbook.sheets` and adds an
+    `<Override PartName="/xl/worksheets/sheetN.xml"
+ContentType=".../worksheet+xml"/>` for any sheet missing
+    one. Re-emits the part only when an entry was actually
+    added so untouched workbooks stay byte-identical.
+  - `rewriteWorkbookRels` does the symmetric pass on
+    `xl/_rels/workbook.xml.rels` via
+    `ooxml.RelationshipGraph.loadFor`: for every worksheet
+    without a rel pointing at its `partPath`, it mints a fresh
+    `rId` (the next free `rId{N}`) and adds a `Relationship`
+    of the worksheet rel-type. Existing rels (sharedStrings,
+    styles, theme, calcChain, …) are preserved verbatim.
+  - `rewriteWorkbookSheets` (renamed from
+    `rewriteWorkbookSheetNames`) is generalized: it rebuilds
+    just the `<sheets>` element of `xl/workbook.xml` from
+    `workbook.sheets` in tab order, looking up each sheet's
+    `r:id` via the just-rewritten rels. Every other byte of
+    `xl/workbook.xml` (namespaces, comments, `<bookViews>`,
+    `<definedNames>`, `<calcPr>`, …) is preserved via a
+    string-level splice. Renames, insertions, and (eventually)
+    reorders all flow through this single rewrite.
+  - Order: `sheets → contentTypes → rels → workbook → styles`.
+    The workbook rewrite runs after rels so `r:id` lookups see
+    the freshly minted ids for new sheets.
+- `packages/xlsx/src/serializer/sheet-sync.ts` — when the typed
+  cell store is empty, `syncSheetToSheetJS` now seeds the dense
+  `!data` with one empty row. Pairing `!ref="A1"` with
+  `!data=[]` triggers `Cannot read properties of undefined`
+  inside SheetJS's `write_ws_xml_data`, which iterates
+  `data[R]` for every row in the declared range. The
+  one-empty-row seed satisfies the iteration without emitting
+  any `<c>` cells.
+- Wired into `commands/registry.ts` (now **8/13 P0 commands
+  shipped**) and re-exported from `commands/index.ts` plus the
+  package root `src/index.ts`.
+
+**Tests landed**
+
+- `packages/xlsx/src/commands/add-sheet.test.ts` — **14 tests**
+  covering: append (default `at`); insert at index 0 with all
+  existing sheets shifted right and `index` re-derived;
+  insert at a middle index; `node-inserted` diff carries
+  `name`/`at`/`sheetId`/`partPath`; reject case-insensitive
+  duplicate name (`duplicate-name`); reject forbidden
+  characters (`invalid-name`); reject reserved name "history"
+  case-insensitive (`invalid-name`); reject empty name and
+  > 31-char name; reject negative and out-of-range `at`
+  > (`invalid-position`); full parse → add → serialize →
+  > re-parse round-trip with all original sheets intact and the
+  > new sheet present at the requested index; same round-trip on
+  > a single-sheet fixture (append); follow-up
+  > `xlsx:set-cell-value` on the freshly added sheet survives the
+  > serializer round-trip.
+
+**Totals after 7h**
+
+- `@officeai/xlsx` unit tests: **516 passing** (+14).
+- 8/13 P0 commands now wired through the bus.
+- `pnpm --filter @officeai/xlsx test`, `lint`, `build`, and
+  `pnpm format:check` all green.
+
+**Decisions**
+
+- **Handler stays typed-model-only; serializer owns container
+  rewrites.** Following the `rename-sheet` pattern, the
+  add-sheet handler does not touch the `OoxmlContainer`. It
+  mutates the typed `XlsxWorkbook.sheets` array, the
+  parallel SheetJS book, and sets dirty flags. The serializer
+  is the single place that touches `[Content_Types].xml`,
+  `xl/_rels/workbook.xml.rels`, and the workbook part. Keeps
+  snapshots logically pure (the container is shared by
+  reference but mutated only on serialize, on a clone) and
+  matches the contract the round-trip tests already enforce.
+- **Mint `sheetId` and part path independently.** OOXML uses
+  `<sheet sheetId="N">` for the stable workbook-internal id
+  (referenced by `<definedName>` and similar) and an unrelated
+  `xl/worksheets/sheet{M}.xml` part path. We mint each
+  separately as the smallest unused positive integer in its
+  own namespace; this matches what Excel does when you delete
+  Sheet2 and add a new sheet (you get `sheetId=4`, part path
+  `sheet4.xml`, but Excel happily reuses `sheet2.xml` for the
+  next added sheet if it's free).
+- **`r:id` minting lives in the rels rewriter, not the
+  handler.** The handler doesn't know which `rId{N}` is free
+  in `xl/_rels/workbook.xml.rels` because it doesn't read the
+  container. Threading the rels graph through every command
+  for a single string would be invasive. Instead the
+  serializer's rels pass mints `rId` for each sheet missing a
+  relationship, and the workbook-sheets pass looks up the
+  fresh `r:id` via target-path matching. Order-of-operations
+  in `serializeXlsx` enforces this dependency.
+- **Rebuild `<sheets>` instead of surgical insert.** The old
+  `rewriteWorkbookSheetNames` was a regex-based name swap that
+  preserved the original `<sheet>` attribute byte order. Adding
+  insertion via more regex was brittle, so the rewrite now
+  reconstructs the entire `<sheets>` element from
+  `workbook.sheets`. Byte-identical preservation only matters
+  when `dirty.workbook = false`; once we touch the workbook
+  part the spec already requires us to re-emit it. The rest
+  of `xl/workbook.xml` is untouched via a string-level splice
+  around the `<sheets>...</sheets>` block, so `<bookViews>`,
+  `<definedNames>`, `<calcPr>`, etc. round-trip exactly.
+- **Empty SheetJS sheet needs a seed row.** SheetJS's
+  `write_ws_xml_data` iterates `data[R]` for every row in
+  `!ref`; an empty `!data: []` paired with `!ref: "A1"` throws
+  `Cannot read properties of undefined`. Seeding a single empty
+  row in `syncSheetToSheetJS` (when the typed cell store is
+  empty) costs one allocation and emits zero `<c>` children —
+  the serialized worksheet XML is the canonical empty
+  `<sheetData/>` shape.
+- **Inverse is `xlsx:delete-sheet`, deferred.** Per
+  `analysis-agent-patterns.md` §8.4, sheet deletion is
+  unrecoverable in-session and lands later (P1+). The
+  add-sheet diff carries `meta.partPath` so a future
+  delete-sheet inverse can target the exact part without
+  re-resolving by name.
