@@ -1759,3 +1759,56 @@ defined names, hyperlinks, sheet reorder/delete/hide,
 `xlsx:edit-comment` / `xlsx:delete-comment` / `xlsx:reply-comment`
 / `xlsx:resolve-comment`, rich-text comment runs, and arrow-key
 keyboard navigation in the web grid.
+
+---
+
+## Phase 11 — Excel-flavoured UX on `/xlsx-editor`
+
+The headless engine landed in Phases 0–10; Phase 11 turns the web
+surface into something that actually feels like Excel. All
+mutations still flow through `XlsxAgent.applyCommand`; the changes
+here are purely UX + a couple of new commands for column/row
+sizing.
+
+| Sub | Deliverable                                                                | Tests delta             |
+| --- | -------------------------------------------------------------------------- | ----------------------- |
+| 11a | Open .xlsx from disk + drag-drop (replace-agent on file load)              | +1 e2e                  |
+| 11b | Multi-cell selection (anchor/focus, drag-extend, shift-click, marquee)     | +2 e2e                  |
+| 11c | Type-to-edit + click-to-insert-ref while editing formulas                  | +3 e2e                  |
+| 11d | Formula autocomplete popover (export `listRegisteredFunctions`, Tab)       | +3 e2e + 7 unit         |
+| 11e | Rich styling toolbar (font/align/fill/number-fmt) + Grid renders `styleId` | +4 e2e                  |
+| 11f | Merge / Unmerge / Insert / Delete from selection, merged-cell rendering    | +3 e2e                  |
+| 11g | `xlsx:set-column-width` / `xlsx:set-row-height` + drag handles + variable geometry | +2 e2e + 7 unit |
+
+**New commands**: `xlsx:set-column-width`, `xlsx:set-row-height`.
+Both store the override on `Sheet.columnWidths` / `Sheet.rowHeights`
+(0-based key, CSS pixels). `null` resets to default (`COL_WIDTH = 100`,
+`ROW_HEIGHT = 24`). Out-of-range column / row indices and sizes
+outside `[MIN, MAX]` reject as `validation` mutations instead of
+mutating the workbook.
+
+**New web exports from `@officeai/xlsx`**: `listRegisteredFunctions`,
+`flattenCellXf`, `EffectiveStyle`, `StyleTable` (+ supporting
+style-table types), and the two new sizing payload / handler
+exports. Used by the Toolbar, FormulaSuggest, and Grid components.
+
+**Grid refactor (variable geometry)**: replaced fixed
+`r * ROW_HEIGHT` arithmetic with prefix-sum arrays (`colXs`,
+`rowYs`) memoised on `sheet.columnWidths`, `sheet.rowHeights`, and
+the transient `colDrag` / `rowDrag` state. Visible-window math now
+binary-searches the prefix arrays. Header drag handles dispatch
+the new commands on mouse-up; transient drag preview is local
+state so the grid stays responsive without round-tripping every
+mousemove through the agent bus.
+
+**Smoke (browser, 19 tests passing on `:3001`)**: open .xlsx →
+fixture replaces seeded sample → multi-cell selection (shift-click,
+plain click collapse) → type-to-edit + Backspace clear →
+click-to-insert-ref into formula → autocomplete popover (Tab /
+ArrowDown / Esc) → bold / italic / underline / align-right toggles
+→ multi-cell format dispatch → merge / unmerge / insert-row /
+delete-column → drag-resize column A and row 1 with revision tick
+verification.
+
+**Tests delta total for Phase 11**: +18 e2e + 14 unit. Repo total
+xlsx tests now sit at **624 unit / 19 e2e** all green.

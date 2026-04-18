@@ -11,7 +11,9 @@ import { renameSheetHandler } from "./rename-sheet.js";
 import { setCellFormatHandler } from "./set-cell-format.js";
 import { setCellFormulaHandler } from "./set-cell-formula.js";
 import { setCellValueHandler } from "./set-cell-value.js";
+import { setColumnWidthHandler } from "./set-column-width.js";
 import { setRangeValuesHandler } from "./set-range-values.js";
+import { setRowHeightHandler } from "./set-row-height.js";
 import { unmergeCellsHandler } from "./unmerge-cells.js";
 
 /**
@@ -47,6 +49,8 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   addSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   renameSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   addCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setColumnWidthHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setRowHeightHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

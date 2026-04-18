@@ -14,13 +14,18 @@ import {
 import { formatCellValue, styleForCell } from "./styles";
 
 /**
- * Fixed cell geometry. Excel's defaults are 64px wide × 20px tall;
- * we widen a touch so column letters and short labels read better.
+ * Default cell geometry — used for any column / row that doesn't
+ * carry an override in `sheet.columnWidths` / `sheet.rowHeights`.
+ * Excel's defaults are 64px × 20px; we widen a touch so column
+ * letters and short labels read better.
  */
 const ROW_HEIGHT = 24;
 const COL_WIDTH = 88;
 const HEADER_ROW_HEIGHT = 24;
 const HEADER_COL_WIDTH = 48;
+
+const MIN_COL_WIDTH = 24;
+const MIN_ROW_HEIGHT = 16;
 
 /**
  * Total grid extents. The visible viewport is much smaller (we render
@@ -50,6 +55,14 @@ export interface GridProps {
    * `xlsx:set-cell-formula`.
    */
   readonly onCommitEdit: (pos: CellPos, value: string) => void;
+  /**
+   * Resize commit handlers. Called once on mouse-up after a header
+   * drag. Parent dispatches `xlsx:set-column-width` /
+   * `xlsx:set-row-height` so the same command-bus invariant holds
+   * for resizing as for cell mutations.
+   */
+  readonly onResizeColumn?: (col: number, widthPx: number) => void;
+  readonly onResizeRow?: (row: number, heightPx: number) => void;
 }
 
 /**
@@ -68,7 +81,7 @@ export interface GridProps {
  *     like Excel even when the user drags up/left.
  */
 export function Grid(props: GridProps): ReactNode {
-  const { sheet, styles, selection, onSelect, onCommitEdit } = props;
+  const { sheet, styles, selection, onSelect, onCommitEdit, onResizeColumn, onResizeRow } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -98,23 +111,121 @@ export function Grid(props: GridProps): ReactNode {
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
 
+  // Live drag state for column / row resize. While present, the
+  // header bar shows the dragged size as a transient override that
+  // is committed via `onResizeColumn` / `onResizeRow` on mouse-up.
+  const [colDrag, setColDrag] = useState<{ col: number; startX: number; startWidth: number; widthPx: number } | null>(
+    null
+  );
+  const [rowDrag, setRowDrag] = useState<{ row: number; startY: number; startHeight: number; heightPx: number } | null>(
+    null
+  );
+
+  // Global mousemove + mouseup for header resize. Tied to the
+  // current `colDrag` / `rowDrag` so we drop the listeners when the
+  // user isn't dragging.
+  useEffect(() => {
+    if (!colDrag) return;
+    const onMove = (e: MouseEvent) => {
+      const next = Math.max(MIN_COL_WIDTH, colDrag.startWidth + (e.clientX - colDrag.startX));
+      setColDrag((prev) => (prev ? { ...prev, widthPx: next } : prev));
+    };
+    const onUp = () => {
+      const finalPx = Math.max(MIN_COL_WIDTH, Math.round(colDrag.widthPx));
+      setColDrag(null);
+      onResizeColumn?.(colDrag.col, finalPx);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [colDrag, onResizeColumn]);
+
+  useEffect(() => {
+    if (!rowDrag) return;
+    const onMove = (e: MouseEvent) => {
+      const next = Math.max(MIN_ROW_HEIGHT, rowDrag.startHeight + (e.clientY - rowDrag.startY));
+      setRowDrag((prev) => (prev ? { ...prev, heightPx: next } : prev));
+    };
+    const onUp = () => {
+      const finalPx = Math.max(MIN_ROW_HEIGHT, Math.round(rowDrag.heightPx));
+      setRowDrag(null);
+      onResizeRow?.(rowDrag.row, finalPx);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [rowDrag, onResizeRow]);
+
   const onScroll = useCallback((ev: React.UIEvent<HTMLDivElement>) => {
     const el = ev.currentTarget;
     setScroll({ top: el.scrollTop, left: el.scrollLeft });
   }, []);
 
+  // Compute the per-column width and per-row height with current
+  // overrides + transient drag applied. Memoised on the inputs so
+  // unchanged sheets reuse the prefix arrays (cheap, but it keeps
+  // re-renders allocation-light).
+  const { colWidths, rowHeights, colXs, rowYs, totalWidth, totalHeight } = useMemo(() => {
+    const cw = new Array<number>(TOTAL_COLS);
+    for (let c = 0; c < TOTAL_COLS; c++) {
+      const override = sheet.columnWidths.get(c);
+      let w = override ?? COL_WIDTH;
+      if (colDrag && colDrag.col === c) w = colDrag.widthPx;
+      cw[c] = Math.max(MIN_COL_WIDTH, w);
+    }
+    const rh = new Array<number>(TOTAL_ROWS);
+    for (let r = 0; r < TOTAL_ROWS; r++) {
+      const override = sheet.rowHeights.get(r);
+      let h = override ?? ROW_HEIGHT;
+      if (rowDrag && rowDrag.row === r) h = rowDrag.heightPx;
+      rh[r] = Math.max(MIN_ROW_HEIGHT, h);
+    }
+    const cx = new Array<number>(TOTAL_COLS + 1);
+    cx[0] = 0;
+    for (let c = 0; c < TOTAL_COLS; c++) cx[c + 1] = cx[c]! + cw[c]!;
+    const ry = new Array<number>(TOTAL_ROWS + 1);
+    ry[0] = 0;
+    for (let r = 0; r < TOTAL_ROWS; r++) ry[r + 1] = ry[r]! + rh[r]!;
+    return {
+      colWidths: cw,
+      rowHeights: rh,
+      colXs: cx,
+      rowYs: ry,
+      totalWidth: cx[TOTAL_COLS]!,
+      totalHeight: ry[TOTAL_ROWS]!,
+    };
+  }, [sheet.columnWidths, sheet.rowHeights, colDrag, rowDrag]);
+
   const visibleH = Math.max(viewport.height - HEADER_ROW_HEIGHT, ROW_HEIGHT);
   const visibleW = Math.max(viewport.width - HEADER_COL_WIDTH, COL_WIDTH);
 
-  const startRow = Math.max(0, Math.floor(scroll.top / ROW_HEIGHT) - OVERSCAN);
-  const endRow = Math.min(TOTAL_ROWS - 1, Math.ceil((scroll.top + visibleH) / ROW_HEIGHT) + OVERSCAN);
-  const startCol = Math.max(0, Math.floor(scroll.left / COL_WIDTH) - OVERSCAN);
-  const endCol = Math.min(TOTAL_COLS - 1, Math.ceil((scroll.left + visibleW) / COL_WIDTH) + OVERSCAN);
+  // Binary-search the prefix arrays to find the first / last visible
+  // index, then pad with the overscan window.
+  const lower = (arr: ReadonlyArray<number>, target: number): number => {
+    let lo = 0;
+    let hi = arr.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid + 1]! <= target) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const startRow = Math.max(0, lower(rowYs, scroll.top) - OVERSCAN);
+  const endRow = Math.min(TOTAL_ROWS - 1, lower(rowYs, scroll.top + visibleH) + OVERSCAN);
+  const startCol = Math.max(0, lower(colXs, scroll.left) - OVERSCAN);
+  const endCol = Math.min(TOTAL_COLS - 1, lower(colXs, scroll.left + visibleW) + OVERSCAN);
 
   const innerStyle: CSSProperties = {
     position: "relative",
-    width: HEADER_COL_WIDTH + TOTAL_COLS * COL_WIDTH,
-    height: HEADER_ROW_HEIGHT + TOTAL_ROWS * ROW_HEIGHT,
+    width: HEADER_COL_WIDTH + totalWidth,
+    height: HEADER_ROW_HEIGHT + totalHeight,
   };
 
   // Index merged regions by top-left and by "covered" cells. The
@@ -187,10 +298,10 @@ export function Grid(props: GridProps): ReactNode {
             }
             style={{
               position: "absolute",
-              top: HEADER_ROW_HEIGHT + r * ROW_HEIGHT,
-              left: HEADER_COL_WIDTH + c * COL_WIDTH,
-              width: COL_WIDTH * widthCells,
-              height: ROW_HEIGHT * heightCells,
+              top: HEADER_ROW_HEIGHT + rowYs[r]!,
+              left: HEADER_COL_WIDTH + colXs[c]!,
+              width: colXs[c + widthCells]! - colXs[c]!,
+              height: rowYs[r + heightCells]! - rowYs[r]!,
               boxSizing: "border-box",
               borderRight: "1px solid var(--divider)",
               borderBottom: "1px solid var(--divider)",
@@ -258,7 +369,7 @@ export function Grid(props: GridProps): ReactNode {
       }
     }
     return out;
-  }, [sheet, styles, mergeIndex, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
+  }, [sheet, styles, mergeIndex, colXs, rowYs, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
 
   // Bounding-box marquee — positioned over the union of the selection.
   let marquee: ReactNode = null;
@@ -270,10 +381,10 @@ export function Grid(props: GridProps): ReactNode {
         aria-hidden
         style={{
           position: "absolute",
-          top: HEADER_ROW_HEIGHT + n.r0 * ROW_HEIGHT,
-          left: HEADER_COL_WIDTH + n.c0 * COL_WIDTH,
-          width: (n.c1 - n.c0 + 1) * COL_WIDTH,
-          height: (n.r1 - n.r0 + 1) * ROW_HEIGHT,
+          top: HEADER_ROW_HEIGHT + rowYs[n.r0]!,
+          left: HEADER_COL_WIDTH + colXs[n.c0]!,
+          width: colXs[n.c1 + 1]! - colXs[n.c0]!,
+          height: rowYs[n.r1 + 1]! - rowYs[n.r0]!,
           border: "2px solid var(--ai-violet)",
           boxSizing: "border-box",
           pointerEvents: "none",
@@ -290,14 +401,16 @@ export function Grid(props: GridProps): ReactNode {
   for (let c = startCol; c <= endCol; c++) {
     const n = selection ? normalizeSelection(selection) : null;
     const isActive = n ? c >= n.c0 && c <= n.c1 : false;
+    const colWidth = colWidths[c]!;
     colHeaders.push(
       <div
         key={`ch-${c}`}
+        data-testid={`col-header-${colToLetter(c)}`}
         style={{
           position: "absolute",
           top: scroll.top,
-          left: HEADER_COL_WIDTH + c * COL_WIDTH,
-          width: COL_WIDTH,
+          left: HEADER_COL_WIDTH + colXs[c]!,
+          width: colWidth,
           height: HEADER_ROW_HEIGHT,
           boxSizing: "border-box",
           borderRight: "1px solid var(--divider)",
@@ -314,6 +427,30 @@ export function Grid(props: GridProps): ReactNode {
         }}
       >
         {colToLetter(c)}
+        {onResizeColumn ? (
+          <div
+            data-testid={`col-resize-${colToLetter(c)}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setColDrag({
+                col: c,
+                startX: e.clientX,
+                startWidth: colWidth,
+                widthPx: colWidth,
+              });
+            }}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: -3,
+              width: 6,
+              height: HEADER_ROW_HEIGHT,
+              cursor: "col-resize",
+              zIndex: 5,
+            }}
+          />
+        ) : null}
       </div>
     );
   }
@@ -323,15 +460,17 @@ export function Grid(props: GridProps): ReactNode {
   for (let r = startRow; r <= endRow; r++) {
     const n = selection ? normalizeSelection(selection) : null;
     const isActive = n ? r >= n.r0 && r <= n.r1 : false;
+    const rowHeight = rowHeights[r]!;
     rowHeaders.push(
       <div
         key={`rh-${r}`}
+        data-testid={`row-header-${r + 1}`}
         style={{
           position: "absolute",
-          top: HEADER_ROW_HEIGHT + r * ROW_HEIGHT,
+          top: HEADER_ROW_HEIGHT + rowYs[r]!,
           left: scroll.left,
           width: HEADER_COL_WIDTH,
-          height: ROW_HEIGHT,
+          height: rowHeight,
           boxSizing: "border-box",
           borderRight: "1px solid var(--divider)",
           borderBottom: "1px solid var(--divider)",
@@ -347,6 +486,30 @@ export function Grid(props: GridProps): ReactNode {
         }}
       >
         {r + 1}
+        {onResizeRow ? (
+          <div
+            data-testid={`row-resize-${r + 1}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setRowDrag({
+                row: r,
+                startY: e.clientY,
+                startHeight: rowHeight,
+                heightPx: rowHeight,
+              });
+            }}
+            style={{
+              position: "absolute",
+              left: 0,
+              bottom: -3,
+              height: 6,
+              width: HEADER_COL_WIDTH,
+              cursor: "row-resize",
+              zIndex: 5,
+            }}
+          />
+        ) : null}
       </div>
     );
   }

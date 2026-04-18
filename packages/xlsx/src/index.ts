@@ -83,6 +83,8 @@ export {
   deleteRowHandler,
   deleteColumnHandler,
   addCommentHandler,
+  setColumnWidthHandler,
+  setRowHeightHandler,
   type SetCellValuePayload,
   type SetCellFormulaPayload,
   type SetCellFormatPayload,
@@ -98,6 +100,8 @@ export {
   type DeleteRowPayload,
   type DeleteColumnPayload,
   type AddCommentPayload,
+  type SetColumnWidthPayload,
+  type SetRowHeightPayload,
 } from "./commands/index.js";
 
 export {

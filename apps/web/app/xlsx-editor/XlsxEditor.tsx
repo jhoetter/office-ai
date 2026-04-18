@@ -544,7 +544,9 @@ export function XlsxEditor(): ReactNode {
         | "xlsx:insert-row"
         | "xlsx:insert-column"
         | "xlsx:delete-row"
-        | "xlsx:delete-column",
+        | "xlsx:delete-column"
+        | "xlsx:set-column-width"
+        | "xlsx:set-row-height",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -657,6 +659,30 @@ export function XlsxEditor(): ReactNode {
       count: r.end.row - r.start.row + 1,
     });
   }, [activeSheet, selection, dispatchOrToast]);
+
+  const onResizeColumn = useCallback(
+    (col: number, widthPx: number) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:set-column-width", {
+        sheet: activeSheet.name,
+        column: col + 1,
+        width: widthPx,
+      });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  const onResizeRow = useCallback(
+    (row: number, heightPx: number) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:set-row-height", {
+        sheet: activeSheet.name,
+        row: row + 1,
+        height: heightPx,
+      });
+    },
+    [activeSheet, dispatchOrToast]
+  );
 
   const onDeleteColumn = useCallback(() => {
     if (!activeSheet || !selection) return;
@@ -883,6 +909,8 @@ export function XlsxEditor(): ReactNode {
             selection={selection}
             onSelect={handleGridSelect}
             onCommitEdit={onCommitGridEdit}
+            onResizeColumn={onResizeColumn}
+            onResizeRow={onResizeRow}
           />
         ) : (
           <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">

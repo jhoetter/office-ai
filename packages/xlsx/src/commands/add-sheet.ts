@@ -60,6 +60,8 @@ export const addSheetHandler: CommandHandler<AddSheetPayload, XlsxSnapshot> = {
       merges: [],
       comments: [],
       commentAuthors: [],
+      columnWidths: new Map(),
+      rowHeights: new Map(),
     };
 
     const sheets = snapshot.root.sheets.slice();

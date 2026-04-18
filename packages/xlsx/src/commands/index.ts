@@ -13,5 +13,7 @@ export { insertColumnHandler } from "./insert-column.js";
 export { deleteRowHandler } from "./delete-row.js";
 export { deleteColumnHandler } from "./delete-column.js";
 export { addCommentHandler } from "./add-comment.js";
+export { setColumnWidthHandler } from "./set-column-width.js";
+export { setRowHeightHandler } from "./set-row-height.js";
 export { evolveSnapshot, mergeDirty, findSheet, replaceSheet, buildDiff } from "./helpers.js";
 export { resolveSheet, parseCellRef, parseRangeRef, validateSheetName } from "./validation.js";

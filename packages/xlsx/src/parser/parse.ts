@@ -280,6 +280,8 @@ function resolveSheet(
     merges,
     comments,
     commentAuthors,
+    columnWidths: new Map(),
+    rowHeights: new Map(),
     ...(commentsPartPath ? { commentsPartPath } : {}),
   };
 }

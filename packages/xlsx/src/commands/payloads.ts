@@ -156,6 +156,32 @@ export interface DeleteColumnPayload {
   readonly count: number;
 }
 
+/* ── `xlsx:set-column-width` / `xlsx:set-row-height` (P11g) ──────────────
+ * Per-column / per-row size overrides in CSS pixels. The handlers
+ * mutate `sheet.columnWidths` / `sheet.rowHeights`; OOXML round-trip
+ * leaves `<cols>` / `<row ht=…>` opaque in P0 — these sizes are a
+ * runtime UI affordance for the web grid and the diff trail, not yet
+ * a formal serializer-side feature.
+ */
+
+/** `xlsx:set-column-width` */
+export interface SetColumnWidthPayload {
+  readonly sheet: string;
+  /** 1-based column index (A=1). */
+  readonly column: number;
+  /** Width in CSS pixels. Pass `null` to reset to the default. */
+  readonly width: number | null;
+}
+
+/** `xlsx:set-row-height` */
+export interface SetRowHeightPayload {
+  readonly sheet: string;
+  /** 1-based row index. */
+  readonly row: number;
+  /** Height in CSS pixels. Pass `null` to reset to the default. */
+  readonly height: number | null;
+}
+
 /** `xlsx:add-comment` */
 export interface AddCommentPayload {
   readonly sheet: string;

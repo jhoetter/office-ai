@@ -133,6 +133,19 @@ export interface Sheet {
   readonly commentsPartPath?: string;
   /** Authors list referenced by classic comments (preserves order). */
   readonly commentAuthors: ReadonlyArray<string>;
+  /**
+   * Per-column width override in CSS pixels. Key = 0-based column
+   * index, value = width in px. Columns not present render at the
+   * Grid's default `COL_WIDTH`. Populated by `xlsx:set-column-width`
+   * (P11g); P0 round-trip leaves the OOXML `<cols>` band opaque.
+   */
+  readonly columnWidths: ReadonlyMap<number, number>;
+  /**
+   * Per-row height override in CSS pixels. Key = 0-based row index,
+   * value = height in px. Rows not present render at the Grid's
+   * default `ROW_HEIGHT`. Populated by `xlsx:set-row-height` (P11g).
+   */
+  readonly rowHeights: ReadonlyMap<number, number>;
 }
 
 export interface Comment {
