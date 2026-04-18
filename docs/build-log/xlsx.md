@@ -1975,3 +1975,247 @@ and every xlsx e2e spec.
   size pickers, increase/decrease decimals are spec'd in
   `renderer.md` but not on screen yet. The structural buttons
   cover the prompt's MVP list.
+
+### Phase 12 — Excel parity polish: ref highlighting + keyboard (2026-04-18)
+
+User feedback after P11: "biggest gaps to Excel are colored
+references in formulas, and the keyboard isn't doing what muscle
+memory expects." Phase 12 closes both, in eight sub-phases that all
+land behind a single `XlsxAgent.applyCommand` invariant — no new
+command types except those P7i already shipped.
+
+#### 12a — `tokenizeForDisplay` + `assignRefColors` (forgiving formula scanner)
+
+**What shipped.** A new presentational scanner in
+`packages/xlsx/src/formula/highlight.ts`, exported from
+`@officeai/xlsx`:
+
+- `tokenizeForDisplay(source)` — left-to-right scanner that emits
+  `DisplayToken`s with `kind ∈ { ref, range, function, string,
+  number, operator, punct, error, text }`. Never throws on partial
+  input.
+- `assignRefColors(tokens)` — hashes by `refKey` (uppercased,
+  `$`-stripped, sheet-qualified) so `A1`, `$A$1`, `a1`, `$A1` all
+  share a colour while `A1` and `B1` get different ones.
+- `DEFAULT_REF_COLORS` — 8-colour cycling palette tuned for both
+  themes, ordered to avoid adjacent collisions.
+
+14 unit tests in `highlight.test.ts` (cover-tightness check, sheet-
+qualified refs incl. quoted-with-apostrophe, palette wrap,
+malformed-input survival).
+
+**Decisions.** *Why a separate scanner instead of wrapping the
+strict `lex()` in a try/catch?* The strict lexer throws on
+malformed input by design (it's the source of truth for the
+evaluator). Mid-typing (`=A1+`, `=SUM("hello`) is the **common
+case** for the highlighter. A purpose-built permissive scanner
+keeps the strict one pristine and gives us a contiguous-cover
+guarantee (`tokens[i].end === tokens[i+1].start`) that downstream
+overlay rendering relies on.
+
+*Why hash refs by normalised `refKey` instead of raw text?* So
+`=A1+$A$1` colours both occurrences identically — that's what
+Excel does and it matches user expectation for "this is the same
+cell".
+
+**Caveats.** Defined names (`MyRange`) and bare booleans (`TRUE`)
+fall into the `text` bucket; they show in the default colour. P12
+made no attempt to colour-code those — the prompt's "colored refs"
+ask is satisfied without dragging in named-range resolution.
+
+#### 12b — Formula bar overlay (`FormulaHighlight.tsx`)
+
+**What shipped.** `apps/web/app/xlsx-editor/FormulaHighlight.tsx`
+renders a transparent-text input on top of an absolutely-positioned
+overlay. The overlay paints each `DisplayToken` as a `<span>` with
+`color: refColors.get(refKey) ?? colorForKind(kind)`. Function
+names get `font-weight: 600`; numbers/strings/operators get muted
+semantic colours. The input keeps `caretColor: var(--foreground)`
+so the cursor stays visible even though the input's own glyphs are
+transparent.
+
+**Decisions.** *Why overlay instead of `contentEditable`?* The
+existing formula bar is an `<input>` with a long history of caret
+behaviour (click-to-insert-ref, autocomplete, type-to-edit). Moving
+to `contentEditable` would force re-validating all of that; the
+overlay pattern keeps the input intact and only changes how it
+*looks*. Trade-off: when the user scrolls the input horizontally
+(long formulas), we mirror `scrollLeft` via `transform: translateX`
+on the overlay so the layers don't drift.
+
+*Why only highlight when `value.startsWith("=")`?* Plain literals
+("Alex", `42`) shouldn't turn purple. The overlay does emit text
+for them but the parent only swaps the input to transparent in
+formula mode.
+
+**Caveats.** IME composition isn't tested — the overlay relies on
+the input's own value-change cycle so a half-composed character
+will briefly show in the default text colour before the overlay
+catches up. Acceptable for P12's English-formula scope.
+
+#### 12c — Grid: coloured ref-rectangles
+
+**What shipped.** `Grid.tsx` gained two new optional props:
+
+- `refRects: ReadonlyArray<RefRect>` — list of `{r1,c1,r2,c2,color}`
+  rectangles, rendered as 2px dashed borders absolutely positioned
+  over the prefix-sum grid coordinates. Per-rect `data-testid`
+  drives the e2e assertions.
+- `onSelectAxis: (axis, index, opts)` — see 12g.
+
+`XlsxEditor.tsx` builds `refRects` via a `useMemo` that walks
+`formulaTokens`, dedupes by `refKey`, drops cross-sheet refs (we
+only paint the active sheet), and looks the colour up in the same
+`refColors` map the formula bar overlay consumes.
+
+**Decisions.** *Why dashed and not solid?* The selection marquee
+is solid violet; the ref rectangles are 2px dashed in the assigned
+ref colour, layered at `zIndex: 3` (below the marquee, above the
+cells). On overlap with the selection, the marquee wins
+visually — exactly Excel's order.
+
+*Why dedupe by `refKey` before rendering rects?* `=A1+A1` only
+needs one coloured border on A1, not two stacked. The dedupe also
+keeps the React key stable across re-renders.
+
+**Caveats.** Cross-sheet refs (`Sheet2!A1`) are detected and have a
+`refKey` for the formula bar colour, but no rect is drawn on the
+active sheet. A future P13 could navigate the sheet tab to show the
+ref on its home sheet.
+
+#### 12d — Arrow-key navigation
+
+**What shipped.** `onSurfaceKeyDown` learned the four arrow keys
+plus `Home` / `Ctrl+Home` / `Ctrl+End`. Pure helpers `moveSelection`
+and `jumpToDataEdge` decouple the navigation algebra from the
+keyboard event:
+
+- `Arrow*` → move the focus by ±1, clamped to `[0, GRID_ROWS-1]` /
+  `[0, GRID_COLS-1]`.
+- `Shift+Arrow*` → keep the existing anchor, replace the focus
+  (rubber-band a range from the current anchor).
+- `Ctrl/Cmd+Arrow*` → "jump to data edge" — if currently on a
+  filled cell, walk while the *next* cell is also filled (Excel's
+  contiguous-block jump); if on an empty cell, walk until the next
+  filled cell.
+- `Home` → first column in the current row; `Shift+Home` extends.
+- `Ctrl+Home` → A1; `Ctrl+End` → bottom-right of the used range
+  (computed from `max(row,col)` over filled cells).
+
+**Decisions.** *Why a closed-form helper instead of a switch in
+the keydown handler?* Both arrow nav AND `handleAxisSelect` need
+the "extend vs collapse" pattern; the helper keeps the contract
+identical.
+
+*Why clamp to `GRID_ROWS / GRID_COLS` (1000 × 26) instead of the
+sheet's actual extent?* The renderer's virtual extent is the user's
+ceiling. Past P12 a real "scroll into used range" pass can lift
+this.
+
+**Caveats.** `Ctrl+End` uses a per-cell scan (`O(n)` over filled
+cells). For a million-cell sheet that's still microseconds, but a
+maintained `usedRange` cache would be cheaper.
+
+#### 12e — Enter / Tab / Shift-Enter / Shift-Tab commit + move
+
+**What shipped.** Two surfaces handle Enter/Tab now, and they
+behave identically:
+
+- **Surface (no edit in progress).** `Enter` → move down, `Shift+Enter`
+  → up, `Tab` → right, `Shift+Tab` → left. No commit — these are
+  pure navigation since nothing is being typed.
+- **Formula bar (focused).** `Enter`/`Tab`/`Shift+...` commit the
+  draft via `dispatchCellEdit` AND move the selection. The motion
+  delta is passed into `onFormulaSubmit({row, col})` so the same
+  function handles all four cases.
+
+**Decisions.** *Why commit-and-move on Tab?* Excel's classic data-
+entry flow. `Tab` across a row, `Enter` to wrap to the next row's
+start. We don't yet implement Enter's "wrap to start column"
+behaviour — that needs a per-row anchor memory which P12 didn't
+need to ship for the prompt's request.
+
+#### 12f — Delete / F2 / Escape
+
+**What shipped.** Already had F2-to-edit and Backspace/Delete-to-
+clear from P11; P12 generalised:
+
+- `F2` → focus formula bar with the cell's current value, caret at
+  end. Restricted to single-cell anchors (multi-cell F2 has no
+  Excel analogue).
+- `Escape` (on the surface) → collapse a multi-cell selection back
+  to a single anchor. `Escape` (in the formula bar) → cancel the
+  draft and refocus the surface.
+- `Delete` / `Backspace` — see 12g; behaviour now depends on the
+  selection shape.
+
+#### 12g — Row / column headers + Delete-deletes-row/column
+
+**What shipped.** Row and column headers are now click targets:
+
+- `<row-header-N>` mousedown → `onSelectAxis("row", r)` →
+  `{ anchor:{r,0}, focus:{r,GRID_COLS-1} }`.
+- `<col-header-X>` mousedown → `onSelectAxis("col", c)` →
+  `{ anchor:{0,c}, focus:{GRID_ROWS-1,c} }`.
+- `Shift+click` extends the existing selection along the same
+  axis (multi-row / multi-col rubber band).
+
+When a whole-row or whole-col selection is active, **Delete /
+Backspace dispatch `xlsx:delete-row` / `xlsx:delete-column`** with
+the right `count` to drop the entire span in a single command. For
+any other selection shape Delete falls back to the P11 range-clear
+behaviour (set every cell to `null`).
+
+**Decisions.** *Why "Delete deletes the row" instead of Excel's
+`Cmd+−`?* The user explicitly asked for it. It also dodges a
+practical Playwright problem: `Cmd+−` is Chromium's zoom-out
+shortcut, intercepted before reaching the page in headless mode.
+The Delete-on-whole-row mapping reads more naturally to non-Excel
+users too ("I selected the row, I pressed Delete, the row went
+away") and we keep Delete-on-cell as the safe clear semantics.
+
+*Why dispatch a single `delete-row` with `count` instead of looping
+one row at a time?* The handler accepts a `count` argument (P7i)
+specifically so multi-row delete is one mutation and one undo
+entry.
+
+**Caveats.** No "Insert row above the selection on Cmd+Shift+="
+yet — the toolbar buttons remain the documented insertion path.
+
+#### 12h — e2e + close-out
+
+**What shipped.** Two new Playwright specs in `apps/web/e2e/`:
+
+- `xlsx-formula-highlight.spec.ts` (3 tests): two unique refs get
+  two unique colours (B1 reused → same colour); range `A2:B3`
+  paints a single rect that covers both corner cells; Escape
+  clears highlights.
+- `xlsx-keyboard.spec.ts` (10 tests): arrow nav, Shift+Arrow
+  extend, Tab/Enter commit-and-move, Home / Ctrl+Home, F2 focus,
+  row-header click selects whole row, col-header click selects
+  whole col, Delete-on-whole-row deletes the row, Delete-on-
+  whole-col deletes the column, Delete-on-single-cell only clears.
+
+Suite at close: 32 xlsx e2e tests pass (was 19 before P12); 638
+xlsx unit tests pass (was 624; +14 from `highlight.test.ts`); web
+lint clean for the editor changes (the pre-existing
+`editor/Toolbar.tsx` lint error is from a parallel agent's branch
+and unrelated).
+
+**Caveats / P13 candidates.**
+
+- **Cross-sheet ref highlighting** — coloured tokens render in the
+  formula bar but no grid rect is drawn on other sheets. A future
+  pass could navigate the tab on hover.
+- **Defined-name colouring** — defined names fall through to the
+  default text colour. Resolving them needs the workbook's named-
+  range table.
+- **Rich-text editor in the cell.** The Grid's in-cell editor is
+  still a plain `<input>`; coloured ref tokens only show in the
+  formula bar overlay, not when editing inside the cell. Symmetry
+  is a P13 nice-to-have.
+- **Browser shortcut conflicts.** `Cmd+−` couldn't be wired
+  (Chromium zoom). `Cmd+Shift+L` (filter), `Ctrl+Shift+L` (slicer
+  in Excel) etc. are also out for similar reasons. We picked
+  conflict-free shortcuts where Excel's would clash.
+

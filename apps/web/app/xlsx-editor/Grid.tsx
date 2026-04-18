@@ -63,6 +63,30 @@ export interface GridProps {
    */
   readonly onResizeColumn?: (col: number, widthPx: number) => void;
   readonly onResizeRow?: (row: number, heightPx: number) => void;
+  /**
+   * Cells / ranges referenced by the formula currently being edited
+   * in the formula bar (Phase 12c). Rendered as coloured borders so
+   * the user can see what the formula points at — the colour matches
+   * the same ref's coloured token in the formula bar.
+   *
+   * Only refs that resolve to the active sheet should be passed in;
+   * the parent filters by sheet name before forwarding.
+   */
+  readonly refRects?: ReadonlyArray<RefRect>;
+  /**
+   * Selection commit handler used by the column / row header click
+   * targets. The Grid raises which axis was clicked plus the index;
+   * the parent maps it to a row-major or column-major selection.
+   */
+  readonly onSelectAxis?: (axis: "row" | "col", index: number, opts?: { extend?: boolean }) => void;
+}
+
+export interface RefRect {
+  readonly r1: number;
+  readonly c1: number;
+  readonly r2: number;
+  readonly c2: number;
+  readonly color: string;
 }
 
 /**
@@ -81,7 +105,17 @@ export interface GridProps {
  *     like Excel even when the user drags up/left.
  */
 export function Grid(props: GridProps): ReactNode {
-  const { sheet, styles, selection, onSelect, onCommitEdit, onResizeColumn, onResizeRow } = props;
+  const {
+    sheet,
+    styles,
+    selection,
+    onSelect,
+    onCommitEdit,
+    onResizeColumn,
+    onResizeRow,
+    refRects,
+    onSelectAxis,
+  } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -371,6 +405,39 @@ export function Grid(props: GridProps): ReactNode {
     return out;
   }, [sheet, styles, mergeIndex, colXs, rowYs, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
 
+  // Coloured borders for refs referenced by the formula currently
+  // being edited (Phase 12c). Rendered behind the marquee so the
+  // selection outline always wins on overlap.
+  const refHighlights: ReactNode[] = [];
+  if (refRects && refRects.length > 0) {
+    for (let i = 0; i < refRects.length; i++) {
+      const rect = refRects[i]!;
+      const r0 = Math.max(0, Math.min(rect.r1, rect.r2));
+      const r1 = Math.min(TOTAL_ROWS - 1, Math.max(rect.r1, rect.r2));
+      const c0 = Math.max(0, Math.min(rect.c1, rect.c2));
+      const c1 = Math.min(TOTAL_COLS - 1, Math.max(rect.c1, rect.c2));
+      if (r0 > r1 || c0 > c1) continue;
+      refHighlights.push(
+        <div
+          key={`refrect-${i}-${rect.color}-${r0}-${c0}-${r1}-${c1}`}
+          data-testid={`ref-rect-${i}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: HEADER_ROW_HEIGHT + rowYs[r0]!,
+            left: HEADER_COL_WIDTH + colXs[c0]!,
+            width: colXs[c1 + 1]! - colXs[c0]!,
+            height: rowYs[r1 + 1]! - rowYs[r0]!,
+            border: `2px dashed ${rect.color}`,
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 3,
+          }}
+        />
+      );
+    }
+  }
+
   // Bounding-box marquee — positioned over the union of the selection.
   let marquee: ReactNode = null;
   if (selection) {
@@ -406,6 +473,15 @@ export function Grid(props: GridProps): ReactNode {
       <div
         key={`ch-${c}`}
         data-testid={`col-header-${colToLetter(c)}`}
+        onMouseDown={(e) => {
+          if (!onSelectAxis) return;
+          // Ignore the resize-handle child — it stops propagation
+          // already, but guard once more for clarity.
+          const tgt = e.target as HTMLElement;
+          if (tgt.dataset.testid?.startsWith("col-resize-")) return;
+          e.preventDefault();
+          onSelectAxis("col", c, { extend: e.shiftKey });
+        }}
         style={{
           position: "absolute",
           top: scroll.top,
@@ -423,6 +499,7 @@ export function Grid(props: GridProps): ReactNode {
           fontSize: 11,
           fontWeight: 500,
           userSelect: "none",
+          cursor: onSelectAxis ? "pointer" : "default",
           zIndex: 2,
         }}
       >
@@ -465,6 +542,13 @@ export function Grid(props: GridProps): ReactNode {
       <div
         key={`rh-${r}`}
         data-testid={`row-header-${r + 1}`}
+        onMouseDown={(e) => {
+          if (!onSelectAxis) return;
+          const tgt = e.target as HTMLElement;
+          if (tgt.dataset.testid?.startsWith("row-resize-")) return;
+          e.preventDefault();
+          onSelectAxis("row", r, { extend: e.shiftKey });
+        }}
         style={{
           position: "absolute",
           top: HEADER_ROW_HEIGHT + rowYs[r]!,
@@ -482,6 +566,7 @@ export function Grid(props: GridProps): ReactNode {
           fontSize: 11,
           fontWeight: 500,
           userSelect: "none",
+          cursor: onSelectAxis ? "pointer" : "default",
           zIndex: 2,
         }}
       >
@@ -549,6 +634,7 @@ export function Grid(props: GridProps): ReactNode {
         {colHeaders}
         {rowHeaders}
         {cellList}
+        {refHighlights}
         {marquee}
       </div>
     </div>

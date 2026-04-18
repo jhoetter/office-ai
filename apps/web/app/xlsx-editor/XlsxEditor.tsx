@@ -6,18 +6,22 @@ import { FolderOpen, Loader2, Sparkles, Download } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import {
   XlsxAgent,
+  assignRefColors,
   cellKey,
   colToLetter,
   flattenCellXf,
   formatA1,
   formatRange,
+  tokenizeForDisplay,
   type CellFormatPatch,
   type CellValue,
+  type DisplayToken,
   type Sheet,
   type XlsxSnapshot,
 } from "@officeai/xlsx";
 import { buildSampleXlsx } from "@/lib/sample-xlsx";
-import { Grid } from "./Grid";
+import { Grid, type RefRect } from "./Grid";
+import { FormulaHighlight } from "./FormulaHighlight";
 import {
   formatSelection,
   isSingle,
@@ -204,6 +208,46 @@ export function XlsxEditor(): ReactNode {
   })();
   const formulaValue = formulaFocused ? formulaDraft : derivedFormulaDisplay;
 
+  // Track the formula input's horizontal scroll so the colour
+  // overlay underneath stays aligned for long formulas. Updated on
+  // every input scroll event below.
+  const [formulaScrollLeft, setFormulaScrollLeft] = useState(0);
+
+  // Phase 12a/c — tokenise the formula bar contents (whether it's a
+  // live draft or the resolved derived display) so we can paint
+  // colored ref tokens in the bar AND draw matching coloured borders
+  // on the referenced cells in the grid. We only highlight when the
+  // value is actually a formula (`=…`) — plain literals get the
+  // default text colour everywhere.
+  const formulaTokens: ReadonlyArray<DisplayToken> = useMemo(() => {
+    if (!formulaValue.startsWith("=")) return [];
+    return tokenizeForDisplay(formulaValue);
+  }, [formulaValue]);
+  const refColors = useMemo(() => assignRefColors(formulaTokens), [formulaTokens]);
+
+  const refRects: ReadonlyArray<RefRect> = useMemo(() => {
+    if (formulaTokens.length === 0) return [];
+    if (!activeSheet) return [];
+    const out: RefRect[] = [];
+    const seen = new Set<string>();
+    for (const t of formulaTokens) {
+      if (!t.target || !t.refKey) continue;
+      // Skip cross-sheet refs: only colour rects on the active sheet.
+      // (Highlighting other sheets would require navigating tabs.)
+      if (t.target.sheet && t.target.sheet !== activeSheet.name) continue;
+      if (seen.has(t.refKey)) continue;
+      seen.add(t.refKey);
+      const color = refColors.get(t.refKey);
+      if (!color) continue;
+      if (t.target.kind === "ref") {
+        out.push({ r1: t.target.row, c1: t.target.col, r2: t.target.row, c2: t.target.col, color });
+      } else {
+        out.push({ r1: t.target.r1, c1: t.target.c1, r2: t.target.r2, c2: t.target.c2, color });
+      }
+    }
+    return out;
+  }, [formulaTokens, refColors, activeSheet]);
+
   // Caret offset inside the formula-bar input. We snapshot it on every
   // selectionchange / keystroke so click-to-insert-ref knows where to
   // splice the picked cell reference. The ref is read by ref-insertion
@@ -265,6 +309,53 @@ export function XlsxEditor(): ReactNode {
     [formulaDraft]
   );
 
+  // Total grid bounds — must stay in sync with `Grid.tsx`. These
+  // bound arrow / Home / Ctrl+End navigation; the underlying model
+  // accepts arbitrary indices, but rendering only goes this far.
+  const GRID_ROWS = 1000;
+  const GRID_COLS = 26;
+
+  const handleAxisSelect = useCallback(
+    (axis: "row" | "col", index: number, opts?: { extend?: boolean }) => {
+      // Row click → select the entire row (col 0 .. GRID_COLS-1).
+      // Column click → select the entire column (row 0 .. GRID_ROWS-1).
+      // Shift-click extends from the existing anchor along the same
+      // axis so users can rubber-band multi-row / multi-col ranges.
+      setSelection((prev) => {
+        const focus: CellPos =
+          axis === "row"
+            ? { row: index, col: GRID_COLS - 1 }
+            : { row: GRID_ROWS - 1, col: index };
+        const anchor: CellPos =
+          axis === "row" ? { row: index, col: 0 } : { row: 0, col: index };
+        if (opts?.extend && prev) {
+          // Keep the prior anchor; replace the focus on the matching
+          // axis only (so a row-select extends rows, col-select cols).
+          if (axis === "row") {
+            return { anchor: { row: prev.anchor.row, col: 0 }, focus };
+          }
+          return { anchor: { row: 0, col: prev.anchor.col }, focus };
+        }
+        return { anchor, focus };
+      });
+      surfaceRef.current?.focus({ preventScroll: true });
+    },
+    []
+  );
+
+  // Detect whether the current selection covers entire rows / cols
+  // — used to decide whether Cmd/Ctrl+− deletes a row or a column.
+  const wholeRowSelection = useMemo(() => {
+    if (!selection) return false;
+    const r = selectionToRange(selection);
+    return r.start.col === 0 && r.end.col >= GRID_COLS - 1;
+  }, [selection]);
+  const wholeColSelection = useMemo(() => {
+    if (!selection) return false;
+    const r = selectionToRange(selection);
+    return r.start.row === 0 && r.end.row >= GRID_ROWS - 1;
+  }, [selection]);
+
   const handleGridSelect = useCallback(
     (pos: CellPos, opts?: { extend?: boolean }) => {
       // Click-to-insert-ref: while the formula bar is in point mode,
@@ -315,6 +406,69 @@ export function XlsxEditor(): ReactNode {
   // single-cell anchor. F2 enters with the existing value; Backspace /
   // Delete clears the cell.
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  // Move the active selection one cell in the given direction, with
+  // optional Shift-extend. Pure helper — no side effects beyond
+  // calling setSelection.
+  const moveSelection = useCallback(
+    (dRow: number, dCol: number, opts: { extend: boolean }) => {
+      setSelection((prev) => {
+        const base: CellPos = prev?.focus ?? { row: 0, col: 0 };
+        const next: CellPos = {
+          row: Math.max(0, Math.min(GRID_ROWS - 1, base.row + dRow)),
+          col: Math.max(0, Math.min(GRID_COLS - 1, base.col + dCol)),
+        };
+        if (opts.extend && prev) return { anchor: prev.anchor, focus: next };
+        return singleSelection(next);
+      });
+    },
+    []
+  );
+
+  // Cmd/Ctrl+arrow Excel-style "jump to data edge". When stationed
+  // on a non-empty cell, jump to the last non-empty cell in the run;
+  // when stationed on an empty cell, jump to the next non-empty one.
+  // Falls back to the grid edge when no transition is found.
+  const jumpToDataEdge = useCallback(
+    (dRow: number, dCol: number, opts: { extend: boolean }) => {
+      if (!activeSheet) return;
+      setSelection((prev) => {
+        const base: CellPos = prev?.focus ?? { row: 0, col: 0 };
+        const isFilled = (r: number, c: number): boolean => {
+          if (r < 0 || c < 0 || r >= GRID_ROWS || c >= GRID_COLS) return false;
+          const cell = activeSheet.cells.get(cellKey(r, c));
+          return !!cell && cell.value !== null && cell.value !== undefined;
+        };
+        const startFilled = isFilled(base.row, base.col);
+        let r = base.row;
+        let c = base.col;
+        const step = (): boolean => {
+          const nr = r + dRow;
+          const nc = c + dCol;
+          if (nr < 0 || nc < 0 || nr >= GRID_ROWS || nc >= GRID_COLS) return false;
+          r = nr;
+          c = nc;
+          return true;
+        };
+        if (startFilled) {
+          // Walk while the *next* cell is also filled; stop just
+          // before a transition into emptiness.
+          while (isFilled(r + dRow, c + dCol)) {
+            if (!step()) break;
+          }
+        } else {
+          // Walk until we hit the next filled cell or the edge.
+          while (step()) {
+            if (isFilled(r, c)) break;
+          }
+        }
+        const next: CellPos = { row: r, col: c };
+        if (opts.extend && prev) return { anchor: prev.anchor, focus: next };
+        return singleSelection(next);
+      });
+    },
+    [activeSheet]
+  );
+
   const onSurfaceKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       // Don't steal keys destined for inputs / buttons / the formula
@@ -323,13 +477,74 @@ export function XlsxEditor(): ReactNode {
       if (target.tagName === "INPUT" || target.tagName === "BUTTON" || target.isContentEditable) {
         return;
       }
-      if (!selection || !isSingle(selection)) {
-        // Multi-cell selections defer to dedicated commands later
-        // (Delete is the one exception we want to keep).
-        if (e.key !== "Backspace" && e.key !== "Delete") return;
+
+      // ── Navigation keys (work whether or not we have a single-cell
+      // selection — extending a range is the whole point).
+      const arrowDelta: Record<string, [number, number]> = {
+        ArrowUp: [-1, 0],
+        ArrowDown: [1, 0],
+        ArrowLeft: [0, -1],
+        ArrowRight: [0, 1],
+      };
+      const arrow = arrowDelta[e.key];
+      if (arrow) {
+        e.preventDefault();
+        if (e.metaKey || e.ctrlKey) {
+          jumpToDataEdge(arrow[0], arrow[1], { extend: e.shiftKey });
+        } else {
+          moveSelection(arrow[0], arrow[1], { extend: e.shiftKey });
+        }
+        return;
+      }
+
+      if (e.key === "Home") {
+        e.preventDefault();
+        setSelection((prev) => {
+          if (!prev) return singleSelection({ row: 0, col: 0 });
+          if (e.metaKey || e.ctrlKey) {
+            return e.shiftKey
+              ? { anchor: prev.anchor, focus: { row: 0, col: 0 } }
+              : singleSelection({ row: 0, col: 0 });
+          }
+          const focus: CellPos = { row: prev.focus.row, col: 0 };
+          return e.shiftKey ? { anchor: prev.anchor, focus } : singleSelection(focus);
+        });
+        return;
+      }
+
+      if (e.key === "End" && (e.metaKey || e.ctrlKey)) {
+        // Ctrl+End → bottom-right of the *used* range (proxy: max
+        // row/col across non-empty cells; falls back to A1).
+        e.preventDefault();
+        if (!activeSheet) return;
+        let maxRow = 0;
+        let maxCol = 0;
+        for (const cell of activeSheet.cells.values()) {
+          if (cell.value === null || cell.value === undefined) continue;
+          if (cell.row > maxRow) maxRow = cell.row;
+          if (cell.col > maxCol) maxCol = cell.col;
+        }
+        const focus: CellPos = { row: maxRow, col: maxCol };
+        setSelection((prev) =>
+          e.shiftKey && prev ? { anchor: prev.anchor, focus } : singleSelection(focus)
+        );
+        return;
+      }
+
+      if (e.key === "Tab") {
+        e.preventDefault();
+        moveSelection(0, e.shiftKey ? -1 : 1, { extend: false });
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        moveSelection(e.shiftKey ? -1 : 1, 0, { extend: false });
+        return;
       }
 
       if (e.key === "F2") {
+        if (!selection || !isSingle(selection)) return;
         e.preventDefault();
         const fi = formulaInputRef.current;
         if (!fi) return;
@@ -343,16 +558,58 @@ export function XlsxEditor(): ReactNode {
         return;
       }
 
+      if (e.key === "Escape") {
+        // Plain Escape on the surface clears the selection back to a
+        // single anchor — handy after Shift-extending a range.
+        if (!selection) return;
+        e.preventDefault();
+        setSelection(singleSelection(selection.anchor));
+        return;
+      }
+
       if (e.key === "Backspace" || e.key === "Delete") {
         if (!activeSheet || !selection) return;
         e.preventDefault();
         const a = agentRef.current;
         if (!a) return;
+        const range = selectionToRange(selection);
+
+        // Whole-row / whole-col selection → Delete actually drops
+        // the rows / cols from the sheet (matches the user's
+        // Excel-adjacent muscle memory: "select row → Delete →
+        // row gone"). For partial selections we fall back to the
+        // range-clear behaviour below.
+        if (wholeRowSelection) {
+          const count = range.end.row - range.start.row + 1;
+          void a
+            .applyCommand({
+              type: "xlsx:delete-row",
+              payload: { sheet: activeSheet.name, at: range.start.row + 1, count },
+              source: "human",
+            })
+            .catch((err: unknown) =>
+              pushToast("error", err instanceof Error ? err.message : String(err))
+            );
+          return;
+        }
+        if (wholeColSelection) {
+          const count = range.end.col - range.start.col + 1;
+          void a
+            .applyCommand({
+              type: "xlsx:delete-column",
+              payload: { sheet: activeSheet.name, at: range.start.col + 1, count },
+              source: "human",
+            })
+            .catch((err: unknown) =>
+              pushToast("error", err instanceof Error ? err.message : String(err))
+            );
+          return;
+        }
+
         // Range-aware clear: dispatch one set-cell-value over each
         // cell in the normalized selection. Simple loop is fine for
         // the in-app sizes we expect; a true range-clear command is a
         // future optimisation.
-        const range = selectionToRange(selection);
         for (let r = range.start.row; r <= range.end.row; r++) {
           for (let c = range.start.col; c <= range.end.col; c++) {
             void a
@@ -374,14 +631,16 @@ export function XlsxEditor(): ReactNode {
       }
 
       // Type-to-edit: a single printable key starts edit mode and
-      // pre-fills the formula bar with that key.
+      // pre-fills the formula bar with that key. Only on a single-
+      // cell anchor so we don't accidentally clobber a multi-cell
+      // selection.
+      if (!selection || !isSingle(selection)) return;
       const isPrintable =
         e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " " ||
         // Treat Space as an explicit edit-start (replaces existing
         // contents), since that matches Excel's behaviour.
         (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey);
       if (!isPrintable) return;
-      if (!selection || !isSingle(selection)) return;
       e.preventDefault();
       setFormulaDraft(e.key === " " ? "" : e.key);
       setFormulaFocused(true);
@@ -393,7 +652,16 @@ export function XlsxEditor(): ReactNode {
         fi.setSelectionRange(len, len);
       });
     },
-    [activeSheet, derivedFormulaDisplay, pushToast, selection]
+    [
+      activeSheet,
+      derivedFormulaDisplay,
+      jumpToDataEdge,
+      moveSelection,
+      pushToast,
+      selection,
+      wholeColSelection,
+      wholeRowSelection,
+    ]
   );
 
   const dispatchCellEdit = useCallback(
@@ -422,16 +690,28 @@ export function XlsxEditor(): ReactNode {
     [pushToast]
   );
 
-  const onFormulaSubmit = useCallback(() => {
-    if (!activeSheet || !selection) return;
-    // Formula-bar Enter applies to the *anchor* cell, mirroring Excel
-    // (the moving end of the range doesn't receive the value).
-    const ref = formatA1({ row: selection.anchor.row, col: selection.anchor.col });
-    void dispatchCellEdit(activeSheet.name, ref, formulaDraft);
-    setFormulaFocused(false);
-    setFormulaDraft("");
-    formulaInputRef.current?.blur();
-  }, [activeSheet, selection, formulaDraft, dispatchCellEdit]);
+  const onFormulaSubmit = useCallback(
+    (move: { row: number; col: number } = { row: 1, col: 0 }) => {
+      if (!activeSheet || !selection) return;
+      // Formula-bar Enter applies to the *anchor* cell, mirroring Excel
+      // (the moving end of the range doesn't receive the value).
+      const anchor = selection.anchor;
+      const ref = formatA1({ row: anchor.row, col: anchor.col });
+      void dispatchCellEdit(activeSheet.name, ref, formulaDraft);
+      setFormulaFocused(false);
+      setFormulaDraft("");
+      formulaInputRef.current?.blur();
+      // Move the selection in Excel-style: Enter→down, Shift+Enter→up,
+      // Tab→right, Shift+Tab→left. Caller passes the delta.
+      const next: CellPos = {
+        row: Math.max(0, Math.min(GRID_ROWS - 1, anchor.row + move.row)),
+        col: Math.max(0, Math.min(GRID_COLS - 1, anchor.col + move.col)),
+      };
+      setSelection(singleSelection(next));
+      surfaceRef.current?.focus({ preventScroll: true });
+    },
+    [activeSheet, selection, formulaDraft, dispatchCellEdit]
+  );
 
   const onCommitGridEdit = useCallback(
     (pos: CellPos, value: string) => {
@@ -718,6 +998,9 @@ export function XlsxEditor(): ReactNode {
       ref={surfaceRef}
       tabIndex={0}
       onKeyDown={onSurfaceKeyDown}
+      data-testid="xlsx-surface"
+      data-whole-row={wholeRowSelection ? "1" : "0"}
+      data-whole-col={wholeColSelection ? "1" : "0"}
       className={cn(
         "xlsx-editor relative flex h-full min-h-0 flex-col gap-3 outline-none",
         dragOver && "ring-2 ring-[var(--ai-violet)] ring-offset-2"
@@ -819,11 +1102,19 @@ export function XlsxEditor(): ReactNode {
           {selectedRef || "—"}
         </span>
         <span className="text-secondary text-xs font-mono">fx</span>
-        <input
+        <div className="relative flex-1 font-mono text-xs">
+          <FormulaHighlight
+            value={formulaValue}
+            tokens={formulaTokens}
+            refColors={refColors}
+            scrollLeft={formulaScrollLeft}
+          />
+          <input
           ref={formulaInputRef}
           data-testid="formula-input"
           aria-label="Formula bar"
           value={formulaValue}
+          onScroll={(e) => setFormulaScrollLeft(e.currentTarget.scrollLeft)}
           onChange={(e) => {
             // A user keystroke invalidates the click-to-insert pending
             // span — anything they type from here adds to / replaces
@@ -874,7 +1165,10 @@ export function XlsxEditor(): ReactNode {
             }
             if (e.key === "Enter") {
               e.preventDefault();
-              onFormulaSubmit();
+              onFormulaSubmit({ row: e.shiftKey ? -1 : 1, col: 0 });
+            } else if (e.key === "Tab") {
+              e.preventDefault();
+              onFormulaSubmit({ row: 0, col: e.shiftKey ? -1 : 1 });
             } else if (e.key === "Escape") {
               e.preventDefault();
               setFormulaFocused(false);
@@ -889,8 +1183,22 @@ export function XlsxEditor(): ReactNode {
           }}
           placeholder={selection ? "Type a value or =formula" : "Select a cell to edit"}
           disabled={!selection || !agent}
-          className="flex-1 bg-transparent px-1 py-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
+          // When the formula starts with `=`, the FormulaHighlight
+          // overlay is responsible for the visible glyphs — make the
+          // input's own text transparent (but keep the caret visible
+          // via `caretColor`). Plain literals stay rendered by the
+          // input itself so we don't have to model number / string
+          // colours in the overlay too.
+          style={{
+            position: "relative",
+            zIndex: 1,
+            background: "transparent",
+            color: formulaValue.startsWith("=") ? "transparent" : undefined,
+            caretColor: "var(--foreground)",
+          }}
+          className="block w-full bg-transparent p-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
         />
+        </div>
         <div className="absolute left-[68px] right-2 top-full z-40">
           <FormulaSuggest
             matches={suggestionMatches}
@@ -911,6 +1219,8 @@ export function XlsxEditor(): ReactNode {
             onCommitEdit={onCommitGridEdit}
             onResizeColumn={onResizeColumn}
             onResizeRow={onResizeRow}
+            refRects={refRects}
+            onSelectAxis={handleAxisSelect}
           />
         ) : (
           <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">

@@ -119,3 +119,12 @@ export {
   type FunctionCategory,
   type RegisteredFunctionInfo,
 } from "./formula/registered-functions.js";
+
+export {
+  tokenizeForDisplay,
+  assignRefColors,
+  DEFAULT_REF_COLORS,
+  type DisplayToken,
+  type DisplayTokenKind,
+  type RefTarget,
+} from "./formula/highlight.js";

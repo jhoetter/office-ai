@@ -337,6 +337,104 @@ significance (clicking a cell appends an A1 ref at the caret).
 
 ---
 
+## 15. Two-layer formula rendering: strict lexer + permissive scanner
+
+|                  | DOCX                                  | XLSX                                                                                                            |
+| ---------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Display tokeniser | n/a                                  | `tokenizeForDisplay()` in `packages/xlsx/src/formula/highlight.ts` — never throws, contiguous-cover guarantee   |
+| Evaluator tokeniser | n/a                                | `lex()` in `packages/xlsx/src/formula/lexer.ts` — strict, throws on malformed input, source of truth for AST    |
+| Why two           | only one consumer (PM)              | the highlighter is **always** asked to render mid-typing input (`=A1+`, `=SUM("hello`); the evaluator is not    |
+
+**Why two scanners**: forcing the strict lexer to be permissive
+would erode its evaluator contract; teaching the highlighter to
+swallow exceptions would scatter throw/catch noise across React
+render paths. Splitting them keeps each one's invariants tight.
+
+**Cost**: a small amount of duplication in regex catalogues for
+references and operators. **Benefit**: `tokenizeForDisplay` can
+guarantee `tokens[i].end === tokens[i+1].start` (contiguous
+coverage) — which the formula bar overlay relies on to align
+glyphs with the underlying transparent input character-by-character.
+
+The `assignRefColors` companion hashes by a normalised `refKey`
+(uppercased, `$`-stripped, sheet-qualified), so `A1`, `$A$1`, and
+`a1` share a colour while distinct addresses cycle through the
+8-colour `DEFAULT_REF_COLORS` palette. DOCX has no parallel
+machinery — there are no "expressions" inside docs that need
+chromatic-distinct rendering.
+
+---
+
+## 16. Two-surface input model with a transparent overlay
+
+|                       | DOCX                                  | XLSX                                                                                                              |
+| --------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Where the user types   | the document surface (PM editor)     | one of three: cell `<input>`, formula bar `<input>`, or the surface `<div>` (type-to-edit redirects to formula)   |
+| Coloured rendering    | n/a                                   | `FormulaHighlight.tsx` overlay layered behind the formula bar — same font/spacing, transparent input text         |
+| Caret ownership       | PM owns the caret                     | the `<input>` keeps the caret; overlay is `pointer-events:none, aria-hidden`                                      |
+
+**Why an overlay instead of `contentEditable`**: the formula bar
+already owns a long history of careful caret behaviour (P11
+click-to-insert-ref, autocomplete acceptance, type-to-edit
+redirection). Migrating to `contentEditable` would force re-
+verifying every one of those flows. The overlay pattern keeps
+the input intact and only changes how it _looks_; the only
+synchronisation primitive is mirroring `scrollLeft` on the
+overlay via `transform: translateX` so long formulas stay aligned.
+
+**Trade-off**: IME composition is mildly fragile — half-composed
+characters briefly show in the default text colour before the
+overlay catches up. Acceptable for English-formula scope; revisit
+when CJK formula authors arrive.
+
+---
+
+## 17. Ref-rectangle highlighting: separate visual layer
+
+|                | DOCX                              | XLSX                                                                                                |
+| -------------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Selection paint | PM decoration on the doc          | `<div data-testid="grid-marquee">` absolutely positioned over `colXs / rowYs`                         |
+| Other overlays  | n/a                               | `refRects` rendered as 2px dashed coloured borders (zIndex 3, below marquee)                          |
+
+**Why a separate visual layer for refs**: selection and ref-
+highlight have different lifecycles (selection is persistent;
+ref-highlight only exists while the formula bar is focused with
+a `=` formula) and different colour vocabularies (selection is
+always violet; refs cycle through the 8-colour palette). Painting
+them as siblings keeps z-order obvious and lets the marquee win
+on overlap, which is what Excel does.
+
+DOCX has no analogue — there are no "this paragraph is
+referenced by that other paragraph" relationships at the
+rendering layer.
+
+---
+
+## 18. Keyboard parity: surface vs in-edit modes (P12)
+
+|                          | DOCX                                  | XLSX                                                                                                                  |
+| ------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Where keyboard handlers live | PM plugins (one tree, one model)     | three: surface div (`onSurfaceKeyDown`), formula bar `<input>` (`onKeyDown`), in-cell `<input>` (`onKeyDown`)         |
+| Mode dispatch            | PM cursor position                   | `formulaFocused` × `formulaDraft.startsWith("=")` × `selection.kind` (single vs range vs whole-row vs whole-col)    |
+| Excel-isms shipped       | n/a                                  | Arrow nav (+ Shift extend, + Ctrl jump-to-data-edge), Tab/Enter commit-and-move, F2 enter edit, Delete drops whole rows/cols |
+
+**Why three handlers instead of one**: each surface owns
+different invariants — the surface div manages selection and
+type-to-edit redirection, the formula bar input manages the
+draft and click-to-insert-ref, the in-cell input is a short-
+lived peer to the formula bar. Folding them into one would
+require either lifting all state up or constantly checking
+`document.activeElement`. The split keeps each handler's deps
+narrow and React's re-render graph predictable.
+
+**Why `Delete` deletes whole rows/columns instead of `Cmd+−`**:
+explicit user request, but it also dodges Chromium's zoom-out
+shortcut interception in headless Playwright. The behaviour
+gracefully degrades — a single-cell Delete still clears, only
+whole-row / whole-col selections trigger structural deletion.
+
+---
+
 ## When this doc should be updated
 
 - A new editor surface lands and shares non-trivial machinery

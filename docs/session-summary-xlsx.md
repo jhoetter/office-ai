@@ -1,6 +1,6 @@
-# XLSX phase summary (P0 → P11)
+# XLSX phase summary (P0 → P12)
 
-> Status: 2026-04-18. Twelve phases shipped against
+> Status: 2026-04-18. Thirteen phases shipped against
 > [`prompt.md`](../prompt.md) lines 396–410 and the spec corpus
 > in [`spec/xlsx/`](../spec/xlsx). This file is the high-level
 > overview; [`docs/build-log/xlsx.md`](build-log/xlsx.md) is the
@@ -31,6 +31,19 @@ The XLSX track now has:
   styling toolbar (font / align / fill / number-format), merge /
   unmerge / insert / delete from the toolbar, drag-resize column
   and row headers, plus the Save round-trip.
+- (P12) **Coloured formula references** — Excel-style colour
+  tokens in the formula bar overlay with matching coloured
+  borders on referenced cells in the grid, driven by a permissive
+  `tokenizeForDisplay()` scanner that never throws on partial
+  input. Refs are normalised (`A1`, `$A$1`, `Sheet2!A1` form
+  three distinct keys with stable colours).
+- (P12) **Excel-grade keyboard parity** — arrow nav (with
+  Shift+Arrow extend and Ctrl/Cmd+Arrow jump-to-data-edge),
+  Home / Ctrl+Home / Ctrl+End, Enter / Tab / Shift+Enter /
+  Shift+Tab commit-and-move, F2 to focus the formula bar,
+  Escape to cancel, row / column header click for whole-axis
+  selection, and **Delete on a whole row / column drops the
+  entire row / column** through one bus dispatch.
 - An `office-agent xlsx` CLI subcommand family (`inspect`, `read`,
   `set-cell`, `set-formula`, etc.) plus an MCP server (`xlsx_*`
   tool family) sharing one transport with the DOCX tools, so the
@@ -53,6 +66,7 @@ The XLSX track now has:
 | 9     | Web surface                                           | `## Phase 9`                                                 | Virtualized grid, `/xlsx-editor` page, formula bar, sheet tabs, agent-snapshot subscription, first Playwright e2e.                    |
 | 10    | Browser smoke + close-out                             | `## Phase 10`                                                | Manual flow-through (open `/xlsx-editor` → edit A2 → set `=B3*2` and watch B4 cascade) + README refresh.                              |
 | 11    | Excel-flavoured UX                                    | `## Phase 11`                                                | Open `.xlsx` from disk, multi-cell selection, type-to-edit, click-to-insert-ref, autocomplete, styling toolbar, structural buttons, drag-resize, +2 sizing commands. |
+| 12    | Excel parity polish: ref highlighting + keyboard      | `## Phase 12`                                                | Coloured ref tokens in the formula bar, matching coloured borders on referenced cells in the grid, full Excel-style keyboard nav (arrows + Shift extend + Ctrl jump-to-data-edge + Tab/Enter commit-and-move + F2/Escape), row/col header click selection + Delete-deletes-row/col. +13 e2e tests, +14 unit tests. |
 
 The full per-batch log lives in
 [`docs/build-log/xlsx.md`](build-log/xlsx.md). Each section follows
