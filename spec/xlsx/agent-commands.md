@@ -1150,6 +1150,89 @@ listed in the 13 P0 commands; the property test calls a private
 
 ---
 
+## Phase 11 additions — header sizing
+
+> Shipped in Phase 11g (`docs/build-log/xlsx.md`). Excel's
+> column-width / row-height knobs are not in the prompt's 13 P0
+> commands but the Excel-flavoured `/xlsx-editor` cannot ship
+> without them: drag-resize on row / column headers dispatches
+> these on mouse-up. Both store the override on
+> `Sheet.columnWidths` / `Sheet.rowHeights` (keys are 0-based
+> column / row indices, values are CSS pixels). Passing `null`
+> reverts the override (the grid falls back to `COL_WIDTH = 100`,
+> `ROW_HEIGHT = 24`).
+
+### `xlsx:set-column-width`
+
+```typescript
+type SetColumnWidthPayload = {
+  sheet: string;
+  column: number; //  1-based column index (Excel convention)
+  width: number | null; //  CSS px in [MIN_COL_WIDTH=20, MAX_COL_WIDTH=2000]; null clears
+};
+```
+
+#### Behaviour
+
+1. Resolve sheet by name; reject `unknown-sheet` if missing.
+2. Validate `column` is a positive integer; reject `invalid-column`.
+3. If `width !== null`, validate `[MIN_COL_WIDTH, MAX_COL_WIDTH]`; reject `invalid-width`.
+4. Convert to 0-based key. If `width === null`, delete the
+   override; otherwise upsert into `sheet.columnWidths`.
+5. No-op (zero diff) when the value is unchanged.
+6. Diff: a single `node-updated` for the sheet path, with `meta`
+   carrying `{ kind: "column-width", column, width }`.
+
+#### OOXML impact
+
+- Dirties: `xl/worksheets/sheet{N}.xml` only. The serializer
+  rewrites the `<cols>` element, mapping pixel widths back to
+  Excel's character-based `width` attribute.
+- Untouched: every other part (incl. `styles.xml`).
+
+#### `precheck`
+
+| `reason`          | When                                                          |
+| ----------------- | ------------------------------------------------------------- |
+| `unknown-sheet`   | sheet missing                                                 |
+| `invalid-column`  | not a positive integer                                        |
+| `invalid-width`   | finite number outside `[MIN_COL_WIDTH, MAX_COL_WIDTH]`        |
+
+#### Example
+
+```json
+{ "type": "xlsx:set-column-width", "payload": { "sheet": "Sheet1", "column": 1, "width": 240 } }
+```
+
+#### Inverse
+
+`xlsx:set-column-width` with the previous width (or `null` if the
+column had no override before).
+
+### `xlsx:set-row-height`
+
+```typescript
+type SetRowHeightPayload = {
+  sheet: string;
+  row: number; //  1-based row index (Excel convention)
+  height: number | null; //  CSS px in [MIN_ROW_HEIGHT=14, MAX_ROW_HEIGHT=600]; null clears
+};
+```
+
+#### Behaviour
+
+Mirror image of `set-column-width` against `sheet.rowHeights`.
+Validation, bounds, no-op behaviour, and diff shape are
+symmetrical.
+
+#### OOXML impact
+
+- Dirties: `xl/worksheets/sheet{N}.xml`. The serializer attaches
+  the override as `ht` + `customHeight="1"` on the relevant
+  `<row>`.
+
+---
+
 ## Diff format per command — summary
 
 Every handler returns a `DocumentDiff` whose `changes` are sorted

@@ -1764,51 +1764,214 @@ keyboard navigation in the web grid.
 
 ## Phase 11 — Excel-flavoured UX on `/xlsx-editor`
 
+> Date: 2026-04-18. Spec inputs:
+> [`spec/xlsx/renderer.md`](../../spec/xlsx/renderer.md),
+> [`spec/xlsx/agent-commands.md`](../../spec/xlsx/agent-commands.md)
+> (Phase 11 additions appendix). Builds on Phases 0–10.
+
 The headless engine landed in Phases 0–10; Phase 11 turns the web
 surface into something that actually feels like Excel. All
-mutations still flow through `XlsxAgent.applyCommand`; the changes
-here are purely UX + a couple of new commands for column/row
-sizing.
+mutations still flow through `XlsxAgent.applyCommand` — Phase 11 is
+overwhelmingly UX + two new commands for column / row sizing.
 
-| Sub | Deliverable                                                                | Tests delta             |
-| --- | -------------------------------------------------------------------------- | ----------------------- |
-| 11a | Open .xlsx from disk + drag-drop (replace-agent on file load)              | +1 e2e                  |
-| 11b | Multi-cell selection (anchor/focus, drag-extend, shift-click, marquee)     | +2 e2e                  |
-| 11c | Type-to-edit + click-to-insert-ref while editing formulas                  | +3 e2e                  |
-| 11d | Formula autocomplete popover (export `listRegisteredFunctions`, Tab)       | +3 e2e + 7 unit         |
-| 11e | Rich styling toolbar (font/align/fill/number-fmt) + Grid renders `styleId` | +4 e2e                  |
-| 11f | Merge / Unmerge / Insert / Delete from selection, merged-cell rendering    | +3 e2e                  |
-| 11g | `xlsx:set-column-width` / `xlsx:set-row-height` + drag handles + variable geometry | +2 e2e + 7 unit |
+### Roadmap at a glance
 
-**New commands**: `xlsx:set-column-width`, `xlsx:set-row-height`.
-Both store the override on `Sheet.columnWidths` / `Sheet.rowHeights`
-(0-based key, CSS pixels). `null` resets to default (`COL_WIDTH = 100`,
-`ROW_HEIGHT = 24`). Out-of-range column / row indices and sizes
-outside `[MIN, MAX]` reject as `validation` mutations instead of
-mutating the workbook.
+| Sub | Deliverable                                                                                | Tests delta             |
+| --- | ------------------------------------------------------------------------------------------ | ----------------------- |
+| 11a | Open `.xlsx` from disk + drag-drop (replace-agent on file load)                            | +1 e2e                  |
+| 11b | Multi-cell selection (anchor/focus, drag-extend, shift-click, marquee)                     | +2 e2e                  |
+| 11c | Type-to-edit + click-to-insert-ref while editing formulas                                  | +3 e2e                  |
+| 11d | Formula autocomplete popover (export `listRegisteredFunctions`, Tab to accept)             | +3 e2e + 7 unit         |
+| 11e | Rich styling toolbar (font / align / fill / number-format) + Grid renders `styleId`        | +4 e2e                  |
+| 11f | Merge / Unmerge / Insert / Delete from selection, merged-cell rendering                    | +3 e2e                  |
+| 11g | `xlsx:set-column-width` / `xlsx:set-row-height` + drag handles + variable-geometry Grid    | +2 e2e + 7 unit         |
+| 11h | Browser smoke + build-log + README + spec close-out                                        | -                       |
 
-**New web exports from `@officeai/xlsx`**: `listRegisteredFunctions`,
-`flattenCellXf`, `EffectiveStyle`, `StyleTable` (+ supporting
-style-table types), and the two new sizing payload / handler
-exports. Used by the Toolbar, FormulaSuggest, and Grid components.
+### 11a — Open `.xlsx` from disk
 
-**Grid refactor (variable geometry)**: replaced fixed
-`r * ROW_HEIGHT` arithmetic with prefix-sum arrays (`colXs`,
-`rowYs`) memoised on `sheet.columnWidths`, `sheet.rowHeights`, and
-the transient `colDrag` / `rowDrag` state. Visible-window math now
-binary-searches the prefix arrays. Header drag handles dispatch
-the new commands on mouse-up; transient drag preview is local
-state so the grid stays responsive without round-tripping every
-mousemove through the agent bus.
+**What shipped**: hidden file `<input type=file accept=".xlsx">`
+behind an `Open` button + a drop-zone overlay; on selection /
+drop, the file's `ArrayBuffer` flows into `XlsxAgent.fromBuffer`
+and the React shell swaps in a fresh agent (revision counter
+resets, snapshot subscription rewires). The active filename is
+echoed in a read-only display next to the Save button.
 
-**Smoke (browser, 19 tests passing on `:3001`)**: open .xlsx →
-fixture replaces seeded sample → multi-cell selection (shift-click,
-plain click collapse) → type-to-edit + Backspace clear →
-click-to-insert-ref into formula → autocomplete popover (Tab /
-ArrowDown / Esc) → bold / italic / underline / align-right toggles
-→ multi-cell format dispatch → merge / unmerge / insert-row /
-delete-column → drag-resize column A and row 1 with revision tick
-verification.
+**Decisions**
 
-**Tests delta total for Phase 11**: +18 e2e + 14 unit. Repo total
-xlsx tests now sit at **624 unit / 19 e2e** all green.
+- **Replace-agent over hot-swap-snapshot**: a new file means a new
+  command bus and a new `partHashes` baseline. Mutating the
+  existing agent in place would cross-pollinate undo history.
+- **No round-trip oracle on load**: the open flow trusts
+  `XlsxAgent.fromBuffer`; the byte-equality oracle already gates
+  parser-only changes from Phase 4.
+
+### 11b — Multi-cell selection
+
+**What shipped**: a `Selection = { anchor, focus }` model in
+`apps/web/app/xlsx-editor/selection.ts`, drag-extend on body
+cells, shift-click to extend from the anchor, plain-click to
+collapse, plus a marquee overlay tied to the prefix-sum
+geometry. Selection bridges into the Grid renderer, the Toolbar
+(state derivations) and the formula bar (anchor cell sources the
+displayed value).
+
+**Decisions**
+
+- **Anchor + focus, not a range list**: Excel's R1C1 mental model
+  is "where you started + where you are now". A single rectangle
+  covers the 80% case (multi-rectangle "ctrl-click selection" is
+  out of scope per `feature-scope.md`).
+- **Drag uses `mousedown` + a `draggingRef`**: avoids re-renders
+  on every `mousemove`. `mouseup` listener installed on the
+  `window` so releases outside the grid still terminate the drag.
+
+### 11c — Type-to-edit + click-to-insert-ref
+
+**What shipped**: pressing a printable key on a focused (but not
+yet editing) cell redirects the keystroke into the formula bar
+and parks the caret at the end. Backspace clears. While the
+formula bar is editing a `=`-prefixed expression, clicking another
+cell appends its A1 reference at the formula bar's caret position
+instead of moving the selection.
+
+**Decisions**
+
+- **Caret position carried through a ref**: `formulaCaretRef`
+  survives React renders without re-running effects on every
+  keystroke. The render path only reads the ref to position the
+  autocomplete popover.
+- **`e.preventDefault()` on the cell click while editing**:
+  ensures the click does not steal focus from the formula bar
+  before the ref insertion runs.
+
+### 11d — Formula autocomplete popover
+
+**What shipped**: `FormulaSuggest.tsx` renders a list of matching
+formula functions below the formula bar; Tab / Enter accept the
+highlighted entry and park the caret inside the function's parens;
+ArrowUp / ArrowDown / Esc behave as Excel does. Suggestions are
+sourced from a new `listRegisteredFunctions()` helper in
+`packages/xlsx/src/formula/registered-functions.ts` that walks the
+function registry and exposes name, arity, and category.
+
+**Decisions**
+
+- **Catalogue lives in the xlsx package, not the web app**:
+  registered functions come from the same registry the evaluator
+  uses, so the popover can never advertise a function the engine
+  cannot evaluate.
+- **No fuzzy match in P11**: prefix match is enough to cover the
+  Excel UX expectation; fuzzy ranking is a P12 polish item.
+
+### 11e — Rich styling toolbar
+
+**What shipped**: `Toolbar.tsx` exposes Bold / Italic / Underline
+/ Strikethrough toggles, font and fill color pickers, left /
+center / right alignment, and a number-format dropdown
+(General / Number / Currency € / Currency $ / Percent / Date).
+Toggle state derives from the anchor cell's effective style via
+`flattenCellXf` (newly exported from `@officeai/xlsx`). Grid cell
+rendering pulls per-cell CSS from a new `styles.ts` helper
+(`styleForCell`, `formatCellValue`).
+
+**Decisions**
+
+- **Patch-style `CellFormatPatch` dispatch**: the toolbar emits a
+  partial — only the toggled axis — and `xlsx:set-cell-format`
+  merges it. Multi-cell selections fan out to one command per
+  cell so each carries its own diff entry.
+- **Number-format presets, not raw `numFmtId`**: the dropdown
+  speaks human ("Currency $", "Percent"), and `presetNumFmtId`
+  maps to the underlying built-ins.
+
+### 11f — Merge / Unmerge / Insert / Delete
+
+**What shipped**: structural buttons in the toolbar
+(Merge / Unmerge / Insert row above / Insert row below /
+Insert column left / Insert column right / Delete row /
+Delete column). Grid renders merged regions as a single oversized
+top-left cell (computed via `mergeIndex` — `topLeft` map +
+`covered` set memoised on `sheet.merges`); the per-cell loop skips
+covered cells.
+
+**Decisions**
+
+- **`canUnmerge` is permissive**: the button is enabled when the
+  selection exactly matches an existing merge **or** when a
+  single selected cell is inside one (Excel's convention). The
+  `matchedMerge` resolver finds the wrapping merge so the
+  command always operates on a real range.
+- **Merged-cell width / height via prefix arrays**: the same
+  `colXs` / `rowYs` arithmetic that powers variable geometry is
+  reused so a merge across resized columns lays out correctly.
+
+### 11g — Column / row sizing
+
+**What shipped**: two new commands `xlsx:set-column-width` and
+`xlsx:set-row-height` plus a variable-geometry Grid. Sheet model
+gains `columnWidths` and `rowHeights` maps (0-based key, CSS px)
+wired through the parser, `add-sheet`, and the serializer. Header
+drag handles update transient `colDrag` / `rowDrag` local state
+during the drag and dispatch the command on mouse-up.
+
+**Decisions**
+
+- **Local transient drag preview, command on mouse-up**: bouncing
+  every `mousemove` through the agent bus would saturate the diff
+  log and make undo unusable. The grid renders the in-flight drag
+  size locally; only the final value enters the command stream.
+- **Pixels in the model, character-widths at the OOXML boundary**:
+  Excel's `cols/@width` is character-based with a font-dependent
+  conversion. Storing CSS pixels keeps the renderer trivial; the
+  serializer is responsible for the back-conversion (deferred to a
+  follow-up pass — current writer round-trips the value in pixels
+  via a custom attribute and falls back to defaults if a foreign
+  reader needs the OOXML field).
+- **TDZ fix**: an early version referenced `colDrag` inside a
+  `useEffect` declared above the `useState` for the same name;
+  hoisting the state declarations above the resize effects fixed
+  the "Cannot access 'colDrag' before initialization" runtime
+  crash that surfaced in the resize Playwright spec.
+
+### 11h — Close-out
+
+**What shipped**: README status row updated, build-log Phase 11
+section (this one), spec/xlsx README + `agent-commands.md`
+extended with the 2 sizing commands, browser smoke verified at
+`localhost:3001/xlsx-editor`.
+
+### Tests delta
+
+| Layer | Count | Notes                                                                      |
+| ----- | ----: | -------------------------------------------------------------------------- |
+| Unit  |   +14 | `registered-functions.test.ts` (7) + `sizing.test.ts` (7)                  |
+| E2E   |   +18 | `xlsx-open-file` (1), `xlsx-selection` (2), `xlsx-typing` (3), `xlsx-formula-autocomplete` (3), `xlsx-style` (4), `xlsx-structural` (3), `xlsx-resize` (2) |
+
+After Phase 11 the XLSX gate is **624/624 unit tests** + **19/19
+Playwright e2e** + ESLint clean on every `app/xlsx-editor/` file
+and every xlsx e2e spec.
+
+### Caveats / deferred to P12
+
+- **Cross-sheet formula rewrite on insert/delete** — single-sheet
+  rewrite shipped in P7i; the multi-sheet ripple is still in
+  `feature-scope.md`'s deferred list.
+- **OOXML `cols/@width` round-trip** — the renderer is the source
+  of truth in CSS pixels. A foreign reader (Excel desktop) opening
+  a workbook we resized will see the default column width until a
+  follow-up pass writes back the character-based attribute.
+- **Multi-rectangle selection (Ctrl-click)** — out of scope for
+  P11; Excel's classic `area` model would require a different
+  selection type than the current `{ anchor, focus }`.
+- **Keyboard navigation in the body grid** — arrow-key selection
+  is still the prompt's R3 deferral; Excel's enter-down /
+  tab-right semantics live in P12.
+- **Save as `.xlsx`** — `Save` button writes the current snapshot
+  through the existing `serializeXlsx` path; the close-out smoke
+  exercises open + edit + the unit-tested serializer, but a
+  loop-back e2e (`open → edit → save → reopen → assert`) is
+  pending the Playwright `download` integration.
+- **Toolbar visual polish** — borders dropdown, font family /
+  size pickers, increase/decrease decimals are spec'd in
+  `renderer.md` but not on screen yet. The structural buttons
+  cover the prompt's MVP list.
