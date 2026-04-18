@@ -306,3 +306,109 @@ verify` pipeline (format / lint / architecture / typecheck / test
   formatting, and comments aren't diffed yet — the first three lift
   once those models become typed (Phase 7+). For Phase 6 the diff
   covers everything the 5 implemented commands can mutate.
+
+## 2026-04-18 — Phase 7a + 7b: formula engine foundation, lexer, parser, AST
+
+Phase 7 (formula engine + 8 deferred P0 commands) is broken into ten
+sub-phases (7a–7j) so each lands as an independently shippable
+quality-gated commit. 7a + 7b are now in.
+
+**Phase 7a — foundation (`tokens`, `errors`, `values`, `references`)**
+
+- `packages/xlsx/src/formula/tokens.ts` — `TokenType` string union
+  - `Token` interface; the immutable contract between lexer and
+    parser.
+- `packages/xlsx/src/formula/errors.ts` — Excel error kinds
+  (`#DIV/0!`, `#NAME?`, `#VALUE!`, `#NUM!`, `#N/A`, `#REF!`,
+  `#NULL!`, `#SPILL!`, `#CALC!`, `#CYCLE!`, `#GETTING_DATA`),
+  interned `Errors` singleton table, `parseErrorLiteral`, and
+  metadata-bearing factories `refWithCycle` /
+  `refWithDeletedTarget` for the dependency-graph layer.
+- `packages/xlsx/src/formula/values.ts` — runtime `Value`
+  discriminated union (`number | string | bool | error | range`),
+  Excel-faithful coercion (`toNumber`, `toString`, `toBoolean`),
+  comparison (`compare`, `eq`, `lt`, `gt`, `lte`, `gte`, `ne`)
+  with the type-class ordering quirk (numbers < strings <
+  booleans), and arithmetic (`add`/`sub`/`mul`/`div`/`pow`/`neg`/
+  `pct`/`concat`) with full error propagation.
+- `packages/xlsx/src/formula/references.ts` — A1 ↔ internal
+  `{row, col, abs}` (`AbsRef.NONE/ROW/COLUMN/ALL`) translation,
+  sheet-prefix normalisation (handles `'Sheet Name'!`-style
+  quoting and the `''` escape), absolute-ref-aware insert/delete
+  adjustments, and A1 ↔ R1C1 conversion. Range parsing covers
+  whole-row (`3:5`), whole-column (`A:A`), and single-sheet
+  rectangles. `cellKey` produces the canonical
+  `Sheet!R{row}C{col}` key the dependency graph hashes on.
+
+`packages/xlsx/src/formula/__tests__/foundation.test.ts` — 38 unit
+tests pinning every coercion / comparison / arithmetic / reference
+behaviour described above.
+
+**Phase 7b — lexer + parser + AST**
+
+- `packages/xlsx/src/formula/ast.ts` — `AstNode` discriminated
+  union (`lit | ref | range | name | binary | unary | pct | call |
+array`) with stable source spans, the `Formula` carrier
+  (`text`, `ast`, `anchor`, `dependencies`, `volatile`), and the
+  curated `VOLATILE_FUNCTIONS` set. Helpers
+  `collectDependencies(ast)` (deduped by `cellKey` /
+  `${sheet}!${a}:${b}`) and `containsVolatile(ast)` walk the tree
+  in a single pass.
+- `packages/xlsx/src/formula/lexer.ts` — single forward-scan
+  tokenizer. Strips a leading `=`, recognises numeric literals
+  (with `e±N` exponent), strings (with `""` doubled-quote
+  escape), errors, booleans, two-char comparison operators,
+  percent, parens, braces, comma, semicolon, colon, and
+  references. Reference recognition is a regex catalogue — quoted
+  sheet name, bare sheet name, A1 cell, A1:A1 cell range,
+  whole-column (`$?A:$?A`), whole-row (`$?N:$?N`) — with
+  disambiguation against function-call identifiers and
+  digit-prefixed row ranges (`3:5` is a `RANGE_REF`, not two
+  `NUMBER`s separated by `COLON`). `$`-prefixed refs are handled
+  before the digit/identifier dispatch.
+- `packages/xlsx/src/formula/parser.ts` — recursive-descent +
+  precedence-climbing parser. Operator precedence (higher binds
+  tighter): `^` (8, right) > `*` `/` (7, left) > `+` `-` (6) >
+  `&` (5) > comparisons (4). Unary `-` / `+` parse the operand at
+  precedence 9, encoding the Excel quirk that `-2^2 == 4`.
+  Function calls upper-case the name; defined names resolve to
+  refs/ranges at parse time when supplied via `ParseOptions`.
+  Array literals parse `{1,2;3,4}` row-by-row. Intersection
+  (`;` outside arrays) raises a typed
+  `intersection-operator-not-supported` error so we can wire the
+  upgrade path later.
+
+`packages/xlsx/src/formula/__tests__/lexer.test.ts` (15 tests) +
+`packages/xlsx/src/formula/__tests__/parser.test.ts` (19 tests)
+pin tokenisation edge cases, full operator-precedence behaviour
+(including the `-2^2` quirk), dependency-collection dedup,
+volatility flagging (`RAND`, `NOW`, `INDIRECT`, `OFFSET`), array
+literals, defined-name resolution, and every parse-error path
+including the rejected intersection operator.
+
+**Totals after 7b**
+
+- `@officeai/xlsx` unit tests: **135 passing** (Phase 5 → 48; Phase
+  6 → 63; Phase 7a → 101; Phase 7b → 135).
+- Full `make verify` (format-check / lint / architecture /
+  typecheck / test / build) green.
+
+**Decisions**
+
+- **Precedence-climbing over shunting-yard.** Easier to reason
+  about, fewer auxiliary data structures, and a near-1:1 mapping
+  to the spec's operator-precedence table.
+- **Higher-number-binds-tighter convention.** Lets `parseExpression`
+  start at `0` and climb upward without inverted predicates;
+  matches the canonical formulation in most parser literature.
+- **Lexer emits sheet-qualified refs as a single token.** The
+  parser reuses `parseA1` / `parseA1Range` from `references.ts`,
+  so sheet handling lives in exactly one place.
+- **Intersection operator (`;`) is a typed parse error, not a
+  silent fallback.** Surfacing it at parse time means a future
+  upgrade path (real intersection or named-range workaround) is
+  one switch-case away.
+- **Defined-name resolution is opt-in via `ParseOptions`.** Keeps
+  the parser pure when no name table is available (e.g. agent
+  command pre-validation) and avoids accidental cross-workbook
+  coupling.
