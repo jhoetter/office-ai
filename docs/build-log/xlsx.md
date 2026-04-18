@@ -412,3 +412,80 @@ including the rejected intersection operator.
   the parser pure when no name table is available (e.g. agent
   command pre-validation) and avoids accidental cross-workbook
   coupling.
+
+## 2026-04-18 — Phase 7c: function registry + tree-walking evaluator
+
+**Shipped**
+
+- `packages/xlsx/src/formula/function-registry.ts` — pluggable
+  registry with `EvalContext` (cell / range accessors, defined-name
+  resolver, `now`, `random`, `anchor`, registry self-reference),
+  `Arity` descriptor (`min`, `max`, `accepts(n)`), `EagerFn` /
+  `LazyFn` distinction, and a `MutableFunctionRegistry` builder
+  (`createRegistry`). Volatile functions self-register into a
+  `volatileNames()` set the dependency graph (Phase 7d) consumes
+  to know which cells force-dirty every recalc.
+- `packages/xlsx/src/formula/evaluator.ts` — single-pass post-order
+  tree walker. Exhaustive `switch` over `AstNode["kind"]`
+  (per `typescript-exhaustive-switch.mdc`). Binary operators
+  delegate to a `BINARY_OPS` map of helpers from `values.ts` so
+  error short-circuit and Excel coercion live in exactly one
+  place. Unknown functions yield `#NAME?`; arity mismatch yields
+  `#N/A`. The `lazyArgs` flow constructs a `LazyEvalAccess`
+  closure that gives `IF` / `IFS` / `SWITCH` / `IFERROR` / `IFNA`
+  full control over argument evaluation order (so they short-
+  circuit correctly).
+
+**Tests landed**
+
+- `packages/xlsx/src/formula/__tests__/evaluator.test.ts` — 27
+  tests grouped into seven scenarios:
+  - literals + operators (arithmetic, string concat, comparisons,
+    `=-2^2 == 4` quirk, percent, error propagation through `+`)
+  - references (cell read, range read, unresolved defined name,
+    resolved defined name)
+  - eager function dispatch (registry hit, case-insensitive
+    lookup, `#NAME?` on miss, `#N/A` on arity mismatch, range
+    flattening inside SUM-like)
+  - lazy-arg dispatch (chosen branch only — verified via
+    side-effect counters, omitted third arg defaults to FALSE,
+    error condition propagation)
+  - array literals (`={1,2;3,4}` → 2×2 RangeValue)
+  - context plumbing (`now` / `random` / `anchor` reach the
+    function impl; `volatileNames` set tracks `volatile: true`
+    registrations)
+  - parser ↔ evaluator end-to-end (custom `DOUBLE` function,
+    `=#REF!+1` error literal propagation, `err()` helper round-trip)
+
+**Totals after 7c**
+
+- `@officeai/xlsx` unit tests: **162 passing** (Phase 7a → 38; 7b
+  → +34; 7c → +27).
+- Full `make verify` (format-check / lint / architecture /
+  typecheck / test / build) green.
+
+**Decisions**
+
+- **Registry-as-data, not as plugin DI.** Functions register via a
+  thin imperative builder (`reg.register({...})`); there's no
+  decorator metadata, no introspection-based wiring, no DI
+  container. Adding a function in Phase 7e is one call.
+- **Lazy args expose a closure, not a parser.** The lazy
+  `LazyEvalAccess` shape is `{ evaluate(node), ctx }` — every lazy
+  function calls `lazy.evaluate(args[i])` to drive its own order.
+  This is what unlocks correct `IF` short-circuit, `IFERROR`'s
+  selective catch, and `IFS`'s pair-walking without leaking
+  evaluator internals to function impls.
+- **Error short-circuit lives in `values.ts`, not the evaluator.**
+  Every binary op runs `BINARY_OPS[op](a, b)` which delegates to
+  the §7.4 helpers. The evaluator is type-driven (one switch) and
+  has no try/catch.
+- **`#NAME?` for unknown functions, `#N/A` for arity mismatch.**
+  Matches Excel parity (per spec §13). The unknown-function path
+  doubles as the P0 rendering for the deferred date / finance
+  categories — the registry returns `undefined`, the evaluator
+  returns `#NAME?`, the cell text round-trips verbatim.
+- **`volatileNames()` is the registry's only structured
+  introspection point.** The dependency graph (7d) needs the
+  volatile set at parse time to flag formulas; everything else
+  about a function (arg shapes, return types) is opaque.
