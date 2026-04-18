@@ -66,6 +66,20 @@ const SAMPLE_NAME = "sample.xlsx";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
+ * True when an event target is a form control / editable surface that
+ * owns its own key handling (inputs, textareas, selects, buttons,
+ * contenteditable). Used by the surface-level keydown / clipboard
+ * guards so typing in the comments composer doesn't get hijacked by
+ * the grid's "type-to-edit" handler.
+ */
+function isFormControlTarget(t: EventTarget | null): boolean {
+  if (!t || !(t instanceof HTMLElement)) return false;
+  const tag = t.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return true;
+  return t.isContentEditable;
+}
+
+/**
  * Top-level XLSX editor surface for /xlsx-editor.
  *
  * Lifecycle (mirrors `DocxEditor`):
@@ -660,8 +674,7 @@ export function XlsxEditor(): ReactNode {
   // channel which avoids the async permission dance entirely.
   const onSurfaceCopy = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      const tgt = e.target as HTMLElement;
-      if (tgt.tagName === "INPUT" || tgt.tagName === "BUTTON" || tgt.isContentEditable) return;
+      if (isFormControlTarget(e.target)) return;
       const a = agentRef.current;
       if (!a || !activeSheet || !selection) return;
       e.preventDefault();
@@ -691,8 +704,7 @@ export function XlsxEditor(): ReactNode {
 
   const onSurfaceCut = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      const tgt = e.target as HTMLElement;
-      if (tgt.tagName === "INPUT" || tgt.tagName === "BUTTON" || tgt.isContentEditable) return;
+      if (isFormControlTarget(e.target)) return;
       const a = agentRef.current;
       if (!a || !activeSheet || !selection) return;
       e.preventDefault();
@@ -722,8 +734,7 @@ export function XlsxEditor(): ReactNode {
 
   const onSurfacePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      const tgt = e.target as HTMLElement;
-      if (tgt.tagName === "INPUT" || tgt.tagName === "BUTTON" || tgt.isContentEditable) return;
+      if (isFormControlTarget(e.target)) return;
       if (!agentRef.current || !activeSheet || !selection) return;
       e.preventDefault();
       const html = e.clipboardData.getData("text/html");
@@ -735,12 +746,13 @@ export function XlsxEditor(): ReactNode {
 
   const onSurfaceKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      // Don't steal keys destined for inputs / buttons / the formula
-      // bar — they have their own onKeyDown.
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "BUTTON" || target.isContentEditable) {
-        return;
-      }
+      // Don't steal keys destined for inputs / textareas / selects /
+      // buttons / contenteditable surfaces — they have their own
+      // onKeyDown. Without this, typing in the comments composer (a
+      // <textarea> inside the floating rail) would be hijacked by the
+      // grid's "type-to-edit" handler and start editing the active
+      // cell's formula instead.
+      if (isFormControlTarget(e.target)) return;
 
       // ── Navigation keys (work whether or not we have a single-cell
       // selection — extending a range is the whole point).
