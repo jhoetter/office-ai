@@ -1,6 +1,6 @@
 /* eslint-disable react/no-danger */
 import * as React from "react";
-import type { Slide, SlideSize } from "../../model/types.js";
+import type { Slide, SlideSize, ThemeColorScheme } from "../../model/types.js";
 import { slideAspectRatio } from "../layout/slide.js";
 import { slideToSvgString } from "../svg/slide.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
@@ -9,6 +9,7 @@ export interface SlideThumbnailProps {
   readonly slide: Slide;
   readonly slideSize: SlideSize;
   readonly mediaUrls?: ReadonlyMap<string, string>;
+  readonly theme?: ThemeColorScheme;
   readonly width?: number;
   readonly active?: boolean;
   readonly onClick?: () => void;
@@ -21,10 +22,13 @@ export interface SlideThumbnailProps {
  * inside the slide.
  */
 export function SlideThumbnail(props: SlideThumbnailProps): React.ReactElement {
-  const { slide, slideSize, mediaUrls, width = 200, active, onClick, label } = props;
-  const ctx: SvgRenderCtx = { slideSize, mediaUrls };
+  const { slide, slideSize, mediaUrls, theme, width = 200, active, onClick, label } = props;
+  const ctx: SvgRenderCtx = { slideSize, mediaUrls, ...(theme ? { theme } : {}) };
   const aspect = slideAspectRatio(slideSize);
-  const svg = React.useMemo(() => slideToSvgString(slide, ctx), [slide, slideSize, mediaUrls]);
+  const svg = React.useMemo(
+    () => slideToSvgString(slide, ctx),
+    [slide, slideSize, mediaUrls, theme]
+  );
 
   return (
     <button

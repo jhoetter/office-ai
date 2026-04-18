@@ -108,6 +108,7 @@ export function PptxEditor(): React.ReactNode {
   void tick;
   const slides = snap?.root.slides ?? [];
   const slideSize = snap?.root.slideSize ?? { cxEmu: 9144000, cyEmu: 6858000 };
+  const themeDefault = snap?.root.themeDefault;
 
   const addSlide = useCallback(async () => {
     const a = agentRef.current;
@@ -269,6 +270,7 @@ export function PptxEditor(): React.ReactNode {
               slides={slides}
               slideSize={slideSize}
               mediaUrls={mediaUrls}
+              theme={themeDefault}
               activeIndex={activeIndex}
               onSelect={setActiveIndex}
               thumbnailWidth={170}

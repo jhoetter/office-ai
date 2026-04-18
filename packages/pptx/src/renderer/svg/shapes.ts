@@ -1,6 +1,7 @@
 import type {
   GroupShape,
   OpaqueShape,
+  OpaqueXml,
   Picture,
   Shape,
   SlideSize,
@@ -68,14 +69,88 @@ function runToTSpan(r: TextRun, theme: ThemeColorScheme): string {
   if (r.properties.underline) attrs.push('text-decoration="underline"');
   if (r.properties.strike) attrs.push('text-decoration="line-through"');
   if (r.properties.fontFamily) attrs.push(`font-family="${escXml(r.properties.fontFamily)}"`);
-  if (r.properties.color) attrs.push(`fill="#${escXml(r.properties.color)}"`);
-  else attrs.push(`fill="#${theme.tx1}"`);
+  attrs.push(`fill="#${resolveRunFill(r, theme)}"`);
   if (r.properties.fontSizeHundredths !== undefined) {
     // sz is hundredths of a point. EMU per point = 12700.
     const sizeEmu = (r.properties.fontSizeHundredths / 100) * 12700;
     attrs.push(`font-size="${sizeEmu}"`);
   }
   return `<tspan ${attrs.join(" ")}>${escXml(r.text)}</tspan>`;
+}
+
+/**
+ * Resolve the fill color for a text run. Order of precedence:
+ *  1. Typed `properties.color` (already extracted from `a:solidFill > a:srgbClr`).
+ *  2. `a:solidFill > a:schemeClr|a:srgbClr|a:sysClr` captured in
+ *     `properties.opaqueChildren`. Scheme refs resolve through `theme`.
+ *  3. `theme.tx1` (body text default).
+ */
+function resolveRunFill(r: TextRun, theme: ThemeColorScheme): string {
+  if (r.properties.color) return escXml(r.properties.color);
+  const fromOpaque = readFillFromOpaque(r.properties.opaqueChildren ?? [], theme);
+  if (fromOpaque) return escXml(fromOpaque);
+  return theme.tx1;
+}
+
+function readFillFromOpaque(
+  children: ReadonlyArray<OpaqueXml>,
+  theme: ThemeColorScheme
+): string | null {
+  for (const c of children) {
+    if (c.tag !== "a:solidFill") continue;
+    for (const inner of c.subtree) {
+      if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+      const obj = inner as Record<string, unknown>;
+      const keys = Object.keys(obj).filter((k) => k !== ":@");
+      if (keys.length !== 1) continue;
+      const tag = keys[0];
+      const attrs = obj[":@"] as Record<string, unknown> | undefined;
+      const val =
+        attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
+      if (typeof val !== "string") continue;
+      if (tag === "a:srgbClr") {
+        return val;
+      }
+      if (tag === "a:sysClr") {
+        const last =
+          attrs && typeof attrs === "object" ? attrs["@_lastClr"] : undefined;
+        return typeof last === "string" ? last : val;
+      }
+      if (tag === "a:schemeClr") {
+        const mapped = mapSchemeName(val);
+        if (mapped) return theme[mapped];
+      }
+    }
+  }
+  return null;
+}
+
+function mapSchemeName(name: string): keyof ThemeColorScheme | null {
+  switch (name) {
+    case "accent1":
+    case "accent2":
+    case "accent3":
+    case "accent4":
+    case "accent5":
+    case "accent6":
+    case "tx1":
+    case "tx2":
+    case "bg1":
+    case "bg2":
+    case "hlink":
+    case "folHlink":
+      return name;
+    case "dk1":
+      return "tx1";
+    case "lt1":
+      return "bg1";
+    case "dk2":
+      return "tx2";
+    case "lt2":
+      return "bg2";
+    default:
+      return null;
+  }
 }
 
 function estimateFontSizeEmu(p: TextParagraph | undefined): number {

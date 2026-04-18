@@ -1,4 +1,6 @@
 import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core";
+import { DEFAULT_THEME, type ThemeColorScheme } from "../renderer/layout/color.js";
+import { parseThemeColorScheme } from "./theme.js";
 import type {
   ContentTypesSnap,
   GroupShape,
@@ -179,8 +181,20 @@ export async function parsePptx(
     layouts.set(p, opaquePartFor(container, p, "p:sldLayout"));
   }
   const theme = new Map<string, OpaquePart>();
+  let themeDefault: ThemeColorScheme = DEFAULT_THEME;
+  let themeDefaultFromPath: string | null = null;
   for (const p of themePaths) {
     theme.set(p, opaquePartFor(container, p, "a:theme"));
+    // First theme part wins; usually `theme1.xml`. Subsequent themes are
+    // preserved verbatim but not used to drive `<a:schemeClr>` resolution.
+    if (themeDefaultFromPath === null) {
+      try {
+        themeDefault = parseThemeColorScheme(container.readText(p));
+        themeDefaultFromPath = p;
+      } catch {
+        // Keep DEFAULT_THEME on any parse hiccup.
+      }
+    }
   }
   const notesSlides = new Map<string, OpaquePart>();
   for (const p of notesSlidePaths) {
@@ -251,6 +265,7 @@ export async function parsePptx(
     masters,
     layouts,
     theme,
+    themeDefault,
     notesSlides,
     media,
     presentationRootAttrs,

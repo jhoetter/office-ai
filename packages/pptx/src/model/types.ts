@@ -5,6 +5,9 @@
  */
 
 import type { DocumentSnapshot, NodeId, ooxml as _ooxml } from "@officeai/core";
+import type { ThemeColorScheme } from "../renderer/layout/color.js";
+
+export type { ThemeColorScheme };
 
 // Re-imported as a type so we don't depend on the runtime namespace.
 type OoxmlContainer = InstanceType<typeof _ooxml.OoxmlContainer>;
@@ -89,6 +92,13 @@ export interface PptxPresentation {
   readonly masters: ReadonlyMap<string, OpaquePart>;
   readonly layouts: ReadonlyMap<string, OpaquePart>;
   readonly theme: ReadonlyMap<string, OpaquePart>;
+  /**
+   * Resolved color scheme from the first theme part (`a:clrScheme`). Used
+   * by the renderer to draw `<a:schemeClr>` references with the correct
+   * palette. Falls back to `DEFAULT_THEME` if no theme part is present
+   * or the scheme can't be parsed.
+   */
+  readonly themeDefault: ThemeColorScheme;
   readonly notesSlides: ReadonlyMap<string, OpaquePart>;
   readonly media: ReadonlyMap<string, MediaPart>;
   readonly presentationRootAttrs: Readonly<Record<string, string>>;

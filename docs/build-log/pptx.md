@@ -20,7 +20,7 @@
 | Date (UTC) | Spec section                | Deviation                                                                                          | Reason                                                                                                                                                       |
 | ---------- | --------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2026-04-18 | `agent-commands.md` (`pptx:format-text`) | Re-emits only `a:solidFill` and `a:latin` from typed properties; other captured `a:rPr` children pass through verbatim | Keeps `schemeClr`/`hlinkClick`/etc. round-tripping; we'd need a typed model for every child of `a:rPr` to fully own the element, which is out-of-scope for P1.|
-| 2026-04-18 | `renderer.md` (theme colors) | `resolveColor` falls back to a fixed default theme map for `kind: "scheme"` references            | We don't parse `theme1.xml` colors yet; the renderer renders them with the default palette. Spec calls this an explicit follow-up.                            |
+| 2026-04-18 | `renderer.md` (theme colors) | _(resolved 2026-04-19, F1.2)_ Parser extracts the first theme part's `a:clrScheme` into `PptxPresentation.themeDefault`; renderer threads it through `SvgRenderCtx.theme` and resolves `<a:schemeClr>` references inside `a:solidFill` opaque children | The opaque `a:solidFill > a:schemeClr` capture stays unchanged so the serializer round-trips cleanly. |
 | 2026-04-18 | `feature-scope.md` (LLM bridge) | _(resolved 2026-04-19, F1.1)_ The `/pptx-editor` agent panel now routes through `/api/llm` with `format: "pptx"`; the in-process intent parser is the offline fallback when no `OPENAI_API_KEY` is set | Brings PPTX to parity with DOCX. |
 
 ### Resolved deviations
@@ -28,6 +28,7 @@
 | Date (UTC) | Item                                  | Resolution                                                                                                  |
 | ---------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 2026-04-19 | LLM bridge wiring for `/pptx-editor` | F1.1 — extended `/api/llm` to switch system prompt + allow-list on `format`, added `lib/llm-client-pptx.ts`. |
+| 2026-04-19 | Theme color resolution                | F1.2 — `parser/theme.ts` extracts `a:clrScheme` into `PptxPresentation.themeDefault`; renderer resolves `<a:schemeClr>` from run opaque children. |
 
 ## Deferred to a follow-up session
 
@@ -37,7 +38,7 @@
 | Charts (`c:chart`)                                          | `agent-commands.md` | Stays opaque (handled by `OpaqueShape`).              |
 | SmartArt (`dgm:*`)                                          | `agent-commands.md` | Stays opaque.                                         |
 | Animations / transitions                                   | `feature-scope.md`  | Untouched-bytes only; spec defers typed model.        |
-| Theme color resolution (`a:schemeClr` → `theme1.xml`)       | `renderer.md`       | Default palette only; theme parser is a follow-up.    |
+| ~~Theme color resolution (`a:schemeClr` → `theme1.xml`)~~   | ~~`renderer.md`~~   | **Resolved (F1.2)** — first theme part is parsed into `themeDefault`; renderer resolves `a:schemeClr` references for run fills. |
 | ~~LLM bridge wiring for `/pptx-editor` agent panel~~       | ~~`feature-scope.md`~~ | **Resolved (F1.1)** — uses `/api/llm` with `format: "pptx"`. |
 | Real-world PPTX fixtures (PowerPoint / Google Slides / Keynote exports) | `feature-scope.md`  | Slots reserved in `fixtures/pptx/MANIFEST.md`.        |
 
