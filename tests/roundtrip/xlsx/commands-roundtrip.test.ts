@@ -94,6 +94,87 @@ describe("XLSX commands roundtrip", () => {
     expect(reparsed.root.sheets.map((s) => s.name)).toEqual(["Sales", "Costs", "Summary"]);
   });
 
+  it("set-auto-filter + set-filter-column persist across serialize → parse", async () => {
+    const { bus, initial } = await makeBus("01-single-sheet-numbers.xlsx");
+    const sheetName = initial.root.sheets[0].name;
+    // Seed a small header + body block we control so the filter can pin
+    // values deterministically regardless of the fixture's contents.
+    await bus.dispatch({
+      type: "xlsx:set-range-values",
+      payload: {
+        sheet: sheetName,
+        range: "Z1:AA4",
+        values: [
+          ["Region", "Score"],
+          ["North", 90],
+          ["South", 70],
+          ["North", 80],
+        ],
+      },
+    });
+    await bus.dispatch({
+      type: "xlsx:set-auto-filter",
+      payload: { sheet: sheetName, range: "Z1:AA4" },
+    });
+    await bus.dispatch({
+      type: "xlsx:set-filter-column",
+      payload: {
+        sheet: sheetName,
+        colId: 0,
+        criterion: { kind: "values", values: new Set(["North"]), blank: false },
+      },
+    });
+
+    const out = await serializeXlsx(bus.getWorking());
+    const reparsed = await parseXlsx(new Uint8Array(out));
+    const sheet = reparsed.root.sheets[0];
+    expect(sheet.autoFilter).toBeDefined();
+    expect(sheet.autoFilter?.range).toEqual({ r1: 0, c1: 25, r2: 3, c2: 26 });
+    const col0 = sheet.autoFilter?.columns.get(0);
+    expect(col0?.kind).toBe("values");
+    if (col0?.kind === "values") {
+      expect([...col0.values].sort()).toEqual(["North"]);
+    }
+    expect(sheet.hiddenRows.has(2)).toBe(true); // South
+    expect(sheet.hiddenRows.has(1)).toBe(false); // North
+    expect(sheet.hiddenRows.has(3)).toBe(false); // North
+  });
+
+  it("sort-range reorders body rows in the persisted file", async () => {
+    const { bus, initial } = await makeBus("01-single-sheet-numbers.xlsx");
+    const sheetName = initial.root.sheets[0].name;
+    await bus.dispatch({
+      type: "xlsx:set-range-values",
+      payload: {
+        sheet: sheetName,
+        range: "Z1:AA5",
+        values: [
+          ["Name", "Score"],
+          ["Alice", 90],
+          ["Bob", 70],
+          ["Carol", 80],
+          ["Dave", 60],
+        ],
+      },
+    });
+    await bus.dispatch({
+      type: "xlsx:sort-range",
+      payload: {
+        sheet: sheetName,
+        range: "Z1:AA5",
+        sortBy: { colId: 1, order: "asc" },
+      },
+    });
+
+    const out = await serializeXlsx(bus.getWorking());
+    const reparsed = await parseXlsx(new Uint8Array(out));
+    const sheet = reparsed.root.sheets[0];
+    expect(sheet.cells.get(cellKey(1, 25))?.value).toBe("Dave");
+    expect(sheet.cells.get(cellKey(2, 25))?.value).toBe("Bob");
+    expect(sheet.cells.get(cellKey(3, 25))?.value).toBe("Carol");
+    expect(sheet.cells.get(cellKey(4, 25))?.value).toBe("Alice");
+  });
+
   it("untouched parts in a renamed-sheet workbook stay byte-identical", async () => {
     const { bus, initial } = await makeBus("02-multi-sheet.xlsx");
     await bus.dispatch({
