@@ -37,7 +37,8 @@ export function PptxEditor(): React.ReactNode {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastId = useRef(0);
   const [zoom, setZoom] = useState(1);
-  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
+  const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
+  const selectedShapeId = selectedShapeIds[0] ?? null;
 
   const onZoomChange = useCallback((next: number) => {
     setZoom(clampZoom(next));
@@ -54,7 +55,7 @@ export function PptxEditor(): React.ReactNode {
     agentRef.current = next;
     setAgent(next);
     setActiveIndex(0);
-    setSelectedShapeId(null);
+    setSelectedShapeIds([]);
     setReady(true);
     setTick((t) => t + 1);
     next.subscribe(() => {
@@ -219,7 +220,7 @@ export function PptxEditor(): React.ReactNode {
         source: "human",
       });
       const s = a.getSnapshot().root.slides[activeIndex];
-      setSelectedShapeId(s.shapes[s.shapes.length - 1]!.id);
+      setSelectedShapeIds([s.shapes[s.shapes.length - 1]!.id]);
     } catch (err) {
       onError(err);
     }
@@ -245,7 +246,7 @@ export function PptxEditor(): React.ReactNode {
           source: "human",
         });
         const s = a.getSnapshot().root.slides[activeIndex];
-        setSelectedShapeId(s.shapes[s.shapes.length - 1]!.id);
+        setSelectedShapeIds([s.shapes[s.shapes.length - 1]!.id]);
       } catch (err) {
         onError(err);
       }
@@ -299,7 +300,7 @@ export function PptxEditor(): React.ReactNode {
           source: "human",
         });
         const s = a.getSnapshot().root.slides[activeIndex];
-        setSelectedShapeId(s.shapes[s.shapes.length - 1]!.id);
+        setSelectedShapeIds([s.shapes[s.shapes.length - 1]!.id]);
       } catch (err) {
         onError(err);
       }
@@ -309,18 +310,58 @@ export function PptxEditor(): React.ReactNode {
 
   const deleteSelectedShape = useCallback(async () => {
     const a = agentRef.current;
-    if (!a || !selectedShapeId) return;
+    if (!a || selectedShapeIds.length === 0) return;
     try {
-      await a.applyCommand({
-        type: "pptx:delete-shape",
-        payload: { slideIndex: activeIndex, shapeId: selectedShapeId },
-        source: "human",
-      });
-      setSelectedShapeId(null);
+      // Delete each selected shape independently. We dispatch sequentially
+      // so each command sees the previous mutation's snapshot — the
+      // command bus rejects "unknown shape" otherwise when later ids
+      // happen to share group ancestry.
+      for (const id of selectedShapeIds) {
+        await a.applyCommand({
+          type: "pptx:delete-shape",
+          payload: { slideIndex: activeIndex, shapeId: id },
+          source: "human",
+        });
+      }
+      setSelectedShapeIds([]);
     } catch (err) {
       onError(err);
     }
-  }, [activeIndex, onError, selectedShapeId]);
+  }, [activeIndex, onError, selectedShapeIds]);
+
+  const alignSelected = useCallback(
+    async (mode: "left" | "center-h" | "right" | "top" | "middle-v" | "bottom") => {
+      const a = agentRef.current;
+      if (!a || selectedShapeIds.length < 2) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:align-shapes",
+          payload: { slideIndex: activeIndex, shapeIds: selectedShapeIds, mode },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, selectedShapeIds]
+  );
+
+  const distributeSelected = useCallback(
+    async (axis: "horizontal" | "vertical") => {
+      const a = agentRef.current;
+      if (!a || selectedShapeIds.length < 3) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:distribute-shapes",
+          payload: { slideIndex: activeIndex, shapeIds: selectedShapeIds, axis },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, selectedShapeIds]
+  );
 
   const changeFill = useCallback(
     async (hex: string | null) => {
@@ -430,6 +471,7 @@ export function PptxEditor(): React.ReactNode {
         disabled={!ready}
         slideCount={slides.length}
         hasSelection={selectedShapeId != null}
+        selectionCount={selectedShapeIds.length}
         currentFill={currentFill ? `#${currentFill}` : null}
         currentFontPt={currentFontPt}
         onOpenFile={() => fileInputRef.current?.click()}
@@ -441,6 +483,8 @@ export function PptxEditor(): React.ReactNode {
         onAddShape={(p) => void addShape(p)}
         onInsertImage={(f) => void insertImage(f)}
         onDeleteShape={() => void deleteSelectedShape()}
+        onAlign={(mode) => void alignSelected(mode)}
+        onDistribute={(axis) => void distributeSelected(axis)}
         onToggleBold={() => void toggleMark("bold")}
         onToggleItalic={() => void toggleMark("italic")}
         onToggleUnderline={() => void toggleMark("underline")}
@@ -490,8 +534,8 @@ export function PptxEditor(): React.ReactNode {
                 mediaUrls={mediaUrls}
                 onError={onError}
                 zoom={zoom}
-                onSelectionChange={setSelectedShapeId}
-                selectedShapeId={selectedShapeId}
+                onSelectionChange={setSelectedShapeIds}
+                selectedShapeIds={selectedShapeIds}
               />
             </div>
           ) : null}

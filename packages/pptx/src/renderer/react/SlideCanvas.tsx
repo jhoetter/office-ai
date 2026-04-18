@@ -2,7 +2,7 @@ import * as React from "react";
 import type { PptxAgent } from "../../agent/agent.js";
 import type { Shape, Slide, SlideSize, TextShape } from "../../model/types.js";
 import { DEFAULT_THEME } from "../layout/color.js";
-import { shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
+import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
@@ -20,38 +20,50 @@ export interface SlideCanvasProps {
   /** DPI used for converting EMU/font sizes to CSS pixels in the HTML overlay. */
   readonly dpi?: number;
   /**
-   * Notified whenever the user selects (or deselects) a shape on the canvas.
-   * Lets the parent route toolbar actions (bold/italic/underline) to the
-   * selected shape instead of guessing the first text shape on the slide.
+   * Notified whenever the user changes the on-canvas selection. Multi-
+   * selection is communicated as an ordered array — the first id is the
+   * "primary" selection (used by the toolbar to drive formatting & fill
+   * actions). An empty array means the user clicked an empty area.
    */
-  readonly onSelectionChange?: (shapeId: string | null) => void;
+  readonly onSelectionChange?: (ids: ReadonlyArray<string>) => void;
   /**
    * Optional controlled selection. When provided, the canvas keeps its
    * internal selection in sync with this value — useful when the parent
    * wants to auto-select a freshly-inserted shape from the toolbar so the
    * user can immediately drag, format, or delete it without an extra click.
    */
-  readonly selectedShapeId?: string | null;
+  readonly selectedShapeIds?: ReadonlyArray<string>;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
 type DragMode = "move" | { resize: ResizeHandle };
 
 interface DragState {
-  readonly shapeId: string;
   readonly mode: DragMode;
+  /** Shapes participating in the drag with their pre-drag bounding boxes. */
+  readonly targets: ReadonlyArray<{ readonly id: string; readonly origin: BoundingBox }>;
   readonly startX: number;
   readonly startY: number;
-  readonly origin: BoundingBox;
   readonly emuPerPx: number;
 }
 
 interface DragPreview {
-  readonly box: BoundingBox;
+  /** Per-shape preview boxes keyed by shape id. */
+  readonly boxes: ReadonlyMap<string, BoundingBox>;
   readonly dx: number;
   readonly dy: number;
   readonly dw: number;
   readonly dh: number;
+}
+
+interface MarqueeState {
+  readonly startX: number;
+  readonly startY: number;
+  readonly currentX: number;
+  readonly currentY: number;
+  readonly emuPerPx: number;
+  readonly startEmuX: number;
+  readonly startEmuY: number;
 }
 
 export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null {
@@ -61,31 +73,32 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const [preview, setPreview] = React.useState<DragPreview | null>(null);
+  const [marquee, setMarquee] = React.useState<MarqueeState | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [selectedId, setSelectedIdState] = React.useState<string | null>(null);
+  const [selectedIds, setSelectedIdsState] = React.useState<ReadonlyArray<string>>([]);
   const onSelectionChange = props.onSelectionChange;
-  const setSelectedId = React.useCallback(
-    (next: string | null) => {
-      setSelectedIdState(next);
+  const setSelectedIds = React.useCallback(
+    (next: ReadonlyArray<string>) => {
+      setSelectedIdsState(next);
       onSelectionChange?.(next);
     },
     [onSelectionChange]
   );
 
   React.useEffect(() => {
-    setSelectedIdState(null);
-    onSelectionChange?.(null);
+    setSelectedIdsState([]);
+    onSelectionChange?.([]);
   }, [props.slideIndex, onSelectionChange]);
 
-  // Mirror the controlled prop into local state so a parent that just
-  // dispatched an "insert shape" command can programmatically select it.
+  // Mirror the controlled prop so a parent that just dispatched an
+  // "insert shape" command can programmatically select the new shape.
   // We don't echo back through `onSelectionChange` here — the parent is
-  // already the source of truth — to avoid a render loop.
-  const controlledSelectedId = props.selectedShapeId;
+  // the source of truth — to avoid a render loop.
+  const controlledSelectedIds = props.selectedShapeIds;
   React.useEffect(() => {
-    if (controlledSelectedId === undefined) return;
-    setSelectedIdState((prev) => (prev === controlledSelectedId ? prev : controlledSelectedId));
-  }, [controlledSelectedId]);
+    if (controlledSelectedIds === undefined) return;
+    setSelectedIdsState((prev) => (sameIds(prev, controlledSelectedIds) ? prev : controlledSelectedIds));
+  }, [controlledSelectedIds]);
 
   const themeDefault = snap.root.themeDefault ?? DEFAULT_THEME;
   const charts = snap.root.charts;
@@ -94,13 +107,14 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     [slideSize, props.mediaUrls, themeDefault, charts]
   );
 
-  // Hide the dragged shape from the static SVG layer while a drag is in
-  // flight — the React-managed ghost mirrors it at the live position so
-  // we don't have to invalidate the whole SVG string on every pointer move.
+  // Hide every shape currently being dragged or text-edited from the
+  // static SVG layer — the React-managed ghost layer mirrors them at
+  // their live positions so we don't have to rebuild the SVG string on
+  // every pointermove.
   const hiddenIds = React.useMemo(() => {
     const set = new Set<string>();
     if (editingId) set.add(editingId);
-    if (drag) set.add(drag.shapeId);
+    if (drag) for (const t of drag.targets) set.add(t.id);
     return set;
   }, [editingId, drag]);
 
@@ -112,15 +126,18 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       .join("");
   }, [slide, ctx, hiddenIds]);
 
-  // The SVG snapshot of the dragged shape, captured once at drag start so
-  // we don't recompute it on every pointermove. The transform is applied
-  // via the wrapping <g> so we still get sub-pixel updates without any
-  // string churn.
-  const dragGhostSvg = React.useMemo(() => {
-    if (!drag || !slide) return "";
-    const sh = findShape(slide.shapes, drag.shapeId);
-    if (!sh) return "";
-    return shapeToSvg(sh, ctx);
+  // Capture the SVG snapshot of every dragged shape at drag start so we
+  // don't recompute it on every pointermove. The transform is applied
+  // via the wrapping <g> for sub-pixel updates without string churn.
+  const dragGhosts = React.useMemo(() => {
+    if (!drag || !slide) return [] as ReadonlyArray<{ id: string; svg: string; origin: BoundingBox }>;
+    const out: { id: string; svg: string; origin: BoundingBox }[] = [];
+    for (const t of drag.targets) {
+      const sh = findShape(slide.shapes, t.id);
+      if (!sh) continue;
+      out.push({ id: t.id, svg: shapeToSvg(sh, ctx), origin: t.origin });
+    }
+    return out;
   }, [drag, slide, ctx]);
 
   const onPointerDown = React.useCallback(
@@ -131,112 +148,192 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       const handleEl = target?.closest("[data-handle]") as HTMLElement | null;
       const shapeEl = target?.closest("[data-shape-id]") as SVGGElement | null;
       const shapeId = handleEl?.dataset.shapeId ?? shapeEl?.dataset.shapeId ?? null;
-      if (!shapeId) {
-        setSelectedId(null);
-        return;
-      }
-      setSelectedId(shapeId);
-      const shape = findShape(slide.shapes, shapeId);
-      if (!shape) return;
-      const box = shapeBoundingBox(shape);
-      if (!box) return;
       const rect = containerRef.current.getBoundingClientRect();
       const emuPerPx = slideSize.cxEmu / rect.width;
+      const shiftHeld = e.shiftKey || e.metaKey || e.ctrlKey;
+
+      if (!shapeId) {
+        // Empty-area click: clear selection (unless shift) and start a
+        // marquee so the user can rubber-band-select multiple shapes.
+        if (!shiftHeld) setSelectedIds([]);
+        setMarquee({
+          startX: e.clientX,
+          startY: e.clientY,
+          currentX: e.clientX,
+          currentY: e.clientY,
+          emuPerPx,
+          startEmuX: (e.clientX - rect.left) * emuPerPx,
+          startEmuY: (e.clientY - rect.top) * emuPerPx,
+        });
+        containerRef.current.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+
+      // Compute the next selection set up-front so the drag uses it.
+      let nextSelection: ReadonlyArray<string>;
+      if (shiftHeld) {
+        const has = selectedIds.includes(shapeId);
+        nextSelection = has ? selectedIds.filter((id) => id !== shapeId) : [...selectedIds, shapeId];
+      } else if (selectedIds.includes(shapeId) && selectedIds.length > 1) {
+        // Clicking a shape already in a multi-selection keeps the group
+        // intact so the user can drag the whole thing; reorder so the
+        // clicked shape becomes the primary.
+        nextSelection = [shapeId, ...selectedIds.filter((id) => id !== shapeId)];
+      } else {
+        nextSelection = [shapeId];
+      }
+      setSelectedIds(nextSelection);
+
+      // Resize handles only ever apply to the primary shape; group
+      // resize is not supported in this iteration. Move handles drag
+      // every shape in the (post-shift) selection together.
       const handle = handleEl?.dataset.handle as ResizeHandle | "move" | undefined;
-      const mode: DragMode = handle && handle !== "move" ? { resize: handle as ResizeHandle } : "move";
-      setDrag({ shapeId, mode, startX: e.clientX, startY: e.clientY, origin: box, emuPerPx });
-      setPreview({ box, dx: 0, dy: 0, dw: 0, dh: 0 });
-      // Capture on the container — handles get unmounted/replaced when the
-      // preview state updates, which would otherwise lose pointer capture
-      // mid-drag and freeze the gesture.
+      const isResize = !!handle && handle !== "move";
+      const dragIds = isResize ? [shapeId] : nextSelection;
+      const targets: { id: string; origin: BoundingBox }[] = [];
+      for (const id of dragIds) {
+        const sh = findShape(slide.shapes, id);
+        if (!sh) continue;
+        const box = shapeBoundingBox(sh);
+        if (!box) continue;
+        targets.push({ id, origin: box });
+      }
+      if (targets.length === 0) return;
+
+      const mode: DragMode = isResize ? { resize: handle as ResizeHandle } : "move";
+      const next: DragState = {
+        mode,
+        targets,
+        startX: e.clientX,
+        startY: e.clientY,
+        emuPerPx,
+      };
+      setDrag(next);
+      setPreview(computePreview(next, 0, 0));
+      // Capture on the container — handles get unmounted/replaced when
+      // the preview state updates, which would otherwise lose pointer
+      // capture mid-drag and freeze the gesture.
       containerRef.current.setPointerCapture?.(e.pointerId);
       e.preventDefault();
     },
-    [slide, slideSize, setSelectedId]
+    [slide, slideSize, setSelectedIds, selectedIds]
   );
 
   const onPointerMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!drag) return;
-      const dxPx = e.clientX - drag.startX;
-      const dyPx = e.clientY - drag.startY;
-      const dxEmu = Math.round(dxPx * drag.emuPerPx);
-      const dyEmu = Math.round(dyPx * drag.emuPerPx);
-      setPreview(computePreview(drag, dxEmu, dyEmu));
+      if (drag) {
+        const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
+        const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
+        setPreview(computePreview(drag, dxEmu, dyEmu));
+        return;
+      }
+      if (marquee) {
+        setMarquee({ ...marquee, currentX: e.clientX, currentY: e.clientY });
+        return;
+      }
     },
-    [drag]
+    [drag, marquee]
   );
 
   const onPointerUp = React.useCallback(
     async (e: React.PointerEvent<HTMLDivElement>) => {
+      containerRef.current?.releasePointerCapture?.(e.pointerId);
+      if (marquee && slide) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) {
+          const x0 = Math.min(marquee.startX, e.clientX) - rect.left;
+          const y0 = Math.min(marquee.startY, e.clientY) - rect.top;
+          const x1 = Math.max(marquee.startX, e.clientX) - rect.left;
+          const y1 = Math.max(marquee.startY, e.clientY) - rect.top;
+          const region: BoundingBox = {
+            x: x0 * marquee.emuPerPx,
+            y: y0 * marquee.emuPerPx,
+            cx: (x1 - x0) * marquee.emuPerPx,
+            cy: (y1 - y0) * marquee.emuPerPx,
+          };
+          // Tiny marquees (< 4 px) are treated as plain clicks; we already
+          // cleared the selection on pointerdown.
+          if (region.cx > 4 * marquee.emuPerPx || region.cy > 4 * marquee.emuPerPx) {
+            const hits: string[] = [];
+            for (const sh of slide.shapes) {
+              const b = shapeBoundingBox(sh);
+              if (!b) continue;
+              if (boxesIntersect(b, region)) hits.push(sh.id);
+            }
+            const shiftHeld = e.shiftKey || e.metaKey || e.ctrlKey;
+            const next = shiftHeld ? unionIds(selectedIds, hits) : hits;
+            setSelectedIds(next);
+          }
+        }
+        setMarquee(null);
+        return;
+      }
       if (!drag) return;
-      const dxPx = e.clientX - drag.startX;
-      const dyPx = e.clientY - drag.startY;
-      const dxEmu = Math.round(dxPx * drag.emuPerPx);
-      const dyEmu = Math.round(dyPx * drag.emuPerPx);
+      const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
+      const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
       const final = computePreview(drag, dxEmu, dyEmu);
       const noChange = final.dx === 0 && final.dy === 0 && final.dw === 0 && final.dh === 0;
-      const shapeId = drag.shapeId;
+      const targets = drag.targets;
+      const mode = drag.mode;
       // Clear drag/preview FIRST so the React-managed ghost vanishes the
       // moment we hand off to the snapshot — otherwise there's a flicker
       // between command apply and snapshot re-render.
       setDrag(null);
       setPreview(null);
-      containerRef.current?.releasePointerCapture?.(e.pointerId);
       if (noChange) return;
       try {
-        if (drag.mode === "move") {
-          await props.agent.applyCommand({
-            type: "pptx:set-position",
-            source: "human",
-            payload: {
-              slideIndex: props.slideIndex,
-              shapeId,
-              x: final.box.x,
-              y: final.box.y,
-            },
-          });
-        } else {
-          // For resize-from-anywhere we may also need to update position
-          // (resizing from N/W/NW/etc shifts the origin). Issue both.
-          if (final.dx !== 0 || final.dy !== 0) {
+        for (const t of targets) {
+          const box = final.boxes.get(t.id);
+          if (!box) continue;
+          if (mode === "move") {
             await props.agent.applyCommand({
               type: "pptx:set-position",
               source: "human",
               payload: {
                 slideIndex: props.slideIndex,
-                shapeId,
-                x: final.box.x,
-                y: final.box.y,
+                shapeId: t.id,
+                x: box.x,
+                y: box.y,
               },
             });
-          }
-          if (final.box.cx !== drag.origin.cx || final.box.cy !== drag.origin.cy) {
-            await props.agent.applyCommand({
-              type: "pptx:set-size",
-              source: "human",
-              payload: {
-                slideIndex: props.slideIndex,
-                shapeId,
-                width: final.box.cx,
-                height: final.box.cy,
-              },
-            });
+          } else {
+            // Resize-from-anywhere may also need a position update (n/w/nw
+            // edges shift the origin). Issue both when needed.
+            if (box.x !== t.origin.x || box.y !== t.origin.y) {
+              await props.agent.applyCommand({
+                type: "pptx:set-position",
+                source: "human",
+                payload: { slideIndex: props.slideIndex, shapeId: t.id, x: box.x, y: box.y },
+              });
+            }
+            if (box.cx !== t.origin.cx || box.cy !== t.origin.cy) {
+              await props.agent.applyCommand({
+                type: "pptx:set-size",
+                source: "human",
+                payload: {
+                  slideIndex: props.slideIndex,
+                  shapeId: t.id,
+                  width: box.cx,
+                  height: box.cy,
+                },
+              });
+            }
           }
         }
       } catch (err) {
         props.onError?.(err as Error);
       }
     },
-    [drag, props]
+    [drag, marquee, props, selectedIds, setSelectedIds, slide]
   );
 
   const startEditing = React.useCallback(
     (shapeId: string) => {
       setEditingId(shapeId);
-      setSelectedId(shapeId);
+      setSelectedIds([shapeId]);
     },
-    [setSelectedId]
+    [setSelectedIds]
   );
 
   const finishEditing = React.useCallback(
@@ -263,7 +360,6 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const aspect = slideAspectRatio(slideSize);
   const zoom = clampZoom(props.zoom ?? 1);
   const dpi = props.dpi ?? DEFAULT_DPI;
-  const previewBox = preview?.box ?? null;
 
   return (
     <div
@@ -304,21 +400,19 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           __html: `<rect width="100%" height="100%" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
         }}
       />
-      {drag && previewBox ? (
-        <DragGhostSvg
-          slideSize={slideSize}
-          ghostSvg={dragGhostSvg}
-          previewBox={previewBox}
-          originBox={drag.origin}
-        />
+      {drag && preview ? (
+        <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} />
       ) : null}
       <SelectionOverlaySvg
         slide={slide}
         slideSize={slideSize}
-        selectedId={selectedId}
-        previewBox={previewBox}
-        previewTargetId={drag?.shapeId ?? null}
+        selectedIds={selectedIds}
+        previewBoxes={preview?.boxes ?? null}
+        dragMode={drag?.mode ?? null}
       />
+      {marquee && containerRef.current ? (
+        <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
+      ) : null}
       {editingId ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing) : null}
     </div>
   );
@@ -340,25 +434,48 @@ function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
   return null;
 }
 
+function sameIds(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function unionIds(a: ReadonlyArray<string>, b: ReadonlyArray<string>): string[] {
+  const seen = new Set(a);
+  const out = [...a];
+  for (const id of b) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
 /**
- * Compute the preview box from the drag's origin + accumulated pointer
- * delta. Move drags translate; resize drags adjust the corresponding
- * edge(s) and shift the origin so the opposite edge stays anchored.
- * A small minimum size (250k EMU ≈ 26 px @ 96 DPI) keeps the shape
- * grabbable after the drag ends.
+ * Compute per-shape preview boxes for the current drag. Move drags
+ * translate every target by the same delta. Resize drags only apply to
+ * the primary (single) target — group resize is intentionally
+ * out-of-scope for this iteration. A small minimum size (250k EMU
+ * ≈ 26 px @ 96 DPI) keeps shapes grabbable after the gesture ends.
  */
 function computePreview(drag: DragState, dxEmu: number, dyEmu: number): DragPreview {
   const MIN = 250_000;
-  const o = drag.origin;
+  const boxes = new Map<string, BoundingBox>();
   if (drag.mode === "move") {
-    return {
-      box: { x: o.x + dxEmu, y: o.y + dyEmu, cx: o.cx, cy: o.cy },
-      dx: dxEmu,
-      dy: dyEmu,
-      dw: 0,
-      dh: 0,
-    };
+    for (const t of drag.targets) {
+      boxes.set(t.id, {
+        x: t.origin.x + dxEmu,
+        y: t.origin.y + dyEmu,
+        cx: t.origin.cx,
+        cy: t.origin.cy,
+      });
+    }
+    return { boxes, dx: dxEmu, dy: dyEmu, dw: 0, dh: 0 };
   }
+  // Resize: only the first target participates.
+  const t = drag.targets[0];
+  const o = t.origin;
   const h = drag.mode.resize;
   let nx = o.x;
   let ny = o.y;
@@ -376,8 +493,9 @@ function computePreview(drag: DragState, dxEmu: number, dyEmu: number): DragPrev
     ny = o.y + (o.cy - newCy);
     nh = newCy;
   }
+  boxes.set(t.id, { x: nx, y: ny, cx: nw, cy: nh });
   return {
-    box: { x: nx, y: ny, cx: nw, cy: nh },
+    boxes,
     dx: nx - o.x,
     dy: ny - o.y,
     dw: nw - o.cx,
@@ -403,31 +521,34 @@ function cursorForDrag(mode: DragMode): string {
   }
 }
 
-interface DragGhostProps {
+interface DragGhostLayerProps {
   readonly slideSize: SlideSize;
-  readonly ghostSvg: string;
-  readonly previewBox: BoundingBox;
-  readonly originBox: BoundingBox;
+  readonly ghosts: ReadonlyArray<{ id: string; svg: string; origin: BoundingBox }>;
+  readonly preview: DragPreview;
 }
 
 /**
- * Renders the dragged shape at its live position by reusing its baked
- * SVG output and applying a translate+scale via the wrapping <g>. This
- * avoids touching the static SVG string on every pointer move while
- * still giving the user pixel-perfect feedback.
+ * Renders every dragged shape at its live position by reusing each
+ * shape's baked SVG output and applying a translate (+ scale, when
+ * resizing) via a wrapping <g>. This avoids re-emitting the static SVG
+ * string on every pointer move while still giving the user pixel-
+ * perfect feedback even for multi-shape group drags.
  */
-function DragGhostSvg({ slideSize, ghostSvg, previewBox, originBox }: DragGhostProps) {
-  const tx = px(previewBox.x - originBox.x);
-  const ty = px(previewBox.y - originBox.y);
-  const sx = originBox.cx > 0 ? previewBox.cx / originBox.cx : 1;
-  const sy = originBox.cy > 0 ? previewBox.cy / originBox.cy : 1;
-  // Scale around the origin's top-left so translate+scale compose cleanly.
-  const ox = px(originBox.x);
-  const oy = px(originBox.y);
-  // `transform` order matters: translate to the new top-left, then
-  // re-anchor to the origin's top-left, scale, then anchor back. This
-  // produces the visual the user expects when grabbing a side handle.
-  const transform = `translate(${tx} ${ty}) translate(${ox} ${oy}) scale(${sx} ${sy}) translate(${-ox} ${-oy})`;
+function DragGhostLayer({ slideSize, ghosts, preview }: DragGhostLayerProps): React.ReactElement {
+  const inner = ghosts
+    .map((g) => {
+      const box = preview.boxes.get(g.id);
+      if (!box) return "";
+      const tx = px(box.x - g.origin.x);
+      const ty = px(box.y - g.origin.y);
+      const sx = g.origin.cx > 0 ? box.cx / g.origin.cx : 1;
+      const sy = g.origin.cy > 0 ? box.cy / g.origin.cy : 1;
+      const ox = px(g.origin.x);
+      const oy = px(g.origin.y);
+      const transform = `translate(${tx} ${ty}) translate(${ox} ${oy}) scale(${sx} ${sy}) translate(${-ox} ${-oy})`;
+      return `<g transform="${transform}">${g.svg}</g>`;
+    })
+    .join("");
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -441,7 +562,7 @@ function DragGhostSvg({ slideSize, ghostSvg, previewBox, originBox }: DragGhostP
         height: "100%",
         opacity: 0.9,
       }}
-      dangerouslySetInnerHTML={{ __html: `<g transform="${transform}">${ghostSvg}</g>` }}
+      dangerouslySetInnerHTML={{ __html: inner }}
     />
   );
 }
@@ -449,49 +570,78 @@ function DragGhostSvg({ slideSize, ghostSvg, previewBox, originBox }: DragGhostP
 interface SelectionOverlayProps {
   readonly slide: Slide;
   readonly slideSize: SlideSize;
-  readonly selectedId: string | null;
-  readonly previewBox: BoundingBox | null;
-  readonly previewTargetId: string | null;
+  readonly selectedIds: ReadonlyArray<string>;
+  readonly previewBoxes: ReadonlyMap<string, BoundingBox> | null;
+  readonly dragMode: DragMode | null;
 }
 
 /**
- * Renders the selection chrome (dashed outline + 8 resize handles) in
- * its own SVG layer so handle hit-testing is independent of the static
- * shape SVG. Handles are sized in CSS pixels so they stay clickable
- * regardless of zoom; we accomplish this by reading the container's
- * displayed width via a `vector-effect: non-scaling-stroke` on the
- * outline and an absolute pixel size on the rects.
+ * Renders selection chrome in its own SVG layer so handle hit-testing
+ * is independent of the static shape SVG. For a single selection we
+ * draw the dashed outline + 8 resize handles. For multi-selection we
+ * draw a per-shape outline plus a union outline; each shape gets a
+ * "move" hit zone so dragging anywhere inside the group moves the
+ * whole thing. Resize handles are intentionally suppressed for multi-
+ * selections — group resize is out-of-scope for this iteration.
  */
 function SelectionOverlaySvg({
   slide,
   slideSize,
-  selectedId,
-  previewBox,
-  previewTargetId,
+  selectedIds,
+  previewBoxes,
+  dragMode,
 }: SelectionOverlayProps): React.ReactElement | null {
-  if (!selectedId) return null;
-  const shape = findShape(slide.shapes, selectedId);
-  if (!shape) return null;
-  const baseBox = shapeBoundingBox(shape);
-  if (!baseBox) return null;
-  const box = previewTargetId === selectedId && previewBox ? previewBox : baseBox;
-  const x = px(box.x);
-  const y = px(box.y);
-  const cx = px(box.cx);
-  const cy = px(box.cy);
-  const handleSize = 10; // CSS pixels — applied via `vectorEffect` below.
-  const sid = escAttr(selectedId);
+  if (selectedIds.length === 0) return null;
+  const entries: { id: string; box: BoundingBox }[] = [];
+  for (const id of selectedIds) {
+    const sh = findShape(slide.shapes, id);
+    if (!sh) continue;
+    const base = shapeBoundingBox(sh);
+    if (!base) continue;
+    const previewBox = previewBoxes?.get(id) ?? null;
+    entries.push({ id, box: previewBox ?? base });
+  }
+  if (entries.length === 0) return null;
+  const isMulti = entries.length > 1;
+  const isResizing = dragMode !== null && dragMode !== "move";
+  // For single-shape resizes the union/handles should track the live
+  // preview box; for moves they follow the single shape too.
+  const primary = entries[0];
+  const handleSize = 10;
 
-  const handles: ReadonlyArray<{ readonly h: ResizeHandle; readonly hx: number; readonly hy: number }> = [
-    { h: "nw", hx: x, hy: y },
-    { h: "n", hx: x + cx / 2, hy: y },
-    { h: "ne", hx: x + cx, hy: y },
-    { h: "e", hx: x + cx, hy: y + cy / 2 },
-    { h: "se", hx: x + cx, hy: y + cy },
-    { h: "s", hx: x + cx / 2, hy: y + cy },
-    { h: "sw", hx: x, hy: y + cy },
-    { h: "w", hx: x, hy: y + cy / 2 },
-  ];
+  const handles: { readonly h: ResizeHandle; readonly hx: number; readonly hy: number }[] = [];
+  if (!isMulti) {
+    const x = px(primary.box.x);
+    const y = px(primary.box.y);
+    const cx = px(primary.box.cx);
+    const cy = px(primary.box.cy);
+    handles.push(
+      { h: "nw", hx: x, hy: y },
+      { h: "n", hx: x + cx / 2, hy: y },
+      { h: "ne", hx: x + cx, hy: y },
+      { h: "e", hx: x + cx, hy: y + cy / 2 },
+      { h: "se", hx: x + cx, hy: y + cy },
+      { h: "s", hx: x + cx / 2, hy: y + cy },
+      { h: "sw", hx: x, hy: y + cy },
+      { h: "w", hx: x, hy: y + cy / 2 }
+    );
+  }
+
+  const unionBox = entries.reduce<BoundingBox>(
+    (acc, e, i) => {
+      if (i === 0) return e.box;
+      const x = Math.min(acc.x, e.box.x);
+      const y = Math.min(acc.y, e.box.y);
+      const right = Math.max(acc.x + acc.cx, e.box.x + e.box.cx);
+      const bottom = Math.max(acc.y + acc.cy, e.box.y + e.box.cy);
+      return { x, y, cx: right - x, cy: bottom - y };
+    },
+    entries[0].box
+  );
+  const ux = px(unionBox.x);
+  const uy = px(unionBox.y);
+  const ucx = px(unionBox.cx);
+  const ucy = px(unionBox.cy);
 
   return (
     <svg
@@ -500,35 +650,62 @@ function SelectionOverlaySvg({
       preserveAspectRatio="xMidYMid meet"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
     >
+      {/* Per-shape outlines (visible in multi-select; redundant in single
+          select but kept consistent for clarity). */}
+      {isMulti
+        ? entries.map((e) => (
+            <rect
+              key={`outline-${e.id}`}
+              x={px(e.box.x)}
+              y={px(e.box.y)}
+              width={px(e.box.cx)}
+              height={px(e.box.cy)}
+              fill="none"
+              stroke="#7c3aed"
+              strokeOpacity={0.5}
+              strokeWidth={1}
+              strokeDasharray="3 2"
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          ))
+        : null}
+      {/* Union / single-shape outline */}
       <rect
-        x={x}
-        y={y}
-        width={cx}
-        height={cy}
+        x={ux}
+        y={uy}
+        width={ucx}
+        height={ucy}
         fill="none"
         stroke="#7c3aed"
         strokeWidth={1.5}
-        strokeDasharray="4 2"
+        strokeDasharray={isMulti ? "6 3" : "4 2"}
         vectorEffect="non-scaling-stroke"
         pointerEvents="none"
       />
-      {/* Move handle: an invisible rectangle covering the body of the
-          shape so any drag inside the selection is treated as a "move",
-          not as a pointerdown on the unrelated shape behind it. */}
-      <rect
-        data-shape-id={sid}
-        data-handle="move"
-        x={x}
-        y={y}
-        width={cx}
-        height={cy}
-        fill="transparent"
-        style={{ cursor: "move" }}
-      />
+      {/* Move hit-zones — one per selected shape so a click on any of
+          them moves the entire group. We deliberately use per-shape
+          rects (not the union) so the user can click between two
+          selected shapes without grabbing the gap. */}
+      {entries.map((e) => (
+        <rect
+          key={`move-${e.id}`}
+          data-shape-id={escAttr(e.id)}
+          data-handle="move"
+          x={px(e.box.x)}
+          y={px(e.box.y)}
+          width={px(e.box.cx)}
+          height={px(e.box.cy)}
+          fill="transparent"
+          style={{ cursor: "move" }}
+        />
+      ))}
+      {/* Resize handles (single-select only). During a resize gesture we
+          keep them rendered so the user sees the corner they're pulling. */}
       {handles.map((it) => (
         <rect
           key={it.h}
-          data-shape-id={sid}
+          data-shape-id={escAttr(primary.id)}
           data-handle={it.h}
           x={it.hx}
           y={it.hy}
@@ -540,9 +717,37 @@ function SelectionOverlaySvg({
           strokeWidth={1.5}
           vectorEffect="non-scaling-stroke"
           style={{ cursor: cursorForHandle(it.h) }}
+          opacity={isResizing ? 0.6 : 1}
         />
       ))}
     </svg>
+  );
+}
+
+interface MarqueeOverlayProps {
+  readonly marquee: MarqueeState;
+  readonly containerRect: DOMRect;
+}
+
+/** Light translucent rectangle drawn while the user rubber-bands. */
+function MarqueeOverlay({ marquee, containerRect }: MarqueeOverlayProps): React.ReactElement {
+  const x0 = Math.min(marquee.startX, marquee.currentX) - containerRect.left;
+  const y0 = Math.min(marquee.startY, marquee.currentY) - containerRect.top;
+  const x1 = Math.max(marquee.startX, marquee.currentX) - containerRect.left;
+  const y1 = Math.max(marquee.startY, marquee.currentY) - containerRect.top;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: x0,
+        top: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+        background: "rgba(124,58,237,0.12)",
+        border: "1px solid rgba(124,58,237,0.6)",
+        pointerEvents: "none",
+      }}
+    />
   );
 }
 

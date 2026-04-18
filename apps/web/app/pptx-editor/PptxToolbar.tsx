@@ -2,6 +2,14 @@
 
 import * as React from "react";
 import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
   Bold,
   ChevronDown,
   Circle,
@@ -23,12 +31,14 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import type { ShapePreset } from "@officeai/pptx";
+import type { AlignMode, ShapePreset } from "@officeai/pptx";
 
 export interface PptxToolbarProps {
   readonly disabled: boolean;
   readonly slideCount: number;
   readonly hasSelection: boolean;
+  /** Total number of selected shapes; drives align/distribute enablement. */
+  readonly selectionCount: number;
   readonly currentFill: string | null;
   readonly currentFontPt: number | null;
   readonly onOpenFile: () => void;
@@ -40,6 +50,8 @@ export interface PptxToolbarProps {
   readonly onAddShape: (preset: ShapePreset) => void;
   readonly onInsertImage: (file: File) => void;
   readonly onDeleteShape: () => void;
+  readonly onAlign: (mode: AlignMode) => void;
+  readonly onDistribute: (axis: "horizontal" | "vertical") => void;
   readonly onToggleBold: () => void;
   readonly onToggleItalic: () => void;
   readonly onToggleUnderline: () => void;
@@ -75,6 +87,7 @@ export function PptxToolbar(props: PptxToolbarProps) {
   const {
     disabled,
     hasSelection,
+    selectionCount,
     currentFill,
     currentFontPt,
     zoom,
@@ -83,6 +96,8 @@ export function PptxToolbar(props: PptxToolbarProps) {
     onZoomChange,
     onZoomReset,
   } = props;
+  const canAlign = !disabled && selectionCount >= 2;
+  const canDistribute = !disabled && selectionCount >= 3;
   const zoomPct = Math.round(zoom * 100);
   const imageInputRef = React.useRef<HTMLInputElement | null>(null);
   return (
@@ -143,6 +158,55 @@ export function PptxToolbar(props: PptxToolbarProps) {
         icon={<Trash2 size={14} />}
         label="Delete"
         disabled={disabled || !hasSelection}
+      />
+      <Sep />
+      <IconButton
+        onClick={() => props.onAlign("left")}
+        icon={<AlignStartVertical size={14} />}
+        label="Align left"
+        disabled={!canAlign}
+      />
+      <IconButton
+        onClick={() => props.onAlign("center-h")}
+        icon={<AlignCenterVertical size={14} />}
+        label="Align center"
+        disabled={!canAlign}
+      />
+      <IconButton
+        onClick={() => props.onAlign("right")}
+        icon={<AlignEndVertical size={14} />}
+        label="Align right"
+        disabled={!canAlign}
+      />
+      <IconButton
+        onClick={() => props.onAlign("top")}
+        icon={<AlignStartHorizontal size={14} />}
+        label="Align top"
+        disabled={!canAlign}
+      />
+      <IconButton
+        onClick={() => props.onAlign("middle-v")}
+        icon={<AlignCenterHorizontal size={14} />}
+        label="Align middle"
+        disabled={!canAlign}
+      />
+      <IconButton
+        onClick={() => props.onAlign("bottom")}
+        icon={<AlignEndHorizontal size={14} />}
+        label="Align bottom"
+        disabled={!canAlign}
+      />
+      <IconButton
+        onClick={() => props.onDistribute("horizontal")}
+        icon={<AlignHorizontalDistributeCenter size={14} />}
+        label="Distribute horizontally"
+        disabled={!canDistribute}
+      />
+      <IconButton
+        onClick={() => props.onDistribute("vertical")}
+        icon={<AlignVerticalDistributeCenter size={14} />}
+        label="Distribute vertically"
+        disabled={!canDistribute}
       />
       <Sep />
       <ToolbarButton
@@ -242,6 +306,27 @@ function ToolbarButton({ onClick, icon, label, disabled }: ToolbarButtonProps) {
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+/**
+ * Icon-only toolbar button — keeps wide button rows (like the eight
+ * align/distribute controls) compact. The label is still surfaced via
+ * `title` and `aria-label` so screen readers and tooltips work.
+ */
+function IconButton({ onClick, icon, label, disabled }: ToolbarButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      data-testid={`pptx-${label.toLowerCase().replace(/\s+/g, "-")}`}
+      className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {icon}
     </button>
   );
 }
