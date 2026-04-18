@@ -560,3 +560,111 @@ including the rejected intersection operator.
   marks every known cell dirty and re-runs — used when the host
   re-imports a workbook or when a user explicitly forces
   recalculation.
+
+## 2026-04-18 — Phase 7e: P0 function library (math/logic/info/lookup/text)
+
+**Shipped (5 parallel subagents)**
+
+- `packages/xlsx/src/formula/functions/math.ts` — **33** P0
+  math/stats functions: `SUM, AVERAGE, COUNT, COUNTA,
+COUNTBLANK, MIN, MAX, SUMIF, SUMIFS, COUNTIF, COUNTIFS,
+AVERAGEIF, AVERAGEIFS, ROUND, ROUNDUP, ROUNDDOWN, INT, ABS,
+MOD, POWER, SQRT, CEILING, FLOOR, RAND, RANDBETWEEN, LARGE,
+SMALL, RANK, MEDIAN, STDEV, VAR, PRODUCT, SUMPRODUCT`. Shared
+  `parseCriteria` supports `=`, `<>`, `>`, `<`, `>=`, `<=` with
+  `*` / `?` wildcards (escaped via `~`). `RAND` / `RANDBETWEEN`
+  are volatile and source bits via `ctx.random()`.
+- `packages/xlsx/src/formula/functions/logic.ts` — **11** P0 logic
+  functions: `IF, IFS, AND, OR, NOT, XOR, IFERROR, IFNA, SWITCH,
+TRUE, FALSE`. `IF / IFS / IFERROR / IFNA / SWITCH` declare
+  `lazyArgs: true` and short-circuit unevaluated branches.
+  `IFERROR` catches every `CellError`; `IFNA` only `#N/A`.
+- `packages/xlsx/src/formula/functions/info.ts` — **10** P0 info
+  functions: `ISBLANK, ISNUMBER, ISTEXT, ISERROR, ISNA, ISODD,
+ISEVEN, TYPE, N, NA`. `IS*` predicates do **not** propagate
+  errors — they inspect type by `kind`. `ISODD`/`ISEVEN` _do_
+  propagate (they consume the number). `ISBLANK` uses object
+  identity against the exported `Blank` singleton (a documented
+  P0 limitation pending a richer Blank kind).
+- `packages/xlsx/src/formula/functions/lookup.ts` — **12** P0
+  lookup functions: `VLOOKUP, HLOOKUP, INDEX, MATCH, XLOOKUP,
+CHOOSE, OFFSET, INDIRECT, ROW, ROWS, COLUMN, COLUMNS`.
+  `OFFSET` and `INDIRECT` are volatile. `OFFSET / ROW / ROWS /
+COLUMN / COLUMNS` use `lazyArgs: true` to peek at AST `RefNode` /
+  `RangeRefNode` before eager eval collapses them. `INDEX`
+  supports both scalar pick and `row=0`/`col=0` whole-row/-column
+  slicing.
+- `packages/xlsx/src/formula/functions/text.ts` — **23** P0 text
+  functions: `CONCATENATE, CONCAT, TEXTJOIN, LEFT, RIGHT, MID,
+LEN, TRIM, UPPER, LOWER, PROPER, FIND, SEARCH, SUBSTITUTE,
+REPLACE, REPT, TEXT, VALUE, NUMBERVALUE, CHAR, CODE, EXACT,
+T`. `FIND` is case-sensitive, no wildcards; `SEARCH` is
+  case-insensitive with `?`/`*` wildcards (escape via `~`).
+  `TEXT` is a P0-minimal format engine handling `0[.0…]`,
+  `#,##0[.0…]`, `0%`, and `$…` patterns; everything else falls
+  back to `toString` (full number-format engine deferred to
+  §16.7).
+- `packages/xlsx/src/formula/functions/index.ts` — single
+  `registerAllFunctions(reg)` aggregator that bulk-registers all
+  five categories.
+
+**Tests landed**
+
+- `math.test.ts` — 100 tests (≥3 per function plus criteria-parser
+  cases and SUMPRODUCT shape validation).
+- `logic.test.ts` — 36 tests including side-effect counters that
+  prove un-chosen branches of `IF / IFS / IFERROR / IFNA /
+SWITCH` are not evaluated.
+- `info.test.ts` — 48 tests including the inverted-error-handling
+  contract (`ISERROR(1/0)` → TRUE, `ISNUMBER(1/0)` → FALSE).
+- `lookup.test.ts` — 41 tests with a fixed `getRange` table host
+  exercising exact + approximate lookup, INDEX whole-row/-col
+  slicing, MATCH all three modes, XLOOKUP `if_not_found`.
+- `text.test.ts` — 77 tests covering coercion edges, wildcard
+  searches, `TEXT` format hints, and the 32 767-char REPT/TEXTJOIN
+  ceiling.
+
+**Totals after 7e**
+
+- **89 functions** registered across 5 categories.
+- `@officeai/xlsx` unit tests: **475 passing** across 15 files
+  (Phase 7a 38 → 7b +34 → 7c +27 → 7d +11 → 7e +302; +
+  serializer/parser/agent/handlers from earlier phases).
+- Full `make verify` (format-check / lint / architecture /
+  typecheck / test / build) green.
+
+**Decisions**
+
+- **One file per category, single `registerXxx` entrypoint.**
+  Keeps blast radius small, parallelisable across subagents, and
+  matches the §16 spec layout. `functions/index.ts` is the only
+  cross-category file; the workbook layer wires the entire
+  library in one call.
+- **Errors are values, never exceptions.** Every function
+  short-circuits on `kind === "e"` arguments and returns a
+  `CellError` for its own failures. `walkSumNumeric` / similar
+  helpers thread the first error back to the caller verbatim.
+- **Lazy args reserved for short-circuit semantics or AST
+  inspection.** Logic gates (`IF / IFS / IFERROR / IFNA /
+SWITCH`) need lazy to skip un-chosen branches; lookup helpers
+  (`OFFSET / ROW / ROWS / COLUMN / COLUMNS`) need lazy to
+  inspect the un-collapsed `RefNode` for ref arithmetic. Every
+  other function is eager.
+- **Volatility declared at registration.** `RAND`,
+  `RANDBETWEEN`, `OFFSET`, `INDIRECT` set `volatile: true`.
+  The dep graph (7d) drains the volatile set on every `recalc()`,
+  matching §13.4.
+- **Documented P0 deferrals (called out in code comments):**
+  - `COUNTBLANK` only detects formula-blanks (`""`); a true
+    empty-cell distinction needs an engine-side `Blank` kind.
+  - `OFFSET` requires its `base` to be a literal `RefNode` /
+    `RangeRefNode`; computed bases return `#VALUE!`.
+  - `INDIRECT(text, FALSE)` (R1C1 mode) returns `#REF!`; A1 mode
+    is fully supported.
+  - `XLOOKUP` `match_mode = 2` (wildcard) and binary `search_mode`
+    not implemented.
+  - `TEXT` covers the listed format hints; full number-format
+    engine deferred.
+  - `VLOOKUP / HLOOKUP / MATCH` exact-match wildcards not yet
+    wired (deferred until text helpers expose a shared wildcard
+    matcher).
