@@ -603,6 +603,116 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
       }
     );
 
+  // ── Charts (F3) ─────────────────────────────────────────────────────
+  pptx
+    .command("chart-set-title")
+    .description("Set or remove a typed ChartShape's title text. Pass --remove to clear it.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Chart shape NodeId")
+    .option("--title <text>", "Replacement title text")
+    .option("--remove", "Remove the title", false)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        title?: string;
+        remove?: boolean;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        if (!opts.remove && opts.title === undefined) {
+          throw new Error("Pass either --title <text> or --remove");
+        }
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-chart-title",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              title: opts.remove ? null : (opts.title ?? null),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("chart-set-type")
+    .description("Change a typed ChartShape's chart type (bar|line|area|pie).")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Chart shape NodeId")
+    .addOption(
+      new Option("--type <kind>", "Target chart type")
+        .choices(["bar", "line", "area", "pie"])
+        .makeOptionMandatory(true)
+    )
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        type: "bar" | "line" | "area" | "pie";
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-chart-type",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              chartType: opts.type,
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("chart-set-data")
+    .description("Replace a typed ChartShape's categories + series data from a JSON file.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Chart shape NodeId")
+    .requiredOption(
+      "--data <path>",
+      'JSON file: { "categories": ["Q1",…], "series": [{ "name": "Revenue", "values": [1,2,3] }, …] }'
+    )
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        data: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        const raw = await readFile(resolve(opts.data), "utf8");
+        const parsed: unknown = JSON.parse(raw);
+        const { categories, series } = parseChartData(parsed);
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-chart-data",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              categories,
+              series,
+            },
+          },
+        ]);
+      }
+    );
+
   pptx
     .command("apply")
     .description("Apply a JSON command file (single command or { commands: [...] }) and write the result.")
@@ -712,6 +822,13 @@ export interface PptxSnapshotProjection {
         columns: number;
         cells: ReadonlyArray<ReadonlyArray<string>>;
       };
+      chart?: {
+        partPath: string;
+        chartType: string;
+        title?: string;
+        categories: ReadonlyArray<string>;
+        series: ReadonlyArray<{ name?: string; values: ReadonlyArray<number> }>;
+      };
     }>;
   }>;
 }
@@ -731,13 +848,16 @@ export function snapshotToJsonProjection(
       id: s.id,
       partPath: s.partPath,
       slideId: s.slideId,
-      shapes: s.shapes.map((sh) => projectShape(sh)),
+      shapes: s.shapes.map((sh) => projectShape(sh, snap)),
     });
   }
   return { format: "pptx", revision: snap.revision, slides: out };
 }
 
-function projectShape(sh: Shape): PptxSnapshotProjection["slides"][number]["shapes"][number] {
+function projectShape(
+  sh: Shape,
+  snap: PptxSnapshot
+): PptxSnapshotProjection["slides"][number]["shapes"][number] {
   const base: {
     id: string;
     kind: Shape["kind"];
@@ -746,6 +866,13 @@ function projectShape(sh: Shape): PptxSnapshotProjection["slides"][number]["shap
     bbox?: { x: number; y: number; cx: number; cy: number };
     text?: string;
     table?: { rows: number; columns: number; cells: ReadonlyArray<ReadonlyArray<string>> };
+    chart?: {
+      partPath: string;
+      chartType: string;
+      title?: string;
+      categories: ReadonlyArray<string>;
+      series: ReadonlyArray<{ name?: string; values: ReadonlyArray<number> }>;
+    };
   } = { id: sh.id, kind: sh.kind };
   if ("cNvPrId" in sh) base.cNvPrId = sh.cNvPrId;
   if ("name" in sh && sh.name) base.name = sh.name;
@@ -769,6 +896,19 @@ function projectShape(sh: Shape): PptxSnapshotProjection["slides"][number]["shap
             .join("\n")
         )
       ),
+    };
+  }
+  if (sh.kind === "chart") {
+    const part = snap.root.charts.get(sh.chartPartPath);
+    base.chart = {
+      partPath: sh.chartPartPath,
+      chartType: part?.chartType ?? "unsupported",
+      ...(part?.title !== undefined ? { title: part.title } : {}),
+      categories: part?.categories ?? [],
+      series: (part?.series ?? []).map((s) => ({
+        ...(s.name !== undefined ? { name: s.name } : {}),
+        values: s.values,
+      })),
     };
   }
   return base;
@@ -1017,6 +1157,39 @@ export function normalizeCommands(
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
+}
+
+function parseChartData(v: unknown): {
+  categories: ReadonlyArray<string>;
+  series: ReadonlyArray<{ name?: string; values: ReadonlyArray<number> }>;
+} {
+  if (!isObj(v)) throw new Error("chart data must be a JSON object");
+  const cats = (v as { categories?: unknown }).categories;
+  const sers = (v as { series?: unknown }).series;
+  if (!Array.isArray(cats) || cats.some((c) => typeof c !== "string")) {
+    throw new Error('chart data must have a `categories: string[]` field');
+  }
+  if (!Array.isArray(sers)) {
+    throw new Error('chart data must have a `series: { name?, values: number[] }[]` field');
+  }
+  const series = sers.map((s, i) => {
+    if (!isObj(s)) throw new Error(`series[${i}] must be an object`);
+    const name = (s as { name?: unknown }).name;
+    const values = (s as { values?: unknown }).values;
+    if (!Array.isArray(values) || values.some((n) => typeof n !== "number")) {
+      throw new Error(`series[${i}].values must be number[]`);
+    }
+    if (values.length !== cats.length) {
+      throw new Error(
+        `series[${i}].values length (${values.length}) must match categories length (${cats.length})`
+      );
+    }
+    return {
+      ...(typeof name === "string" ? { name } : {}),
+      values: values as number[],
+    };
+  });
+  return { categories: cats as string[], series };
 }
 
 async function dispatchAndWrite(

@@ -1,4 +1,5 @@
 import type {
+  ChartPart,
   PptxSnapshot,
   Shape,
   Slide,
@@ -23,23 +24,31 @@ export function snapshotToMarkdown(snap: PptxSnapshot): string {
   lines.push(`Slides: ${snap.root.slides.length}`);
   lines.push("");
   for (let i = 0; i < snap.root.slides.length; i++) {
-    lines.push(...renderSlide(i + 1, snap.root.slides[i]));
+    lines.push(...renderSlide(i + 1, snap.root.slides[i], snap.root.charts));
     lines.push("");
   }
   return lines.join("\n");
 }
 
-function renderSlide(num: number, slide: Slide): string[] {
+function renderSlide(
+  num: number,
+  slide: Slide,
+  charts: ReadonlyMap<string, ChartPart>
+): string[] {
   const out: string[] = [];
   out.push(`## Slide ${num} — \`${slide.partPath}\` (slideId=${slide.slideId})`);
   out.push("");
   for (const sh of slide.shapes) {
-    out.push(...renderShape(sh, 0));
+    out.push(...renderShape(sh, 0, charts));
   }
   return out;
 }
 
-function renderShape(sh: Shape, depth: number): string[] {
+function renderShape(
+  sh: Shape,
+  depth: number,
+  charts: ReadonlyMap<string, ChartPart>
+): string[] {
   const indent = "  ".repeat(depth);
   const out: string[] = [];
   const bbox = bboxString(sh);
@@ -55,7 +64,7 @@ function renderShape(sh: Shape, depth: number): string[] {
       break;
     case "group":
       out.push(`${indent}- **group** \`${sh.id}\` cNvPr=${sh.cNvPrId} ${bbox}`);
-      for (const c of sh.children) out.push(...renderShape(c, depth + 1));
+      for (const c of sh.children) out.push(...renderShape(c, depth + 1, charts));
       break;
     case "table":
       out.push(
@@ -63,11 +72,15 @@ function renderShape(sh: Shape, depth: number): string[] {
       );
       out.push(...renderTable(sh, depth + 1));
       break;
-    case "chart":
+    case "chart": {
+      const part = charts.get(sh.chartPartPath);
+      const t = part?.chartType ?? "?";
       out.push(
-        `${indent}- **chart** \`${sh.id}\` cNvPr=${sh.cNvPrId} part=\`${sh.chartPartPath || "?"}\` ${bbox}`
+        `${indent}- **chart** \`${sh.id}\` cNvPr=${sh.cNvPrId} type=${t} part=\`${sh.chartPartPath || "?"}\` ${bbox}`
       );
+      if (part) out.push(...renderChartPart(part, depth + 1));
       break;
+    }
     case "opaque":
       out.push(`${indent}- **opaque** \`${sh.id}\` <${sh.tag}> ${bbox}`);
       break;
@@ -93,6 +106,20 @@ function renderTable(table: TableShape, depth: number): string[] {
     if (r === 0) {
       out.push(`${indent}|${row.cells.map(() => "---").join("|")}|`);
     }
+  }
+  return out;
+}
+
+function renderChartPart(part: ChartPart, depth: number): string[] {
+  const indent = "  ".repeat(depth);
+  const out: string[] = [];
+  if (part.title) out.push(`${indent}> title: ${part.title}`);
+  if (part.categories.length > 0) {
+    out.push(`${indent}> categories: ${part.categories.join(", ")}`);
+  }
+  for (const ser of part.series) {
+    const name = ser.name ? `${ser.name}: ` : "";
+    out.push(`${indent}> ${name}[${ser.values.join(", ")}]`);
   }
   return out;
 }

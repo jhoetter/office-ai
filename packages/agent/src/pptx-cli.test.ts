@@ -52,6 +52,7 @@ const FIXTURE = (name: string): string =>
 const SINGLE = FIXTURE("03-title-and-content.pptx");
 const MULTI = FIXTURE("07-multi-slide.pptx");
 const TABLE = FIXTURE("06-with-table.pptx");
+const CHART = FIXTURE("09-with-chart.pptx");
 
 describe("office-agent pptx subcommand group", () => {
   it("pptx inspect prints structural counts as JSON", async () => {
@@ -476,6 +477,150 @@ describe("office-agent pptx subcommand group", () => {
       expect(code).toBe(0);
       const parsed = JSON.parse(stdout.text());
       expect(parsed.shapeCounts.table).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("chart CLI subcommands", () => {
+    async function findChart(path: string): Promise<{ slide: number; shapeId: string }> {
+      const agent = await loadDeterministic(path);
+      const slides = agent.getSnapshot().root.slides;
+      for (let i = 0; i < slides.length; i++) {
+        const c = slides[i].shapes.find((s) => s.kind === "chart");
+        if (c) return { slide: i, shapeId: c.id };
+      }
+      throw new Error("no chart shape in fixture");
+    }
+
+    it("inspect reports chart count and read --format json projects chart data", async () => {
+      const { io: io1, stdout: out1 } = makeIO();
+      let code = await runCli(["pptx", "inspect", "--file", CHART], io1);
+      expect(code).toBe(0);
+      const inspected = JSON.parse(out1.text());
+      expect(inspected.shapeCounts.chart).toBeGreaterThanOrEqual(1);
+
+      const { io: io2, stdout: out2 } = makeIO();
+      code = await runCli(["pptx", "read", "--file", CHART, "--format", "json"], io2);
+      expect(code).toBe(0);
+      const projection = JSON.parse(out2.text());
+      const chart = projection.slides
+        .flatMap((s: { shapes: Array<{ kind: string; chart?: unknown }> }) => s.shapes)
+        .find((sh: { kind: string }) => sh.kind === "chart");
+      expect(chart).toBeDefined();
+      expect(chart.chart.partPath).toMatch(/^ppt\/charts\/chart\d+\.xml$/);
+      expect(["bar", "line", "area", "pie", "unsupported"]).toContain(chart.chart.chartType);
+      expect(Array.isArray(chart.chart.series)).toBe(true);
+    });
+
+    it("chart-set-title rewrites the title and chart-set-type swaps the chart kind", async () => {
+      const { slide, shapeId } = await findChart(CHART);
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-chart-"));
+      const a = join(dir, "a.pptx");
+      const b = join(dir, "b.pptx");
+      const { io } = makeIO();
+
+      let code = await runCli(
+        [
+          "pptx", "chart-set-title",
+          "--file", CHART, "--out", a,
+          "--slide", String(slide),
+          "--shape", shapeId,
+          "--title", "Quarterly Revenue",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const aAgent = await loadDeterministic(a);
+      const aChart = aAgent.getSnapshot().root.slides[slide].shapes.find(
+        (s) => s.kind === "chart"
+      );
+      if (!aChart || aChart.kind !== "chart") throw new Error("chart missing");
+      const aPart = aAgent.getSnapshot().root.charts.get(aChart.chartPartPath);
+      expect(aPart?.title).toBe("Quarterly Revenue");
+
+      code = await runCli(
+        [
+          "pptx", "chart-set-type",
+          "--file", a, "--out", b,
+          "--slide", String(slide),
+          "--shape", aChart.id,
+          "--type", "line",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const bAgent = await loadDeterministic(b);
+      const bChart = bAgent.getSnapshot().root.slides[slide].shapes.find(
+        (s) => s.kind === "chart"
+      );
+      if (!bChart || bChart.kind !== "chart") throw new Error("chart missing");
+      const bPart = bAgent.getSnapshot().root.charts.get(bChart.chartPartPath);
+      expect(bPart?.chartType).toBe("line");
+    });
+
+    it("chart-set-data replaces categories + series from a JSON file", async () => {
+      const { slide, shapeId } = await findChart(CHART);
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-chart-data-"));
+      const dataPath = join(dir, "data.json");
+      const out = join(dir, "out.pptx");
+      writeFileSync(
+        dataPath,
+        JSON.stringify({
+          categories: ["Jan", "Feb", "Mar"],
+          series: [
+            { name: "Revenue", values: [100, 150, 175] },
+            { name: "Cost", values: [40, 60, 55] },
+          ],
+        })
+      );
+      const { io } = makeIO();
+      const code = await runCli(
+        [
+          "pptx", "chart-set-data",
+          "--file", CHART, "--out", out,
+          "--slide", String(slide),
+          "--shape", shapeId,
+          "--data", dataPath,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const after = await loadDeterministic(out);
+      const ch = after.getSnapshot().root.slides[slide].shapes.find((s) => s.kind === "chart");
+      if (!ch || ch.kind !== "chart") throw new Error("chart missing");
+      const part = after.getSnapshot().root.charts.get(ch.chartPartPath);
+      expect(part?.categories).toEqual(["Jan", "Feb", "Mar"]);
+      expect(part?.series.map((s) => s.name)).toEqual(["Revenue", "Cost"]);
+      expect(part?.series.map((s) => Array.from(s.values))).toEqual([
+        [100, 150, 175],
+        [40, 60, 55],
+      ]);
+    });
+
+    it("chart-set-data validates mismatched categories/series lengths", async () => {
+      const { slide, shapeId } = await findChart(CHART);
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-chart-bad-"));
+      const dataPath = join(dir, "bad.json");
+      const out = join(dir, "out.pptx");
+      writeFileSync(
+        dataPath,
+        JSON.stringify({
+          categories: ["A", "B"],
+          series: [{ name: "X", values: [1, 2, 3] }],
+        })
+      );
+      const { io, stderr } = makeIO();
+      const code = await runCli(
+        [
+          "pptx", "chart-set-data",
+          "--file", CHART, "--out", out,
+          "--slide", String(slide),
+          "--shape", shapeId,
+          "--data", dataPath,
+        ],
+        io
+      );
+      expect(code).not.toBe(0);
+      expect(stderr.text()).toMatch(/length/);
     });
   });
 

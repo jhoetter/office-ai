@@ -425,6 +425,17 @@ export function createMcpServer(): McpServer {
                     lines.push(`| ${row.map((c) => (c.length > 0 ? c.replaceAll("\n", " · ") : "(empty)")).join(" | ")} |`);
                   }
                 }
+                if (sh.kind === "chart" && sh.chart) {
+                  lines.push(`> chart (${sh.chart.chartType})${sh.chart.title ? ` — ${sh.chart.title}` : ""}`);
+                  if (sh.chart.categories.length > 0) {
+                    lines.push(`> categories: ${sh.chart.categories.join(", ")}`);
+                  }
+                  for (const ser of sh.chart.series) {
+                    lines.push(
+                      `> ${ser.name ? `${ser.name}: ` : ""}[${ser.values.join(", ")}]`
+                    );
+                  }
+                }
               }
             }
             return ok({ format: fmt, content: lines.join("\n") });
@@ -443,6 +454,9 @@ export function createMcpServer(): McpServer {
                       if (cell.length > 0) lines.push(cell);
                     }
                   }
+                }
+                if (sh.kind === "chart" && sh.chart && sh.chart.title) {
+                  lines.push(sh.chart.title);
                 }
               }
             }

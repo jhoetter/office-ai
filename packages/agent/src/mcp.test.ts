@@ -292,6 +292,9 @@ describe("OfficeAI MCP server — PPTX tools", () => {
   const PPTX_TABLE_FIXTURE = resolve(
     fileURLToPath(new URL("../../../fixtures/pptx/synthetic/06-with-table.pptx", import.meta.url))
   );
+  const PPTX_CHART_FIXTURE = resolve(
+    fileURLToPath(new URL("../../../fixtures/pptx/synthetic/09-with-chart.pptx", import.meta.url))
+  );
 
   it("pptx_load returns a handle and an inspection summary", async () => {
     const client = await makeClient();
@@ -427,6 +430,80 @@ describe("OfficeAI MCP server — PPTX tools", () => {
       await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "text" } })
     );
     expect((after.content as string).includes("MCP Cell")).toBe(true);
+  });
+
+  it("pptx_apply_command dispatches typed chart commands and json projection surfaces them", async () => {
+    const client = await makeClient();
+    const loaded = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_CHART_FIXTURE } })
+    );
+    const handle = loaded.handle as string;
+
+    const summary = loaded.summary as { shapeCounts: { chart: number } };
+    expect(summary.shapeCounts.chart).toBeGreaterThanOrEqual(1);
+
+    const json = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "json" } })
+    ) as unknown as {
+      slides: Array<{
+        index: number;
+        shapes: Array<{ id: string; kind: string; chart?: { chartType: string } }>;
+      }>;
+    };
+    let slideIndex = -1;
+    let chartId = "";
+    for (const slide of json.slides) {
+      const c = slide.shapes.find((s) => s.kind === "chart");
+      if (c) {
+        slideIndex = slide.index;
+        chartId = c.id;
+        break;
+      }
+    }
+    expect(chartId).not.toBe("");
+
+    const apply = structured(
+      await client.callTool({
+        name: "pptx_apply_command",
+        arguments: {
+          handle,
+          type: "pptx:set-chart-title",
+          payload: { slideIndex, shapeId: chartId, title: "MCP Chart Title" },
+        },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("approved");
+
+    const apply2 = structured(
+      await client.callTool({
+        name: "pptx_apply_command",
+        arguments: {
+          handle,
+          type: "pptx:set-chart-type",
+          payload: { slideIndex, shapeId: chartId, chartType: "pie" },
+        },
+      })
+    );
+    expect((apply2.mutation as { status: string }).status).toBe("approved");
+
+    const md = structured(
+      await client.callTool({
+        name: "pptx_get_text",
+        arguments: { handle, format: "markdown", slide: slideIndex },
+      })
+    );
+    expect((md.content as string).includes("MCP Chart Title")).toBe(true);
+
+    const after = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "json" } })
+    ) as unknown as {
+      slides: Array<{ shapes: Array<{ kind: string; chart?: { chartType: string; title?: string } }> }>;
+    };
+    const ch = after.slides
+      .flatMap((s) => s.shapes)
+      .find((sh) => sh.kind === "chart");
+    expect(ch?.chart?.chartType).toBe("pie");
+    expect(ch?.chart?.title).toBe("MCP Chart Title");
   });
 
   it("returns an error for unknown pptx handles", async () => {
