@@ -24,6 +24,7 @@ import {
   pmSelectionToRange,
 } from "@/lib/format-helpers";
 import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
+import { HeaderFooterPanel } from "./HeaderFooterPanel";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
@@ -802,6 +803,12 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
             if (f) void handleImageFile(f);
             e.target.value = "";
           }}
+        />
+        <HeaderFooterPanel
+          agent={agent}
+          snapshot={snapshot}
+          onError={(msg) => pushToast("error", msg)}
+          onInfo={(msg) => pushToast("info", msg)}
         />
         <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
           <div

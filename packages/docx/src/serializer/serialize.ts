@@ -298,7 +298,7 @@ function serializeParagraphProperties(props: ParagraphProperties): unknown | nul
 function serializeInline(node: InlineNode): unknown {
   switch (node.kind) {
     case "run":
-      return serializeRun(node);
+      return serializeRunOrFieldWrapper(node);
     case "hyperlink":
       return serializeHyperlink(node);
     case "comment-range-start":
@@ -329,6 +329,39 @@ function serializeRun(r: Run): unknown {
     children.push(serializeRunChild(c));
   }
   return { "w:r": children };
+}
+
+/**
+ * P3.4 / W15 — runs that contain exactly one {@link PageNumberFieldLeaf}
+ * round-trip as `<w:fldSimple w:instr="…"><w:r>…</w:r></w:fldSimple>`
+ * because that is the OOXML idiom Word writes (and the form the
+ * parser detects). Mixed runs (text + field) fall back to the plain
+ * `<w:r>` serialization — those don't exist when the leaf was
+ * produced via `docx:insert-page-number`, but a future
+ * AI-stitched mutation could create one and we'd rather degrade
+ * gracefully than throw.
+ */
+function serializeRunOrFieldWrapper(r: Run): unknown {
+  if (r.children.length !== 1) return serializeRun(r);
+  const only = r.children[0];
+  if (only.kind !== "page-number-field") return serializeRun(r);
+
+  const innerRunChildren: unknown[] = [];
+  const rPr = serializeRunProperties(r.properties);
+  if (rPr) innerRunChildren.push(rPr);
+  // Word always writes an inner `<w:t>` with the cached display
+  // value. Use the captured cachedText when round-tripping a parsed
+  // field, otherwise emit the field name as a sentinel placeholder
+  // (Word will recompute on open).
+  const display = only.cachedText ?? "#";
+  innerRunChildren.push({
+    "w:t": [{ "#text": display }],
+    ":@": { "@_xml:space": "preserve" },
+  });
+  return {
+    "w:fldSimple": [{ "w:r": innerRunChildren }],
+    ":@": { "@_w:instr": only.instr },
+  };
 }
 
 function serializeRunProperties(props: RunProperties): unknown | null {
@@ -394,6 +427,21 @@ function serializeRunChild(c: RunChild): unknown {
       return makeEl("w:br", { "w:type": "page" });
     case "last-rendered-page-break":
       return { "w:lastRenderedPageBreak": [] };
+    case "page-number-field": {
+      // Defensive path: page-number leaves should be lifted to a
+      // `<w:fldSimple>` wrapper at the inline level by
+      // `serializeRunOrFieldWrapper`. If the leaf reaches here it
+      // means a *mixed* run snuck through; emit a `<w:fldSimple>`
+      // anyway so the field semantics survive, even though the
+      // surrounding text in the same run will end up grouped under
+      // a sibling `<w:r>` by the caller.
+      return {
+        "w:fldSimple": [
+          { "w:r": [{ "w:t": [{ "#text": c.cachedText ?? "#" }], ":@": { "@_xml:space": "preserve" } }] },
+        ],
+        ":@": { "@_w:instr": c.instr },
+      };
+    }
     case "tab":
       return { "w:tab": [] };
     case "drawing": {

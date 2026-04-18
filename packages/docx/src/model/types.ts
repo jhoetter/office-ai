@@ -512,7 +512,42 @@ export type RunChild =
   | DrawingLeaf
   | PageBreakLeaf
   | LastRenderedPageBreakLeaf
+  | PageNumberFieldLeaf
   | OpaqueRunChild;
+
+/**
+ * `<w:fldSimple w:instr=" PAGE \* MERGEFORMAT "/>` and the equivalent
+ * `<w:fldSimple w:instr=" NUMPAGES "/>`. Promoted to a typed leaf in
+ * P3.4 / W15 so the toolbar can produce page-number fields and the
+ * paged-renderer can render the live page index.
+ *
+ * The complex `<w:fldChar>`-bracketed multi-run form stays as
+ * {@link OpaqueRunChild} for now; it requires multi-run reassembly
+ * across siblings that the parser does not yet do.
+ *
+ * Round-trip invariant: parse → serialize → parse produces the same
+ * `instr` string (including switches like `\* MERGEFORMAT`).
+ */
+export interface PageNumberFieldLeaf {
+  readonly kind: "page-number-field";
+  readonly id: NodeId;
+  /** Variant of the field. Determines what the renderer substitutes. */
+  readonly field: "PAGE" | "NUMPAGES";
+  /**
+   * The literal `w:instr` attribute as it appeared in the source XML
+   * (e.g. `" PAGE \\* MERGEFORMAT "`). Captured verbatim so the
+   * serializer can re-emit byte-identical bytes when the leaf is
+   * untouched.
+   */
+  readonly instr: string;
+  /**
+   * Optional cached display value Word writes inside the field
+   * (`<w:t>3</w:t>`). Carried through for byte round-trip. The
+   * runtime renderer ignores this and substitutes the live page
+   * index from the page chunker.
+   */
+  readonly cachedText?: string;
+}
 
 export interface TextLeaf {
   readonly kind: "text";

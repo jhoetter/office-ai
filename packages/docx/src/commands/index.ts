@@ -26,3 +26,6 @@ export { removeHyperlinkHandler } from "./remove-hyperlink.js";
 export { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
 export { setParagraphIndentHandler } from "./set-paragraph-indent.js";
 export { setParagraphSpacingHandler, type SetParagraphSpacingPayload } from "./set-paragraph-spacing.js";
+export { insertPageNumberHandler } from "./insert-page-number.js";
+export { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
+export { insertSectionBreakHandler } from "./insert-section-break.js";

@@ -299,6 +299,16 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       // Layout hint only; never visible. Drop on render — the snapshot
       // model still carries the leaf so it round-trips on save.
       return;
+    case "page-number-field":
+      // Render as plain text — the cached display value (`"3"`) when
+      // present, otherwise a sentinel `#` so the user sees something
+      // where the field will resolve. Live page numbers come from the
+      // page-decorations plugin which substitutes the correct page
+      // index per visible widget; this branch is what the editor
+      // surface sees inside header/footer previews and in the body if
+      // a page number ever ends up there.
+      out.push(docxSchema.text(child.cachedText && child.cachedText.length > 0 ? child.cachedText : "#", marks));
+      return;
     case "tab":
       out.push(docxSchema.nodes.tab.create(null, null, marks));
       return;

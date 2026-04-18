@@ -8,8 +8,10 @@ import { formatRangeHandler } from "./format-range.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertHyperlinkHandler } from "./insert-hyperlink.js";
 import { insertImageHandler } from "./insert-image.js";
+import { insertPageNumberHandler } from "./insert-page-number.js";
 import { insertParagraphHandler } from "./insert-paragraph.js";
 import { insertRowHandler } from "./insert-row.js";
+import { insertSectionBreakHandler } from "./insert-section-break.js";
 import { insertTableHandler } from "./insert-table.js";
 import { insertTextHandler } from "./insert-text.js";
 import { rejectChangeHandler } from "./reject-change.js";
@@ -25,6 +27,7 @@ import { setParagraphIndentHandler } from "./set-paragraph-indent.js";
 import { setParagraphListHandler } from "./set-paragraph-list.js";
 import { setParagraphSpacingHandler } from "./set-paragraph-spacing.js";
 import { setParagraphStyleHandler } from "./set-paragraph-style.js";
+import { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
 
 export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot>> = [
   insertTextHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -52,6 +55,9 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setParagraphAlignmentHandler as CommandHandler<unknown, DocxSnapshot>,
   setParagraphIndentHandler as CommandHandler<unknown, DocxSnapshot>,
   setParagraphSpacingHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertPageNumberHandler as CommandHandler<unknown, DocxSnapshot>,
+  setSectionDifferentFirstHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertSectionBreakHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(
