@@ -6,6 +6,7 @@ import { DocxAgent, paragraphPlainText } from "@officeai/docx";
 import type { DocxComment, DocxPosition, DocxSnapshot, Paragraph } from "@officeai/docx";
 import { parseSelector, SelectorError, type Selector } from "./selector.js";
 import { runMcpStdioServer } from "./mcp.js";
+import { registerPptxSubcommands } from "./pptx-cli.js";
 
 interface IO {
   stdout: NodeJS.WritableStream;
@@ -19,7 +20,7 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
   program
     .name("office-agent")
     .description(
-      "Headless agent CLI for OfficeAI. DOCX is supported in this build; XLSX/PPTX commands report 'not yet supported'. The 'docx' subcommand group is the canonical surface; top-level read/search/insert-text/comment/apply remain as backward-compatible shims."
+      "Headless agent CLI for OfficeAI. DOCX and PPTX are supported in this build; XLSX commands report 'not yet supported'. The 'docx' and 'pptx' subcommand groups are the canonical surface; top-level read/search/insert-text/comment/apply remain as backward-compatible shims for DOCX."
     )
     .version("0.1.0")
     .exitOverride();
@@ -27,6 +28,10 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
   // ── docx subcommand group ───────────────────────────────────────────────
   const docx = program.command("docx").description("DOCX-specific commands. See `office-agent docx --help`.");
   registerDocxSubcommands(docx, io);
+
+  // ── pptx subcommand group ───────────────────────────────────────────────
+  const pptx = program.command("pptx").description("PPTX-specific commands. See `office-agent pptx --help`.");
+  registerPptxSubcommands(pptx, io);
 
   // ── Backward-compatible top-level shims ─────────────────────────────────
   // Old commands forwarded the same payloads. We keep them aliased so existing
@@ -44,17 +49,15 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       await runMcpStdioServer();
     });
 
-  // ── XLSX/PPTX deferral stubs ────────────────────────────────────────────
-  for (const stub of ["xlsx", "pptx"] as const) {
-    const cmd = new Command(stub).description(
-      `(stub) ${stub.toUpperCase()} support is deferred to a future session`
-    );
-    cmd.action(() => {
-      io.stderr.write(`${stub.toUpperCase()} support is not yet implemented in office-agent.\n`);
-      throw new CliError(2, `${stub} not implemented`);
-    });
-    program.addCommand(cmd);
-  }
+  // ── XLSX deferral stub ──────────────────────────────────────────────────
+  const xlsxStub = new Command("xlsx").description(
+    "(stub) XLSX support is deferred to a future session"
+  );
+  xlsxStub.action(() => {
+    io.stderr.write("XLSX support is not yet implemented in office-agent.\n");
+    throw new CliError(2, "xlsx not implemented");
+  });
+  program.addCommand(xlsxStub);
 
   try {
     await program.parseAsync(argv, { from: "user" });

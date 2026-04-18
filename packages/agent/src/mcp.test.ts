@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -56,7 +57,7 @@ describe("OfficeAI MCP server", () => {
   beforeEach(() => __resetMcpSessionsForTests());
   afterEach(() => __resetMcpSessionsForTests());
 
-  it("lists every registered docx_* tool", async () => {
+  it("lists every registered docx_* and pptx_* tool", async () => {
     const client = await makeClient();
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name).sort();
@@ -68,6 +69,13 @@ describe("OfficeAI MCP server", () => {
       "docx_load",
       "docx_save",
       "docx_search",
+      "pptx_apply_command",
+      "pptx_diff",
+      "pptx_get_text",
+      "pptx_inspect",
+      "pptx_load",
+      "pptx_save",
+      "pptx_search",
     ]);
   });
 
@@ -270,6 +278,115 @@ describe("OfficeAI MCP server", () => {
       name: "docx_inspect",
       arguments: { handle: "nope" },
     });
+    expect(r.isError).toBe(true);
+  });
+});
+
+describe("OfficeAI MCP server — PPTX tools", () => {
+  beforeEach(() => __resetMcpSessionsForTests());
+  afterEach(() => __resetMcpSessionsForTests());
+
+  const PPTX_FIXTURE = resolve(
+    fileURLToPath(new URL("../../../fixtures/pptx/synthetic/03-title-and-content.pptx", import.meta.url))
+  );
+
+  it("pptx_load returns a handle and an inspection summary", async () => {
+    const client = await makeClient();
+    const out = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } })
+    );
+    expect(typeof out.handle).toBe("string");
+    const summary = out.summary as {
+      slides: number;
+      shapeCounts: { text: number };
+      slideSize: { cxEmu: number; cyEmu: number };
+    };
+    expect(summary.slides).toBe(1);
+    expect(summary.shapeCounts.text).toBeGreaterThanOrEqual(1);
+    expect(summary.slideSize.cxEmu).toBeGreaterThan(0);
+  });
+
+  it("pptx_get_text supports markdown / json / text", async () => {
+    const client = await makeClient();
+    const loaded = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } })
+    );
+    const handle = loaded.handle as string;
+
+    const md = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "markdown" } })
+    );
+    expect((md.content as string).startsWith("# Presentation")).toBe(true);
+
+    const json = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "json" } })
+    );
+    expect(json.format).toBe("pptx");
+    expect(Array.isArray(json.slides)).toBe(true);
+
+    const text = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "text" } })
+    );
+    expect(typeof text.content).toBe("string");
+  });
+
+  it("pptx_apply_command + pptx_save round-trips an edit through disk", async () => {
+    const client = await makeClient();
+    const loaded = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } })
+    );
+    const handle = loaded.handle as string;
+
+    const apply = structured(
+      await client.callTool({
+        name: "pptx_apply_command",
+        arguments: { handle, type: "pptx:add-slide", payload: {} },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("approved");
+
+    const dir = mkdtempSync(join(tmpdir(), "mcp-pptx-out-"));
+    const out = join(dir, "out.pptx");
+    const saved = structured(
+      await client.callTool({ name: "pptx_save", arguments: { handle, out_path: out } })
+    );
+    expect(saved.wrote).toBe(out);
+    expect(readFileSync(out).byteLength).toBeGreaterThan(0);
+  });
+
+  it("pptx_diff reports slide-level changes between two handles", async () => {
+    const client = await makeClient();
+    const a = structured(await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } }));
+    const b = structured(await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } }));
+
+    await client.callTool({
+      name: "pptx_apply_command",
+      arguments: { handle: b.handle, type: "pptx:add-slide", payload: {} },
+    });
+
+    const diff = structured(
+      await client.callTool({ name: "pptx_diff", arguments: { before: a.handle, after: b.handle } })
+    );
+    expect((diff.slides as { added: number }).added).toBe(1);
+  });
+
+  it("pptx_search returns text matches", async () => {
+    const client = await makeClient();
+    const loaded = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } })
+    );
+    const r = structured(
+      await client.callTool({
+        name: "pptx_search",
+        arguments: { handle: loaded.handle, query: "Title" },
+      })
+    );
+    expect(Array.isArray(r.matches)).toBe(true);
+  });
+
+  it("returns an error for unknown pptx handles", async () => {
+    const client = await makeClient();
+    const r = await client.callTool({ name: "pptx_inspect", arguments: { handle: "nope" } });
     expect(r.isError).toBe(true);
   });
 });

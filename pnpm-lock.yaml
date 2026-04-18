@@ -129,6 +129,9 @@ importers:
       '@officeai/docx':
         specifier: workspace:*
         version: link:../docx
+      '@officeai/pptx':
+        specifier: workspace:*
+        version: link:../pptx
       commander:
         specifier: ^12.1.0
         version: 12.1.0
