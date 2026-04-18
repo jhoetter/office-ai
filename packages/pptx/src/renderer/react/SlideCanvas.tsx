@@ -879,6 +879,12 @@ function SelectionOverlaySvg({
       xmlns="http://www.w3.org/2000/svg"
       viewBox={slideViewBox(slideSize)}
       preserveAspectRatio="xMidYMid meet"
+      // The overlay <svg> must not absorb clicks itself — otherwise a
+      // shift-click on a non-selected shape stacked underneath the selected
+      // one's bbox would target the overlay root instead of the underlying
+      // shape, breaking multi-selection. Children that need to receive
+      // events (move zones, resize handles) opt back in explicitly below.
+      pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
     >
       {/* Per-shape outlines (visible in multi-select; redundant in single
@@ -928,6 +934,7 @@ function SelectionOverlaySvg({
           width={px(e.box.cx)}
           height={px(e.box.cy)}
           fill="transparent"
+          pointerEvents="auto"
           style={{ cursor: "move" }}
         />
       ))}
@@ -947,6 +954,7 @@ function SelectionOverlaySvg({
           stroke="#7c3aed"
           strokeWidth={1.5}
           vectorEffect="non-scaling-stroke"
+          pointerEvents="auto"
           style={{ cursor: cursorForHandle(it.h) }}
           opacity={isResizing ? 0.6 : 1}
         />
