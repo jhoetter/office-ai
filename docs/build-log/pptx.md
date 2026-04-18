@@ -30,6 +30,7 @@
 | 2026-04-19 | LLM bridge wiring for `/pptx-editor` | F1.1 — extended `/api/llm` to switch system prompt + allow-list on `format`, added `lib/llm-client-pptx.ts`. |
 | 2026-04-19 | Theme color resolution                | F1.2 — `parser/theme.ts` extracts `a:clrScheme` into `PptxPresentation.themeDefault`; renderer resolves `<a:schemeClr>` from run opaque children. |
 | 2026-04-19 | Playwright e2e for `/pptx-editor`     | F1.3 — `apps/web/e2e/pptx-editor.spec.ts` covers route mount, sample-deck thumbnail, Add slide / Delete enable, Text box, Bold toggle, agent panel "add a slide" via the LLM bridge offline fallback. |
+| 2026-04-19 | Real-world PPTX fixtures + roundtrip integration test | F1.4 — `scripts/generate-real-pptx-fixtures.mjs` writes 3 third-party-emitter (`pptxgenjs`) decks to `fixtures/pptx/real/` (styled deck w/ hyperlinks + notes, mixed-media w/ table+image, 25-slide deck). `tests/roundtrip/pptx/real-world-roundtrip.test.ts` asserts ≥95 % byte-identity on pure roundtrip and edit-isolation on a single text-shape edit. |
 
 ## Deferred to a follow-up session
 
@@ -41,7 +42,7 @@
 | Animations / transitions                                   | `feature-scope.md`  | Untouched-bytes only; spec defers typed model.        |
 | ~~Theme color resolution (`a:schemeClr` → `theme1.xml`)~~   | ~~`renderer.md`~~   | **Resolved (F1.2)** — first theme part is parsed into `themeDefault`; renderer resolves `a:schemeClr` references for run fills. |
 | ~~LLM bridge wiring for `/pptx-editor` agent panel~~       | ~~`feature-scope.md`~~ | **Resolved (F1.1)** — uses `/api/llm` with `format: "pptx"`. |
-| Real-world PPTX fixtures (PowerPoint / Google Slides / Keynote exports) | `feature-scope.md`  | Slots reserved in `fixtures/pptx/MANIFEST.md`.        |
+| ~~Real-world PPTX fixtures (third-party emitter)~~                       | ~~`feature-scope.md`~~ | **Resolved (F1.4)** — `fixtures/pptx/real/` shipped + integration test. PowerPoint / Google Slides / Keynote *direct* exports remain as `./real-world/` slots until we have license-clean originals. |
 
 ## Phase summary
 

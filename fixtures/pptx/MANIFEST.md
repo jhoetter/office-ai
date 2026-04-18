@@ -29,6 +29,49 @@ pnpm fixtures:pptx
 These cover the **shapes** we model in P0; they are not a substitute for
 real-world decks emitted by PowerPoint / Keynote / Google Slides (see below).
 
+## Real (`./real/`) — third-party emitter output
+
+The fixtures in `./real/` are emitted by the [`pptxgenjs`](https://www.npmjs.com/package/pptxgenjs)
+MIT library via `scripts/generate-real-pptx-fixtures.mjs`. pptxgenjs is a
+**third-party PowerPoint-grade emitter**, so the resulting `.pptx` files
+ship the parts a typical PowerPoint / LibreOffice Impress / Google Slides
+export ships:
+
+- `ppt/theme/theme1.xml` with a full color scheme,
+- slide masters and layouts,
+- multi-slide notes and hyperlinks,
+- embedded images with content-type defaults and per-slide rels,
+- mixed shape kinds (text + roundRect + image + opaque table) on the same slide.
+
+These augment the `./synthetic/` corpus by exercising the **full container
+path** on output that originates outside our own serializer. They are
+deterministic (DOS dates pinned, `dcterms:created/modified` normalised) and
+checked in (each well under 200 KB).
+
+Regenerate with:
+
+```bash
+pnpm fixtures:pptx-real
+```
+
+| File                          | What it exercises                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `01-styled-deck.pptx`         | 3 slides w/ custom master, hyperlinks, speaker notes, bulleted body. Themes + hlink rels survive. |
+| `02-mixed-media.pptx`         | Image + roundRect + table on a single slide. Image rels + opaque graphicFrame both round-trip.    |
+| `03-large-real-deck.pptx`     | 25 slides of mixed title + body + bullets. Stress-tests `presentation.xml` rebuild + sldIdLst.    |
+
+The `tests/roundtrip/pptx/real-world-roundtrip.test.ts` integration test
+loads each fixture and asserts:
+
+1. **Pure roundtrip** preserves ≥95 % of parts byte-identical (and 100 % of
+   part *paths*).
+2. **Targeted text edit** on the first text shape leaves every other part
+   byte-identical and the edited slide contains the new text.
+
+If a fixture surfaces a parser/serializer bug, document the failure in this
+manifest and skip the affected case — do **not** patch the parser from inside
+the integration test.
+
 ## To-Collect Real-World Slots (`./real-world/`)
 
 The synthetic fixtures above are the floor, not the ceiling. The following
