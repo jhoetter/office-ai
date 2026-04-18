@@ -116,6 +116,7 @@ export interface InsertPageNumberPayload {
 ```
 
 Behavior:
+
 - Errors with `unknown-target` if the paragraph isn't inside a
   header/footer part.
 - Errors with `invalid-payload` if `offset` is out of range.
@@ -144,6 +145,7 @@ export interface SetSectionDifferentFirstPayload {
 ```
 
 Behavior:
+
 - Locates the section by walking forward from `paragraphIndex` to
   the next `SectionBreak` block or the document's trailing
   implicit `sectPr`.
@@ -152,7 +154,7 @@ Behavior:
   — that's P4. The toolbar surfaces a follow-up affordance for
   the user to run `docx:set-header-text` against the (yet-to-be
   created) first-page part. P3.4 ships only the typed flag flip
-  + serializer support for `<w:titlePg/>`.
+  - serializer support for `<w:titlePg/>`.
 - Dirties `body` (since `<w:sectPr>` lives in `word/document.xml`).
 
 ### `docx:insert-section-break`
@@ -171,6 +173,7 @@ export interface InsertSectionBreakPayload {
 ```
 
 Behavior:
+
 - Errors `invalid-payload` if `paragraphIndex` is out of range
   (inserting at `body.length` is permitted — appends a section
   break before the trailing sectPr).
@@ -186,19 +189,17 @@ body. Headers / footers each get their own lightweight PM
 instance, mounted lazily when the user activates one. State:
 
 ```ts
-type ActivePart =
-  | { kind: "body" }
-  | { kind: "header-footer"; partId: string };
+type ActivePart = { kind: "body" } | { kind: "header-footer"; partId: string };
 ```
 
 Stored in `DocxEditor` React state. Transitions:
 
-| Trigger                                   | New `ActivePart`        |
-| ----------------------------------------- | ----------------------- |
-| Click inside body                         | `{ kind: "body" }`      |
-| Click inside a rendered header / footer   | `{ kind: "header-footer", partId }` |
-| Press `Esc` while in header/footer        | `{ kind: "body" }`      |
-| Toolbar "Close Header/Footer" button      | `{ kind: "body" }`      |
+| Trigger                                 | New `ActivePart`                    |
+| --------------------------------------- | ----------------------------------- |
+| Click inside body                       | `{ kind: "body" }`                  |
+| Click inside a rendered header / footer | `{ kind: "header-footer", partId }` |
+| Press `Esc` while in header/footer      | `{ kind: "body" }`                  |
+| Toolbar "Close Header/Footer" button    | `{ kind: "body" }`                  |
 
 While `kind === "body"`:
 
@@ -273,7 +274,7 @@ Header/footer DOM hierarchy:
 </div>
 ```
 
-The footer mirrors the header, attached to the *previous* page
+The footer mirrors the header, attached to the _previous_ page
 chunk's bottom rather than the next chunk's top. P3.4 ships the
 header preview only; footer rendering and active-part PM mounting
 are wired up but the integration test cases focus on the
@@ -286,7 +287,7 @@ verified manually against the masterthesis fixture in P3.7 / W25.
 - Snapshots without P3.4 mutations round-trip byte-identically
   (existing `dirty.body === false`, `dirty.headersAndFooters` empty,
   no new `<w:sectPr>` produced).
-- `PageNumberFieldLeaf` re-serializes to the *exact* `w:instr`
+- `PageNumberFieldLeaf` re-serializes to the _exact_ `w:instr`
   string captured at parse time, including switches.
 - A fresh-from-command page-number leaf serializes to
   `<w:fldSimple w:instr=" PAGE \* MERGEFORMAT "/>` (matching

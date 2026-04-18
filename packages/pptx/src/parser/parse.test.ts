@@ -64,9 +64,7 @@ describe("parsePptx", () => {
     const table = slide.shapes.find((s) => s.kind === "table");
     expect(table).toBeDefined();
     if (!table || table.kind !== "table") return;
-    expect(table.graphicDataUri).toBe(
-      "http://schemas.openxmlformats.org/drawingml/2006/table"
-    );
+    expect(table.graphicDataUri).toBe("http://schemas.openxmlformats.org/drawingml/2006/table");
     expect(table.columnWidths.length).toBe(3);
     for (const w of table.columnWidths) expect(w).toBeGreaterThan(0);
     expect(table.rows.length).toBeGreaterThanOrEqual(2);
@@ -77,9 +75,9 @@ describe("parsePptx", () => {
       }
     }
     // First row, first cell should hold "Quarter" (header).
-    const headerText = table.rows[0]!.cells[0]!.txBody.paragraphs
-      .flatMap((p) => p.runs.filter((r) => !r.isLineBreak).map((r) => r.text))
-      .join("");
+    const headerText = table.rows[0]!.cells[0]!.txBody.paragraphs.flatMap((p) =>
+      p.runs.filter((r) => !r.isLineBreak).map((r) => r.text)
+    ).join("");
     expect(headerText).toBe("Quarter");
     // Position/size are present (typed).
     expect(table.position?.xEmu).toBeGreaterThan(0);
@@ -94,9 +92,7 @@ describe("parsePptx", () => {
     const chart = slide.shapes.find((s) => s.kind === "chart");
     expect(chart).toBeDefined();
     if (!chart || chart.kind !== "chart") return;
-    expect(chart.graphicDataUri).toBe(
-      "http://schemas.openxmlformats.org/drawingml/2006/chart"
-    );
+    expect(chart.graphicDataUri).toBe("http://schemas.openxmlformats.org/drawingml/2006/chart");
     expect(chart.chartRelId).toMatch(/^rId\d+$/);
     expect(chart.chartPartPath).toMatch(/^ppt\/charts\/chart\d+\.xml$/);
     expect(chart.position?.xEmu).toBeGreaterThan(0);

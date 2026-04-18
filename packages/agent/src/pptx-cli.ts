@@ -23,7 +23,15 @@ import {
   type TextShape,
 } from "@officeai/pptx";
 import { deterministicIdMinter } from "@officeai/core";
-import type { Command as BusCommand, CommandLite } from "@officeai/core";
+import type { Command as BusCommand, CommandLite, Mutation } from "@officeai/core";
+import {
+  CliError,
+  isEmuUnit,
+  readStdinToString,
+  toEmu,
+  useDeterministicIds,
+  type EmuUnit,
+} from "./cli-shared.js";
 
 // ── IO stream type re-export so cli.ts can pass through its own ────────
 export interface IO {
@@ -50,6 +58,17 @@ const MIME_BY_EXT: Readonly<Record<string, string>> = {
  */
 export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
   pptx
+    .command("create")
+    .description("Create a brand-new blank .pptx file at --out (one empty slide on a default Blank layout).")
+    .requiredOption("--out <path>", "Path to write the new .pptx file")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { out: string; pretty: boolean }) => {
+      const agent = await PptxAgent.empty();
+      await writeFile(resolve(opts.out), Buffer.from(await agent.exportFile()));
+      io.stdout.write(stringifyJson({ wrote: opts.out, format: "pptx" }, opts.pretty) + "\n");
+    });
+
+  pptx
     .command("inspect")
     .description("Print a structural summary (slides, shapes, masters, layouts) as JSON.")
     .requiredOption("--file <path>", "Path to a .pptx file")
@@ -64,9 +83,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .description("Read a PPTX file as Markdown, structured JSON, or plain text.")
     .requiredOption("--file <path>", "Path to a .pptx file")
     .addOption(
-      new Option("--format <fmt>", "Output format")
-        .choices(["markdown", "json", "text"])
-        .default("markdown")
+      new Option("--format <fmt>", "Output format").choices(["markdown", "json", "text"]).default("markdown")
     )
     .addOption(new Option("--slide <n>", "Restrict to a single 0-based slide index").argParser(parseIntArg))
     .option("--pretty", "Pretty-print JSON output (only with --format json)", false)
@@ -88,9 +105,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
             io.stdout.write(renderPlainText(snap, range) + "\n");
             return;
           case "json":
-            io.stdout.write(
-              stringifyJson(snapshotToJsonProjection(snap, range), opts.pretty) + "\n"
-            );
+            io.stdout.write(stringifyJson(snapshotToJsonProjection(snap, range), opts.pretty) + "\n");
             return;
           default: {
             const _exhaustive: never = opts.format;
@@ -135,19 +150,17 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .addOption(new Option("--layout <partPath>", "Layout part path to clone placeholders from"))
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: { file: string; at?: number; layout?: string; out?: string; pretty: boolean }) => {
-        await dispatchAndWrite(opts, io, [
-          {
-            type: "pptx:add-slide",
-            payload: {
-              ...(opts.at !== undefined ? { at: opts.at } : {}),
-              ...(opts.layout ? { layoutPartPath: opts.layout } : {}),
-            },
+    .action(async (opts: { file: string; at?: number; layout?: string; out?: string; pretty: boolean }) => {
+      await dispatchAndWrite(opts, io, [
+        {
+          type: "pptx:add-slide",
+          payload: {
+            ...(opts.at !== undefined ? { at: opts.at } : {}),
+            ...(opts.layout ? { layoutPartPath: opts.layout } : {}),
           },
-        ]);
-      }
-    );
+        },
+      ]);
+    });
 
   pptx
     .command("delete-slide")
@@ -157,9 +170,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(async (opts: { file: string; slide: number; out?: string; pretty: boolean }) => {
-      await dispatchAndWrite(opts, io, [
-        { type: "pptx:delete-slide", payload: { slideIndex: opts.slide } },
-      ]);
+      await dispatchAndWrite(opts, io, [{ type: "pptx:delete-slide", payload: { slideIndex: opts.slide } }]);
     });
 
   pptx
@@ -183,13 +194,11 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .requiredOption("--to <n>", "Target 0-based slide index", parseIntArg)
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: { file: string; from: number; to: number; out?: string; pretty: boolean }) => {
-        await dispatchAndWrite(opts, io, [
-          { type: "pptx:move-slide", payload: { from: opts.from, to: opts.to } },
-        ]);
-      }
-    );
+    .action(async (opts: { file: string; from: number; to: number; out?: string; pretty: boolean }) => {
+      await dispatchAndWrite(opts, io, [
+        { type: "pptx:move-slide", payload: { from: opts.from, to: opts.to } },
+      ]);
+    });
 
   // ── Shape edits ────────────────────────────────────────────────────
   pptx
@@ -220,13 +229,72 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     );
 
   pptx
+    .command("set-title")
+    .description(
+      "Replace the title placeholder text on a slide. Looks up the first text shape with placeholder.type ∈ {title, ctrTitle}."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--text <text>", "Replacement title text")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { file: string; slide: number; text: string; out?: string; pretty: boolean }) => {
+      const agent = await loadAgent(opts.file);
+      const shapeId = findPlaceholderId(agent.getSnapshot(), opts.slide, ["title", "ctrTitle"]);
+      if (!shapeId) {
+        throw new CliError(
+          65,
+          `pptx set-title: no title/ctrTitle placeholder on slide ${opts.slide}. Decks created via 'pptx create' or 'add-slide' have no placeholders; use 'pptx add-text-box' for new titles, or 'pptx read --format json' to discover shape ids and 'pptx set-text --shape-id …' to overwrite an existing free shape.`
+        );
+      }
+      await dispatchAndWrite(opts, io, [
+        {
+          type: "pptx:set-text",
+          payload: { slideIndex: opts.slide, shapeId, text: opts.text },
+        },
+      ]);
+    });
+
+  pptx
+    .command("set-body")
+    .description(
+      "Replace the body placeholder text on a slide. Looks up the first text shape with placeholder.type ∈ {body, subTitle}; \\n separates paragraphs/bullets."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--text <text>", "Replacement body text (\\n separates paragraphs)")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { file: string; slide: number; text: string; out?: string; pretty: boolean }) => {
+      const agent = await loadAgent(opts.file);
+      const shapeId = findPlaceholderId(agent.getSnapshot(), opts.slide, ["body", "subTitle"]);
+      if (!shapeId) {
+        throw new CliError(
+          65,
+          `pptx set-body: no body/subTitle placeholder on slide ${opts.slide}. Decks created via 'pptx create' or 'add-slide' have no placeholders; use 'pptx add-text-box' for new bodies, or 'pptx read --format json' to discover shape ids and 'pptx set-text --shape-id …' to overwrite an existing free shape.`
+        );
+      }
+      await dispatchAndWrite(opts, io, [
+        {
+          type: "pptx:set-text",
+          payload: { slideIndex: opts.slide, shapeId, text: opts.text },
+        },
+      ]);
+    });
+
+  pptx
     .command("set-position")
-    .description("Set a shape's <a:off> position in EMU.")
+    .description(
+      "Set a shape's <a:off> position. Pass --x/--y in --unit (default emu); 1in=914400emu, 1px=9525emu, 1pt=12700emu, 1cm=360000emu."
+    )
     .requiredOption("--file <path>", "Path to a .pptx file")
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--shape <id>", "Shape NodeId")
-    .requiredOption("--x <emu>", "X in EMU", parseIntArg)
-    .requiredOption("--y <emu>", "Y in EMU", parseIntArg)
+    .requiredOption("--x <n>", "X position in --unit", parseFloatArg)
+    .requiredOption("--y <n>", "Y position in --unit", parseFloatArg)
+    .addOption(
+      new Option("--unit <unit>", "Unit for --x/--y").choices(["emu", "px", "in", "cm", "pt"]).default("emu")
+    )
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
@@ -236,13 +304,20 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
         shape: string;
         x: number;
         y: number;
+        unit: string;
         out?: string;
         pretty: boolean;
       }) => {
+        const unit = parseEmuUnit(opts.unit);
         await dispatchAndWrite(opts, io, [
           {
             type: "pptx:set-position",
-            payload: { slideIndex: opts.slide, shapeId: opts.shape, x: opts.x, y: opts.y },
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              x: toEmu(opts.x, unit),
+              y: toEmu(opts.y, unit),
+            },
           },
         ]);
       }
@@ -250,12 +325,17 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
 
   pptx
     .command("set-size")
-    .description("Set a shape's <a:ext> width/height in EMU.")
+    .description("Set a shape's <a:ext> width/height. Pass --width/--height in --unit (default emu).")
     .requiredOption("--file <path>", "Path to a .pptx file")
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--shape <id>", "Shape NodeId")
-    .requiredOption("--width <emu>", "Width in EMU (>0)", parseIntArg)
-    .requiredOption("--height <emu>", "Height in EMU (>0)", parseIntArg)
+    .requiredOption("--width <n>", "Width in --unit (>0)", parseFloatArg)
+    .requiredOption("--height <n>", "Height in --unit (>0)", parseFloatArg)
+    .addOption(
+      new Option("--unit <unit>", "Unit for --width/--height")
+        .choices(["emu", "px", "in", "cm", "pt"])
+        .default("emu")
+    )
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
@@ -265,17 +345,19 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
         shape: string;
         width: number;
         height: number;
+        unit: string;
         out?: string;
         pretty: boolean;
       }) => {
+        const unit = parseEmuUnit(opts.unit);
         await dispatchAndWrite(opts, io, [
           {
             type: "pptx:set-size",
             payload: {
               slideIndex: opts.slide,
               shapeId: opts.shape,
-              width: opts.width,
-              height: opts.height,
+              width: toEmu(opts.width, unit),
+              height: toEmu(opts.height, unit),
             },
           },
         ]);
@@ -377,9 +459,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
         const buf = await readFile(resolve(opts.image));
         const mimeType = opts.mime ?? inferMime(opts.image);
         if (!mimeType) {
-          throw new Error(
-            `Could not infer MIME from "${opts.image}". Pass --mime image/png (or similar).`
-          );
+          throw new Error(`Could not infer MIME from "${opts.image}". Pass --mime image/png (or similar).`);
         }
         await dispatchAndWrite(opts, io, [
           {
@@ -402,14 +482,19 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
 
   pptx
     .command("add-text-box")
-    .description("Append a fresh text box on a slide.")
+    .description("Append a fresh text box on a slide. Coordinates are in --unit (default emu).")
     .requiredOption("--file <path>", "Path to a .pptx file")
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--text <text>", "Initial text content")
-    .requiredOption("--x <emu>", "X in EMU", parseIntArg)
-    .requiredOption("--y <emu>", "Y in EMU", parseIntArg)
-    .requiredOption("--width <emu>", "Width in EMU (>0)", parseIntArg)
-    .requiredOption("--height <emu>", "Height in EMU (>0)", parseIntArg)
+    .requiredOption("--x <n>", "X in --unit", parseFloatArg)
+    .requiredOption("--y <n>", "Y in --unit", parseFloatArg)
+    .requiredOption("--width <n>", "Width in --unit (>0)", parseFloatArg)
+    .requiredOption("--height <n>", "Height in --unit (>0)", parseFloatArg)
+    .addOption(
+      new Option("--unit <unit>", "Unit for --x/--y/--width/--height")
+        .choices(["emu", "px", "in", "cm", "pt"])
+        .default("emu")
+    )
     .option("--name <name>", "Override <p:cNvPr name>")
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
@@ -422,20 +507,22 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
         y: number;
         width: number;
         height: number;
+        unit: string;
         name?: string;
         out?: string;
         pretty: boolean;
       }) => {
+        const unit = parseEmuUnit(opts.unit);
         await dispatchAndWrite(opts, io, [
           {
             type: "pptx:add-text-box",
             payload: {
               slideIndex: opts.slide,
               text: opts.text,
-              x: opts.x,
-              y: opts.y,
-              width: opts.width,
-              height: opts.height,
+              x: toEmu(opts.x, unit),
+              y: toEmu(opts.y, unit),
+              width: toEmu(opts.width, unit),
+              height: toEmu(opts.height, unit),
               ...(opts.name ? { name: opts.name } : {}),
             },
           },
@@ -488,7 +575,11 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--shape <id>", "Table shape NodeId")
     .addOption(new Option("--at <n>", "0-based insert position (default: append)").argParser(parseIntArg))
-    .addOption(new Option("--height <emu>", "Row height in EMU (default: median of existing rows)").argParser(parseIntArg))
+    .addOption(
+      new Option("--height <emu>", "Row height in EMU (default: median of existing rows)").argParser(
+        parseIntArg
+      )
+    )
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
@@ -549,7 +640,11 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--shape <id>", "Table shape NodeId")
     .addOption(new Option("--at <n>", "0-based insert position (default: append)").argParser(parseIntArg))
-    .addOption(new Option("--width <emu>", "Column width in EMU (default: average of existing columns)").argParser(parseIntArg))
+    .addOption(
+      new Option("--width <emu>", "Column width in EMU (default: average of existing columns)").argParser(
+        parseIntArg
+      )
+    )
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
@@ -724,9 +819,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
         .choices(["none", "fade", "push", "wipe", "split", "cut"])
         .makeOptionMandatory(true)
     )
-    .addOption(
-      new Option("--speed <speed>", "Transition speed").choices(["slow", "med", "fast"])
-    )
+    .addOption(new Option("--speed <speed>", "Transition speed").choices(["slow", "med", "fast"]))
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
@@ -801,13 +894,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
-      async (opts: {
-        file: string;
-        slide: number;
-        animation: string;
-        out?: string;
-        pretty: boolean;
-      }) => {
+      async (opts: { file: string; slide: number; animation: string; out?: string; pretty: boolean }) => {
         await dispatchAndWrite(opts, io, [
           {
             type: "pptx:remove-shape-animation",
@@ -819,47 +906,57 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
 
   pptx
     .command("reorder-shape-animations")
-    .description("Atomically reorder a slide's typed animations. --order accepts a comma-separated list of NodeIds.")
+    .description(
+      "Atomically reorder a slide's typed animations. --order accepts a comma-separated list of NodeIds."
+    )
     .requiredOption("--file <path>", "Path to a .pptx file")
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--order <ids>", "Comma-separated NodeIds in the new order")
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: {
-        file: string;
-        slide: number;
-        order: string;
-        out?: string;
-        pretty: boolean;
-      }) => {
-        const order = opts.order
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
-        if (order.length === 0) throw new Error("--order requires at least one id");
-        await dispatchAndWrite(opts, io, [
-          {
-            type: "pptx:reorder-shape-animations",
-            payload: { slideIndex: opts.slide, order },
-          },
-        ]);
-      }
-    );
+    .action(async (opts: { file: string; slide: number; order: string; out?: string; pretty: boolean }) => {
+      const order = opts.order
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (order.length === 0) throw new Error("--order requires at least one id");
+      await dispatchAndWrite(opts, io, [
+        {
+          type: "pptx:reorder-shape-animations",
+          payload: { slideIndex: opts.slide, order },
+        },
+      ]);
+    });
 
   pptx
     .command("apply")
-    .description("Apply a JSON command file (single command or { commands: [...] }) and write the result.")
+    .description(
+      "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive)."
+    )
     .requiredOption("--file <path>", "Path to a .pptx file")
-    .requiredOption("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+    .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+    .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; commands: string; out?: string; pretty: boolean }) => {
-      const raw = await readFile(resolve(opts.commands), "utf8");
-      const data: unknown = JSON.parse(raw);
-      const cmds = normalizeCommands(data);
-      await dispatchAndWrite(opts, io, cmds);
-    });
+    .action(
+      async (opts: {
+        file: string;
+        commands?: string;
+        fromStdin: boolean;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        if (opts.fromStdin === Boolean(opts.commands)) {
+          throw new CliError(64, "pptx apply: pass exactly one of -c/--commands <path> or --from-stdin");
+        }
+        const raw = opts.fromStdin
+          ? await readStdinToString()
+          : await readFile(resolve(opts.commands as string), "utf8");
+        const data: unknown = JSON.parse(raw);
+        const cmds = normalizeCommands(data);
+        await dispatchAndWrite(opts, io, cmds);
+      }
+    );
 
   pptx
     .command("diff")
@@ -880,11 +977,13 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
 
 export async function loadAgent(input: string): Promise<PptxAgent> {
   const buf = await readFile(resolve(input));
-  // Tests need stable shape NodeIds across multiple CLI invocations
-  // against the same fixture. The default UUID minter changes them on
-  // every parse, which makes ID-based commands (set-text/format-text/
-  // set-position/set-size) fail across invocations. Opt-in env var.
-  if (process.env.OFFICEAI_DETERMINISTIC_IDS === "1") {
+  // Tests + scripted CLI flows need stable shape NodeIds across
+  // multiple invocations against the same fixture. The default UUID
+  // minter changes them on every parse, which makes ID-based commands
+  // (set-text/format-text/set-position/set-size) fail across runs.
+  // Toggle via the root `--deterministic-ids` flag (preferred) or the
+  // legacy `OFFICEAI_DETERMINISTIC_IDS=1` env var.
+  if (useDeterministicIds()) {
     return PptxAgent.fromBuffer(buf, { idMinter: deterministicIdMinter("n") });
   }
   return PptxAgent.fromBuffer(buf);
@@ -1184,8 +1283,10 @@ export function diffSnapshots(before: PptxSnapshot, after: PptxSnapshot): PptxDi
 
 function shapeChanged(b: Shape, a: Shape): boolean {
   if (b.kind !== a.kind) return true;
-  const bbb = b.position && b.size ? `${b.position.xEmu},${b.position.yEmu},${b.size.cxEmu},${b.size.cyEmu}` : "";
-  const abb = a.position && a.size ? `${a.position.xEmu},${a.position.yEmu},${a.size.cxEmu},${a.size.cyEmu}` : "";
+  const bbb =
+    b.position && b.size ? `${b.position.xEmu},${b.position.yEmu},${b.size.cxEmu},${b.size.cyEmu}` : "";
+  const abb =
+    a.position && a.size ? `${a.position.xEmu},${a.position.yEmu},${a.size.cxEmu},${a.size.cyEmu}` : "";
   if (bbb !== abb) return true;
   if (b.kind === "text" && a.kind === "text") {
     if (textShapePlainText(b) !== textShapePlainText(a)) return true;
@@ -1284,9 +1385,7 @@ function sliceRange(
 ): { startSlide: number; endSlide: number } | undefined {
   if (slide === undefined) return undefined;
   if (slide < 0 || slide >= snap.root.slides.length) {
-    throw new Error(
-      `--slide ${slide} out of range (presentation has ${snap.root.slides.length} slides)`
-    );
+    throw new Error(`--slide ${slide} out of range (presentation has ${snap.root.slides.length} slides)`);
   }
   return { startSlide: slide, endSlide: slide + 1 };
 }
@@ -1301,6 +1400,44 @@ function parseIntArg(v: string): number {
   const n = Number(v);
   if (!Number.isFinite(n)) throw new Error(`expected a number, got "${v}"`);
   return Math.trunc(n);
+}
+
+function parseFloatArg(v: string): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`expected a number, got "${v}"`);
+  return n;
+}
+
+/**
+ * Walk a slide's shapes (recursing into groups) and return the first
+ * `TextShape` whose `placeholder.type` matches one of `wantedTypes`.
+ * Used by `pptx set-title` / `pptx set-body` so agents don't have to
+ * round-trip through `pptx inspect` to discover the placeholder
+ * shape id.
+ */
+function findPlaceholderId(
+  snap: PptxSnapshot,
+  slideIndex: number,
+  wantedTypes: ReadonlyArray<string>
+): string | undefined {
+  const slide = snap.root.slides[slideIndex];
+  if (!slide) return undefined;
+  let found: string | undefined;
+  walkShapes(slide.shapes, (s) => {
+    if (found) return;
+    if (s.kind !== "text") return;
+    const ph = (s as TextShape).placeholder;
+    if (!ph?.type) return;
+    if (wantedTypes.includes(ph.type)) found = s.id;
+  });
+  return found;
+}
+
+function parseEmuUnit(unit: string): EmuUnit {
+  if (!isEmuUnit(unit)) {
+    throw new CliError(64, `--unit must be one of emu|px|in|cm|pt; got "${unit}"`);
+  }
+  return unit;
 }
 
 function stringifyJson(value: unknown, pretty: boolean): string {
@@ -1340,10 +1477,10 @@ function parseChartData(v: unknown): {
   const cats = (v as { categories?: unknown }).categories;
   const sers = (v as { series?: unknown }).series;
   if (!Array.isArray(cats) || cats.some((c) => typeof c !== "string")) {
-    throw new Error('chart data must have a `categories: string[]` field');
+    throw new Error("chart data must have a `categories: string[]` field");
   }
   if (!Array.isArray(sers)) {
-    throw new Error('chart data must have a `series: { name?, values: number[] }[]` field');
+    throw new Error("chart data must have a `series: { name?, values: number[] }[]` field");
   }
   const series = sers.map((s, i) => {
     if (!isObj(s)) throw new Error(`series[${i}] must be an object`);
@@ -1372,22 +1509,86 @@ async function dispatchAndWrite(
 ): Promise<void> {
   const agent = await loadAgent(opts.file);
   const muts = await agent.applyCommands(commands);
-  agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
+  const ids = agent.getPendingMutations().map((m) => m.id);
+  for (const id of ids) agent.approveMutation(id);
   const target = opts.out ?? opts.file;
   await writeFile(resolve(target), Buffer.from(await agent.exportFile()));
+  const post = agent.getSnapshot();
   io.stdout.write(
     stringifyJson(
       {
         wrote: target,
-        mutations: muts.map((m) => ({
-          id: m.id,
-          type: m.command.type,
-          status: m.status,
-          ...(m.rejection ? { rejection: m.rejection } : {}),
-        })),
+        mutations: muts.map((m) => pptxMutationSummary(m, post, true)),
       },
       opts.pretty
     ) + "\n"
   );
+  const rejected = muts.filter((m) => m.status === "rejected");
+  if (rejected.length > 0) {
+    throw new CliError(
+      2,
+      `pptx: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
+    );
+  }
 }
 
+/**
+ * Per-mutation envelope used by every PPTX write command. Mirrors
+ * `mutationLineSummary` in cli.ts: surfaces freshly minted node ids
+ * and added OPC parts so callers can chain commands without an
+ * intermediate `pptx inspect` round-trip. Special-cases
+ * `pptx:add-slide` / `pptx:duplicate-slide`: the diff only carries
+ * the slide id, so we read the post-dispatch snapshot to enumerate
+ * the slide's placeholder shapes (id + cNvPrId + name + kind) so
+ * downstream calls can target them directly.
+ */
+function pptxMutationSummary(
+  m: Mutation<PptxSnapshot>,
+  post: PptxSnapshot,
+  bulkApproved: boolean
+): {
+  id: string;
+  type: string;
+  status: string;
+  inserted?: ReadonlyArray<{ nodeId: string; path: string }>;
+  addedParts?: ReadonlyArray<string>;
+  shapes?: ReadonlyArray<{ id: string; kind: string; cNvPrId?: number; name?: string }>;
+  rejection?: { code: string; message: string };
+} {
+  const inserted: Array<{ nodeId: string; path: string }> = [];
+  const addedParts: string[] = [];
+  for (const c of m.diff.changes) {
+    if (c.kind === "node-inserted") {
+      inserted.push({ nodeId: c.nodeId, path: c.path.join("/") });
+    } else if (c.kind === "part-added") {
+      addedParts.push(c.path.join("/"));
+    }
+  }
+  let shapes: Array<{ id: string; kind: string; cNvPrId?: number; name?: string }> | undefined;
+  if (m.command.type === "pptx:add-slide" || m.command.type === "pptx:duplicate-slide") {
+    const newSlide = post.root.slides.find(
+      (s) => s.id === m.diff.changes.find((c) => c.kind === "node-inserted")?.nodeId
+    );
+    if (newSlide) {
+      shapes = [];
+      walkShapes(newSlide.shapes, (s) => {
+        shapes!.push({
+          id: s.id,
+          kind: s.kind,
+          ...(s.cNvPrId !== undefined ? { cNvPrId: s.cNvPrId } : {}),
+          ...(s.name ? { name: s.name } : {}),
+        });
+      });
+    }
+  }
+  const status = m.status === "rejected" ? "rejected" : bulkApproved ? "approved" : m.status;
+  return {
+    id: m.id,
+    type: m.command.type,
+    status,
+    ...(inserted.length > 0 ? { inserted } : {}),
+    ...(addedParts.length > 0 ? { addedParts } : {}),
+    ...(shapes && shapes.length > 0 ? { shapes } : {}),
+    ...(m.rejection ? { rejection: m.rejection } : {}),
+  };
+}

@@ -14,11 +14,9 @@ import {
   Type as TypeIcon,
   Merge,
   Split,
-  ArrowDownToLine,
-  ArrowUpToLine,
-  ArrowLeftToLine,
-  ArrowRightToLine,
-  Trash2,
+  Undo2,
+  Redo2,
+  TableProperties,
 } from "lucide-react";
 import { cn } from "@officeai/ui";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
@@ -48,21 +46,38 @@ export interface ToolbarProps {
   readonly canMerge: boolean;
   readonly onMerge: () => void;
   readonly onUnmerge: () => void;
-  readonly onInsertRowAbove: () => void;
-  readonly onInsertRowBelow: () => void;
-  readonly onInsertColumnLeft: () => void;
-  readonly onInsertColumnRight: () => void;
-  readonly onDeleteRow: () => void;
-  readonly onDeleteColumn: () => void;
+  /**
+   * P13 Undo/Redo. The bus exposes `canUndo()`/`canRedo()` so the
+   * parent flips these every render. When the bus surface isn't
+   * wired yet (early P13 commits) the parent passes `false` +
+   * no-op callbacks.
+   */
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly onUndo: () => void;
+  readonly onRedo: () => void;
+  /** Open the Text-to-Columns popover for the active selection. */
+  readonly onTextToColumns: () => void;
+  /** Disabled when no single-column selection is available. */
+  readonly canTextToColumns: boolean;
 }
 
 /**
- * Excel-style formatting toolbar — Bold / Italic / Underline /
- * Strike, Font colour, Fill colour, Horizontal alignment, and a
- * Number-format dropdown. Every action funnels through the parent's
- * `onApply` (which dispatches `xlsx:set-cell-format` on the active
- * range) so the agent path and the human path share the same
- * command surface.
+ * Excel-style formatting toolbar.
+ *
+ * Layout (left → right):
+ *   [Undo / Redo] | [Bold / Italic / Underline / Strike] |
+ *   [Font colour / Fill colour] | [Align L/C/R] |
+ *   [Merge / Unmerge] | [Text-to-Columns] | [Number format]
+ *
+ * Structural row / column edits (Insert / Delete) live in the
+ * right-click context menu (P13b) — the toolbar used to carry them
+ * but two near-identical Trash icons were impossible to tell apart,
+ * so they moved.
+ *
+ * Every action funnels through the parent's `onApply` (which
+ * dispatches `xlsx:set-cell-format` on the active range) so the
+ * agent path and the human path share the same command surface.
  *
  * Toggle state for the bold/italic/etc. buttons is derived from the
  * *anchor* cell's effective style (matches Excel — the active cell
@@ -79,12 +94,12 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     canUnmerge,
     onMerge,
     onUnmerge,
-    onInsertRowAbove,
-    onInsertRowBelow,
-    onInsertColumnLeft,
-    onInsertColumnRight,
-    onDeleteRow,
-    onDeleteColumn,
+    canUndo,
+    canRedo,
+    onUndo,
+    onRedo,
+    onTextToColumns,
+    canTextToColumns,
   } = props;
 
   const effective: EffectiveStyle = useMemo(
@@ -143,9 +158,26 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       data-testid="xlsx-toolbar"
       className="flex flex-wrap items-center gap-1 rounded-md border border-divider bg-surface px-2 py-1.5"
     >
+      <ActionBtn
+        icon={<Undo2 size={14} />}
+        label="Undo (⌘Z)"
+        testId="action-undo"
+        disabled={!canUndo}
+        onClick={onUndo}
+      />
+      <ActionBtn
+        icon={<Redo2 size={14} />}
+        label="Redo (⇧⌘Z)"
+        testId="action-redo"
+        disabled={!canRedo}
+        onClick={onRedo}
+      />
+
+      <Divider />
+
       <ToggleBtn
         icon={<Bold size={14} />}
-        label="Bold"
+        label="Bold (⌘B)"
         testId="format-bold"
         active={!!effective.font.bold}
         disabled={disabled}
@@ -153,7 +185,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       />
       <ToggleBtn
         icon={<Italic size={14} />}
-        label="Italic"
+        label="Italic (⌘I)"
         testId="format-italic"
         active={!!effective.font.italic}
         disabled={disabled}
@@ -161,7 +193,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       />
       <ToggleBtn
         icon={<Underline size={14} />}
-        label="Underline"
+        label="Underline (⌘U)"
         testId="format-underline"
         active={!!effective.font.underline}
         disabled={disabled}
@@ -176,7 +208,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onClick={() => onToggle("strike")}
       />
 
-      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+      <Divider />
 
       <ColorPicker
         icon={<TypeIcon size={14} />}
@@ -193,7 +225,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onPick={onFillColor}
       />
 
-      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+      <Divider />
 
       <ToggleBtn
         icon={<AlignLeft size={14} />}
@@ -220,9 +252,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onClick={() => onAlign("right")}
       />
 
-      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
-
-      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+      <Divider />
 
       <ActionBtn
         icon={<Merge size={14} />}
@@ -239,52 +269,17 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onClick={onUnmerge}
       />
 
-      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+      <Divider />
 
       <ActionBtn
-        icon={<ArrowUpToLine size={14} />}
-        label="Insert row above"
-        testId="row-insert-above"
-        disabled={disabled}
-        onClick={onInsertRowAbove}
-      />
-      <ActionBtn
-        icon={<ArrowDownToLine size={14} />}
-        label="Insert row below"
-        testId="row-insert-below"
-        disabled={disabled}
-        onClick={onInsertRowBelow}
-      />
-      <ActionBtn
-        icon={<ArrowLeftToLine size={14} />}
-        label="Insert column left"
-        testId="col-insert-left"
-        disabled={disabled}
-        onClick={onInsertColumnLeft}
-      />
-      <ActionBtn
-        icon={<ArrowRightToLine size={14} />}
-        label="Insert column right"
-        testId="col-insert-right"
-        disabled={disabled}
-        onClick={onInsertColumnRight}
-      />
-      <ActionBtn
-        icon={<Trash2 size={14} />}
-        label="Delete row"
-        testId="row-delete"
-        disabled={disabled}
-        onClick={onDeleteRow}
-      />
-      <ActionBtn
-        icon={<Trash2 size={14} className="rotate-90" />}
-        label="Delete column"
-        testId="col-delete"
-        disabled={disabled}
-        onClick={onDeleteColumn}
+        icon={<TableProperties size={14} />}
+        label="Text to Columns"
+        testId="data-text-to-columns"
+        disabled={disabled || !canTextToColumns}
+        onClick={onTextToColumns}
       />
 
-      <div className="mx-1 h-5 w-px bg-divider" aria-hidden />
+      <Divider />
 
       <select
         data-testid="format-number"
@@ -309,6 +304,10 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       </select>
     </div>
   );
+}
+
+function Divider(): ReactNode {
+  return <div className="mx-1 h-5 w-px bg-divider" aria-hidden />;
 }
 
 interface ToggleBtnProps {

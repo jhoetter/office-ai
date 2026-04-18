@@ -7,10 +7,8 @@ import type { AddSlidePayload } from "./payloads.js";
 const PRES_RELS_PATH = "ppt/_rels/presentation.xml.rels";
 const SLIDE_RELS_PREFIX = "ppt/slides/_rels/";
 const REL_TYPE_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
-const REL_TYPE_LAYOUT =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
-const SLIDE_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
+const REL_TYPE_LAYOUT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
+const SLIDE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 
 export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
   type: "pptx:add-slide",
@@ -89,9 +87,7 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
     }
 
     // Content types: add Override for the new slide.
-    const overrideExists = snapshot.contentTypes.overrides.some(
-      (o) => o.partName === `/${partPath}`
-    );
+    const overrideExists = snapshot.contentTypes.overrides.some((o) => o.partName === `/${partPath}`);
     const newContentTypes = overrideExists
       ? snapshot.contentTypes
       : {

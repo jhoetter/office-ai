@@ -1,10 +1,5 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
-import type {
-  BlockNode,
-  DocxSnapshot,
-  SectionBreak,
-  SectionProperties,
-} from "../model/types.js";
+import type { DocxSnapshot, SectionBreak, SectionProperties } from "../model/types.js";
 import { buildDiff, evolveSnapshot, insertBlock } from "./helpers.js";
 import type { InsertSectionBreakPayload } from "./payloads.js";
 

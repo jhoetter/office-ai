@@ -16,10 +16,7 @@ import type {
 
 // ─── pptx:set-slide-transition ───────────────────────────────────────────
 
-export const setSlideTransitionHandler: CommandHandler<
-  SetSlideTransitionPayload,
-  PptxSnapshot
-> = {
+export const setSlideTransitionHandler: CommandHandler<SetSlideTransitionPayload, PptxSnapshot> = {
   type: "pptx:set-slide-transition",
   apply(snapshot, payload, ctx) {
     const { slide } = findSlide(snapshot, payload.slideIndex);
@@ -69,19 +66,13 @@ export const setSlideTransitionHandler: CommandHandler<
 
 // ─── pptx:add-shape-animation ────────────────────────────────────────────
 
-export const addShapeAnimationHandler: CommandHandler<
-  AddShapeAnimationPayload,
-  PptxSnapshot
-> = {
+export const addShapeAnimationHandler: CommandHandler<AddShapeAnimationPayload, PptxSnapshot> = {
   type: "pptx:add-shape-animation",
   apply(snapshot, payload, ctx) {
     const { slide } = findSlide(snapshot, payload.slideIndex);
     const { shape } = findShapeInSlide(slide, payload.shapeId);
     if (!shape.cNvPrId || shape.cNvPrId <= 0) {
-      throw makeError(
-        "not-applicable",
-        `shape ${payload.shapeId} has no cNvPrId; cannot be animated`
-      );
+      throw makeError("not-applicable", `shape ${payload.shapeId} has no cNvPrId; cannot be animated`);
     }
     const insertAt = clampInsertIndex(payload.at, slide.animations.length);
     const newAnim: EntranceAnimation = {
@@ -117,10 +108,7 @@ export const addShapeAnimationHandler: CommandHandler<
 
 // ─── pptx:remove-shape-animation ─────────────────────────────────────────
 
-export const removeShapeAnimationHandler: CommandHandler<
-  RemoveShapeAnimationPayload,
-  PptxSnapshot
-> = {
+export const removeShapeAnimationHandler: CommandHandler<RemoveShapeAnimationPayload, PptxSnapshot> = {
   type: "pptx:remove-shape-animation",
   apply(snapshot, payload) {
     const { slide } = findSlide(snapshot, payload.slideIndex);
@@ -132,10 +120,9 @@ export const removeShapeAnimationHandler: CommandHandler<
       );
     }
     const removed = slide.animations[idx]!;
-    const newAnimations = [
-      ...slide.animations.slice(0, idx),
-      ...slide.animations.slice(idx + 1),
-    ].map((a, i) => ({ ...a, order: i }));
+    const newAnimations = [...slide.animations.slice(0, idx), ...slide.animations.slice(idx + 1)].map(
+      (a, i) => ({ ...a, order: i })
+    );
     const nextSlide = dropTimingTail({ ...slide, animations: newAnimations });
 
     const root = withSlide(snapshot.root, payload.slideIndex, () => nextSlide);
@@ -156,10 +143,7 @@ export const removeShapeAnimationHandler: CommandHandler<
 
 // ─── pptx:reorder-shape-animations ───────────────────────────────────────
 
-export const reorderShapeAnimationsHandler: CommandHandler<
-  ReorderShapeAnimationsPayload,
-  PptxSnapshot
-> = {
+export const reorderShapeAnimationsHandler: CommandHandler<ReorderShapeAnimationsPayload, PptxSnapshot> = {
   type: "pptx:reorder-shape-animations",
   apply(snapshot, payload) {
     const { slide } = findSlide(snapshot, payload.slideIndex);

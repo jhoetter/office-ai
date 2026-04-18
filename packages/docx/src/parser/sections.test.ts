@@ -87,9 +87,7 @@ describe("parseSectionProperties (W5)", () => {
       { type: "default", relationshipId: "rId10" },
       { type: "first", relationshipId: "rId11" },
     ]);
-    expect(sect.properties.footerRefs).toEqual([
-      { type: "default", relationshipId: "rId12" },
-    ]);
+    expect(sect.properties.footerRefs).toEqual([{ type: "default", relationshipId: "rId12" }]);
   });
 
   it("captures unmodeled sectPr children into opaqueProps in source order", async () => {
@@ -126,7 +124,7 @@ describe("section-break round-trip (W7)", () => {
 });
 
 describe("PageBreakLeaf / LastRenderedPageBreakLeaf (W6)", () => {
-  it("promotes <w:br w:type=\"page\"/> to a typed page-break leaf", async () => {
+  it('promotes <w:br w:type="page"/> to a typed page-break leaf', async () => {
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>
   <w:p><w:r><w:t>before</w:t><w:br w:type="page"/><w:t>after</w:t></w:r></w:p>
@@ -142,7 +140,7 @@ describe("PageBreakLeaf / LastRenderedPageBreakLeaf (W6)", () => {
     expect(kinds).not.toContain("opaque");
   });
 
-  it("page-break round-trips back to <w:br w:type=\"page\"/>", async () => {
+  it('page-break round-trips back to <w:br w:type="page"/>', async () => {
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body><w:p><w:r><w:t xml:space="preserve">a</w:t><w:br w:type="page"/><w:t xml:space="preserve">b</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`;
     const { reEmittedXml } = await loadFromXml(documentXml);

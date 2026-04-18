@@ -13,9 +13,23 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Command, Option } from "commander";
-import { XlsxAgent, diffXlsxSnapshots, type XlsxRangeSnapshot, type XlsxSnapshot } from "@officeai/xlsx";
-import type { DocumentDiff, Mutation } from "@officeai/core";
-import { CliError, parseIntOpt, stringifyJson, type IO } from "./cli-shared.js";
+import {
+  XlsxAgent,
+  colToLetter,
+  diffXlsxSnapshots,
+  parseRange,
+  type XlsxRangeSnapshot,
+  type XlsxSnapshot,
+} from "@officeai/xlsx";
+import { deterministicIdMinter, type DocumentDiff, type Mutation } from "@officeai/core";
+import {
+  CliError,
+  parseIntOpt,
+  readStdinToString,
+  stringifyJson,
+  useDeterministicIds,
+  type IO,
+} from "./cli-shared.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Agent loading + structural projections
@@ -23,6 +37,9 @@ import { CliError, parseIntOpt, stringifyJson, type IO } from "./cli-shared.js";
 
 export async function loadXlsxAgent(input: string): Promise<XlsxAgent> {
   const buf = await readFile(resolve(input));
+  if (useDeterministicIds()) {
+    return XlsxAgent.fromBuffer(buf, { idMinter: deterministicIdMinter("n") });
+  }
   return XlsxAgent.fromBuffer(buf);
 }
 
@@ -222,7 +239,8 @@ async function runXlsxWrite(io: IO, opts: XlsxWriteOpts, type: string, payload: 
   });
   const approve = opts.approve !== false;
   if (approve) {
-    agent.getPendingMutations().forEach((p) => agent.approveMutation(p.id));
+    const ids = agent.getPendingMutations().map((p) => p.id);
+    for (const id of ids) agent.approveMutation(id);
   }
   const out = opts.out ?? opts.file;
   await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
@@ -240,6 +258,64 @@ async function runXlsxWrite(io: IO, opts: XlsxWriteOpts, type: string, payload: 
       opts.pretty === true
     ) + "\n"
   );
+  if (m.status === "rejected") {
+    throw new CliError(
+      2,
+      `xlsx ${type}: mutation rejected (${m.rejection?.code ?? "unknown"}): ${m.rejection?.message ?? "no message"}`
+    );
+  }
+}
+
+/**
+ * Apply a batch of commands as a single round-trip: load, dispatch
+ * all, optionally auto-approve, write, and emit a JSON summary that
+ * mirrors `apply-file`'s shape so chained tooling can read both
+ * surfaces uniformly.
+ */
+async function runXlsxWriteBatch(
+  io: IO,
+  opts: XlsxWriteOpts,
+  cmds: ReadonlyArray<{ type: string; payload: unknown }>
+): Promise<void> {
+  const agent = await loadXlsxAgent(opts.file);
+  const source = opts.source ?? "agent";
+  const agentId = source === "agent" ? (opts.agentId ?? "office-agent-cli") : undefined;
+  const muts = await agent.applyCommands(
+    cmds.map((c) => ({
+      type: c.type,
+      payload: c.payload,
+      source,
+      ...(agentId ? { agentId } : {}),
+    }))
+  );
+  const approve = opts.approve !== false;
+  if (approve) {
+    const ids = agent.getPendingMutations().map((p) => p.id);
+    for (const id of ids) agent.approveMutation(id);
+  }
+  const out = opts.out ?? opts.file;
+  await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+  io.stdout.write(
+    stringifyJson(
+      {
+        wrote: out,
+        mutations: muts.map((m) => ({
+          id: m.id,
+          type: m.command.type,
+          status: m.status === "rejected" ? "rejected" : approve ? "approved" : "pending",
+          ...(m.rejection ? { rejection: m.rejection } : {}),
+        })),
+      },
+      opts.pretty === true
+    ) + "\n"
+  );
+  const rejected = muts.filter((m) => m.status === "rejected");
+  if (rejected.length > 0) {
+    throw new CliError(
+      2,
+      `xlsx apply: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
+    );
+  }
 }
 
 function mutationSummary(
@@ -296,6 +372,54 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
+/**
+ * Resolve `xlsx set-cell`'s value flags into a `CellValue`. `--value-raw`
+ * always wins (it's the JSON escape hatch for typed nulls and error
+ * sentinels). Plain `--value` accepts bare strings/numbers/booleans:
+ * `JSON.parse` is tried first so `42`, `true`, and `"quoted"` survive
+ * round-trip; on `SyntaxError` the raw text is returned verbatim, so
+ * `--value Total` lands as the string `"Total"` without shell-aware
+ * double-quoting. Numbers that look like leading zeros (`"007"`) stay
+ * strings because `JSON.parse("007")` errors. See §G5 of
+ * docs/cli-gap-report.md.
+ */
+function resolveCellValueFlag(value: string | undefined, valueRaw: string | undefined): unknown {
+  if (valueRaw !== undefined) {
+    return parseJsonFlag(valueRaw, "--value-raw");
+  }
+  if (value === undefined) {
+    throw new CliError(64, "xlsx set-cell: one of --value or --value-raw is required");
+  }
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      parsed === null ||
+      typeof parsed === "boolean" ||
+      typeof parsed === "number" ||
+      typeof parsed === "string"
+    ) {
+      return parsed;
+    }
+    return value;
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Expand `{row}` / `{col}` / `{row0}` / `{col0}` placeholders in a
+ * `fill-formula` template. `{row}` / `{col}` use Excel's 1-based
+ * convention (matches A1 labels); `{row0}` / `{col0}` use the typed
+ * 0-based convention for callers who need it.
+ */
+function expandFormulaTemplate(template: string, row0: number, col0: number): string {
+  return template
+    .replace(/\{row0\}/g, String(row0))
+    .replace(/\{col0\}/g, String(col0))
+    .replace(/\{row\}/g, String(row0 + 1))
+    .replace(/\{col\}/g, String(col0 + 1));
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Subcommand registration
 // ──────────────────────────────────────────────────────────────────────────
@@ -310,6 +434,17 @@ interface CommonWriteFlags {
 }
 
 export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
+  xlsx
+    .command("create")
+    .description("Create a brand-new blank .xlsx file at --out (one empty worksheet named Sheet1).")
+    .requiredOption("--out <path>", "Path to write the new .xlsx file")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { out: string; pretty: boolean }) => {
+      const agent = await XlsxAgent.empty();
+      await writeFile(resolve(opts.out), Buffer.from(await agent.exportFile()));
+      io.stdout.write(stringifyJson({ wrote: opts.out, format: "xlsx" }, opts.pretty) + "\n");
+    });
+
   xlsx
     .command("inspect")
     .description("Print a structural summary (sheets, cells, parts, comments, merges) as JSON.")
@@ -395,18 +530,25 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
   attachCommonWriteFlags(
     xlsx
       .command("set-cell")
-      .description("Set a single cell's literal value.")
+      .description(
+        "Set a single cell's literal value. " +
+          "Pass bare strings/numbers/booleans via --value (e.g. --value 'Total' or --value 42); " +
+          'use --value-raw for typed nulls or error sentinels (e.g. --value-raw \'{"kind":"error","code":"#REF!"}\').'
+      )
       .requiredOption("--file <path>", "Path to a .xlsx file")
       .requiredOption("--sheet <name>", "Sheet name")
       .requiredOption("--ref <A1>", "A1 single-cell ref, e.g. B7")
-      .requiredOption(
-        "--value <json>",
-        'JSON-encoded literal (null, true, 42, "text", {"kind":"error","code":"#REF!"})'
+      .option("--value <text>", "Bare value: string, number, or boolean (no JSON quoting required)")
+      .option(
+        "--value-raw <json>",
+        'JSON-encoded literal (null, true, 42, "text", {"kind":"error","code":"#REF!"}); takes precedence over --value'
       )
-  ).action(async (opts: CommonWriteFlags & { sheet: string; ref: string; value: string }) => {
-    const value = parseJsonFlag(opts.value, "--value");
-    await runXlsxWrite(io, opts, "xlsx:set-cell-value", { sheet: opts.sheet, ref: opts.ref, value });
-  });
+  ).action(
+    async (opts: CommonWriteFlags & { sheet: string; ref: string; value?: string; valueRaw?: string }) => {
+      const value = resolveCellValueFlag(opts.value, opts.valueRaw);
+      await runXlsxWrite(io, opts, "xlsx:set-cell-value", { sheet: opts.sheet, ref: opts.ref, value });
+    }
+  );
 
   attachCommonWriteFlags(
     xlsx
@@ -590,46 +732,178 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
     });
   });
 
+  attachCommonWriteFlags(
+    xlsx
+      .command("delete-sheet")
+      .description("Delete a worksheet by name (the workbook must keep ≥1 visible sheet).")
+      .requiredOption("--file <path>", "Path to a .xlsx file")
+      .requiredOption("--name <name>", "Sheet name to delete")
+  ).action(async (opts: CommonWriteFlags & { name: string }) => {
+    await runXlsxWrite(io, opts, "xlsx:delete-sheet", { name: opts.name });
+  });
+
+  attachCommonWriteFlags(
+    xlsx
+      .command("set-column-width")
+      .description("Override a column's width in CSS pixels (pass --width 0 or omit to reset to default).")
+      .requiredOption("--file <path>", "Path to a .xlsx file")
+      .requiredOption("--sheet <name>", "Sheet name")
+      .requiredOption("--column <n>", "1-based column index (A=1)", parseIntOpt)
+      .option("--width <px>", "Width in CSS pixels; omit for default", parseIntOpt)
+      .option("--reset", "Reset the column to the default width", false)
+  ).action(
+    async (opts: CommonWriteFlags & { sheet: string; column: number; width?: number; reset: boolean }) => {
+      const width = opts.reset ? null : (opts.width ?? null);
+      await runXlsxWrite(io, opts, "xlsx:set-column-width", {
+        sheet: opts.sheet,
+        column: opts.column,
+        width,
+      });
+    }
+  );
+
+  attachCommonWriteFlags(
+    xlsx
+      .command("set-row-height")
+      .description("Override a row's height in CSS pixels (pass --reset to clear the override).")
+      .requiredOption("--file <path>", "Path to a .xlsx file")
+      .requiredOption("--sheet <name>", "Sheet name")
+      .requiredOption("--row <n>", "1-based row index", parseIntOpt)
+      .option("--height <px>", "Height in CSS pixels; omit for default", parseIntOpt)
+      .option("--reset", "Reset the row to the default height", false)
+  ).action(
+    async (opts: CommonWriteFlags & { sheet: string; row: number; height?: number; reset: boolean }) => {
+      const height = opts.reset ? null : (opts.height ?? null);
+      await runXlsxWrite(io, opts, "xlsx:set-row-height", {
+        sheet: opts.sheet,
+        row: opts.row,
+        height,
+      });
+    }
+  );
+
+  attachCommonWriteFlags(
+    xlsx
+      .command("clear-range")
+      .description("Wipe every cell in an A1 range to null in a single round-trip.")
+      .requiredOption("--file <path>", "Path to a .xlsx file")
+      .requiredOption("--sheet <name>", "Sheet name")
+      .requiredOption("--range <A1:B2>", "A1 range to clear")
+  ).action(async (opts: CommonWriteFlags & { sheet: string; range: string }) => {
+    const rect = parseRange(opts.range);
+    const rows = rect.end.row - rect.start.row + 1;
+    const cols = rect.end.col - rect.start.col + 1;
+    const values = Array.from({ length: rows }, () => Array.from({ length: cols }, () => null as null));
+    await runXlsxWrite(io, opts, "xlsx:set-range-values", {
+      sheet: opts.sheet,
+      range: opts.range,
+      values,
+    });
+  });
+
+  attachCommonWriteFlags(
+    xlsx
+      .command("fill-formula")
+      .description(
+        "Fill a formula across an A1 range, expanding {row}/{col}/{rowN}/{colN} placeholders per cell. " +
+          "Example: --range D2:D6 --formula '=B{row}*C{row}/100'."
+      )
+      .requiredOption("--file <path>", "Path to a .xlsx file")
+      .requiredOption("--sheet <name>", "Sheet name")
+      .requiredOption("--range <A1:B2>", "A1 range to fill")
+      .requiredOption("--formula <text>", "Formula template; {row}, {col}, {row0}, {col0} expand per cell")
+  ).action(async (opts: CommonWriteFlags & { sheet: string; range: string; formula: string }) => {
+    const rect = parseRange(opts.range);
+    const cmds: Array<{ type: string; payload: unknown }> = [];
+    for (let row = rect.start.row; row <= rect.end.row; row++) {
+      for (let col = rect.start.col; col <= rect.end.col; col++) {
+        const ref = `${colToLetter(col)}${row + 1}`;
+        const formula = expandFormulaTemplate(opts.formula, row, col);
+        cmds.push({
+          type: "xlsx:set-cell-formula",
+          payload: { sheet: opts.sheet, ref, formula },
+        });
+      }
+    }
+    await runXlsxWriteBatch(io, opts, cmds);
+  });
+
   // ── Generic escape hatch ──────────────────────────────────────────────
   attachCommonWriteFlags(
     xlsx
       .command("apply")
-      .description("Generic command escape hatch — pass --type and --payload (JSON).")
+      .description(
+        "Generic command escape hatch — pass --type and --payload (JSON), or --type with --payload-stdin to read JSON from stdin."
+      )
       .requiredOption("--file <path>", "Path to a .xlsx file")
       .requiredOption("--type <command-type>", 'Command type, e.g. "xlsx:set-cell-value"')
-      .requiredOption("--payload <json>", "JSON payload object")
-  ).action(async (opts: CommonWriteFlags & { type: string; payload: string }) => {
-    const payload = parseJsonFlag(opts.payload, "--payload");
+      .option("--payload <json>", "JSON payload object")
+      .option("--payload-stdin", "Read the payload JSON from stdin instead of --payload <json>", false)
+  ).action(async (opts: CommonWriteFlags & { type: string; payload?: string; payloadStdin: boolean }) => {
+    if (opts.payloadStdin === Boolean(opts.payload)) {
+      throw new CliError(64, "xlsx apply: pass exactly one of --payload <json> or --payload-stdin");
+    }
+    const raw = opts.payloadStdin ? await readStdinToString() : (opts.payload as string);
+    const payload = parseJsonFlag(raw, opts.payloadStdin ? "--payload-stdin" : "--payload");
     await runXlsxWrite(io, opts, opts.type, payload);
   });
 
   // ── Apply commands JSON file (matches `docx apply -c <path>`) ─────────
   xlsx
     .command("apply-file")
-    .description("Apply a JSON command file (single command or { commands: [...] }) and write the result.")
+    .description(
+      "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive)."
+    )
     .requiredOption("--file <path>", "Path to a .xlsx file")
-    .requiredOption("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+    .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+    .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
     .option("--out <path>", "Path to write the resulting .xlsx file (defaults to --file, in place)")
     .option("--pretty", "Pretty-print JSON output", false)
-    .action(async (opts: { file: string; commands: string; out?: string; pretty: boolean }) => {
-      const agent = await loadXlsxAgent(opts.file);
-      const raw = await readFile(resolve(opts.commands), "utf8");
-      const data: unknown = JSON.parse(raw);
-      const cmds = normalizeCommands(data);
-      const muts = await agent.applyCommands(cmds);
-      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
-      const out = opts.out ?? opts.file;
-      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-      io.stdout.write(
-        stringifyJson(
-          {
-            wrote: out,
-            mutations: muts.map((m) => ({ id: m.id, type: m.command.type, status: m.status })),
-          },
-          opts.pretty
-        ) + "\n"
-      );
-    });
+    .action(
+      async (opts: {
+        file: string;
+        commands?: string;
+        fromStdin: boolean;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        if (opts.fromStdin === Boolean(opts.commands)) {
+          throw new CliError(64, "xlsx apply-file: pass exactly one of -c/--commands <path> or --from-stdin");
+        }
+        const agent = await loadXlsxAgent(opts.file);
+        const raw = opts.fromStdin
+          ? await readStdinToString()
+          : await readFile(resolve(opts.commands as string), "utf8");
+        const data: unknown = JSON.parse(raw);
+        const cmds = normalizeCommands(data);
+        const muts = await agent.applyCommands(cmds);
+        const ids = agent.getPendingMutations().map((m) => m.id);
+        for (const id of ids) agent.approveMutation(id);
+        const out = opts.out ?? opts.file;
+        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+        io.stdout.write(
+          stringifyJson(
+            {
+              wrote: out,
+              mutations: muts.map((m) => ({
+                id: m.id,
+                type: m.command.type,
+                status: m.status === "rejected" ? "rejected" : "approved",
+                ...(m.rejection ? { rejection: m.rejection } : {}),
+              })),
+            },
+            opts.pretty
+          ) + "\n"
+        );
+        const rejected = muts.filter((m) => m.status === "rejected");
+        if (rejected.length > 0) {
+          throw new CliError(
+            2,
+            `xlsx apply-file: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
+          );
+        }
+      }
+    );
 
   xlsx
     .command("diff")

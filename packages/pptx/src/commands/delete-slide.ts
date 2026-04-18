@@ -33,9 +33,7 @@ export const deleteSlideHandler: CommandHandler<DeleteSlidePayload, PptxSnapshot
       removedParts.add(relsPathFor(slide.notesSlidePartPath));
       removedPartNames.add(`/${slide.notesSlidePartPath}`);
     }
-    const newOverrides = snapshot.contentTypes.overrides.filter(
-      (o) => !removedPartNames.has(o.partName)
-    );
+    const newOverrides = snapshot.contentTypes.overrides.filter((o) => !removedPartNames.has(o.partName));
     const newContentTypes = {
       ...snapshot.contentTypes,
       overrides: newOverrides,

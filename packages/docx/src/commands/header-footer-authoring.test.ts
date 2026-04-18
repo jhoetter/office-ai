@@ -2,11 +2,7 @@ import { describe, expect, it } from "vitest";
 import { deterministicIdMinter } from "@officeai/core";
 import { DocxAgent } from "../agent/agent.js";
 import { parseDocx } from "../parser/parse.js";
-import {
-  DEFAULT_DOC_ROOT_ATTRS,
-  escapeXml,
-  makeSyntheticDocx,
-} from "../test-utils/synthetic.js";
+import { DEFAULT_DOC_ROOT_ATTRS, escapeXml, makeSyntheticDocx } from "../test-utils/synthetic.js";
 import type { PageNumberFieldLeaf, Paragraph, Run, SectionBreak } from "../model/types.js";
 import { paragraphPlainText } from "./helpers.js";
 
@@ -16,8 +12,9 @@ const HEADER_PART = "word/header1.xml";
 const FOOTER_PART = "word/footer1.xml";
 
 function syntheticDocXml(extraParas = 0): string {
-  const paras = Array.from({ length: 1 + extraParas }, (_, i) =>
-    `<w:p><w:r><w:t xml:space="preserve">Body para ${i}</w:t></w:r></w:p>`
+  const paras = Array.from(
+    { length: 1 + extraParas },
+    (_, i) => `<w:p><w:r><w:t xml:space="preserve">Body para ${i}</w:t></w:r></w:p>`
   ).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>${paras}<w:sectPr><w:headerReference w:type="default" r:id="rIdH"/><w:footerReference w:type="default" r:id="rIdF"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/></w:sectPr></w:body></w:document>`;
@@ -41,7 +38,11 @@ function syntheticDocRels(): string {
 </Relationships>`;
 }
 
-async function makeAgent(opts?: { extraParas?: number; headerText?: string; footerText?: string }): Promise<DocxAgent> {
+async function makeAgent(opts?: {
+  extraParas?: number;
+  headerText?: string;
+  footerText?: string;
+}): Promise<DocxAgent> {
   const buf = await makeSyntheticDocx({
     documentXml: syntheticDocXml(opts?.extraParas ?? 0),
     extra: {
@@ -74,8 +75,7 @@ describe("docx:insert-page-number (P3.4 / W16)", () => {
     if (!headerAfter || headerAfter.body[0].kind !== "paragraph") throw new Error();
     const newPara = headerAfter.body[0];
     const fieldRun = newPara.children.find(
-      (c): c is Run =>
-        c.kind === "run" && c.children.some((rc) => rc.kind === "page-number-field")
+      (c): c is Run => c.kind === "run" && c.children.some((rc) => rc.kind === "page-number-field")
     );
     expect(fieldRun).toBeTruthy();
     const leaf = fieldRun!.children[0] as PageNumberFieldLeaf;

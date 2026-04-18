@@ -1,10 +1,5 @@
 import * as React from "react";
-import type {
-  ChartPart,
-  Slide,
-  SlideSize,
-  ThemeColorScheme,
-} from "../../model/types.js";
+import type { ChartPart, Slide, SlideSize, ThemeColorScheme } from "../../model/types.js";
 import { SlideThumbnail } from "./SlideThumbnail.js";
 
 export interface SlidesSidebarProps {
@@ -36,9 +31,7 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
     >
       {slides.map((s, i) => (
         <li key={s.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 12, color: "#71717a", width: 18, textAlign: "right" }}>
-            {i + 1}
-          </span>
+          <span style={{ fontSize: 12, color: "#71717a", width: 18, textAlign: "right" }}>{i + 1}</span>
           <SlideThumbnail
             slide={s}
             slideSize={slideSize}

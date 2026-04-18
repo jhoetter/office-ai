@@ -102,12 +102,12 @@ describe("targeted-edit roundtrip", () => {
       for (let c = 0; c < ra.cells.length; c++) {
         const a = ra.cells[c]!;
         const b = rb.cells[c]!;
-        const at = a.txBody.paragraphs.flatMap((p) =>
-          p.runs.filter((r2) => !r2.isLineBreak).map((r2) => r2.text)
-        ).join("");
-        const bt = b.txBody.paragraphs.flatMap((p) =>
-          p.runs.filter((r2) => !r2.isLineBreak).map((r2) => r2.text)
-        ).join("");
+        const at = a.txBody.paragraphs
+          .flatMap((p) => p.runs.filter((r2) => !r2.isLineBreak).map((r2) => r2.text))
+          .join("");
+        const bt = b.txBody.paragraphs
+          .flatMap((p) => p.runs.filter((r2) => !r2.isLineBreak).map((r2) => r2.text))
+          .join("");
         expect(bt).toBe(at);
       }
     }

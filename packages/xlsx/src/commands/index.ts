@@ -15,5 +15,7 @@ export { deleteColumnHandler } from "./delete-column.js";
 export { addCommentHandler } from "./add-comment.js";
 export { setColumnWidthHandler } from "./set-column-width.js";
 export { setRowHeightHandler } from "./set-row-height.js";
+export { deleteSheetHandler } from "./delete-sheet.js";
+export { pasteRangeHandler } from "./paste-range.js";
 export { evolveSnapshot, mergeDirty, findSheet, replaceSheet, buildDiff } from "./helpers.js";
 export { resolveSheet, parseCellRef, parseRangeRef, validateSheetName } from "./validation.js";

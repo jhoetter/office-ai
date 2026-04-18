@@ -15,16 +15,16 @@ Regenerate with:
 pnpm fixtures:pptx
 ```
 
-| File                          | What it exercises                                                          |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| `01-blank.pptx`               | Empty slide. Smallest happy path.                                          |
-| `02-title-only.pptx`          | One title text shape; verifies xfrm + a:rPr + a:t baseline.                |
-| `03-title-and-content.pptx`   | Title + bulleted content; verifies multi-paragraph TextBody.               |
-| `04-multi-shape.pptx`         | Rect + ellipse + roundRect + two text boxes (5 shapes); z-order ordering.  |
-| `05-with-image.pptx`          | Embeds a small PNG; exercises slide rels + media part + Default extension. |
-| `06-with-table.pptx`          | A 5×3 table as `graphicFrame` — preserved opaque, must round-trip clean.   |
-| `07-multi-slide.pptx`         | 8 slides; exercises sldIdLst ordering and per-slide rels.                  |
-| `08-large-deck.pptx`          | 50 slides; smoke-tests parse/serialize perf.                               |
+| File                        | What it exercises                                                          |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `01-blank.pptx`             | Empty slide. Smallest happy path.                                          |
+| `02-title-only.pptx`        | One title text shape; verifies xfrm + a:rPr + a:t baseline.                |
+| `03-title-and-content.pptx` | Title + bulleted content; verifies multi-paragraph TextBody.               |
+| `04-multi-shape.pptx`       | Rect + ellipse + roundRect + two text boxes (5 shapes); z-order ordering.  |
+| `05-with-image.pptx`        | Embeds a small PNG; exercises slide rels + media part + Default extension. |
+| `06-with-table.pptx`        | A 5×3 table as `graphicFrame` — preserved opaque, must round-trip clean.   |
+| `07-multi-slide.pptx`       | 8 slides; exercises sldIdLst ordering and per-slide rels.                  |
+| `08-large-deck.pptx`        | 50 slides; smoke-tests parse/serialize perf.                               |
 
 These cover the **shapes** we model in P0; they are not a substitute for
 real-world decks emitted by PowerPoint / Keynote / Google Slides (see below).
@@ -54,17 +54,17 @@ Regenerate with:
 pnpm fixtures:pptx-real
 ```
 
-| File                          | What it exercises                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ |
-| `01-styled-deck.pptx`         | 3 slides w/ custom master, hyperlinks, speaker notes, bulleted body. Themes + hlink rels survive. |
-| `02-mixed-media.pptx`         | Image + roundRect + table on a single slide. Image rels + opaque graphicFrame both round-trip.    |
-| `03-large-real-deck.pptx`     | 25 slides of mixed title + body + bullets. Stress-tests `presentation.xml` rebuild + sldIdLst.    |
+| File                      | What it exercises                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `01-styled-deck.pptx`     | 3 slides w/ custom master, hyperlinks, speaker notes, bulleted body. Themes + hlink rels survive. |
+| `02-mixed-media.pptx`     | Image + roundRect + table on a single slide. Image rels + opaque graphicFrame both round-trip.    |
+| `03-large-real-deck.pptx` | 25 slides of mixed title + body + bullets. Stress-tests `presentation.xml` rebuild + sldIdLst.    |
 
 The `tests/roundtrip/pptx/real-world-roundtrip.test.ts` integration test
 loads each fixture and asserts:
 
 1. **Pure roundtrip** preserves ≥95 % of parts byte-identical (and 100 % of
-   part *paths*).
+   part _paths_).
 2. **Targeted text edit** on the first text shape leaves every other part
    byte-identical and the edited slide contains the new text.
 
@@ -82,19 +82,19 @@ SmartArt, animations) that a clean third-party emitter can't fully reproduce.
 Each should be a small, license-clean deck we can check in (or a script that
 fetches a public-domain deck into `./real-world/.cache/` at test time).
 
-| Slot                                  | Source                          | Why we need it                                                                                           |
-| ------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `real-pp-2021-deck.pptx`              | PowerPoint for Windows          | Verify our parser tolerates Microsoft's "PowerPoint default" XML (themes, masters, defaultTextStyle).     |
-| `real-pp-mac-deck.pptx`               | PowerPoint for Mac              | Mac PPT emits some attributes in different orders.                                                       |
-| `real-keynote-export.pptx`            | Keynote "Export to PowerPoint"  | Keynote's export differs from native PPT in masters, font handling, and `mc:AlternateContent` wrapping.  |
-| `real-google-slides-export.pptx`      | Google Slides "Download .pptx"  | Slides exports tend to flatten masters and emit unusual placeholder shapes.                              |
-| `real-with-smartart.pptx`             | PowerPoint with SmartArt        | Verify SmartArt `graphicFrame` round-trips opaquely; rels to `ppt/diagrams/*` survive.                   |
-| `real-with-animations.pptx`           | PowerPoint with animations      | Verify `<p:timing>` round-trips opaquely; nothing in our edits perturbs it.                              |
-| `real-with-transitions.pptx`          | PowerPoint with slide transitions | Verify `<p:transition>` round-trips opaquely.                                                          |
-| `real-with-embedded-chart.pptx`       | PowerPoint with embedded chart  | Verify `ppt/charts/*` and the chart `graphicFrame` round-trip opaquely.                                  |
-| `real-with-notes.pptx`                | PowerPoint with speaker notes   | Verify `ppt/notesSlides/*` round-trips, and `delete-slide` cleans the attached notes part.               |
-| `real-large-50-slide.pptx`            | A real 50+ slide deck           | Stress-test parse/serialize perf and memory on a real-world structure.                                   |
-| `real-templated-deck.pptx`            | A deck using a custom master    | Verify multi-master decks parse with all masters captured opaquely.                                      |
+| Slot                             | Source                            | Why we need it                                                                                          |
+| -------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `real-pp-2021-deck.pptx`         | PowerPoint for Windows            | Verify our parser tolerates Microsoft's "PowerPoint default" XML (themes, masters, defaultTextStyle).   |
+| `real-pp-mac-deck.pptx`          | PowerPoint for Mac                | Mac PPT emits some attributes in different orders.                                                      |
+| `real-keynote-export.pptx`       | Keynote "Export to PowerPoint"    | Keynote's export differs from native PPT in masters, font handling, and `mc:AlternateContent` wrapping. |
+| `real-google-slides-export.pptx` | Google Slides "Download .pptx"    | Slides exports tend to flatten masters and emit unusual placeholder shapes.                             |
+| `real-with-smartart.pptx`        | PowerPoint with SmartArt          | Verify SmartArt `graphicFrame` round-trips opaquely; rels to `ppt/diagrams/*` survive.                  |
+| `real-with-animations.pptx`      | PowerPoint with animations        | Verify `<p:timing>` round-trips opaquely; nothing in our edits perturbs it.                             |
+| `real-with-transitions.pptx`     | PowerPoint with slide transitions | Verify `<p:transition>` round-trips opaquely.                                                           |
+| `real-with-embedded-chart.pptx`  | PowerPoint with embedded chart    | Verify `ppt/charts/*` and the chart `graphicFrame` round-trip opaquely.                                 |
+| `real-with-notes.pptx`           | PowerPoint with speaker notes     | Verify `ppt/notesSlides/*` round-trips, and `delete-slide` cleans the attached notes part.              |
+| `real-large-50-slide.pptx`       | A real 50+ slide deck             | Stress-test parse/serialize perf and memory on a real-world structure.                                  |
+| `real-templated-deck.pptx`       | A deck using a custom master      | Verify multi-master decks parse with all masters captured opaquely.                                     |
 
 > **Reproduction policy.** Real-world fixtures must be
 >
@@ -110,7 +110,7 @@ fetches a public-domain deck into `./real-world/.cache/` at test time).
   `packages/pptx/src/serializer/serialize.test.ts` use **synthetic XML** (not these
   zip files) so the tests stay sub-millisecond. The fixtures here are the next
   layer: they run the full container path (`OoxmlContainer.load → parsePptx →
-  serializePptx → reload`).
+serializePptx → reload`).
 - `tests/roundtrip/pptx/` (top-level integration tests) iterates this directory and
   asserts `untouched parts are byte-identical`.
 - The web demo (`apps/web/app/pptx-editor/`) bundles a tiny in-browser synthetic

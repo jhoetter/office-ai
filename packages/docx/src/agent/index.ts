@@ -16,7 +16,12 @@ export {
   type PageTrigger,
 } from "./pages.js";
 export { diffDocxSnapshots } from "./diff.js";
-export { resolveEffectiveRpr, resolveEffectivePpr } from "./style-resolver.js";
+export {
+  resolveEffectiveRpr,
+  resolveEffectivePpr,
+  resolveThemeFont,
+  WORD_DEFAULT_THEME_FONTS,
+} from "./style-resolver.js";
 export {
   resolveHeaderFooterParts,
   type ResolvedHeaderFooter,

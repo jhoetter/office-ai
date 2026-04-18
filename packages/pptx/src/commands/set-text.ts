@@ -1,10 +1,5 @@
 import type { CommandHandler } from "@officeai/core";
-import type {
-  PptxSnapshot,
-  TextParagraph,
-  TextRun,
-  TextShape,
-} from "../model/types.js";
+import type { PptxSnapshot, TextParagraph, TextRun, TextShape } from "../model/types.js";
 import {
   buildDiff,
   evolveSnapshot,
@@ -42,9 +37,7 @@ export const setTextHandler: CommandHandler<SetTextPayload, PptxSnapshot> = {
         id: ctx.mintNodeId(),
         properties: { ...inheritedParaProps },
         runs: [run],
-        ...(i === 0 && firstPara?.endParaRPrRaw
-          ? { endParaRPrRaw: firstPara.endParaRPrRaw }
-          : {}),
+        ...(i === 0 && firstPara?.endParaRPrRaw ? { endParaRPrRaw: firstPara.endParaRPrRaw } : {}),
       };
       return p;
     });

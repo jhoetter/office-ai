@@ -66,7 +66,8 @@ export type RefTarget =
   | { kind: "ref"; sheet?: string; row: number; col: number }
   | { kind: "range"; sheet?: string; r1: number; c1: number; r2: number; c2: number };
 
-const REF_PATTERN = /^(?:'((?:[^']|'')+)'!|([A-Za-z_][A-Za-z0-9_.]*)!)?(\$?[A-Za-z]{1,3}\$?\d{1,7})(?::(\$?[A-Za-z]{1,3}\$?\d{1,7}))?/;
+const REF_PATTERN =
+  /^(?:'((?:[^']|'')+)'!|([A-Za-z_][A-Za-z0-9_.]*)!)?(\$?[A-Za-z]{1,3}\$?\d{1,7})(?::(\$?[A-Za-z]{1,3}\$?\d{1,7}))?/;
 const NUMBER_PATTERN = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/;
 const FUNCTION_PATTERN = /^([A-Za-z_][A-Za-z0-9_.]*)\s*\(/;
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*/;

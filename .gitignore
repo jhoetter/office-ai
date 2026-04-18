@@ -88,3 +88,10 @@ scratch/
 # Playwright artifacts
 playwright-report/
 test-results/
+
+# Personal scratch documents at the repo root (devs commonly drop real
+# Office files here for ad-hoc smoke testing). Fixtures live under
+# fixtures/ and packages/**/fixtures/, which are NOT ignored.
+/*.docx
+/*.xlsx
+/*.pptx

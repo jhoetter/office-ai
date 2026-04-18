@@ -219,14 +219,7 @@ export interface Slide {
 
 // ─── Animations / transitions (F4) ───────────────────────────────────────
 
-export type TransitionKind =
-  | "none"
-  | "fade"
-  | "push"
-  | "wipe"
-  | "split"
-  | "cut"
-  | "unsupported";
+export type TransitionKind = "none" | "fade" | "push" | "wipe" | "split" | "cut" | "unsupported";
 
 export type TransitionSpeed = "slow" | "med" | "fast";
 
@@ -262,13 +255,7 @@ export interface EntranceAnimation {
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-export type Shape =
-  | TextShape
-  | Picture
-  | TableShape
-  | ChartShape
-  | GroupShape
-  | OpaqueShape;
+export type Shape = TextShape | Picture | TableShape | ChartShape | GroupShape | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 

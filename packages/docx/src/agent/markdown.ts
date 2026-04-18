@@ -41,10 +41,7 @@ const HEADING_STYLES: Record<string, number> = {
  *
  * Pure: no I/O, no mutation. Safe to call from any context.
  */
-export function snapshotToMarkdown(
-  snapshot: DocxSnapshot,
-  options?: SnapshotToMarkdownOptions
-): string {
+export function snapshotToMarkdown(snapshot: DocxSnapshot, options?: SnapshotToMarkdownOptions): string {
   const lines: string[] = [];
   const commentParents = buildCommentParentIndex(snapshot.root.body);
 

@@ -18,9 +18,7 @@ export function snapshotToMarkdown(snap: PptxSnapshot): string {
   const lines: string[] = [];
   lines.push(`# Presentation`);
   lines.push("");
-  lines.push(
-    `Slide size: ${snap.root.slideSize.cxEmu} × ${snap.root.slideSize.cyEmu} EMU`
-  );
+  lines.push(`Slide size: ${snap.root.slideSize.cxEmu} × ${snap.root.slideSize.cyEmu} EMU`);
   lines.push(`Slides: ${snap.root.slides.length}`);
   lines.push("");
   for (let i = 0; i < snap.root.slides.length; i++) {
@@ -30,11 +28,7 @@ export function snapshotToMarkdown(snap: PptxSnapshot): string {
   return lines.join("\n");
 }
 
-function renderSlide(
-  num: number,
-  slide: Slide,
-  charts: ReadonlyMap<string, ChartPart>
-): string[] {
+function renderSlide(num: number, slide: Slide, charts: ReadonlyMap<string, ChartPart>): string[] {
   const out: string[] = [];
   out.push(`## Slide ${num} — \`${slide.partPath}\` (slideId=${slide.slideId})`);
   out.push("");
@@ -46,9 +40,7 @@ function renderSlide(
     out.push(`- _animations_:`);
     for (const a of slide.animations) {
       const dur = a.durationMs !== undefined ? ` ${a.durationMs}ms` : "";
-      out.push(
-        `  - \`${a.id}\` ${a.order + 1}. **${a.effect}**${dur} → cNvPr=${a.targetCNvPrId}`
-      );
+      out.push(`  - \`${a.id}\` ${a.order + 1}. **${a.effect}**${dur} → cNvPr=${a.targetCNvPrId}`);
     }
   }
   if (slide.transition || slide.animations.length > 0) out.push("");
@@ -58,11 +50,7 @@ function renderSlide(
   return out;
 }
 
-function renderShape(
-  sh: Shape,
-  depth: number,
-  charts: ReadonlyMap<string, ChartPart>
-): string[] {
+function renderShape(sh: Shape, depth: number, charts: ReadonlyMap<string, ChartPart>): string[] {
   const indent = "  ".repeat(depth);
   const out: string[] = [];
   const bbox = bboxString(sh);
@@ -113,7 +101,10 @@ function renderTable(table: TableShape, depth: number): string[] {
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r];
     const cells = row.cells.map((c) => {
-      const txt = c.txBody.paragraphs.map((p) => paragraphText(p)).join(" / ").trim();
+      const txt = c.txBody.paragraphs
+        .map((p) => paragraphText(p))
+        .join(" / ")
+        .trim();
       return txt.length > 0 ? txt : "(empty)";
     });
     out.push(`${indent}| ${cells.join(" | ")} |`);

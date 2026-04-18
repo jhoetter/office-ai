@@ -8,7 +8,7 @@ import type {
   RelationshipsSnap,
   Slide,
 } from "../model/types.js";
-import { buildDiff, evolveSnapshot, findSlide, makeError, maxCNvPrId } from "./helpers.js";
+import { evolveSnapshot, findSlide, makeError, maxCNvPrId } from "./helpers.js";
 import type { InsertImagePayload } from "./payloads.js";
 
 const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
@@ -108,10 +108,7 @@ export const insertImageHandler: CommandHandler<InsertImagePayload, PptxSnapshot
       if (!hasDefault) {
         newContentTypes = {
           ...snapshot.contentTypes,
-          defaults: [
-            ...snapshot.contentTypes.defaults,
-            { extension: ext, contentType: payload.mimeType },
-          ],
+          defaults: [...snapshot.contentTypes.defaults, { extension: ext, contentType: payload.mimeType }],
         };
         contentTypesDirty = true;
       }
@@ -245,11 +242,7 @@ function relativeFromRels(relsPath: string, targetPath: string): string {
   const ownerSegs = ownerDir.split("/").filter((s) => s.length > 0);
   const targetSegs = targetPath.split("/");
   let i = 0;
-  while (
-    i < ownerSegs.length &&
-    i < targetSegs.length - 1 &&
-    ownerSegs[i] === targetSegs[i]
-  ) {
+  while (i < ownerSegs.length && i < targetSegs.length - 1 && ownerSegs[i] === targetSegs[i]) {
     i++;
   }
   const ups = ownerSegs.length - i;

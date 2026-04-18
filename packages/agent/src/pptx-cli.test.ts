@@ -46,8 +46,7 @@ function makeIO() {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..", "..");
-const FIXTURE = (name: string): string =>
-  resolve(REPO_ROOT, "fixtures", "pptx", "synthetic", name);
+const FIXTURE = (name: string): string => resolve(REPO_ROOT, "fixtures", "pptx", "synthetic", name);
 
 const SINGLE = FIXTURE("03-title-and-content.pptx");
 const MULTI = FIXTURE("07-multi-slide.pptx");
@@ -89,10 +88,7 @@ describe("office-agent pptx subcommand group", () => {
 
   it("pptx read --slide N restricts to a single slide", async () => {
     const { io, stdout } = makeIO();
-    const code = await runCli(
-      ["pptx", "read", "--file", MULTI, "--format", "json", "--slide", "1"],
-      io
-    );
+    const code = await runCli(["pptx", "read", "--file", MULTI, "--format", "json", "--slide", "1"], io);
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout.text());
     expect(parsed.slides).toHaveLength(1);
@@ -111,10 +107,7 @@ describe("office-agent pptx subcommand group", () => {
     const dir = mkdtempSync(join(tmpdir(), "pptx-cli-add-"));
     const out = join(dir, "out.pptx");
     const { io } = makeIO();
-    const code = await runCli(
-      ["pptx", "add-slide", "--file", SINGLE, "--out", out],
-      io
-    );
+    const code = await runCli(["pptx", "add-slide", "--file", SINGLE, "--out", out], io);
     expect(code).toBe(0);
     const agent = await PptxAgent.fromBuffer(readFileSync(out));
     expect(agent.getSnapshot().root.slides.length).toBe(2);
@@ -124,16 +117,11 @@ describe("office-agent pptx subcommand group", () => {
     const dir = mkdtempSync(join(tmpdir(), "pptx-cli-del-"));
     const out = join(dir, "out.pptx");
     const { io } = makeIO();
-    const code = await runCli(
-      ["pptx", "delete-slide", "--file", MULTI, "--slide", "1", "--out", out],
-      io
-    );
+    const code = await runCli(["pptx", "delete-slide", "--file", MULTI, "--slide", "1", "--out", out], io);
     expect(code).toBe(0);
     const before = await PptxAgent.fromBuffer(readFileSync(MULTI));
     const after = await PptxAgent.fromBuffer(readFileSync(out));
-    expect(after.getSnapshot().root.slides.length).toBe(
-      before.getSnapshot().root.slides.length - 1
-    );
+    expect(after.getSnapshot().root.slides.length).toBe(before.getSnapshot().root.slides.length - 1);
   });
 
   it("pptx duplicate-slide and move-slide compose into the expected order", async () => {
@@ -142,14 +130,10 @@ describe("office-agent pptx subcommand group", () => {
     const moved = join(dir, "moved.pptx");
     const { io } = makeIO();
 
-    let code = await runCli(
-      ["pptx", "duplicate-slide", "--file", MULTI, "--slide", "0", "--out", dup],
-      io
-    );
+    let code = await runCli(["pptx", "duplicate-slide", "--file", MULTI, "--slide", "0", "--out", dup], io);
     expect(code).toBe(0);
     const dupAgent = await PptxAgent.fromBuffer(readFileSync(dup));
-    const baseLen = (await PptxAgent.fromBuffer(readFileSync(MULTI))).getSnapshot().root.slides
-      .length;
+    const baseLen = (await PptxAgent.fromBuffer(readFileSync(MULTI))).getSnapshot().root.slides.length;
     expect(dupAgent.getSnapshot().root.slides.length).toBe(baseLen + 1);
 
     code = await runCli(
@@ -194,9 +178,7 @@ describe("office-agent pptx subcommand group", () => {
 
   it("pptx set-position and set-size update geometry", async () => {
     const baseAgent = await loadDeterministic(SINGLE);
-    const textShape = baseAgent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.kind === "text");
+    const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
     if (!textShape) throw new Error("expected text shape");
 
     const dir = mkdtempSync(join(tmpdir(), "pptx-cli-pos-"));
@@ -287,9 +269,7 @@ describe("office-agent pptx subcommand group", () => {
 
   it("pptx apply runs a JSON command file", async () => {
     const baseAgent = await loadDeterministic(SINGLE);
-    const textShape = baseAgent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.kind === "text");
+    const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
     if (!textShape) throw new Error("expected text shape");
 
     const dir = mkdtempSync(join(tmpdir(), "pptx-cli-apply-"));
@@ -308,10 +288,7 @@ describe("office-agent pptx subcommand group", () => {
       })
     );
     const { io, stdout } = makeIO();
-    const code = await runCli(
-      ["pptx", "apply", "--file", SINGLE, "--commands", cmdsPath, "--out", out],
-      io
-    );
+    const code = await runCli(["pptx", "apply", "--file", SINGLE, "--commands", cmdsPath, "--out", out], io);
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout.text());
     expect(parsed.mutations).toHaveLength(2);
@@ -338,12 +315,22 @@ describe("office-agent pptx subcommand group", () => {
       const { io } = makeIO();
       const code = await runCli(
         [
-          "pptx", "table-set-cell-text",
-          "--file", TABLE, "--out", out,
-          "--slide", String(slide),
-          "--shape", shapeId,
-          "--row", "0", "--column", "0",
-          "--text", "CLI Cell",
+          "pptx",
+          "table-set-cell-text",
+          "--file",
+          TABLE,
+          "--out",
+          out,
+          "--slide",
+          String(slide),
+          "--shape",
+          shapeId,
+          "--row",
+          "0",
+          "--column",
+          "0",
+          "--text",
+          "CLI Cell",
         ],
         io
       );
@@ -375,10 +362,16 @@ describe("office-agent pptx subcommand group", () => {
 
       let code = await runCli(
         [
-          "pptx", "table-add-row",
-          "--file", TABLE, "--out", a,
-          "--slide", String(beforeTbl.slide),
-          "--shape", beforeTbl.sh.id,
+          "pptx",
+          "table-add-row",
+          "--file",
+          TABLE,
+          "--out",
+          a,
+          "--slide",
+          String(beforeTbl.slide),
+          "--shape",
+          beforeTbl.sh.id,
         ],
         io
       );
@@ -387,26 +380,28 @@ describe("office-agent pptx subcommand group", () => {
       // IDs are minted from the parser, and adding a row shifts later IDs.
       // Re-resolve the table id from the saved file before the next call.
       const aAgent = await loadDeterministic(a);
-      const aTbl = aAgent
-        .getSnapshot()
-        .root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
+      const aTbl = aAgent.getSnapshot().root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
       if (!aTbl) throw new Error("table missing in intermediate file");
 
       code = await runCli(
         [
-          "pptx", "table-add-column",
-          "--file", a, "--out", b,
-          "--slide", String(beforeTbl.slide),
-          "--shape", aTbl.id,
+          "pptx",
+          "table-add-column",
+          "--file",
+          a,
+          "--out",
+          b,
+          "--slide",
+          String(beforeTbl.slide),
+          "--shape",
+          aTbl.id,
         ],
         io
       );
       expect(code).toBe(0);
 
       const after = await loadDeterministic(b);
-      const tbl = after.getSnapshot().root.slides[beforeTbl.slide].shapes.find(
-        (s) => s.kind === "table"
-      );
+      const tbl = after.getSnapshot().root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
       if (!tbl || tbl.kind !== "table") throw new Error("table missing");
       expect(tbl.rows.length).toBe(beforeRows + 1);
       expect(tbl.columnWidths.length).toBe(beforeCols + 1);
@@ -435,38 +430,48 @@ describe("office-agent pptx subcommand group", () => {
 
       let code = await runCli(
         [
-          "pptx", "table-delete-row",
-          "--file", TABLE, "--out", a,
-          "--slide", String(beforeTbl.slide),
-          "--shape", beforeTbl.sh.id,
-          "--row", String(beforeRows - 1),
+          "pptx",
+          "table-delete-row",
+          "--file",
+          TABLE,
+          "--out",
+          a,
+          "--slide",
+          String(beforeTbl.slide),
+          "--shape",
+          beforeTbl.sh.id,
+          "--row",
+          String(beforeRows - 1),
         ],
         io
       );
       expect(code).toBe(0);
 
       const aAgent = await loadDeterministic(a);
-      const aTbl = aAgent
-        .getSnapshot()
-        .root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
+      const aTbl = aAgent.getSnapshot().root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
       if (!aTbl) throw new Error("table missing in intermediate file");
 
       code = await runCli(
         [
-          "pptx", "table-delete-column",
-          "--file", a, "--out", b,
-          "--slide", String(beforeTbl.slide),
-          "--shape", aTbl.id,
-          "--column", String(beforeCols - 1),
+          "pptx",
+          "table-delete-column",
+          "--file",
+          a,
+          "--out",
+          b,
+          "--slide",
+          String(beforeTbl.slide),
+          "--shape",
+          aTbl.id,
+          "--column",
+          String(beforeCols - 1),
         ],
         io
       );
       expect(code).toBe(0);
 
       const after = await loadDeterministic(b);
-      const tbl = after.getSnapshot().root.slides[beforeTbl.slide].shapes.find(
-        (s) => s.kind === "table"
-      );
+      const tbl = after.getSnapshot().root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
       if (!tbl || tbl.kind !== "table") throw new Error("table missing");
       expect(tbl.rows.length).toBe(beforeRows - 1);
       expect(tbl.columnWidths.length).toBe(beforeCols - 1);
@@ -521,38 +526,48 @@ describe("office-agent pptx subcommand group", () => {
 
       let code = await runCli(
         [
-          "pptx", "chart-set-title",
-          "--file", CHART, "--out", a,
-          "--slide", String(slide),
-          "--shape", shapeId,
-          "--title", "Quarterly Revenue",
+          "pptx",
+          "chart-set-title",
+          "--file",
+          CHART,
+          "--out",
+          a,
+          "--slide",
+          String(slide),
+          "--shape",
+          shapeId,
+          "--title",
+          "Quarterly Revenue",
         ],
         io
       );
       expect(code).toBe(0);
       const aAgent = await loadDeterministic(a);
-      const aChart = aAgent.getSnapshot().root.slides[slide].shapes.find(
-        (s) => s.kind === "chart"
-      );
+      const aChart = aAgent.getSnapshot().root.slides[slide].shapes.find((s) => s.kind === "chart");
       if (!aChart || aChart.kind !== "chart") throw new Error("chart missing");
       const aPart = aAgent.getSnapshot().root.charts.get(aChart.chartPartPath);
       expect(aPart?.title).toBe("Quarterly Revenue");
 
       code = await runCli(
         [
-          "pptx", "chart-set-type",
-          "--file", a, "--out", b,
-          "--slide", String(slide),
-          "--shape", aChart.id,
-          "--type", "line",
+          "pptx",
+          "chart-set-type",
+          "--file",
+          a,
+          "--out",
+          b,
+          "--slide",
+          String(slide),
+          "--shape",
+          aChart.id,
+          "--type",
+          "line",
         ],
         io
       );
       expect(code).toBe(0);
       const bAgent = await loadDeterministic(b);
-      const bChart = bAgent.getSnapshot().root.slides[slide].shapes.find(
-        (s) => s.kind === "chart"
-      );
+      const bChart = bAgent.getSnapshot().root.slides[slide].shapes.find((s) => s.kind === "chart");
       if (!bChart || bChart.kind !== "chart") throw new Error("chart missing");
       const bPart = bAgent.getSnapshot().root.charts.get(bChart.chartPartPath);
       expect(bPart?.chartType).toBe("line");
@@ -576,11 +591,18 @@ describe("office-agent pptx subcommand group", () => {
       const { io } = makeIO();
       const code = await runCli(
         [
-          "pptx", "chart-set-data",
-          "--file", CHART, "--out", out,
-          "--slide", String(slide),
-          "--shape", shapeId,
-          "--data", dataPath,
+          "pptx",
+          "chart-set-data",
+          "--file",
+          CHART,
+          "--out",
+          out,
+          "--slide",
+          String(slide),
+          "--shape",
+          shapeId,
+          "--data",
+          dataPath,
         ],
         io
       );
@@ -612,11 +634,18 @@ describe("office-agent pptx subcommand group", () => {
       const { io, stderr } = makeIO();
       const code = await runCli(
         [
-          "pptx", "chart-set-data",
-          "--file", CHART, "--out", out,
-          "--slide", String(slide),
-          "--shape", shapeId,
-          "--data", dataPath,
+          "pptx",
+          "chart-set-data",
+          "--file",
+          CHART,
+          "--out",
+          out,
+          "--slide",
+          String(slide),
+          "--shape",
+          shapeId,
+          "--data",
+          dataPath,
         ],
         io
       );
@@ -654,11 +683,18 @@ describe("office-agent pptx subcommand group", () => {
       const { io } = makeIO();
       const code = await runCli(
         [
-          "pptx", "set-slide-transition",
-          "--file", ANIM, "--out", out,
-          "--slide", "0",
-          "--kind", "wipe",
-          "--speed", "fast",
+          "pptx",
+          "set-slide-transition",
+          "--file",
+          ANIM,
+          "--out",
+          out,
+          "--slide",
+          "0",
+          "--kind",
+          "wipe",
+          "--speed",
+          "fast",
         ],
         io
       );
@@ -674,12 +710,7 @@ describe("office-agent pptx subcommand group", () => {
       const out = join(dir, "out.pptx");
       const { io } = makeIO();
       const code = await runCli(
-        [
-          "pptx", "set-slide-transition",
-          "--file", ANIM, "--out", out,
-          "--slide", "0",
-          "--kind", "none",
-        ],
+        ["pptx", "set-slide-transition", "--file", ANIM, "--out", out, "--slide", "0", "--kind", "none"],
         io
       );
       expect(code).toBe(0);
@@ -694,30 +725,43 @@ describe("office-agent pptx subcommand group", () => {
       const c = join(dir, "c.pptx");
 
       const baseAgent = await loadDeterministic(SINGLE);
-      const target = baseAgent.getSnapshot().root.slides[0]!.shapes.find(
-        (s) => s.cNvPrId > 0
-      )!;
+      const target = baseAgent.getSnapshot().root.slides[0]!.shapes.find((s) => s.cNvPrId > 0)!;
 
       const { io } = makeIO();
       let code = await runCli(
         [
-          "pptx", "add-shape-animation",
-          "--file", SINGLE, "--out", a,
-          "--slide", "0",
-          "--shape", target.id,
-          "--effect", "appear",
+          "pptx",
+          "add-shape-animation",
+          "--file",
+          SINGLE,
+          "--out",
+          a,
+          "--slide",
+          "0",
+          "--shape",
+          target.id,
+          "--effect",
+          "appear",
         ],
         io
       );
       expect(code).toBe(0);
       code = await runCli(
         [
-          "pptx", "add-shape-animation",
-          "--file", a, "--out", b,
-          "--slide", "0",
-          "--shape", target.id,
-          "--effect", "fade",
-          "--duration-ms", "400",
+          "pptx",
+          "add-shape-animation",
+          "--file",
+          a,
+          "--out",
+          b,
+          "--slide",
+          "0",
+          "--shape",
+          target.id,
+          "--effect",
+          "fade",
+          "--duration-ms",
+          "400",
         ],
         io
       );
@@ -732,10 +776,16 @@ describe("office-agent pptx subcommand group", () => {
       const reverseOrder = [anims[1]!.id, anims[0]!.id].join(",");
       code = await runCli(
         [
-          "pptx", "reorder-shape-animations",
-          "--file", b, "--out", c,
-          "--slide", "0",
-          "--order", reverseOrder,
+          "pptx",
+          "reorder-shape-animations",
+          "--file",
+          b,
+          "--out",
+          c,
+          "--slide",
+          "0",
+          "--order",
+          reverseOrder,
         ],
         io
       );
@@ -748,12 +798,7 @@ describe("office-agent pptx subcommand group", () => {
       const dropId = reordered[0]!.id;
       const d = join(dir, "d.pptx");
       code = await runCli(
-        [
-          "pptx", "remove-shape-animation",
-          "--file", c, "--out", d,
-          "--slide", "0",
-          "--animation", dropId,
-        ],
+        ["pptx", "remove-shape-animation", "--file", c, "--out", d, "--slide", "0", "--animation", dropId],
         io
       );
       expect(code).toBe(0);

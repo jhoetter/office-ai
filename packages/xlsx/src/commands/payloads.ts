@@ -182,6 +182,12 @@ export interface SetRowHeightPayload {
   readonly height: number | null;
 }
 
+/** `xlsx:delete-sheet` */
+export interface DeleteSheetPayload {
+  /** Sheet name to drop (case-sensitive lookup). */
+  readonly name: string;
+}
+
 /** `xlsx:add-comment` */
 export interface AddCommentPayload {
   readonly sheet: string;
@@ -190,4 +196,54 @@ export interface AddCommentPayload {
   /** Comment body. Plain text in P0 (rich-text formatting deferred). */
   readonly text: string;
   readonly author: string;
+}
+
+/* ── P13: Clipboard / Fill / Text-to-Columns ─────────────────────────────── */
+
+/**
+ * `xlsx:paste-range` (§14)
+ *
+ * Atomically writes a {@link XlsxClipboardSnapshot} at the target
+ * top-left cell. Modes:
+ *   - `"all"`     — values + formulas + styleIds + merges (default)
+ *   - `"values"`  — values + formulas only (style preserved)
+ *   - `"formats"` — styleIds only (value preserved)
+ *
+ * `transpose: true` flips rows and columns before applying.
+ */
+export interface PasteRangePayload {
+  readonly sheet: string;
+  /** A1 single-cell ref pointing at the destination top-left. */
+  readonly target: string;
+  readonly source: import("../clipboard/snapshot.js").XlsxClipboardSnapshot;
+  readonly mode?: "all" | "values" | "formats";
+  readonly transpose?: boolean;
+}
+
+/**
+ * `xlsx:fill-range` (§15) — Excel's drag-the-corner fill handle.
+ *
+ * `source` is the original selection (the cells the user grabbed);
+ * `target` extends it by one direction. The handler diffs the two
+ * rectangles, picks a series detector against the source data, and
+ * writes the extrapolated cells.
+ */
+export interface FillRangePayload {
+  readonly sheet: string;
+  readonly source: string;
+  readonly target: string;
+  readonly direction: "down" | "right" | "up" | "left";
+}
+
+/**
+ * `xlsx:text-to-columns` (§16) — split each row of `range` on a
+ * delimiter and write the columns out in row-major order starting
+ * at `destination` (defaults to the same top-left as `range`).
+ */
+export interface TextToColumnsPayload {
+  readonly sheet: string;
+  readonly range: string;
+  readonly delimiter: string;
+  readonly treatConsecutiveAsOne?: boolean;
+  readonly destination?: string;
 }

@@ -1,11 +1,5 @@
 import type { CommandHandler } from "@officeai/core";
-import type {
-  PptxSnapshot,
-  TextParagraph,
-  TextRun,
-  TextRunProperties,
-  TextShape,
-} from "../model/types.js";
+import type { PptxSnapshot, TextParagraph, TextRun, TextRunProperties, TextShape } from "../model/types.js";
 import {
   buildDiff,
   evolveSnapshot,
@@ -154,7 +148,11 @@ function coalesce(runs: ReadonlyArray<TextRun>): TextRun[] {
 
 function propsEqual(a: TextRunProperties, b: TextRunProperties): boolean {
   // Compare the JSON-serialised view; properties are simple.
-  const stripIds = (p: TextRunProperties) => ({ ...p, opaqueAttrs: p.opaqueAttrs, opaqueChildren: p.opaqueChildren });
+  const stripIds = (p: TextRunProperties) => ({
+    ...p,
+    opaqueAttrs: p.opaqueAttrs,
+    opaqueChildren: p.opaqueChildren,
+  });
   return JSON.stringify(stripIds(a)) === JSON.stringify(stripIds(b));
 }
 

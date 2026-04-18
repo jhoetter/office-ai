@@ -81,7 +81,10 @@ interface LocatedHFParagraph {
   readonly paragraphIdx: number;
 }
 
-function locateParagraphInHeaderFooter(snapshot: DocxSnapshot, paragraphId: string): LocatedHFParagraph | null {
+function locateParagraphInHeaderFooter(
+  snapshot: DocxSnapshot,
+  paragraphId: string
+): LocatedHFParagraph | null {
   for (let i = 0; i < snapshot.root.headersAndFooters.length; i++) {
     const part = snapshot.root.headersAndFooters[i];
     for (let j = 0; j < part.body.length; j++) {

@@ -45,22 +45,22 @@ export interface SnapshotToMarkdownOptions {
   readonly withPageSections?: boolean;
 }
 
-export function snapshotToMarkdown(
-  snapshot: DocxSnapshot,
-  options?: SnapshotToMarkdownOptions
-): string;
+export function snapshotToMarkdown(snapshot: DocxSnapshot, options?: SnapshotToMarkdownOptions): string;
 ```
 
 Output shape with `withPageSections: true`:
 
 ```markdown
 <!-- page 1 -->
+
 ## Page 1
 
 # Title
+
 First paragraph.
 
 <!-- page 2 -->
+
 ## Page 2
 
 Second-page paragraph.
@@ -91,17 +91,17 @@ Lists every page chunk:
       "startBlockIndex": 0,
       "endBlockIndex": 4,
       "trigger": "doc-start",
-      "preview": "Title\nFirst paragraph…"
+      "preview": "Title\nFirst paragraph…",
     },
     {
       "pageNumber": 2,
       "startBlockIndex": 5,
       "endBlockIndex": 11,
       "trigger": "page-break",
-      "preview": "Second-page paragraph…"
-    }
+      "preview": "Second-page paragraph…",
+    },
   ],
-  "total": 2
+  "total": 2,
 }
 ```
 
@@ -131,7 +131,7 @@ Returns the markdown projection scoped to a single page:
   "startBlockIndex": 11,
   "endBlockIndex": 17,
   "format": "markdown",
-  "content": "# Section heading\n\nBody…\n"
+  "content": "# Section heading\n\nBody…\n",
 }
 ```
 
@@ -144,7 +144,7 @@ Schema:
 Errors:
 
 - `out-of-range` — when `page < 1` or `page > total`.
-- `unknown handle` — same as every other docx_* tool.
+- `unknown handle` — same as every other docx\_\* tool.
 
 ### W24 — Selection-aware page helpers
 
@@ -173,12 +173,7 @@ interface PageInfo {
   readonly preview: string;
 }
 
-type PageTrigger =
-  | "doc-start"
-  | "page-break"
-  | "last-rendered"
-  | "section-break"
-  | "measured-overflow";
+type PageTrigger = "doc-start" | "page-break" | "last-rendered" | "section-break" | "measured-overflow";
 ```
 
 These helpers wrap `chunkIntoPages` and the markdown projection;

@@ -3,11 +3,7 @@ import { deterministicIdMinter } from "@officeai/core";
 import { DocxAgent } from "./agent.js";
 import { snapshotToMarkdown } from "./markdown.js";
 import { getPageInfos, getPageMarkdown, pageForParagraph } from "./pages.js";
-import {
-  DEFAULT_DOC_ROOT_ATTRS,
-  escapeXml,
-  makeSyntheticDocx,
-} from "../test-utils/synthetic.js";
+import { DEFAULT_DOC_ROOT_ATTRS, escapeXml, makeSyntheticDocx } from "../test-utils/synthetic.js";
 
 function syntheticDocXml(paras: ReadonlyArray<string>): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -65,12 +61,7 @@ describe("getPageInfos (P3.6 / W22)", () => {
 describe("pageForParagraph (P3.6 / W24)", () => {
   it("resolves the page of every body paragraph", async () => {
     const agent = await makeAgent(
-      syntheticDocXml([
-        paraXml("first"),
-        paraXml("second"),
-        paraWithPageBreak("third"),
-        paraXml("fourth"),
-      ])
+      syntheticDocXml([paraXml("first"), paraXml("second"), paraWithPageBreak("third"), paraXml("fourth")])
     );
     expect(agent.pageForParagraph(0)).toBe(1);
     expect(agent.pageForParagraph(1)).toBe(1);
@@ -85,9 +76,7 @@ describe("pageForParagraph (P3.6 / W24)", () => {
   });
 
   it("agrees with the snapshot pageForParagraph helper", async () => {
-    const agent = await makeAgent(
-      syntheticDocXml([paraXml("a"), paraWithPageBreak("b")])
-    );
+    const agent = await makeAgent(syntheticDocXml([paraXml("a"), paraWithPageBreak("b")]));
     const snap = agent.getSnapshot();
     expect(pageForParagraph(snap, 0)).toBe(1);
     expect(pageForParagraph(snap, 1)).toBe(2);
@@ -96,9 +85,7 @@ describe("pageForParagraph (P3.6 / W24)", () => {
 
 describe("getPageMarkdown (P3.6 / W24)", () => {
   it("returns the markdown for a single page", async () => {
-    const agent = await makeAgent(
-      syntheticDocXml([paraXml("Page one"), paraWithPageBreak("Page two")])
-    );
+    const agent = await makeAgent(syntheticDocXml([paraXml("Page one"), paraWithPageBreak("Page two")]));
     const md = agent.getPageMarkdown(2);
     expect(md).toContain("Page two");
     expect(md).not.toContain("Page one");
@@ -113,18 +100,14 @@ describe("getPageMarkdown (P3.6 / W24)", () => {
 
 describe("snapshotToMarkdown withPageSections (P3.6 / W22)", () => {
   it("is byte-identical to the default output when withPageSections is false/absent", async () => {
-    const agent = await makeAgent(
-      syntheticDocXml([paraXml("Hello"), paraWithPageBreak("World")])
-    );
+    const agent = await makeAgent(syntheticDocXml([paraXml("Hello"), paraWithPageBreak("World")]));
     const baseline = snapshotToMarkdown(agent.getSnapshot());
     const explicit = snapshotToMarkdown(agent.getSnapshot(), { withPageSections: false });
     expect(explicit).toBe(baseline);
   });
 
   it("emits page anchors and headings when enabled", async () => {
-    const agent = await makeAgent(
-      syntheticDocXml([paraXml("Hello"), paraWithPageBreak("World")])
-    );
+    const agent = await makeAgent(syntheticDocXml([paraXml("Hello"), paraWithPageBreak("World")]));
     const md = snapshotToMarkdown(agent.getSnapshot(), { withPageSections: true });
     expect(md).toContain("<!-- page 1 -->");
     expect(md).toContain("## Page 1");
@@ -136,11 +119,7 @@ describe("snapshotToMarkdown withPageSections (P3.6 / W22)", () => {
 
   it("agrees with getPageInfos on the total page count", async () => {
     const agent = await makeAgent(
-      syntheticDocXml([
-        paraXml("a"),
-        paraWithPageBreak("b"),
-        paraWithPageBreak("c"),
-      ])
+      syntheticDocXml([paraXml("a"), paraWithPageBreak("b"), paraWithPageBreak("c")])
     );
     const pages = getPageInfos(agent.getSnapshot());
     const md = snapshotToMarkdown(agent.getSnapshot(), { withPageSections: true });
@@ -153,9 +132,7 @@ describe("snapshotToMarkdown withPageSections (P3.6 / W22)", () => {
 
 describe("getPageMarkdown integrates with getPageInfos", () => {
   it("returns markdown matching each page preview", async () => {
-    const agent = await makeAgent(
-      syntheticDocXml([paraXml("alpha"), paraWithPageBreak("beta")])
-    );
+    const agent = await makeAgent(syntheticDocXml([paraXml("alpha"), paraWithPageBreak("beta")]));
     const pages = agent.getPages();
     for (const p of pages) {
       const md = getPageMarkdown(agent.getSnapshot(), p.pageNumber);

@@ -23,12 +23,7 @@ export function shapeBoundingBox(shape: Shape): BoundingBox | null {
 
 /** Whether two boxes intersect (used for hit-testing & selection). */
 export function boxesIntersect(a: BoundingBox, b: BoundingBox): boolean {
-  return !(
-    a.x + a.cx < b.x ||
-    b.x + b.cx < a.x ||
-    a.y + a.cy < b.y ||
-    b.y + b.cy < a.y
-  );
+  return !(a.x + a.cx < b.x || b.x + b.cx < a.x || a.y + a.cy < b.y || b.y + b.cy < a.y);
 }
 
 /** Whether a point lies within a box. */

@@ -11,10 +11,7 @@
  */
 
 import { ooxml } from "@officeai/core";
-import {
-  DEFAULT_THEME,
-  type ThemeColorScheme,
-} from "../renderer/layout/color.js";
+import { DEFAULT_THEME, type ThemeColorScheme } from "../renderer/layout/color.js";
 import { attrOf, elementEntries, findElementEntry } from "./xml-helpers.js";
 
 export function parseThemeColorScheme(xml: string): ThemeColorScheme {
@@ -35,8 +32,7 @@ export function parseThemeColorScheme(xml: string): ThemeColorScheme {
   const clrScheme = childByTag(themeElements, "a:clrScheme");
   if (!clrScheme) return DEFAULT_THEME;
 
-  const slot = (tag: string, fallback: string): string =>
-    extractColor(clrScheme, tag) ?? fallback;
+  const slot = (tag: string, fallback: string): string => extractColor(clrScheme, tag) ?? fallback;
 
   return {
     accent1: slot("a:accent1", DEFAULT_THEME.accent1),
@@ -54,20 +50,14 @@ export function parseThemeColorScheme(xml: string): ThemeColorScheme {
   };
 }
 
-function childByTag(
-  parent: Record<string, unknown>,
-  tag: string
-): Record<string, unknown> | null {
+function childByTag(parent: Record<string, unknown>, tag: string): Record<string, unknown> | null {
   const own = ooxml.getTag(parent);
   const subtree = parent[own];
   if (!Array.isArray(subtree)) return null;
   return findElementEntry(subtree as unknown[], tag);
 }
 
-function extractColor(
-  clrScheme: Record<string, unknown>,
-  slotTag: string
-): string | null {
+function extractColor(clrScheme: Record<string, unknown>, slotTag: string): string | null {
   const slot = childByTag(clrScheme, slotTag);
   if (!slot) return null;
   const slotKey = ooxml.getTag(slot);

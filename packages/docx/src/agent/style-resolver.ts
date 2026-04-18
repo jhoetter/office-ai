@@ -6,6 +6,7 @@ import type {
   RunProperties,
   StyleDefinition,
   StylesPart,
+  ThemePart,
 } from "../model/types.js";
 
 /**
@@ -20,6 +21,52 @@ import type {
  */
 
 const MAX_BASED_ON_DEPTH = 16;
+
+/**
+ * Word-default font scheme used when a document carries theme refs
+ * (`<w:rFonts w:asciiTheme="majorHAnsi"/>`) but ships no
+ * `word/theme/theme1.xml` to resolve them — most commonly synthetic
+ * test fixtures and hand-written demo docs.
+ *
+ * Values match what `File → New Document` produces in Word for
+ * Microsoft 365 (2024+), which switched the default font scheme from
+ * Calibri/Calibri Light to Aptos. Using these values means a doc that
+ * round-trips through us *without* shipping a theme part still renders
+ * the same way Word does — which is exactly the invariant the user
+ * spotted as broken when "Calibri shows in the editor, Aptos shows in
+ * Word".
+ */
+export const WORD_DEFAULT_THEME_FONTS: Readonly<Record<string, string>> = {
+  majorHAnsi: "Aptos Display",
+  minorHAnsi: "Aptos",
+  majorAscii: "Aptos Display",
+  minorAscii: "Aptos",
+  majorBidi: "Aptos Display",
+  minorBidi: "Aptos",
+  majorEastAsia: "Aptos Display",
+  minorEastAsia: "Aptos",
+};
+
+/**
+ * Resolve a `<w:rFonts w:asciiTheme="…"/>` reference to a literal
+ * typeface. Consults the document's typed {@link ThemePart} first,
+ * falls back to {@link WORD_DEFAULT_THEME_FONTS}. Exported so tests
+ * (and the toolbar's font dropdown, eventually) can probe the
+ * mapping.
+ */
+export function resolveThemeFont(theme: ThemePart | undefined, themeRef: string): string | undefined {
+  if (theme) {
+    if (themeRef === "majorHAnsi" || themeRef === "majorAscii" || themeRef === "majorBidi") {
+      if (theme.majorFont.latin) return theme.majorFont.latin;
+    }
+    if (themeRef === "minorHAnsi" || themeRef === "minorAscii" || themeRef === "minorBidi") {
+      if (theme.minorFont.latin) return theme.minorFont.latin;
+    }
+    if (themeRef === "majorEastAsia") return theme.majorFont.ea ?? theme.majorFont.latin;
+    if (themeRef === "minorEastAsia") return theme.minorFont.ea ?? theme.minorFont.latin;
+  }
+  return WORD_DEFAULT_THEME_FONTS[themeRef];
+}
 
 export function resolveEffectiveRpr(
   snapshot: DocxSnapshot,
@@ -43,13 +90,10 @@ export function resolveEffectiveRpr(
     }
   }
 
-  return acc;
+  return projectThemeFont(acc, snapshot.root.theme);
 }
 
-export function resolveEffectivePpr(
-  snapshot: DocxSnapshot,
-  paragraphIndex: number
-): ParagraphProperties {
+export function resolveEffectivePpr(snapshot: DocxSnapshot, paragraphIndex: number): ParagraphProperties {
   const paragraph = paragraphAt(snapshot, paragraphIndex);
   const styles = snapshot.root.styles;
 
@@ -141,11 +185,52 @@ function mergeRpr(a: RunProperties, b: RunProperties): RunProperties {
   if (b.italic !== undefined) out.italic = b.italic;
   if (b.underline !== undefined) out.underline = b.underline;
   if (b.strike !== undefined) out.strike = b.strike;
-  if (b.fontFamily !== undefined) out.fontFamily = b.fontFamily;
+  // `<w:rFonts>` is treated as a single property by Word's style
+  // cascade: if the child level supplies one (literal *or* theme),
+  // the parent's `<w:rFonts>` is replaced wholesale, not merged
+  // attribute-by-attribute. So a `Heading1` style that only carries
+  // `<w:rFonts w:asciiTheme="majorHAnsi"/>` drops the `Calibri` from
+  // `docDefaults.rPrDefault`. This matches Word 2024+ rendering of
+  // the bundled welcome doc (headings render as Aptos).
+  const childHasRFonts =
+    b.fontFamily !== undefined ||
+    b.fontFamilyAsciiTheme !== undefined ||
+    b.fontFamilyHAnsiTheme !== undefined;
+  if (childHasRFonts) {
+    if (b.fontFamily !== undefined) out.fontFamily = b.fontFamily;
+    else delete out.fontFamily;
+    if (b.fontFamilyAsciiTheme !== undefined) out.fontFamilyAsciiTheme = b.fontFamilyAsciiTheme;
+    else delete out.fontFamilyAsciiTheme;
+    if (b.fontFamilyHAnsiTheme !== undefined) out.fontFamilyHAnsiTheme = b.fontFamilyHAnsiTheme;
+    else delete out.fontFamilyHAnsiTheme;
+  }
   if (b.fontSize !== undefined) out.fontSize = b.fontSize;
   if (b.color !== undefined) out.color = b.color;
   if (b.highlight !== undefined) out.highlight = b.highlight;
   return out;
+}
+
+/**
+ * Final step of {@link resolveEffectiveRpr}. Mirrors Word's per-attribute
+ * resolution rule for `<w:rFonts>`: a literal `w:ascii` always wins
+ * over `w:asciiTheme` when both end up on the merged element. So if
+ * the cascade produced both — common when a Heading style only
+ * carries a theme ref but `docDefaults.rPrDefault` carries a literal
+ * font — the literal one is what Word renders.
+ *
+ * When the literal slot is empty *and* a theme ref is present, we
+ * project the theme ref through the loaded {@link ThemePart} (or the
+ * Word-default fallback map) into a concrete typeface and write it
+ * back into `fontFamily`. The theme attributes themselves are kept on
+ * the result so a downstream serializer round-trip stays lossless.
+ */
+function projectThemeFont(rpr: RunProperties, theme: ThemePart | undefined): RunProperties {
+  if (rpr.fontFamily) return rpr;
+  const themeRef = rpr.fontFamilyAsciiTheme ?? rpr.fontFamilyHAnsiTheme;
+  if (!themeRef) return rpr;
+  const projected = resolveThemeFont(theme, themeRef);
+  if (!projected) return rpr;
+  return { ...rpr, fontFamily: projected };
 }
 
 function mergePpr(a: ParagraphProperties, b: ParagraphProperties): ParagraphProperties {

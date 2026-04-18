@@ -220,6 +220,31 @@ textarea::placeholder {
   animation: fade-in 0.2s ease-out;
 }
 
+/* ── XLSX marching ants (copy/cut clipboard source overlay) ── */
+@keyframes xlsx-march {
+  to {
+    background-position: 12px 0, -12px 100%, 0 -12px, 100% 12px;
+  }
+}
+
+.xlsx-marching-ants {
+  background-image:
+    linear-gradient(90deg, var(--ai-violet) 50%, transparent 50%),
+    linear-gradient(90deg, var(--ai-violet) 50%, transparent 50%),
+    linear-gradient(0deg, var(--ai-violet) 50%, transparent 50%),
+    linear-gradient(0deg, var(--ai-violet) 50%, transparent 50%);
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size: 12px 2px, 12px 2px, 2px 12px, 2px 12px;
+  animation: xlsx-march 0.6s linear infinite;
+}
+
+.xlsx-marching-ants-cut {
+  /* Cut uses a dimmer hue so the user can tell at a glance which
+     mode is pending. */
+  filter: hue-rotate(20deg) brightness(0.85);
+}
+
 /* ── ProseMirror DOCX editor surface ── */
 .prose-pm .ProseMirror {
   /*
@@ -656,7 +681,13 @@ textarea::placeholder {
 
 /* The PM editor itself is the page card — white, rounded, with a
  * subtle drop shadow so it reads as a single sheet of paper resting
- * on the desk. */
+ * on the desk.
+ *
+ * The card width is driven by a `--pm-page-width` CSS variable that
+ * `DocxEditor.tsx` derives from the document's first-section
+ * `pgSz.w` (US Letter ≈ 816px, DIN A4 ≈ 794px, legal ≈ 816px wide).
+ * Falling back to 720px keeps the older fixed-column behaviour for
+ * any consumer that doesn't set the variable. */
 .prose-pm .ProseMirror {
   background: var(--background);
   border-radius: 4px;
@@ -665,6 +696,8 @@ textarea::placeholder {
     0 8px 24px -10px rgba(0, 0, 0, 0.10);
   padding: 0;
   min-height: 60vh;
+  width: var(--pm-page-width, 720px);
+  max-width: 100%;
 }
 
 .dark .prose-pm .ProseMirror,
@@ -678,12 +711,17 @@ html.dark .prose-pm .ProseMirror {
  * page cap, page edge, anything — gets the same horizontal padding
  * so the column reads as a single page. The page-edge widget opts
  * out (its `padding: 0` rule wins later) because the gap inside a
- * page-edge needs to span edge-to-edge to reveal the grey desk. */
+ * page-edge needs to span edge-to-edge to reveal the grey desk.
+ *
+ * The horizontal inset is `--pm-page-margin-left` /
+ * `--pm-page-margin-right`, derived in `DocxEditor.tsx` from the
+ * document's first-section `pgMar`. Default of 72px (≈ 1 inch)
+ * matches Word's out-of-the-box left/right margin. */
 .prose-pm .ProseMirror > * {
   margin-left: 0;
   margin-right: 0;
-  padding-left: 72px;
-  padding-right: 72px;
+  padding-left: var(--pm-page-margin-left, 72px);
+  padding-right: var(--pm-page-margin-right, 72px);
 }
 
 /* Page cap (top): the white header strip above the very first page.
@@ -743,7 +781,7 @@ html.dark .prose-pm .ProseMirror {
 
 .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer {
   background: var(--background);
-  padding: 4px 72px 24px 72px;
+  padding: 4px var(--pm-page-margin-right, 72px) 24px var(--pm-page-margin-left, 72px);
   border-bottom-left-radius: 4px;
   border-bottom-right-radius: 4px;
   box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.18);
@@ -751,7 +789,7 @@ html.dark .prose-pm .ProseMirror {
 
 .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header {
   background: var(--background);
-  padding: 24px 72px 4px 72px;
+  padding: 24px var(--pm-page-margin-right, 72px) 4px var(--pm-page-margin-left, 72px);
   border-top-left-radius: 4px;
   border-top-right-radius: 4px;
   box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.04);

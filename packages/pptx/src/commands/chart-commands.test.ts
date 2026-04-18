@@ -15,7 +15,7 @@ async function loadChartAgent(): Promise<{ agent: PptxAgent; chart: ChartShape }
   return { agent, chart };
 }
 
-function getChart(agent: PptxAgent): ChartShape {
+function _getChart(agent: PptxAgent): ChartShape {
   const slide = agent.getSnapshot().root.slides[0]!;
   return slide.shapes.find((s): s is ChartShape => s.kind === "chart")!;
 }

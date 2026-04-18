@@ -73,7 +73,7 @@ Mint a fresh slide:
 6. If a layout was specified, add a layout relationship in the new
    `ppt/slides/_rels/slide{N}.xml.rels` file.
 7. Add `<Override PartName="/ppt/slides/slide{N}.xml"
-   ContentType=".../slide+xml"/>` to `[Content_Types].xml`.
+ContentType=".../slide+xml"/>` to `[Content_Types].xml`.
 8. Set `dirty.presentation = true`, `dirty.slides.add(newPath)`,
    `dirty.relationships.add(presRelsPath)`,
    `dirty.relationships.add(newSlideRelsPath)` if layout was set,
@@ -232,8 +232,8 @@ Diff: `{ kind: "node-updated", path: ..., field: "position", summary: "(${x},${y
 type SetSizePayload = {
   slideIndex: number;
   shapeId: NodeId;
-  width: number;   // EMU
-  height: number;  // EMU
+  width: number; // EMU
+  height: number; // EMU
 };
 ```
 
@@ -280,12 +280,12 @@ type InsertImagePayload = {
   slideIndex: number;
   data: Uint8Array | ArrayBuffer;
   mimeType: string; // "image/png" | "image/jpeg" | "image/gif" | "image/bmp" | "image/tiff" | "image/webp" | "image/svg+xml"
-  x: number;        // EMU
-  y: number;        // EMU
-  width: number;    // EMU
-  height: number;   // EMU
+  x: number; // EMU
+  y: number; // EMU
+  width: number; // EMU
+  height: number; // EMU
   altText?: string;
-  name?: string;    // <p:cNvPr name>; defaults to "Picture {cNvPrId}"
+  name?: string; // <p:cNvPr name>; defaults to "Picture {cNvPrId}"
 };
 ```
 
@@ -323,7 +323,10 @@ added, also emits a `part-added` entry whose `path` is `[mediaPartPath]`.
 type AddTextBoxPayload = {
   slideIndex: number;
   text: string;
-  x: number; y: number; width: number; height: number; // EMU
+  x: number;
+  y: number;
+  width: number;
+  height: number; // EMU
   name?: string;
 };
 ```

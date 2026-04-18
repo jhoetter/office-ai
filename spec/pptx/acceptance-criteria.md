@@ -8,14 +8,14 @@
 For every fixture in `fixtures/pptx/synthetic/`:
 
 - [ ] **No-edit roundtrip is byte-identical.**
-  `parsePptx(buf) → serializePptx(snap) → bytesEqual(buf, output)`.
-  Verified by the SHA-256 of every part being unchanged in
-  `partHashes`.
+      `parsePptx(buf) → serializePptx(snap) → bytesEqual(buf, output)`.
+      Verified by the SHA-256 of every part being unchanged in
+      `partHashes`.
 - [ ] **Single-edit roundtrip is shape-clean and untouched-parts byte-identical.**
-  Apply `pptx:set-text` (or a P0 command of the test's choice) →
-  serialize → re-parse → assert (a) the dirty part round-trips to the
-  same typed model after re-parse, and (b) every other part's
-  SHA-256 matches the input.
+      Apply `pptx:set-text` (or a P0 command of the test's choice) →
+      serialize → re-parse → assert (a) the dirty part round-trips to the
+      same typed model after re-parse, and (b) every other part's
+      SHA-256 matches the input.
 
 ## Parser
 
@@ -118,7 +118,7 @@ For each command, at least one **integration test** passes:
 - [ ] `office-agent pptx read -i deck.pptx --slide N --format json`
       prints the typed slide projection.
 - [ ] `office-agent pptx set-text -i in.pptx -o out.pptx --slide N
-      --shape-id ID --text "X"` writes the file with the edit applied.
+--shape-id ID --text "X"` writes the file with the edit applied.
 - [ ] All other PPTX subcommands (`add-slide`, `delete-slide`,
       `duplicate-slide`, `move-slide`, `set-position`, `set-size`,
       `format-text`, `insert-image`, `add-text-box`, `apply`) work and
@@ -139,12 +139,7 @@ For each command, at least one **integration test** passes:
 
 - [ ] Browser smoke via `cursor-ide-browser` MCP: open
       `http://localhost:3000`, click "Open the PPTX editor", upload
-      `fixtures/pptx/synthetic/05-with-image.pptx`, exercise:
-      - text edit (set-text)
-      - drag a shape (set-position)
-      - resize a shape (set-size)
-      - add a slide (add-slide)
-      - export → re-upload → renders identically
+      `fixtures/pptx/synthetic/05-with-image.pptx`, exercise: - text edit (set-text) - drag a shape (set-position) - resize a shape (set-size) - add a slide (add-slide) - export → re-upload → renders identically
 - [ ] LibreOffice headless roundtrip on the same fixture, when `soffice`
       is on PATH (skipped gracefully otherwise).
 

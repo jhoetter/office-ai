@@ -453,9 +453,7 @@ describe("OfficeAI MCP server — PPTX tools", () => {
 
   it("pptx_load returns a handle and an inspection summary", async () => {
     const client = await makeClient();
-    const out = structured(
-      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } })
-    );
+    const out = structured(await client.callTool({ name: "pptx_load", arguments: { path: PPTX_FIXTURE } }));
     expect(typeof out.handle).toBe("string");
     const summary = out.summary as {
       slides: number;
@@ -654,9 +652,7 @@ describe("OfficeAI MCP server — PPTX tools", () => {
     ) as unknown as {
       slides: Array<{ shapes: Array<{ kind: string; chart?: { chartType: string; title?: string } }> }>;
     };
-    const ch = after.slides
-      .flatMap((s) => s.shapes)
-      .find((sh) => sh.kind === "chart");
+    const ch = after.slides.flatMap((s) => s.shapes).find((sh) => sh.kind === "chart");
     expect(ch?.chart?.chartType).toBe("pie");
     expect(ch?.chart?.title).toBe("MCP Chart Title");
   });
@@ -787,7 +783,6 @@ describe("OfficeAI MCP server — xlsx tools", () => {
     );
     expect((projection.cells as Array<{ value: unknown }>)[0].value).toBe("via-apply-command");
   });
-
 
   it("xlsx_set_cell convenience tool produces an equivalent mutation", async () => {
     const client = await makeClient();

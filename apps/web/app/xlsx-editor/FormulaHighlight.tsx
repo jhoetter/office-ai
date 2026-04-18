@@ -44,12 +44,7 @@ interface FormulaHighlightProps {
  *     `tokenizeForDisplay` already enforce this) — character offsets
  *     stay 1:1 between layers.
  */
-export function FormulaHighlight({
-  value,
-  tokens,
-  refColors,
-  scrollLeft,
-}: FormulaHighlightProps): ReactNode {
+export function FormulaHighlight({ value, tokens, refColors, scrollLeft }: FormulaHighlightProps): ReactNode {
   const style: CSSProperties = {
     position: "absolute",
     inset: 0,
@@ -66,13 +61,11 @@ export function FormulaHighlight({
 
   return (
     <div aria-hidden style={style} data-testid="formula-highlight">
-      {tokens.length === 0 ? (
-        // Render a non-breaking space so the overlay still has the
-        // same baseline as the input even when the value is empty.
-        "\u00a0"
-      ) : (
-        tokens.map((t, i) => renderToken(t, i, refColors, value))
-      )}
+      {tokens.length === 0
+        ? // Render a non-breaking space so the overlay still has the
+          // same baseline as the input even when the value is empty.
+          "\u00a0"
+        : tokens.map((t, i) => renderToken(t, i, refColors, value))}
     </div>
   );
 }

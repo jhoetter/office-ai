@@ -1,12 +1,5 @@
 import type { CommandHandler } from "@officeai/core";
-import type {
-  OpaqueXml,
-  PptxSnapshot,
-  Slide,
-  TextParagraph,
-  TextRun,
-  TextShape,
-} from "../model/types.js";
+import type { OpaqueXml, PptxSnapshot, Slide, TextParagraph, TextRun, TextShape } from "../model/types.js";
 import { buildDiff, evolveSnapshot, findSlide, makeError, maxCNvPrId } from "./helpers.js";
 import type { AddTextBoxPayload } from "./payloads.js";
 

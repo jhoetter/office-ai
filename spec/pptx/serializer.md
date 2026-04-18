@@ -95,12 +95,12 @@ serializeSlideXml(slide):
 
 ## serializeShape
 
-| Node                  | Output                                            |
-| --------------------- | ------------------------------------------------- |
-| `TextShape`           | `serializeSp(s)` (rebuild `<p:sp>`)               |
-| `Picture`             | `serializePic(s)` (rebuild `<p:pic>`)             |
-| `GroupShape`          | `serializeGrpSp(s)` (rebuild `<p:grpSp>`)         |
-| `OpaqueShape`         | `s.raw.subtree` (verbatim slice)                  |
+| Node          | Output                                    |
+| ------------- | ----------------------------------------- |
+| `TextShape`   | `serializeSp(s)` (rebuild `<p:sp>`)       |
+| `Picture`     | `serializePic(s)` (rebuild `<p:pic>`)     |
+| `GroupShape`  | `serializeGrpSp(s)` (rebuild `<p:grpSp>`) |
+| `OpaqueShape` | `s.raw.subtree` (verbatim slice)          |
 
 ### serializeSp (TextShape)
 
@@ -238,23 +238,23 @@ serializeTextRun(r):
 
 Build `<a:rPr>` with attributes:
 
-| Field                       | Output attribute              |
-| --------------------------- | ----------------------------- |
-| `bold === true`             | `@_b="1"`                     |
-| `bold === false`            | `@_b="0"`                     |
-| `italic`                    | `@_i="1"` / `@_i="0"`         |
-| `underline === string`      | `@_u="..."`                   |
-| `underline === false`       | `@_u="none"`                  |
-| `strike === true`           | `@_strike="sngStrike"`        |
-| `fontSizeHundredths`        | `@_sz="3200"`                 |
+| Field                  | Output attribute       |
+| ---------------------- | ---------------------- |
+| `bold === true`        | `@_b="1"`              |
+| `bold === false`       | `@_b="0"`              |
+| `italic`               | `@_i="1"` / `@_i="0"`  |
+| `underline === string` | `@_u="..."`            |
+| `underline === false`  | `@_u="none"`           |
+| `strike === true`      | `@_strike="sngStrike"` |
+| `fontSizeHundredths`   | `@_sz="3200"`          |
 
 And children:
 
-| Field                       | Child element                                   |
-| --------------------------- | ----------------------------------------------- |
-| `fontFamily`                | `<a:latin typeface="..."/>`                     |
-| `color`                     | `<a:solidFill><a:srgbClr val="..."/></a:solidFill>` |
-| `opaqueProps[]`             | each entry's subtree appended verbatim          |
+| Field           | Child element                                       |
+| --------------- | --------------------------------------------------- |
+| `fontFamily`    | `<a:latin typeface="..."/>`                         |
+| `color`         | `<a:solidFill><a:srgbClr val="..."/></a:solidFill>` |
+| `opaqueProps[]` | each entry's subtree appended verbatim              |
 
 If no typed field is set and `opaqueProps` is empty, omit `<a:rPr>`.
 

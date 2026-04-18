@@ -129,12 +129,12 @@ export function slideToSvgString(slide: Slide, ctx: SvgRenderCtx): string {
 
 Per shape:
 
-| Shape kind     | SVG output                                                             |
-| -------------- | ---------------------------------------------------------------------- |
-| `TextShape`    | `<g class="shape text" data-shape-id="…"><rect/><text>…</text></g>`   |
-| `Picture`      | `<g class="shape pic" data-shape-id="…"><image .../></g>`             |
-| `GroupShape`   | `<g class="shape group" data-shape-id="…">…children…</g>`             |
-| `OpaqueShape`  | `<g class="shape opaque" data-shape-id="…"><rect class="placeholder"/></g>` (the renderer cannot draw arbitrary SmartArt/charts; we draw a labeled placeholder so users know where the opaque shape lives) |
+| Shape kind    | SVG output                                                                                                                                                                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TextShape`   | `<g class="shape text" data-shape-id="…"><rect/><text>…</text></g>`                                                                                                                                        |
+| `Picture`     | `<g class="shape pic" data-shape-id="…"><image .../></g>`                                                                                                                                                  |
+| `GroupShape`  | `<g class="shape group" data-shape-id="…">…children…</g>`                                                                                                                                                  |
+| `OpaqueShape` | `<g class="shape opaque" data-shape-id="…"><rect class="placeholder"/></g>` (the renderer cannot draw arbitrary SmartArt/charts; we draw a labeled placeholder so users know where the opaque shape lives) |
 
 Text shapes get both:
 

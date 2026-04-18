@@ -139,9 +139,7 @@ describe("P0 shape commands", () => {
       source: "system",
     });
     expect(m.status).toBe("approved");
-    const updated = agent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     expect(updated.txBody.paragraphs.length).toBe(2);
     expect(updated.txBody.paragraphs[0].runs[0].text).toBe("Line one");
     expect(updated.txBody.paragraphs[1].runs[0].text).toBe("Line two");
@@ -179,9 +177,7 @@ describe("P0 shape commands", () => {
       payload: { slideIndex: 0, shapeId: ts.id, x: 1234567, y: 7654321 },
       source: "system",
     });
-    const updated = agent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.id === ts.id)!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s) => s.id === ts.id)!;
     expect(updated.position).toEqual({ xEmu: 1234567, yEmu: 7654321 });
 
     const out = await agent.exportFile();
@@ -213,9 +209,7 @@ describe("P0 shape commands", () => {
       payload: { slideIndex: 0, shapeId: ts.id, width: 5000000, height: 1500000 },
       source: "system",
     });
-    const updated = agent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.id === ts.id)!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s) => s.id === ts.id)!;
     expect(updated.size).toEqual({ cxEmu: 5000000, cyEmu: 1500000 });
   });
 

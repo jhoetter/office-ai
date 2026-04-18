@@ -69,12 +69,16 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
     rewriteDirtySheetRels(snapshot.root, container, dirty.sheetRels);
   }
 
+  if (dirty.removedSheetParts.size > 0) {
+    dropRemovedSheetParts(container, dirty.removedSheetParts);
+  }
+
   if (dirty.contentTypes) {
-    rewriteContentTypes(snapshot.root, container);
+    rewriteContentTypes(snapshot.root, container, dirty.removedSheetParts);
   }
 
   if (dirty.rels) {
-    rewriteWorkbookRels(snapshot.root, container);
+    rewriteWorkbookRels(snapshot.root, container, dirty.removedSheetParts);
   }
 
   if (dirty.workbook) {
@@ -202,9 +206,20 @@ function injectStyleIds(xml: string, cells: ReadonlyMap<string, Cell>): string {
  * entry was actually added; an unchanged content-types file is left
  * byte-identical to keep the round-trip oracle honest.
  */
-function rewriteContentTypes(workbook: XlsxWorkbook, container: ooxml.OoxmlContainer): void {
+function rewriteContentTypes(
+  workbook: XlsxWorkbook,
+  container: ooxml.OoxmlContainer,
+  removedSheetParts: ReadonlySet<string>
+): void {
   const ct = ooxml.ContentTypes.load(container);
   let mutated = false;
+  for (const removed of removedSheetParts) {
+    const partName = `/${removed}`;
+    if (ct.hasOverride(partName)) {
+      ct.removeOverride(partName);
+      mutated = true;
+    }
+  }
   for (const sheet of workbook.sheets) {
     if (sheet.kind !== "worksheet") continue;
     const partName = `/${sheet.partPath}`;
@@ -318,12 +333,29 @@ function relsRelativeTarget(ownerPartPath: string, targetPath: string): string {
  * preserved verbatim. As with content-types we only write back when
  * something was actually added.
  */
-function rewriteWorkbookRels(workbook: XlsxWorkbook, container: ooxml.OoxmlContainer): void {
+function rewriteWorkbookRels(
+  workbook: XlsxWorkbook,
+  container: ooxml.OoxmlContainer,
+  removedSheetParts: ReadonlySet<string>
+): void {
   const rels = ooxml.RelationshipGraph.loadFor(container, WORKBOOK_PART);
+
+  let mutated = false;
+  if (removedSheetParts.size > 0) {
+    const removedTargets = new Set<string>();
+    for (const path of removedSheetParts) removedTargets.add(workbookRelTarget(path));
+    const orphans = rels.relationships.filter(
+      (r) => r.type === WORKSHEET_REL_TYPE && removedTargets.has(normalizeRelTarget(r.target))
+    );
+    for (const r of orphans) {
+      rels.remove(r.id);
+      mutated = true;
+    }
+  }
+
   const covered = new Set<string>();
   for (const r of rels.relationships) covered.add(normalizeRelTarget(r.target));
 
-  let mutated = false;
   for (const sheet of workbook.sheets) {
     if (sheet.kind !== "worksheet") continue;
     const target = workbookRelTarget(sheet.partPath);
@@ -334,6 +366,23 @@ function rewriteWorkbookRels(workbook: XlsxWorkbook, container: ooxml.OoxmlConta
     }
   }
   if (mutated) rels.writeBack(container);
+}
+
+/**
+ * Drop sheet parts (and their `_rels/` sidecars) listed in
+ * `dirty.removedSheetParts`. The workbook-rels and content-types
+ * pruning happens in their respective rewrite passes; this function
+ * only touches the part files themselves.
+ */
+function dropRemovedSheetParts(
+  container: ooxml.OoxmlContainer,
+  removedSheetParts: ReadonlySet<string>
+): void {
+  for (const path of removedSheetParts) {
+    if (container.has(path)) container.removePart(path);
+    const relsPath = ooxml.RelationshipGraph.relsPathFor(path);
+    if (container.has(relsPath)) container.removePart(relsPath);
+  }
 }
 
 /**

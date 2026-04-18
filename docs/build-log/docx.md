@@ -2122,14 +2122,14 @@ like Word:
 
 Six batches of work-packages, each spec-first then code:
 
-| Batch | Workstream                                                                                                                                                                | Deliverables                                                                                                                                                                                |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P3.1  | Style cascade + toolbar inheritance                                                                                                                                       | Typed `StylesPart` + `StyleDefinition`; `resolveEffectiveRpr` / `resolveEffectivePpr` + cycle-safe `basedOn` walker; `activeRunAttr` toolbar helper; `docx:set-paragraph-spacing` command.   |
-| P3.2  | Typed page geometry + section model                                                                                                                                       | `SectionProperties` (pgSz, pgMar, cols, headerRefs, footerRefs, titlePg, sectionType); typed `PageBreakLeaf` + `LastRenderedPageBreakLeaf`; `parser/sections.ts`; `serializer/sections.ts`.  |
-| P3.3  | Paged-renderer foundation                                                                                                                                                 | `chunkIntoPages` (hard / hint / measured); `pageDecorationsPlugin` widget dividers ("Page N of M"); status bar with current/total; zoom 50–200 %.                                            |
-| P3.4  | Header/footer authoring                                                                                                                                                   | `PageNumberFieldLeaf` typed run child; `serializeRunOrFieldWrapper` to lift single-leaf runs into `<w:fldSimple>`; commands `docx:insert-page-number`, `set-section-different-first`, `insert-section-break`; `HeaderFooterPanel` MVP UI. |
-| P3.5  | Page-aware editing UX                                                                                                                                                     | `docx:insert-page-break` command; `Mod-Enter` keymap; `gotoPage` + click-to-jump in the status bar; `PageDown` / `PageUp` snap to the next chunk; locale-aware read-only `PageRuler`.       |
-| P3.6  | LLM + MCP surface for pages                                                                                                                                               | `snapshotToMarkdown({ withPageSections })` injecting `<!-- page N -->` anchors; `DocxAgent.getPages` / `pageForParagraph` / `getPageMarkdown` / `getPageText`; new MCP tools `docx_get_pages`, `docx_get_page_text`. |
+| Batch | Workstream                          | Deliverables                                                                                                                                                                                                                              |
+| ----- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P3.1  | Style cascade + toolbar inheritance | Typed `StylesPart` + `StyleDefinition`; `resolveEffectiveRpr` / `resolveEffectivePpr` + cycle-safe `basedOn` walker; `activeRunAttr` toolbar helper; `docx:set-paragraph-spacing` command.                                                |
+| P3.2  | Typed page geometry + section model | `SectionProperties` (pgSz, pgMar, cols, headerRefs, footerRefs, titlePg, sectionType); typed `PageBreakLeaf` + `LastRenderedPageBreakLeaf`; `parser/sections.ts`; `serializer/sections.ts`.                                               |
+| P3.3  | Paged-renderer foundation           | `chunkIntoPages` (hard / hint / measured); `pageDecorationsPlugin` widget dividers ("Page N of M"); status bar with current/total; zoom 50–200 %.                                                                                         |
+| P3.4  | Header/footer authoring             | `PageNumberFieldLeaf` typed run child; `serializeRunOrFieldWrapper` to lift single-leaf runs into `<w:fldSimple>`; commands `docx:insert-page-number`, `set-section-different-first`, `insert-section-break`; `HeaderFooterPanel` MVP UI. |
+| P3.5  | Page-aware editing UX               | `docx:insert-page-break` command; `Mod-Enter` keymap; `gotoPage` + click-to-jump in the status bar; `PageDown` / `PageUp` snap to the next chunk; locale-aware read-only `PageRuler`.                                                     |
+| P3.6  | LLM + MCP surface for pages         | `snapshotToMarkdown({ withPageSections })` injecting `<!-- page N -->` anchors; `DocxAgent.getPages` / `pageForParagraph` / `getPageMarkdown` / `getPageText`; new MCP tools `docx_get_pages`, `docx_get_page_text`.                      |
 
 ### Decisions worth remembering
 
@@ -2189,18 +2189,18 @@ single-character text edit.
 
 ### Test counts
 
-| Suite                                        | Before P3 | After P3   |
-| -------------------------------------------- | --------: | ---------: |
-| `@officeai/docx`                             |       208 |        249 |
-| ↳ `commands/header-footer-authoring.test.ts` |         0 |         14 |
-| ↳ `commands/insert-page-break.test.ts`       |         0 |          6 |
-| ↳ `agent/pages.test.ts`                      |         0 |         12 |
-| ↳ `parser/sections.test.ts`                  |         0 |          7 |
-| ↳ `renderer/page-chunker.test.ts`            |         0 |          9 |
-| ↳ `agent/header-footer-graph.test.ts`        |         0 |          3 |
-| `@officeai/agent` (MCP tools)                |        47 |         50 |
-| `@officeai/integration-tests`                |        51 |         86 |
-| ↳ `roundtrip/docx/p3-page-roundtrip.test.ts` |         0 |         35 |
+| Suite                                        | Before P3 | After P3 |
+| -------------------------------------------- | --------: | -------: |
+| `@officeai/docx`                             |       208 |      249 |
+| ↳ `commands/header-footer-authoring.test.ts` |         0 |       14 |
+| ↳ `commands/insert-page-break.test.ts`       |         0 |        6 |
+| ↳ `agent/pages.test.ts`                      |         0 |       12 |
+| ↳ `parser/sections.test.ts`                  |         0 |        7 |
+| ↳ `renderer/page-chunker.test.ts`            |         0 |        9 |
+| ↳ `agent/header-footer-graph.test.ts`        |         0 |        3 |
+| `@officeai/agent` (MCP tools)                |        47 |       50 |
+| `@officeai/integration-tests`                |        51 |       86 |
+| ↳ `roundtrip/docx/p3-page-roundtrip.test.ts` |         0 |       35 |
 
 ### Caveats / out-of-scope (carried into P4)
 

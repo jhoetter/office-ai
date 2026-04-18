@@ -14,8 +14,7 @@ import type { DuplicateSlidePayload } from "./payloads.js";
 
 const PRES_RELS_PATH = "ppt/_rels/presentation.xml.rels";
 const REL_TYPE_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
-const SLIDE_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
+const SLIDE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 
 export const duplicateSlideHandler: CommandHandler<DuplicateSlidePayload, PptxSnapshot> = {
   type: "pptx:duplicate-slide",
@@ -94,9 +93,7 @@ export const duplicateSlideHandler: CommandHandler<DuplicateSlidePayload, PptxSn
       entries: newPresEntries,
     });
 
-    const overrideExists = snapshot.contentTypes.overrides.some(
-      (o) => o.partName === `/${partPath}`
-    );
+    const overrideExists = snapshot.contentTypes.overrides.some((o) => o.partName === `/${partPath}`);
     const newContentTypes = overrideExists
       ? snapshot.contentTypes
       : {
@@ -147,11 +144,7 @@ export const duplicateSlideHandler: CommandHandler<DuplicateSlidePayload, PptxSn
   },
 };
 
-function deepCloneShape(
-  s: Shape,
-  nextCNvPrId: () => number,
-  mintNodeId: () => string
-): Shape {
+function deepCloneShape(s: Shape, nextCNvPrId: () => number, mintNodeId: () => string): Shape {
   const id = mintNodeId();
   const cNvPrId = nextCNvPrId();
   switch (s.kind) {
@@ -225,12 +218,8 @@ function deepCloneShape(
             ...(cell.tcPrRaw ? { tcPrRaw: cloneOpaque(cell.tcPrRaw) } : {}),
             txBody: {
               ...cell.txBody,
-              ...(cell.txBody.bodyPrRaw
-                ? { bodyPrRaw: cloneOpaque(cell.txBody.bodyPrRaw) }
-                : {}),
-              ...(cell.txBody.lstStyleRaw
-                ? { lstStyleRaw: cloneOpaque(cell.txBody.lstStyleRaw) }
-                : {}),
+              ...(cell.txBody.bodyPrRaw ? { bodyPrRaw: cloneOpaque(cell.txBody.bodyPrRaw) } : {}),
+              ...(cell.txBody.lstStyleRaw ? { lstStyleRaw: cloneOpaque(cell.txBody.lstStyleRaw) } : {}),
               paragraphs: cell.txBody.paragraphs.map((p) => ({
                 ...p,
                 id: mintNodeId(),
@@ -240,9 +229,7 @@ function deepCloneShape(
                   id: mintNodeId(),
                   properties: { ...r2.properties },
                 })),
-                ...(p.endParaRPrRaw
-                  ? { endParaRPrRaw: cloneOpaque(p.endParaRPrRaw) }
-                  : {}),
+                ...(p.endParaRPrRaw ? { endParaRPrRaw: cloneOpaque(p.endParaRPrRaw) } : {}),
               })),
             },
           })),

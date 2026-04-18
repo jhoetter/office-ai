@@ -1,11 +1,5 @@
-/* eslint-disable react/no-danger */
 import * as React from "react";
-import type {
-  ChartPart,
-  Slide,
-  SlideSize,
-  ThemeColorScheme,
-} from "../../model/types.js";
+import type { ChartPart, Slide, SlideSize, ThemeColorScheme } from "../../model/types.js";
 import { slideAspectRatio } from "../layout/slide.js";
 import { slideToSvgString } from "../svg/slide.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
@@ -36,19 +30,13 @@ export function SlideThumbnail(props: SlideThumbnailProps): React.ReactElement {
     ...(charts ? { charts } : {}),
   };
   const aspect = slideAspectRatio(slideSize);
-  const svg = React.useMemo(
-    () => slideToSvgString(slide, ctx),
-    [slide, slideSize, mediaUrls, theme, charts]
-  );
+  const svg = React.useMemo(() => slideToSvgString(slide, ctx), [slide, slideSize, mediaUrls, theme, charts]);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={[
-        "officeai-pptx-thumb",
-        active ? "officeai-pptx-thumb--active" : "",
-      ]
+      className={["officeai-pptx-thumb", active ? "officeai-pptx-thumb--active" : ""]
         .filter(Boolean)
         .join(" ")}
       style={{

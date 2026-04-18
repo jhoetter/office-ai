@@ -1,4 +1,5 @@
 import { CommandBus, type Command, type CommandLite, type DocumentDiff, type Mutation } from "@officeai/core";
+import { extractClipboardSnapshot, type XlsxClipboardSnapshot } from "../clipboard/snapshot.js";
 import { allXlsxHandlers } from "../commands/index.js";
 import {
   cellKey,
@@ -13,6 +14,7 @@ import type { Cell, Sheet, XlsxSnapshot } from "../model/types.js";
 import { parseXlsx, type ParseOptions } from "../parser/parse.js";
 import { serializeXlsx } from "../serializer/serialize.js";
 import { diffXlsxSnapshots } from "./diff.js";
+import { buildBlankXlsxBuffer } from "./empty.js";
 
 export interface XlsxAgentOptions extends ParseOptions {
   readonly sessionId?: string;
@@ -97,6 +99,16 @@ export class XlsxAgent {
     return new XlsxAgent(snap, opts);
   }
 
+  /**
+   * Construct an XlsxAgent backed by a brand-new blank workbook — one
+   * empty visible worksheet named "Sheet1", no shared strings, no
+   * styles, no theme. Use as the entry point for `oa xlsx create --out`.
+   */
+  static async empty(opts: XlsxAgentOptions = {}): Promise<XlsxAgent> {
+    const buf = await buildBlankXlsxBuffer();
+    return XlsxAgent.fromBuffer(buf, opts);
+  }
+
   /** Replace the in-memory document. Drops all pending mutations. */
   async importFile(buffer: ArrayBuffer | Uint8Array): Promise<void> {
     const snap = await parseXlsx(buffer, this.opts);
@@ -144,6 +156,20 @@ export class XlsxAgent {
       out.push("");
     }
     return out.join("\n").trimEnd();
+  }
+
+  /**
+   * Rich clipboard projection of a sheet range. Carries values,
+   * formulas (raw text, refs unchanged), per-cell style ids, and
+   * fully-contained merges. Powers `xlsx:paste-range`.
+   */
+  getClipboardSnapshot(req: { readonly sheet: string; readonly range: string }): XlsxClipboardSnapshot {
+    const snap = this.getSnapshot();
+    const sheet = snap.root.sheets.find((s) => s.name === req.sheet);
+    if (!sheet) {
+      throw new Error(`unknown sheet "${req.sheet}"`);
+    }
+    return extractClipboardSnapshot(sheet, req.range);
   }
 
   /** Sparse projection of a range or whole sheet. */

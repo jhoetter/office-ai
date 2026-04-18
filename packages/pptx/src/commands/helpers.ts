@@ -67,11 +67,7 @@ function extendSet(s: ReadonlySet<string>, items: ReadonlyArray<string>): Readon
 
 // ─── Diff helpers ─────────────────────────────────────────────────────────
 
-export function buildDiff(
-  fromRevision: number,
-  toRevision: number,
-  ...changes: DiffChange[]
-): DocumentDiff {
+export function buildDiff(fromRevision: number, toRevision: number, ...changes: DiffChange[]): DocumentDiff {
   return {
     format: "pptx",
     fromRevision,
@@ -82,10 +78,7 @@ export function buildDiff(
 
 // ─── Slides + shapes ──────────────────────────────────────────────────────
 
-export function findSlide(
-  snapshot: PptxSnapshot,
-  slideIndex: number
-): { slide: Slide; index: number } {
+export function findSlide(snapshot: PptxSnapshot, slideIndex: number): { slide: Slide; index: number } {
   const slides = snapshot.root.slides;
   if (slideIndex < 0 || slideIndex >= slides.length) {
     throw makeError("unknown-target", `slideIndex ${slideIndex} out of range (0..${slides.length})`);
@@ -93,10 +86,7 @@ export function findSlide(
   return { slide: slides[slideIndex], index: slideIndex };
 }
 
-export function findShapeInSlide(
-  slide: Slide,
-  shapeId: NodeId
-): { shape: Shape; path: number[] } {
+export function findShapeInSlide(slide: Slide, shapeId: NodeId): { shape: Shape; path: number[] } {
   for (let i = 0; i < slide.shapes.length; i++) {
     const s = slide.shapes[i];
     if (s.id === shapeId) return { shape: s, path: [i] };

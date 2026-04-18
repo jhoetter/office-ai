@@ -6,13 +6,8 @@ import { parseDocx, type ParseOptions } from "../parser/parse.js";
 import { serializeDocx } from "../serializer/serialize.js";
 import { snapshotToMarkdown, type SnapshotToMarkdownOptions } from "./markdown.js";
 import { diffDocxSnapshots } from "./diff.js";
-import {
-  getPageInfos,
-  getPageMarkdown,
-  getPagePlainText,
-  pageForParagraph,
-  type PageInfo,
-} from "./pages.js";
+import { buildBlankDocxBuffer } from "./empty.js";
+import { getPageInfos, getPageMarkdown, getPagePlainText, pageForParagraph, type PageInfo } from "./pages.js";
 
 export interface DocxAgentOptions extends ParseOptions {
   readonly sessionId?: string;
@@ -67,6 +62,17 @@ export class DocxAgent {
   static async fromBuffer(buffer: ArrayBuffer | Uint8Array, opts: DocxAgentOptions = {}): Promise<DocxAgent> {
     const snap = await parseDocx(buffer, opts);
     return new DocxAgent(snap, opts);
+  }
+
+  /**
+   * Construct a DocxAgent backed by a brand-new blank document — one
+   * empty paragraph in the default section, no header/footer, no styles
+   * part. Use as the entry point for `oa docx create --out` and for any
+   * scripted authoring workflow that doesn't have a fixture to seed from.
+   */
+  static async empty(opts: DocxAgentOptions = {}): Promise<DocxAgent> {
+    const buf = await buildBlankDocxBuffer();
+    return DocxAgent.fromBuffer(buf, opts);
   }
 
   /**

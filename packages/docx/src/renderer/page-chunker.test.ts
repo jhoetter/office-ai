@@ -9,11 +9,13 @@ async function snapshotFromXml(documentXml: string) {
   return agent.getSnapshot();
 }
 
-const SECT_PR = '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/></w:sectPr>';
+const SECT_PR =
+  '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/></w:sectPr>';
 
 function paragraphsXml(count: number): string {
-  return Array.from({ length: count }, (_, i) =>
-    `<w:p><w:r><w:t xml:space="preserve">para ${i + 1}</w:t></w:r></w:p>`
+  return Array.from(
+    { length: count },
+    (_, i) => `<w:p><w:r><w:t xml:space="preserve">para ${i + 1}</w:t></w:r></w:p>`
   ).join("");
 }
 
@@ -32,7 +34,7 @@ describe("chunkIntoPages (P3.3 / W9)", () => {
     expect(pages[0].geometry.pgSz.h).toBe(15840);
   });
 
-  it("breaks on an explicit <w:br w:type=\"page\"/> inside a paragraph", async () => {
+  it('breaks on an explicit <w:br w:type="page"/> inside a paragraph', async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${DEFAULT_DOC_ROOT_ATTRS}><w:body>
   <w:p><w:r><w:t xml:space="preserve">first</w:t></w:r></w:p>

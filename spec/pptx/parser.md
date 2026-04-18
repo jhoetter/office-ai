@@ -52,12 +52,12 @@ parsePptx(buffer):
 Walk `<p:presentation>`'s children in order. Recognized children populate
 typed fields; everything else lands in `presentationOpaqueTail`.
 
-| Child                | Typed                                       |
-| -------------------- | ------------------------------------------- |
-| `<p:sldIdLst>`       | `slideOrder: [{ slideId, rId }]`            |
-| `<p:sldSz>`          | `slideSize` (cx/cy attrs, optional `type`)  |
-| `<p:notesSz>`        | `notesSize`                                 |
-| anything else        | `presentationOpaqueTail.push(opaqueXml(c))` |
+| Child          | Typed                                       |
+| -------------- | ------------------------------------------- |
+| `<p:sldIdLst>` | `slideOrder: [{ slideId, rId }]`            |
+| `<p:sldSz>`    | `slideSize` (cx/cy attrs, optional `type`)  |
+| `<p:notesSz>`  | `notesSize`                                 |
+| anything else  | `presentationOpaqueTail.push(opaqueXml(c))` |
 
 `slideOrder` preserves source order — that IS the display order.
 
@@ -263,11 +263,11 @@ parseTextParagraph(p):
 
 ## parsePPr
 
-| Attr / child         | Field                       |
-| -------------------- | --------------------------- |
-| `@_lvl`              | `level = parseInt(...)`     |
-| `@_algn`             | `alignment` (l/ctr/r/just)  |
-| anything else        | `opaqueProps[]`             |
+| Attr / child  | Field                      |
+| ------------- | -------------------------- |
+| `@_lvl`       | `level = parseInt(...)`    |
+| `@_algn`      | `alignment` (l/ctr/r/just) |
+| anything else | `opaqueProps[]`            |
 
 Note: PPTX uses `algn="ctr"` for center, `"l"` for left, `"r"` for
 right, `"just"` for justify. Anything else (`"justLow"`, `"dist"`,
@@ -287,18 +287,18 @@ parseTextRun(r):
 
 ## parseRPr
 
-| OOXML                                                | Field                                    |
-| ---------------------------------------------------- | ---------------------------------------- |
-| `@_b="1"`                                            | `bold = true`                            |
-| `@_b="0"`                                            | `bold = false`                           |
-| `@_i="1"` / `@_i="0"`                                | `italic`                                 |
-| `@_u="sng"` / `@_u="dbl"` / etc.                     | `underline = "..." `                     |
-| `@_u="none"`                                         | `underline = false`                      |
-| `@_strike="..."`                                     | `strike = true` (any value other than "noStrike") |
-| `@_sz="3200"`                                        | `fontSizeHundredths = 3200`              |
-| `<a:latin @typeface="...">` (child)                  | `fontFamily`                             |
-| `<a:solidFill><a:srgbClr @val="RRGGBB">` (descendant)| `color = "RRGGBB"`                       |
-| anything else                                        | `opaqueProps[]`                          |
+| OOXML                                                 | Field                                             |
+| ----------------------------------------------------- | ------------------------------------------------- |
+| `@_b="1"`                                             | `bold = true`                                     |
+| `@_b="0"`                                             | `bold = false`                                    |
+| `@_i="1"` / `@_i="0"`                                 | `italic`                                          |
+| `@_u="sng"` / `@_u="dbl"` / etc.                      | `underline = "..." `                              |
+| `@_u="none"`                                          | `underline = false`                               |
+| `@_strike="..."`                                      | `strike = true` (any value other than "noStrike") |
+| `@_sz="3200"`                                         | `fontSizeHundredths = 3200`                       |
+| `<a:latin @typeface="...">` (child)                   | `fontFamily`                                      |
+| `<a:solidFill><a:srgbClr @val="RRGGBB">` (descendant) | `color = "RRGGBB"`                                |
+| anything else                                         | `opaqueProps[]`                                   |
 
 The `<a:rPr>` carrier itself is preserved per-run (its full attribute
 set goes into `opaqueProps[]` if any non-introspected attrs survive,
@@ -333,7 +333,7 @@ seedIdGen(slideOrder, container):
 
 For each part under the given prefix that is XML, build an
 `OpaquePart { partPath, raw: captureOpaqueRoot(parseXml(text)) }`. The
-`raw` slice is for code paths that need to *read* the part structurally
+`raw` slice is for code paths that need to _read_ the part structurally
 (theme color resolution at render time). The serializer does NOT
 re-stringify it — it copies bytes from the container cache.
 
