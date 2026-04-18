@@ -245,3 +245,64 @@ parse` for value writes, range writes, merge/unmerge, and rename.
   the workbook are untouched. Phase 6+ migrates to a native sheet
   XML emitter that surgically patches `<sheetData>` + `<mergeCells>`
   while preserving all other worksheet XML in place.
+
+## 2026-04-18 — Phase 6: headless XlsxAgent (DocxAgent parity)
+
+**Shipped**
+
+- `packages/xlsx/src/agent/agent.ts` — `XlsxAgent` class implementing
+  the same surface as `DocxAgent` (see `spec/shared/agent-api.md`):
+  - **Read** — `getSnapshot`, `getApprovedSnapshot`, `listSheets`,
+    `toMarkdown` (per-sheet, bounding-box-clipped), `getRange`
+    (sparse projection of A1 ranges or whole sheets), `search`
+    (substring / regex over string-typed cells, optional sheet
+    filter).
+  - **Write** — `applyCommand`, `applyCommands`. Both go through the
+    shared `CommandBus`; `source: "agent"` stages as `pending`,
+    `source: "human"`/`"system"` auto-approves.
+  - **Diff & review** — `getDiff`, `getPendingMutations`,
+    `approveMutation`, `rejectMutation`, `rollback`.
+  - **I/O** — `fromBuffer`, `importFile`, `exportFile`. Re-uses the
+    Phase 5 surgical serializer.
+  - **Subscriptions** — `subscribe(listener)` for live mutation
+    notifications.
+- `packages/xlsx/src/agent/diff.ts` — `diffXlsxSnapshots(from, to)`.
+  Sheet-matching by stable `sheetId`; cell-matching by
+  `${row}:${col}`; merge-matching by exact rectangle. Emits typed
+  `DiffChange` records (`node-inserted`, `node-deleted`,
+  `node-updated`, `node-moved`).
+- `packages/xlsx/src/agent/index.ts` — public re-exports; mirrored
+  in `packages/xlsx/src/index.ts`.
+
+**Tests landed**
+
+- `packages/xlsx/src/agent/agent.test.ts` — 9 tests covering
+  byte-preservation roundtrip, re-parse-after-edit fidelity,
+  `listSheets`, `toMarkdown`, `getRange`, `search`, `getDiff`,
+  agent-pending→approve flow, and headless (no-DOM) execution.
+- `packages/xlsx/src/agent/diff.test.ts` — 6 tests covering insert,
+  update, delete, rename, merge add/remove, and identity (no-op)
+  paths.
+- Phase 6 totals: **63 unit tests in `@officeai/xlsx`** + **17 xlsx
+  integration tests** (carried from Phase 5), all green. Full `pnpm
+verify` pipeline (format / lint / architecture / typecheck / test
+  / build) green.
+
+**Decisions**
+
+- **DocxAgent parity over speed.** Method signatures, naming, and
+  semantics deliberately mirror `DocxAgent` so the upcoming
+  `office-agent` CLI / MCP server (Phase 8) can hold a single
+  `DocumentAgent` interface and switch on `format`.
+- **Sparse projection for `getRange`.** Range snapshots return only
+  populated cells (row-major ordered) plus `(rows, cols)` for
+  sizing. Caller densifies if needed. This keeps payloads tiny for
+  large but mostly-empty sheets, which is the common LLM context
+  shape.
+- **Search scoped to string cells.** Numbers, booleans, and errors
+  are skipped. Once the formula engine lands (Phase 7), we'll
+  optionally include formula text and computed values.
+- **Diff is structural, not pixel-perfect.** Style, conditional
+  formatting, and comments aren't diffed yet — the first three lift
+  once those models become typed (Phase 7+). For Phase 6 the diff
+  covers everything the 5 implemented commands can mutate.

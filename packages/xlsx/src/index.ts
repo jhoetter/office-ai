@@ -70,3 +70,13 @@ export {
   type RenameSheetPayload,
   type AddSheetPayload,
 } from "./commands/index.js";
+
+export {
+  XlsxAgent,
+  diffXlsxSnapshots,
+  type XlsxAgentOptions,
+  type XlsxRangeRequest,
+  type XlsxRangeSnapshot,
+  type XlsxSearchSpec,
+  type XlsxSearchResult,
+} from "./agent/index.js";

@@ -31,20 +31,24 @@ The contract for the XLSX (Microsoft Excel) editor in
 
 The shared specs in [`../shared/`](../shared) cover infrastructure
 (command bus, OOXML utils, agent API, plugin system) which is reused
-unchanged from the DOCX phase.
+unchanged from the DOCX phase. The headless `XlsxAgent`
+(`packages/xlsx/src/agent/`) implements the same `DocumentAgent`
+shape as `DocxAgent`, mirroring methods and pending/approved
+semantics; see `spec/shared/agent-api.md` and
+[`docs/build-log/xlsx.md` Phase 6 entry](../../docs/build-log/xlsx.md).
 
 ## Status
 
-| Doc                      | Status                                                                                         |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `analysis.md`            | landed (P1)                                                                                    |
-| `feature-scope.md`       | landed (P2)                                                                                    |
-| `document-model.md`      | landed (P2)                                                                                    |
-| `ooxml-mapping.md`       | landed (P2)                                                                                    |
-| `parser.md`              | implemented (P4 thin + P5 typed cells)                                                         |
-| `serializer.md`          | implemented (P4 byte-oracle + P5 dirty-sheet rewrite)                                          |
-| `renderer.md`            | landed (P2)                                                                                    |
-| `formula-engine.md`      | landed (P2)                                                                                    |
-| `agent-commands.md`      | partial (5/13 implemented in P5; remaining 8 deferred to P6/P7 — see `docs/build-log/xlsx.md`) |
-| `edge-cases.md`          | landed (P2)                                                                                    |
-| `acceptance-criteria.md` | landed (P2)                                                                                    |
+| Doc                      | Status                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| `analysis.md`            | landed (P1)                                                                                 |
+| `feature-scope.md`       | landed (P2)                                                                                 |
+| `document-model.md`      | landed (P2)                                                                                 |
+| `ooxml-mapping.md`       | landed (P2)                                                                                 |
+| `parser.md`              | implemented (P4 thin + P5 typed cells)                                                      |
+| `serializer.md`          | implemented (P4 byte-oracle + P5 dirty-sheet rewrite)                                       |
+| `renderer.md`            | landed (P2)                                                                                 |
+| `formula-engine.md`      | landed (P2)                                                                                 |
+| `agent-commands.md`      | partial (5/13 implemented in P5; remaining 8 deferred to P7 — see `docs/build-log/xlsx.md`) |
+| `edge-cases.md`          | landed (P2)                                                                                 |
+| `acceptance-criteria.md` | landed (P2)                                                                                 |
