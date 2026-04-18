@@ -27,3 +27,13 @@ export function fontSizeHundredthsToPx(sz: number, dpi: number = DEFAULT_DPI): n
   const pt = sz / 100;
   return (pt * dpi) / 72;
 }
+
+/** Bounds for the user-facing zoom slider. */
+export const MIN_ZOOM = 0.25;
+export const MAX_ZOOM = 3;
+
+/** Clamp a zoom factor into the supported [MIN_ZOOM, MAX_ZOOM] range. */
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+}

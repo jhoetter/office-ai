@@ -74,6 +74,33 @@ test.describe("pptx-editor route", () => {
     await expect(errorToasts).toHaveCount(0);
   });
 
+  test("zoom slider rescales the slide canvas and resets to 100%", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    const canvas = page.getByTestId("pptx-slide-canvas");
+    await expect(canvas).toBeVisible();
+    await expect(canvas).toHaveAttribute("data-zoom", "1.00");
+
+    const slider = page.getByTestId("pptx-zoom-slider");
+    // React intercepts native value setters on `<input>` to track changes;
+    // calling the prototype setter directly is the supported way to drive
+    // a controlled range input from outside the React event system.
+    await slider.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      setter?.call(input, "1.5");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await expect(canvas).toHaveAttribute("data-zoom", "1.50");
+
+    await page.getByTestId("pptx-zoom-reset").click();
+    await expect(canvas).toHaveAttribute("data-zoom", "1.00");
+  });
+
   test("agent panel 'add a slide' prompt routes through the LLM bridge fallback", async ({
     page,
   }) => {

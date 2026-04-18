@@ -31,6 +31,7 @@
 | 2026-04-19 | Theme color resolution                | F1.2 — `parser/theme.ts` extracts `a:clrScheme` into `PptxPresentation.themeDefault`; renderer resolves `<a:schemeClr>` from run opaque children. |
 | 2026-04-19 | Playwright e2e for `/pptx-editor`     | F1.3 — `apps/web/e2e/pptx-editor.spec.ts` covers route mount, sample-deck thumbnail, Add slide / Delete enable, Text box, Bold toggle, agent panel "add a slide" via the LLM bridge offline fallback. |
 | 2026-04-19 | Real-world PPTX fixtures + roundtrip integration test | F1.4 — `scripts/generate-real-pptx-fixtures.mjs` writes 3 third-party-emitter (`pptxgenjs`) decks to `fixtures/pptx/real/` (styled deck w/ hyperlinks + notes, mixed-media w/ table+image, 25-slide deck). `tests/roundtrip/pptx/real-world-roundtrip.test.ts` asserts ≥95 % byte-identity on pure roundtrip and edit-isolation on a single text-shape edit. |
+| 2026-04-19 | Renderer DPI/zoom hook + toolbar zoom slider | F1.5 — `SlideCanvas` accepts `zoom` (clamped to [0.25, 3]) and `dpi` (overlay font sizing); `MIN_ZOOM` / `MAX_ZOOM` / `clampZoom` exported from `@officeai/pptx/renderer`. `PptxToolbar` gained zoom-out / range slider / zoom-in / reset (% display + click-to-100 %). New Playwright case in `apps/web/e2e/pptx-editor.spec.ts` drives the slider and asserts the canvas's `data-zoom` attribute. |
 
 ## Deferred to a follow-up session
 

@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@officeai/ui";
 import { PptxAgent } from "@officeai/pptx/agent";
 import { SlideCanvas, SlidesSidebar } from "@officeai/pptx/renderer/react";
+import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import type { Mutation } from "@officeai/core";
 import type { TextShape } from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
@@ -29,6 +30,11 @@ export function PptxEditor(): React.ReactNode {
   const [tick, setTick] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastId = useRef(0);
+  const [zoom, setZoom] = useState(1);
+
+  const onZoomChange = useCallback((next: number) => {
+    setZoom(clampZoom(next));
+  }, []);
 
   const pushToast = useCallback((kind: ToastMessage["kind"], text: string) => {
     const id = ++toastId.current;
@@ -248,6 +254,11 @@ export function PptxEditor(): React.ReactNode {
         onToggleBold={() => void toggleMark("bold")}
         onToggleItalic={() => void toggleMark("italic")}
         onToggleUnderline={() => void toggleMark("underline")}
+        zoom={zoom}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
+        onZoomChange={onZoomChange}
+        onZoomReset={() => setZoom(1)}
       />
       <input
         ref={fileInputRef}
@@ -277,14 +288,15 @@ export function PptxEditor(): React.ReactNode {
             />
           ) : null}
         </aside>
-        <section className="relative flex min-h-0 flex-1 items-center justify-center rounded-md border border-divider bg-background p-4">
+        <section className="relative flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-divider bg-background p-4">
           {agent ? (
-            <div className="w-full max-w-[1100px]">
+            <div className="w-full max-w-[1100px]" style={{ alignSelf: "flex-start" }}>
               <SlideCanvas
                 agent={agent}
                 slideIndex={activeIndex}
                 mediaUrls={mediaUrls}
                 onError={onError}
+                zoom={zoom}
               />
             </div>
           ) : null}

@@ -4,6 +4,7 @@ import type { PptxAgent } from "../../agent/agent.js";
 import type { Shape, Slide, SlideSize, TextShape } from "../../model/types.js";
 import { shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
+import { DEFAULT_DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
 import { useAgentSnapshot } from "./use-agent-snapshot.js";
@@ -13,6 +14,10 @@ export interface SlideCanvasProps {
   readonly slideIndex: number;
   readonly mediaUrls?: ReadonlyMap<string, string>;
   readonly onError?: (err: Error) => void;
+  /** Zoom multiplier; 1 = fit-to-container. Clamped to [0.25, 3]. */
+  readonly zoom?: number;
+  /** DPI used for converting EMU/font sizes to CSS pixels in the HTML overlay. */
+  readonly dpi?: number;
 }
 
 interface DragState {
@@ -156,14 +161,19 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     return null;
   }
   const aspect = slideAspectRatio(slideSize);
+  const zoom = clampZoom(props.zoom ?? 1);
+  const dpi = props.dpi ?? DEFAULT_DPI;
 
   return (
     <div
       ref={containerRef}
+      data-testid="pptx-slide-canvas"
+      data-zoom={zoom.toFixed(2)}
+      data-dpi={dpi}
       className="officeai-pptx-canvas"
       style={{
         position: "relative",
-        width: "100%",
+        width: `${zoom * 100}%`,
         aspectRatio: String(aspect),
         background: "white",
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
@@ -191,7 +201,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         }}
       />
       {editingId
-        ? renderEditingOverlay(slide, editingId, slideSize, finishEditing)
+        ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing)
         : null}
     </div>
   );
@@ -232,6 +242,7 @@ function renderEditingOverlay(
   slide: Slide,
   shapeId: string,
   slideSize: SlideSize,
+  dpi: number,
   onCommit: (shape: TextShape, text: string) => void
 ): React.ReactElement | null {
   const shape = findShape(slide.shapes, shapeId);
@@ -244,7 +255,7 @@ function renderEditingOverlay(
   const topPct = (box.y / slideSize.cyEmu) * 100;
   const widthPct = (box.cx / slideSize.cxEmu) * 100;
   const heightPct = (box.cy / slideSize.cyEmu) * 100;
-  const fontPx = estimateFontPx(shape);
+  const fontPx = estimateFontPx(shape, dpi);
   return (
     <TextEditOverlay
       key={shapeId}
@@ -322,11 +333,11 @@ function textShapePlain(shape: TextShape): string {
     .join("\n");
 }
 
-function estimateFontPx(shape: TextShape): number {
+function estimateFontPx(shape: TextShape, dpi: number = DEFAULT_DPI): number {
   const r = shape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak);
   if (r?.properties.fontSizeHundredths !== undefined) {
     const pt = r.properties.fontSizeHundredths / 100;
-    return (pt * 96) / 72;
+    return (pt * dpi) / 72;
   }
-  return 18; // default 18pt → 24px
+  return (18 * dpi) / 72; // default 18pt
 }
