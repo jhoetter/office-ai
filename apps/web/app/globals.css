@@ -958,6 +958,31 @@ html.dark .prose-pm .ProseMirror {
   padding-right: var(--pm-page-margin-right, 72px);
 }
 
+/* Tables are an exception to the universal "page margin = padding"
+ * rule above: Tailwind preflight makes `box-sizing: border-box`
+ * global, so a `<table style="width: 6.5in">` ends up with the
+ * 96 px page-margin padding eating into the cell area instead of
+ * shifting the table to the right of the margin. The visible
+ * symptom is a typed-width table whose cells render narrower than
+ * the text column AND start mid-page (because the cell area is the
+ * declared width minus 2× page margin, and the empty padding sits
+ * on the LEFT of the cells). Re-anchor tables with horizontal
+ * margins so the table BOX itself sits inside the text margins,
+ * matching paragraph indentation, and clamp width so a typed-dxa
+ * table that exceeds the live margin width never overflows the
+ * page sheet. Inline `margin-left` / `margin-right` (emitted by the
+ * schema for `<w:jc w:val="center"/>` and `<w:tblInd>`) still wins
+ * over these class rules via specificity. */
+.prose-pm .ProseMirror > .pm-table {
+  padding-left: 0;
+  padding-right: 0;
+  margin-left: var(--pm-page-margin-left, 72px);
+  margin-right: var(--pm-page-margin-right, 72px);
+  max-width: calc(
+    100% - var(--pm-page-margin-left, 72px) - var(--pm-page-margin-right, 72px)
+  );
+}
+
 /* Page cap (top): the white header strip above the very first page.
  * Pads top so the sheet has visible top margin. */
 .prose-pm .ProseMirror > .pm-page-cap-top {

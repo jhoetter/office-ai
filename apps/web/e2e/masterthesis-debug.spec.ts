@@ -64,5 +64,42 @@ test.describe("masterthesis fixture", () => {
       }, 760);
       await page.waitForTimeout(250);
     }
+
+    // Diagnostic dump: inline + computed geometry for every <table.pm-table>
+    // so we can see whether the declared width is being honoured. Logged
+    // to stdout and written to disk for offline inspection.
+    const tableMetrics = await page.evaluate(() => {
+      const tables = Array.from(
+        document.querySelectorAll<HTMLTableElement>(".ProseMirror .pm-table")
+      );
+      const sample = (n: Node | null): string =>
+        (n?.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 60);
+      return tables.map((t, i) => {
+        const cs = window.getComputedStyle(t);
+        const r = t.getBoundingClientRect();
+        const parent = t.parentElement;
+        const parentCs = parent ? window.getComputedStyle(parent) : null;
+        const parentR = parent ? parent.getBoundingClientRect() : null;
+        return {
+          index: i,
+          firstCell: sample(t.querySelector("td")),
+          inlineStyle: t.getAttribute("style") ?? "",
+          width: cs.width,
+          marginLeft: cs.marginLeft,
+          marginRight: cs.marginRight,
+          tableLayout: cs.tableLayout,
+          rectX: Math.round(r.x),
+          rectW: Math.round(r.width),
+          parentTag: parent?.tagName ?? "",
+          parentClass: parent?.className ?? "",
+          parentDisplay: parentCs?.display ?? "",
+          parentWidth: parentCs?.width ?? "",
+          parentRectX: parentR ? Math.round(parentR.x) : 0,
+          parentRectW: parentR ? Math.round(parentR.width) : 0,
+        };
+      });
+    });
+    // eslint-disable-next-line no-console
+    console.log("[masterthesis-debug] table metrics:\n" + JSON.stringify(tableMetrics, null, 2));
   });
 });
