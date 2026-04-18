@@ -98,3 +98,9 @@ export {
   type XlsxSearchSpec,
   type XlsxSearchResult,
 } from "./agent/index.js";
+
+export {
+  listRegisteredFunctions,
+  type FunctionCategory,
+  type RegisteredFunctionInfo,
+} from "./formula/registered-functions.js";

@@ -24,6 +24,11 @@ import {
   type CellPos,
   type Selection,
 } from "./selection";
+import {
+  FormulaSuggest,
+  applySuggestion,
+  getSuggestions,
+} from "./FormulaSuggest";
 
 interface ToastMessage {
   id: number;
@@ -195,14 +200,19 @@ export function XlsxEditor(): ReactNode {
 
   // Caret offset inside the formula-bar input. We snapshot it on every
   // selectionchange / keystroke so click-to-insert-ref knows where to
-  // splice the picked cell reference. Stored in a ref (not state) so
-  // touching it doesn't re-render the formula bar mid-keystroke.
+  // splice the picked cell reference. The ref is read by ref-insertion
+  // logic (no re-render needed); the state shadow drives autocomplete
+  // reactivity (matches list refreshes when the caret moves).
   const formulaCaretRef = useRef<number>(0);
+  const [formulaCaret, setFormulaCaret] = useState(0);
   const captureCaret = useCallback(() => {
     const el = formulaInputRef.current;
     if (!el) return;
-    formulaCaretRef.current = el.selectionStart ?? el.value.length;
+    const next = el.selectionStart ?? el.value.length;
+    formulaCaretRef.current = next;
+    setFormulaCaret(next);
   }, []);
+  const [suggestHighlight, setSuggestHighlight] = useState(0);
 
   // We're in "formula edit mode" (Excel's "point mode") whenever the
   // formula bar is focused AND the draft starts with `=`. Cell clicks
@@ -479,6 +489,44 @@ export function XlsxEditor(): ReactNode {
   const sheets = snapshot?.root.sheets ?? [];
   const revision = snapshot?.revision ?? 0;
 
+  // Recompute autocomplete matches whenever the user types or moves
+  // the caret while the formula bar is focused. `getSuggestions`
+  // returns the empty list when the caret isn't on a partial function
+  // token, which makes the popover render `null`.
+  const { matches: suggestionMatches, active: suggestionSpan } = formulaFocused
+    ? getSuggestions(formulaDraft, formulaCaret)
+    : { matches: [], active: null };
+
+  // Reset the highlight cursor whenever the prefix changes so the
+  // first match is always selected by default. Done in render via a
+  // ref-tracked previous-prefix shadow to avoid the lint-flagged
+  // setState-in-effect pattern; the conditional setState is safe
+  // because it short-circuits when the prefix is unchanged.
+  const prevPrefixRef = useRef<string | null>(null);
+  if (prevPrefixRef.current !== (suggestionSpan?.prefix ?? null)) {
+    prevPrefixRef.current = suggestionSpan?.prefix ?? null;
+    if (suggestHighlight !== 0) setSuggestHighlight(0);
+  }
+
+  const acceptSuggestion = useCallback(
+    (info: Parameters<typeof applySuggestion>[1]) => {
+      if (!suggestionSpan) return;
+      const { next, caret } = applySuggestion(formulaDraft, info, suggestionSpan);
+      setFormulaDraft(next);
+      formulaCaretRef.current = caret;
+      setFormulaCaret(caret);
+      // Re-focus + park caret inside the parens so the user can keep
+      // typing arguments without grabbing the mouse.
+      requestAnimationFrame(() => {
+        const el = formulaInputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      });
+    },
+    [formulaDraft, suggestionSpan]
+  );
+
   return (
     <div
       ref={surfaceRef}
@@ -557,7 +605,7 @@ export function XlsxEditor(): ReactNode {
         </div>
       ) : null}
 
-      <div className="formula-bar flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
+      <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
         <span
           data-testid="cell-ref"
           className="inline-flex h-7 min-w-[60px] items-center justify-center rounded border border-divider bg-background px-2 text-xs font-mono text-foreground"
@@ -598,6 +646,26 @@ export function XlsxEditor(): ReactNode {
             pendingRefAnchorRef.current = null;
           }}
           onKeyDown={(e) => {
+            const hasSuggestions = suggestionMatches.length > 0;
+            if (hasSuggestions && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              setSuggestHighlight((prev) => {
+                const dir = e.key === "ArrowDown" ? 1 : -1;
+                const n = suggestionMatches.length;
+                return (prev + dir + n) % n;
+              });
+              return;
+            }
+            if (hasSuggestions && (e.key === "Tab" || e.key === "Enter")) {
+              // Enter accepts a suggestion only while the popover is
+              // open; otherwise it submits the formula.
+              const pick = suggestionMatches[Math.min(suggestHighlight, suggestionMatches.length - 1)];
+              if (pick) {
+                e.preventDefault();
+                acceptSuggestion(pick);
+                return;
+              }
+            }
             if (e.key === "Enter") {
               e.preventDefault();
               onFormulaSubmit();
@@ -608,8 +676,6 @@ export function XlsxEditor(): ReactNode {
               pendingRefSpanRef.current = null;
               pendingRefAnchorRef.current = null;
               formulaInputRef.current?.blur();
-              // Hand keyboard focus back to the surface so the next
-              // keystroke is "type-to-edit" again.
               surfaceRef.current?.focus();
             } else {
               captureCaret();
@@ -619,6 +685,14 @@ export function XlsxEditor(): ReactNode {
           disabled={!selection || !agent}
           className="flex-1 bg-transparent px-1 py-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
         />
+        <div className="absolute left-[68px] right-2 top-full z-40">
+          <FormulaSuggest
+            matches={suggestionMatches}
+            highlight={Math.min(suggestHighlight, Math.max(suggestionMatches.length - 1, 0))}
+            onPick={acceptSuggestion}
+            onHighlight={setSuggestHighlight}
+          />
+        </div>
       </div>
 
       <div className="relative flex-1 min-h-0">
