@@ -53,7 +53,9 @@
 | `<p:cSld><p:bg>` (if present) | `spTreeHead[0]`              | preserved verbatim as the first head item          |
 | `<p:cSld><p:spTree>` head     | `spTreeHead[]`               | `<p:nvGrpSpPr>`, `<p:grpSpPr>` for the spTree     |
 | children of `<p:spTree>`      | `shapes[]`                   | each child becomes a typed Shape or OpaqueShape    |
-| `<p:clrMapOvr>`, `<p:transition>`, `<p:timing>`, `<p:extLst>`, … | `slideOpaqueTail[]` | preserved verbatim |
+| `<p:transition>`              | `Slide.transition` (F4)      | typed if recognized; opaque-tail otherwise           |
+| `<p:timing>`                  | `Slide.animations[]` (F4) + `Slide.timingTailRaw` | typed entrances promoted; rest preserved verbatim |
+| `<p:clrMapOvr>`, `<p:extLst>`, … | `slideOpaqueTail[]`       | preserved verbatim                                   |
 
 ## Shape elements (children of `<p:spTree>`)
 
@@ -65,7 +67,8 @@
 | `<p:grpSp>`          | `GroupShape`              | recursive; children parsed                                  |
 | `<p:cxnSp>`          | `OpaqueShape`             | connector                                                   |
 | `<p:graphicFrame>` (table) | `TableShape`        | `<a:graphicData @uri="…/drawingml/2006/table">` → typed (F2) |
-| `<p:graphicFrame>` (other) | `OpaqueShape`       | host for `c:chart` / `dgm:relIds` (SmartArt)                |
+| `<p:graphicFrame>` (chart) | `ChartShape`        | `<a:graphicData @uri="…/drawingml/2006/chart">` → typed (F3); references a `ChartPart` via slide rels |
+| `<p:graphicFrame>` (other) | `OpaqueShape`       | host for `dgm:relIds` (SmartArt) and any unsupported graphicData uri |
 | `<mc:AlternateContent>` | `OpaqueShape`          | mc-wrapped content                                          |
 | anything else        | `OpaqueShape`             | catch-all                                                   |
 
@@ -137,6 +140,53 @@
 | `<a:rPr><a:solidFill><a:srgbClr @val="RRGGBB">` | `properties.color`       | direct hex                            |
 | anything else under `<a:rPr>`   | `properties.opaqueProps[]`               | schemeClr, lumMod, hlinkClick, …      |
 
+## `<p:graphicFrame>` (chart) internals — F3
+
+| OOXML path                                              | Model field            | Notes                                           |
+| ------------------------------------------------------- | ---------------------- | ----------------------------------------------- |
+| `<p:nvGraphicFramePr><p:cNvPr @id @name>`               | `cNvPrId`, `name`      | typed via `ShapeBase`                           |
+| any other `<p:nvGraphicFramePr>` child                  | `nvGraphicFramePrTail` | preserved verbatim                              |
+| `<p:xfrm><a:off>` / `<a:ext>`                           | `position`, `size`     | EMU                                             |
+| `<a:graphic><a:graphicData @uri>`                       | `graphicDataUri`       | always the chart uri for a `ChartShape`         |
+| `<a:graphic><a:graphicData><c:chart @r:id>`             | `chartRelId`           | resolves to `chartPartPath` via slide rels      |
+
+## ChartPart (`ppt/charts/chart{N}.xml`) — F3
+
+| OOXML path                                                            | Model field             | Notes                                                |
+| --------------------------------------------------------------------- | ----------------------- | ---------------------------------------------------- |
+| `<c:chartSpace>` head + tail (sans the children we model)             | `chartSpaceRaw`         | preserved verbatim                                   |
+| `<c:chart><c:title><c:tx><c:rich>` flattened text                     | `title`                 | optional; `set-chart-title` rewrites this           |
+| `<c:chart><c:plotArea><c:barChart \| lineChart \| pieChart \| areaChart>` | `chartType`         | `"unsupported"` for any other plot type             |
+| `<c:plotArea>` siblings (axes, legend, dispBlanksAs, …)               | `plotAreaTailRaw[]`     | preserved verbatim                                   |
+| `<c:ser><c:idx @val>`                                                 | `series[].idx`          |                                                      |
+| `<c:ser><c:tx><c:strRef><c:strCache><c:pt><c:v>`                      | `series[].name`         | flattened plain text                                 |
+| `<c:ser><c:val><c:numRef><c:numCache><c:pt @idx><c:v>`                | `series[].values[]`     | numeric only; non-finite → 0                         |
+| `<c:ser><c:cat><c:strRef><c:strCache><c:pt @idx><c:v>` (first series) | `categories[]`          | shared across series; subsequent series ignored      |
+| any other `<c:ser>` head/tail                                         | `seriesRaw[idx]`        | preserved verbatim per series                        |
+
+## `<p:transition>` internals — F4
+
+| OOXML path                                       | Model field          | Notes                                              |
+| ------------------------------------------------ | -------------------- | -------------------------------------------------- |
+| `<p:transition>` element presence                | `Slide.transition`   | absent ⇒ `undefined`                               |
+| `<p:transition><p:fade \| push \| wipe \| split \| cut>` | `transition.kind` | typed if matched; otherwise `"unsupported"`        |
+| `<p:transition @spd="slow\|med\|fast">`          | `transition.speed`   |                                                    |
+| anything else under `<p:transition>`             | `transition.raw`     | preserved verbatim                                 |
+
+## `<p:timing>` internals — F4 (entrances only)
+
+We only promote main-sequence entrance effects matching one of the four
+named effects below. Anything more complex is preserved as `timingTailRaw`.
+
+| OOXML path (under `<p:timing><p:tnLst><p:par>` main sequence)                   | Model field                  | Notes                                |
+| -------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------ |
+| `<p:par>` containing a single `<p:cTn nodeType="entr">` with `<p:set><p:to><p:strVal val="visible">` and no `<p:anim>` | `effect: "appear"` | no `<p:cTn @dur>` typed              |
+| `<p:par>` whose `<p:cTn>` contains `<p:animEffect filter="fade">`                | `effect: "fade"`             | duration from `<p:cTn @dur>`         |
+| `<p:par>` whose `<p:cTn>` contains `<p:animEffect filter="fly*">`                | `effect: "fly-in"`           |                                      |
+| `<p:par>` whose `<p:cTn>` contains `<p:animEffect filter="wipe*">`               | `effect: "wipe"`             |                                      |
+| `<p:spTgt @spid>`                                                                | `targetCNvPrId`              | matches a typed shape's `cNvPrId`    |
+| anything not matching the patterns above                                         | `timingTailRaw`              | preserved verbatim                   |
+
 ## Slide rels graph (`ppt/slides/_rels/slideN.xml.rels`)
 
 Resolved into `RelationshipGraph` keyed by the **slide part path**.
@@ -147,7 +197,8 @@ Resolved into `RelationshipGraph` keyed by the **slide part path**.
 | `/relationships/notesSlide`                                         | binds slide → notesSlide                  |
 | `/relationships/image`                                              | picture media references                  |
 | `/relationships/hyperlink`                                          | text-run hyperlinks (preserved opaquely)  |
-| `/relationships/chart`, `/diagramData`, `/diagramLayout`, …         | preserved verbatim                        |
+| `/relationships/chart`                                              | resolves to `ChartPart` keyed by partPath (F3) |
+| `/diagramData`, `/diagramLayout`, …                                 | preserved verbatim (SmartArt)             |
 | `/relationships/oleObject`, `/audio`, `/video`, …                   | preserved verbatim                        |
 
 ## Presentation rels graph (`ppt/_rels/presentation.xml.rels`)

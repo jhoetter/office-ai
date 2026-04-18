@@ -54,6 +54,12 @@ export interface PptxPresentation {
   readonly notesSlides: ReadonlyMap<string, OpaquePart>;
   /** Media parts keyed by part path. Carry SHA-256 for dedup. */
   readonly media: ReadonlyMap<string, MediaPart>;
+  /**
+   * F3: typed chart parts keyed by part path. Each `ChartShape` resolves
+   * its `chartPartPath` here. Anything in the chart XML we don't model
+   * is preserved as `OpaqueXml` inside the part.
+   */
+  readonly charts: ReadonlyMap<string, ChartPart>;
   /** Original `<p:presentation>` root attributes. Re-emitted verbatim. */
   readonly presentationRootAttrs: Readonly<Record<string, string>>;
   /**
@@ -120,8 +126,28 @@ export interface Slide {
   /** Top-level shapes inside `<p:cSld><p:spTree>`, in z-order. */
   readonly shapes: ReadonlyArray<Shape>;
   /**
-   * Tail children of `<p:sld>` we don't introspect (clrMapOvr, transition,
-   * timing, extLst, …). Re-emitted verbatim on serialize.
+   * F4: typed slide transition (`<p:transition>`). Optional — slides
+   * with no transition or with an unsupported transition fall back to
+   * the opaque tail.
+   */
+  readonly transition?: SlideTransition;
+  /**
+   * F4: typed simple per-shape entrance animations parsed from
+   * `<p:timing>`. Anything we don't model stays in `timingTailRaw`
+   * and is re-emitted verbatim.
+   */
+  readonly animations?: ReadonlyArray<EntranceAnimation>;
+  /**
+   * F4: opaque remainder of `<p:timing>` we don't introspect (build,
+   * advanced sequences, custom paths, behaviors). Re-emitted verbatim
+   * alongside the typed animations.
+   */
+  readonly timingTailRaw?: OpaqueXml;
+  /**
+   * Tail children of `<p:sld>` we don't introspect (clrMapOvr, extLst, …).
+   * Note: `<p:transition>` and `<p:timing>` are *removed* from this tail
+   * iff we successfully promote them to the typed model above; otherwise
+   * they remain here verbatim. Re-emitted verbatim on serialize.
    */
   readonly slideOpaqueTail: ReadonlyArray<OpaqueXml>;
   /**
@@ -143,7 +169,13 @@ export interface Slide {
 ## Shapes
 
 ```typescript
-export type Shape = TextShape | Picture | TableShape | GroupShape | OpaqueShape;
+export type Shape =
+  | TextShape
+  | Picture
+  | TableShape
+  | ChartShape
+  | GroupShape
+  | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 
@@ -272,6 +304,25 @@ export interface GroupShape extends ShapeBase {
 }
 
 /**
+ * F3: typed chart frame. The `<p:graphicFrame>` is typed (so position/size
+ * are model-driven) and a relationship points at a typed `ChartPart`
+ * carrying the chart series + plot area. Anything inside the chart XML
+ * we don't model (axes formatting, legend layout, chart styles) is
+ * preserved verbatim as `OpaqueXml` and re-emitted.
+ */
+export interface ChartShape extends ShapeBase {
+  readonly kind: "chart";
+  /** Relationship id (`<c:chart r:id=…>`) pointing at the ChartPart. */
+  readonly chartRelId: string;
+  /** Resolved chart part path, e.g. `ppt/charts/chart1.xml`. */
+  readonly chartPartPath: string;
+  /** Captured `<p:nvGraphicFramePr>` tail — see TableShape. */
+  readonly nvGraphicFramePrTail: ReadonlyArray<OpaqueXml>;
+  /** `<a:graphicData @uri>` — always `"…/drawingml/2006/chart"`. */
+  readonly graphicDataUri: string;
+}
+
+/**
  * Anything not above (cxnSp, graphicFrame, contentPart, AlternateContent, …).
  * Position/size parsed best-effort from a leading `<a:xfrm>` if present;
  * otherwise both are undefined and the renderer falls back to layout/master.
@@ -342,6 +393,101 @@ export interface TextRunProperties {
 }
 ```
 
+## Charts (F3)
+
+```typescript
+/**
+ * F3: typed chart part. Lives at `ppt/charts/chart{N}.xml` and is
+ * referenced from a `ChartShape` via the slide's relationships file.
+ *
+ * The model is intentionally narrow: only enough to support
+ * `set-chart-title` / `set-chart-data` / `set-chart-type`. Everything
+ * else (axes, legend layout, plotArea fills, embedded xlsx) is
+ * preserved verbatim.
+ *
+ * Embedded `xlsx/embeddings/Microsoft_Excel_Worksheet*.xlsx` workbooks
+ * are NOT auto-rewritten when set-chart-data fires. PowerPoint
+ * silently re-derives the cached values from the chart XML's
+ * `<c:numCache>` / `<c:strCache>`, so charts open correctly. Round-
+ * tripping the embedded workbook is a non-goal.
+ */
+export interface ChartPart {
+  readonly partPath: string;
+  readonly contentType: string; // application/vnd.openxmlformats-officedocument.drawingml.chart+xml
+  readonly chartType: ChartType;
+  /** `<c:title><c:tx><c:rich>` flattened to plain text. Optional. */
+  readonly title?: string;
+  /**
+   * One series per `<c:ser>`. `chartType` determines which fields
+   * are honored (e.g. pie charts only use `categories` + the first
+   * series' `values`).
+   */
+  readonly series: ReadonlyArray<ChartSeries>;
+  /** `<c:cat>` shared across series — repeated only when series differ. */
+  readonly categories: ReadonlyArray<string>;
+  /** Verbatim head/tail of `<c:chartSpace>` we don't model. */
+  readonly chartSpaceRaw: OpaqueXml;
+  /** Verbatim plotArea formatting blocks (axes, legend, …). */
+  readonly plotAreaTailRaw: ReadonlyArray<OpaqueXml>;
+  /** Verbatim head of each `<c:ser>` (idx/order/tx/spPr) keyed by series idx. */
+  readonly seriesRaw: ReadonlyMap<number, OpaqueXml>;
+}
+
+export type ChartType = "bar" | "line" | "pie" | "area" | "unsupported";
+
+export interface ChartSeries {
+  readonly id: NodeId;
+  /** `<c:ser><c:idx>`. Index attribute, not array position. */
+  readonly idx: number;
+  /** Display name (`<c:tx><c:strRef><c:strCache><c:pt><c:v>`). */
+  readonly name?: string;
+  /** Numeric data points; aligned with `ChartPart.categories`. */
+  readonly values: ReadonlyArray<number>;
+}
+```
+
+## Animations (F4)
+
+```typescript
+/**
+ * F4: typed slide transition. The kind covers the 6 most common
+ * effects; anything else falls back to opaque-tail preservation
+ * (we never lose the original transition).
+ */
+export interface SlideTransition {
+  readonly id: NodeId;
+  readonly kind:
+    | "none"
+    | "fade"
+    | "push"
+    | "wipe"
+    | "split"
+    | "cut"
+    | "unsupported";
+  /** `@spd` — slide / fast / med / slow. */
+  readonly speed?: "slow" | "med" | "fast";
+  /** Verbatim `<p:transition>` attrs/children we don't model. */
+  readonly raw: OpaqueXml;
+}
+
+/**
+ * F4: typed simple per-shape entrance animation. Targets a shape
+ * by `cNvPrId`. The 4 supported effects round-trip cleanly; anything
+ * else is preserved as opaque animation tail and is NOT exposed as
+ * a typed entrance.
+ */
+export interface EntranceAnimation {
+  readonly id: NodeId;
+  /** Target shape's `cNvPrId` (PowerPoint's `<p:spTgt @spid>`). */
+  readonly targetCNvPrId: number;
+  readonly effect: "appear" | "fade" | "fly-in" | "wipe";
+  /** `<p:cTn @dur>` in ms. Optional; engines default if missing. */
+  readonly durationMs?: number;
+  /** Trigger order in the main entrance sequence. */
+  readonly order: number;
+}
+```
+
 ## OpaqueXml
 
 The shared `OpaqueXml` type — already used by DOCX — is reused as-is:
@@ -370,5 +516,7 @@ export interface OpaqueXml {
 
 - Slide masters / layouts / theme contents — opaque parts only (we do read them at render time, but we never type them).
 - Notes-slide contents — opaque per-slide.
-- Animation timing tree, transitions, color map overrides — captured under `slideOpaqueTail`.
+- F3 (charts): only series values, categories, title and chart type are typed. Axes formatting, legend layout, plot-area styling, embedded `xlsx/embeddings/` workbooks, 3-D charts, scatter / radar / surface chart types, and trendlines are preserved verbatim and reported as `chartType: "unsupported"` when they would otherwise be set as the chart type.
+- F4 (animations): only slide transitions and the 4 named entrance effects per shape are typed. Build sequences, exit / motion-path / emphasis effects, and any unknown timing tail are preserved verbatim under `Slide.timingTailRaw`.
+- Color map overrides remain captured under `slideOpaqueTail`.
 - Connector geometry, `graphicFrame` charts/SmartArt/tables — opaque shapes only.

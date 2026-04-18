@@ -44,11 +44,11 @@ Per [`prompt.md`](../../prompt.md) lines 291–298:
 | Feature                                                | Status                                  |
 | ------------------------------------------------------ | --------------------------------------- |
 | SmartArt **editing** (render + preserve only)          | **OUT** (preserved as `OpaqueShape`)    |
-| Animation / transition **editing** (preserve only)     | **OUT** (preserved verbatim per slide)  |
-| Chart editing within slides (preserve only)            | **OUT** (chart parts preserved opaque)  |
 | Master / layout **editing** (preserve only)            | **OUT** (master & layout parts opaque)  |
 | Notes-pages **editing** (preserve only)                | **OUT** (notes parts preserved opaque)  |
 | ~~Table **editing** within slides (render + preserve)~~ | **F2** — typed `TableShape`; cell-text + add/delete row/column edits. Visual styling stays opaque (re-emit `<a:tblPr>` verbatim). |
+| ~~Chart editing within slides (preserve only)~~        | **F3** — typed `ChartShape` + `ChartPart`. Edit chart title, replace numeric data, switch chart type between bar / line / pie / area. All non-modeled chart XML (axes, legend, formatting) is preserved verbatim. Embedded `xlsx/embeddings/Microsoft_Excel_Worksheet*.xlsx` workbooks are preserved opaquely (not auto-synced). |
+| ~~Animation / transition **editing** (preserve only)~~ | **F4** — typed `SlideTransition` + simple per-shape `EntranceAnimation` for the 4 most common effects (fade / appear / fly-in / wipe). Anything else stays as opaque `<p:timing>` tail and is re-emitted verbatim. |
 
 ## Roundtrip-integrity bar
 

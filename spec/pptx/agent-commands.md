@@ -458,6 +458,149 @@ AND from every row's `cells`. Rejects if the table only has one column.
 
 Diff: `{ kind: "node-removed", path: ["slides", N, "shapes", M, "columnWidths", column], summary: "column" }`.
 
+## Commands (F3 — Charts)
+
+> All three chart commands operate on a `ChartShape` resolved by
+> `(slideIndex, shapeId)` and dispatch the actual edit through the
+> `ChartPart` resolved via that shape's `chartRelId` /
+> `chartPartPath`. They reject `not-applicable` for non-`ChartShape`
+> targets and `unknown-target` if the resolved part is missing.
+
+### `pptx:set-chart-title`
+
+```typescript
+type SetChartTitlePayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  /** Plain text. Pass empty string to clear the title. */
+  title: string;
+};
+```
+
+Replace the chart's typed `title` and rebuild the `<c:title>` element
+on serialize. Existing rich formatting on the title (color, font size)
+is dropped — agents wanting to keep rich formatting should leave the
+title alone and edit the workbook through PowerPoint.
+
+Diff: `{ kind: "node-updated", path: ["charts", chartPartPath, "title"], field: "text", summary: "…" }`.
+
+### `pptx:set-chart-data`
+
+```typescript
+type SetChartDataPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  categories: ReadonlyArray<string>;
+  series: ReadonlyArray<{
+    /** Optional — defaults to existing seriesRaw[idx]. */
+    name?: string;
+    values: ReadonlyArray<number>;
+  }>;
+};
+```
+
+Replace `categories[]` and rebuild every `series[]` entry with new
+`values[]`. Series whose length is < `categories.length` are
+zero-padded; series longer than `categories.length` raise
+`invalid-payload`. The embedded xlsx workbook is NOT rewritten —
+PowerPoint uses the chart XML's number/string caches at render time.
+
+Diff: one `node-updated` per modified series + one for `categories`.
+
+### `pptx:set-chart-type`
+
+```typescript
+type SetChartTypePayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  chartType: "bar" | "line" | "pie" | "area";
+};
+```
+
+Switch the typed `chartType`. Serializer rewrites the
+`<c:plotArea>` child wrapper (`<c:barChart>`, `<c:lineChart>`,
+`<c:pieChart>`, `<c:areaChart>`) while preserving
+`plotAreaTailRaw[]` for axes / legend. Rejects
+`not-applicable` if the existing chart is `"unsupported"` (we'd
+have to fabricate plot area parts we can't safely round-trip).
+
+Diff: `{ kind: "node-updated", path: ["charts", chartPartPath, "chartType"], field: "type", summary: "…" }`.
+
+## Commands (F4 — Animations)
+
+> All four animation commands operate on the typed `Slide.transition`
+> and `Slide.animations[]` fields. Anything they touch is re-emitted
+> through the typed serializer; the rest of `<p:timing>` stays in
+> `timingTailRaw` verbatim.
+
+### `pptx:set-slide-transition`
+
+```typescript
+type SetSlideTransitionPayload = {
+  slideIndex: number;
+  /** Pass `"none"` to remove an existing transition. */
+  kind: "none" | "fade" | "push" | "wipe" | "split" | "cut";
+  speed?: "slow" | "med" | "fast";
+};
+```
+
+Replace `Slide.transition` with a fresh typed value. `"none"` clears
+the field entirely (and the serializer drops `<p:transition>` from
+the slide XML).
+
+Diff: `{ kind: "node-updated", path: ["slides", N, "transition"], field: "kind", summary: "…" }`.
+
+### `pptx:add-shape-animation`
+
+```typescript
+type AddShapeAnimationPayload = {
+  slideIndex: number;
+  shapeId: NodeId;
+  effect: "appear" | "fade" | "fly-in" | "wipe";
+  /** Insert position in the main entrance sequence. Defaults to append. */
+  at?: number;
+  durationMs?: number;
+};
+```
+
+Resolve the shape's `cNvPrId`, mint an `EntranceAnimation` and insert
+it at `at` (or append). Rejects `not-applicable` if the shape has no
+`cNvPrId` (i.e. it's an `OpaqueShape` we couldn't type).
+
+Diff: `{ kind: "node-inserted", path: ["slides", N, "animations", at], summary: "entrance" }`.
+
+### `pptx:remove-shape-animation`
+
+```typescript
+type RemoveShapeAnimationPayload = {
+  slideIndex: number;
+  /** The animation's NodeId (returned by add / read). */
+  animationId: NodeId;
+};
+```
+
+Drop `Slide.animations[i]` matching `animationId`. Rejects
+`unknown-target` if the id is not in the typed list — animations
+parked under `timingTailRaw` are not addressable by id and must be
+edited by the user in PowerPoint.
+
+Diff: `{ kind: "node-removed", path: ["slides", N, "animations", i], summary: "entrance" }`.
+
+### `pptx:reorder-shape-animations`
+
+```typescript
+type ReorderShapeAnimationsPayload = {
+  slideIndex: number;
+  /** New order, must be a permutation of current `animations[].id`. */
+  order: ReadonlyArray<NodeId>;
+};
+```
+
+Atomically rewrites `Slide.animations[]` in the new order. Rejects
+`invalid-payload` if `order` isn't a permutation of the current ids.
+
+Diff: `{ kind: "node-updated", path: ["slides", N, "animations"], field: "order", summary: "permutation" }`.
+
 ## Diff format per command
 
 Each handler returns a `DocumentDiff` whose `changes` describe what
