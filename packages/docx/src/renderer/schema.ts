@@ -267,8 +267,39 @@ const nodes: Record<string, NodeSpec> = {
     group: "inline",
     inline: true,
     atom: true,
-    attrs: { runId: { default: null }, drawingJson: { default: null } },
-    toDOM() {
+    attrs: {
+      runId: { default: null },
+      drawingJson: { default: null },
+      /**
+       * `data:` URL for the image bytes. Built at render time by
+       * `doc-to-pm.ts` from the snapshot's `media` + `relationships` so
+       * the editor can show real pixels instead of an `[image]` chip.
+       * Falls back to the placeholder when the relationship cannot be
+       * resolved (e.g. broken doc, unknown rId, missing media part).
+       */
+      dataUrl: { default: null },
+      /** Display width in CSS pixels (intrinsic 1× size). */
+      width: { default: null },
+      /** Display height in CSS pixels (intrinsic 1× size). */
+      height: { default: null },
+      /** Alt text for screen readers / accessibility. */
+      alt: { default: "" },
+    },
+    toDOM(node) {
+      const dataUrl = typeof node.attrs.dataUrl === "string" ? node.attrs.dataUrl : "";
+      if (dataUrl.length > 0) {
+        const attrs: Record<string, string> = {
+          class: "pm-image",
+          src: dataUrl,
+          alt: typeof node.attrs.alt === "string" ? node.attrs.alt : "",
+          draggable: "false",
+        };
+        const w = typeof node.attrs.width === "number" ? node.attrs.width : 0;
+        const h = typeof node.attrs.height === "number" ? node.attrs.height : 0;
+        if (w > 0) attrs.width = String(w);
+        if (h > 0) attrs.height = String(h);
+        return ["img", attrs];
+      }
       return ["span", { class: "pm-image-placeholder" }, "[image]"];
     },
   },

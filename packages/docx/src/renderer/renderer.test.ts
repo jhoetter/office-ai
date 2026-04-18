@@ -154,6 +154,65 @@ describe("renderer", () => {
     });
   });
 
+  describe("image rendering — real <img> from media (P2.4 / W22)", () => {
+    /**
+     * The dataUrl/width/height/alt attrs are populated by docToPM via the
+     * MediaResolver. We exercise the full pipeline against the real-world
+     * 05-inline-image fixture so a regression in either the parser, the
+     * resolver, or the schema's toDOM mapping is caught.
+     */
+    it("docToPM populates dataUrl + intrinsic dimensions for inline images", async () => {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const buf = await fs.readFile(
+        path.resolve(__dirname, "../../../../fixtures/docx/real-world/05-inline-image.docx")
+      );
+      const agent = await DocxAgent.fromBuffer(buf, { idMinter: deterministicIdMinter() });
+      const pm = docToPM(agent.getSnapshot());
+      let imageNode: import("prosemirror-model").Node | null = null;
+      pm.descendants((n) => {
+        if (n.type.name === "image") {
+          imageNode = n;
+          return false;
+        }
+        return true;
+      });
+      expect(imageNode).not.toBeNull();
+      if (!imageNode) return;
+      const node = imageNode as import("prosemirror-model").Node;
+      const dataUrl = node.attrs.dataUrl as string | null;
+      expect(typeof dataUrl).toBe("string");
+      expect(dataUrl).toMatch(/^data:image\/png;base64,/);
+      // 228600 EMU @ 9525 EMU/px = 24px on each side for the fixture image.
+      expect(node.attrs.width).toBe(24);
+      expect(node.attrs.height).toBe(24);
+    });
+
+    it("image.toDOM emits <img src=data:...> when dataUrl is present", () => {
+      const node = docxSchema.nodes.image.create({
+        dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+        width: 32,
+        height: 32,
+        alt: "smoke",
+      });
+      const dom = node.type.spec.toDOM!(node) as [string, Record<string, string>];
+      expect(dom[0]).toBe("img");
+      expect(dom[1].src).toBe("data:image/png;base64,iVBORw0KGgo=");
+      expect(dom[1].width).toBe("32");
+      expect(dom[1].height).toBe("32");
+      expect(dom[1].alt).toBe("smoke");
+      expect(dom[1].class).toBe("pm-image");
+    });
+
+    it("image.toDOM falls back to [image] placeholder when dataUrl is missing", () => {
+      const node = docxSchema.nodes.image.create({});
+      const dom = node.type.spec.toDOM!(node) as [string, Record<string, string>, string];
+      expect(dom[0]).toBe("span");
+      expect(dom[1].class).toBe("pm-image-placeholder");
+      expect(dom[2]).toBe("[image]");
+    });
+  });
+
   it("agent.subscribe fires on every applied command (single-funnel hook)", async () => {
     const agent = await loadAgent([{ text: "abc" }]);
     let count = 0;

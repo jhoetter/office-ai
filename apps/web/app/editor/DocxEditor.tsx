@@ -26,6 +26,7 @@ import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
 import { dispatchToLlm } from "@/lib/llm-client";
+import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
 
 interface ToastMessage {
   id: number;
@@ -67,6 +68,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   // directly during render trips `react-hooks/refs`.
   const [hostEl, setHostEl] = useState<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   // `agentRef` / `mountRef` are kept in addition to the React state
   // mirrors below so that long-lived callbacks (file open, accept
   // change, …) capture a stable reference without re-binding on
@@ -400,8 +402,66 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   );
 
   const insertImageFromFile = useCallback(() => {
-    pushToast("info", "Image insertion arrives in P2.4. Use the API for now.");
-  }, [pushToast]);
+    imageInputRef.current?.click();
+  }, []);
+
+  const handleImageFile = useCallback(
+    async (file: File) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent) {
+        pushToast("warn", "Document is still loading.");
+        return;
+      }
+      try {
+        await insertImageIntoDocx(agent, file, mount?.view.state ?? null);
+        pushToast("info", `Inserted ${file.name || "image"}.`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  // Drag-drop + paste handlers for image files. We intercept the events
+  // at the host DOM level *before* ProseMirror sees them so that:
+  //   - a dropped file lands as a typed `docx:insert-image` instead of
+  //     PM's default "paste as text" behaviour;
+  //   - a pasted screenshot (clipboard image) gets inserted at the
+  //     caret instead of being silently dropped on the floor.
+  // Non-file drops (text, regular HTML pastes) fall through to PM.
+  useEffect(() => {
+    if (!hostEl) return;
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      const hasFile = Array.from(e.dataTransfer.items ?? []).some((it) => it.kind === "file");
+      if (hasFile) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      const file = pickImageFile(e.dataTransfer?.files);
+      if (!file) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void handleImageFile(file);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      const file = pickImageFile(e.clipboardData?.files);
+      if (!file) return;
+      e.preventDefault();
+      void handleImageFile(file);
+    };
+    hostEl.addEventListener("dragover", onDragOver);
+    hostEl.addEventListener("drop", onDrop);
+    hostEl.addEventListener("paste", onPaste);
+    return () => {
+      hostEl.removeEventListener("dragover", onDragOver);
+      hostEl.removeEventListener("drop", onDrop);
+      hostEl.removeEventListener("paste", onPaste);
+    };
+  }, [hostEl, handleImageFile]);
 
   const scrollToComment = useCallback(
     (commentId: string) => {
@@ -597,6 +657,18 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
             e.target.value = "";
           }}
         />
+        <input
+          ref={imageInputRef}
+          data-testid="image-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void handleImageFile(f);
+            e.target.value = "";
+          }}
+        />
         <div className="relative mt-3 flex-1 overflow-auto rounded-md border border-divider bg-background">
           <div
             ref={setHostEl}
@@ -700,4 +772,15 @@ void Button;
 function cssEscape(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
   return value.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
+function pickImageFile(files: FileList | null | undefined): File | null {
+  if (!files || files.length === 0) return null;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const mime = (f.type || "").toLowerCase();
+    if (SUPPORTED_IMAGE_MIME.has(mime)) return f;
+    if (mime.startsWith("image/")) return f;
+  }
+  return null;
 }

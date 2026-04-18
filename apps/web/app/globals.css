@@ -419,6 +419,22 @@ textarea::placeholder {
   font-family: var(--font-mono);
 }
 
+/*
+ * Real <img> rendering for inline images. The `image` PM node carries a
+ * data: URL built from `snapshot.media` + `snapshot.relationships` and
+ * the intrinsic pixel dimensions converted from EMU. We constrain the
+ * displayed width to the editor's content column so a freshly inserted
+ * full-resolution photo doesn't blow past the page margins.
+ */
+.prose-pm .ProseMirror .pm-image {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.25rem 0;
+  vertical-align: baseline;
+  border-radius: 2px;
+}
+
 .prose-pm .ProseMirror .pm-table-placeholder,
 .prose-pm .ProseMirror .pm-opaque-block,
 .prose-pm .ProseMirror .pm-section-break {

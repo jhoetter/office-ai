@@ -3,12 +3,15 @@ import { docxSchema } from "./schema.js";
 import { classifyOpaqueTag, extractOpaqueText } from "../model/opaque-classification.js";
 import type {
   BlockNode,
+  DocxDocument,
   DocxSnapshot,
   Hyperlink,
   InlineImageDrawing,
   InlineNode,
+  MediaPart,
   OpaqueXml,
   Paragraph,
+  Relationship,
   Run,
   RunChild,
   RunProperties,
@@ -17,6 +20,33 @@ import type {
   TableRow,
 } from "../model/types.js";
 import type { RenderableTable, RenderableTableCell, RenderableTableRow } from "./schema.js";
+
+const IMAGE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+interface ResolvedImage {
+  dataUrl: string;
+  mimeType: string;
+}
+
+/**
+ * Maps `<a:blip r:embed="rIdN"/>` style references to a base64 `data:`
+ * URL of the underlying media bytes. Built once per `docToPM` call from
+ * `snapshot.root.relationships` + `snapshot.root.media` and consumed by
+ * `pushRunChild` so the editor renders real `<img>` elements instead of
+ * the legacy `[image]` chip.
+ */
+type MediaResolver = (relId: string) => ResolvedImage | null;
+
+/**
+ * Module-local during a single synchronous `docToPM` invocation. Set at
+ * the entry point and cleared in a `finally` so an exception inside the
+ * walker can never leak the resolver into a subsequent call. We use a
+ * module-scoped slot rather than threading the resolver through every
+ * helper because the renderer is intentionally a "free function" tree
+ * walker — adding a `ctx` arg to each of the ~20 helpers below would be
+ * pure overhead for a transient render-time concern.
+ */
+let activeResolver: MediaResolver | null = null;
 
 function imageStub(leaf: InlineImageDrawing): unknown {
   return {
@@ -39,8 +69,50 @@ function imageStub(leaf: InlineImageDrawing): unknown {
  * unchanged documents.
  */
 export function docToPM(snapshot: DocxSnapshot): PMNode {
-  const blocks = snapshot.root.body.map((b) => blockToPM(b)).filter((n): n is PMNode => n !== null);
-  return docxSchema.nodes.doc.create(null, blocks);
+  activeResolver = buildMediaResolver(snapshot.root);
+  try {
+    const blocks = snapshot.root.body.map((b) => blockToPM(b)).filter((n): n is PMNode => n !== null);
+    return docxSchema.nodes.doc.create(null, blocks);
+  } finally {
+    activeResolver = null;
+  }
+}
+
+function buildMediaResolver(doc: DocxDocument): MediaResolver {
+  const docRels: ReadonlyArray<Relationship> = doc.relationships.get("word/document.xml") ?? [];
+  const cache = new Map<string, ResolvedImage>();
+  return (relId: string) => {
+    const cached = cache.get(relId);
+    if (cached) return cached;
+    const rel = docRels.find((r) => r.id === relId && r.type === IMAGE_REL_TYPE);
+    if (!rel) return null;
+    const partPath = rel.target.startsWith("word/") ? rel.target : `word/${rel.target}`;
+    const part = doc.media.get(partPath);
+    if (!part) return null;
+    const resolved: ResolvedImage = {
+      dataUrl: bytesToDataUrl(part),
+      mimeType: part.mimeType,
+    };
+    cache.set(relId, resolved);
+    return resolved;
+  };
+}
+
+function bytesToDataUrl(part: MediaPart): string {
+  return `data:${part.mimeType};base64,${bytesToBase64(part.bytes)}`;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  // Browser-safe; Node 18+ also supports `btoa` via globalThis.
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  if (typeof btoa === "function") return btoa(bin);
+  // Fallback for older Node test envs without `btoa`.
+  return Buffer.from(bin, "binary").toString("base64");
+}
+
+function emuToPx(emu: number): number {
+  return Math.round(emu / 9525);
 }
 
 function blockToPM(block: BlockNode): PMNode | null {
@@ -224,9 +296,21 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       // metadata stub so the editor still gets the relationship id and
       // dimensions.
       const drawingMeta = child.subkind === "inline-image" ? (child.raw ?? imageStub(child)) : child.raw;
-      out.push(
-        docxSchema.nodes.image.create({ runId: child.id, drawingJson: encode(drawingMeta) }, null, marks)
-      );
+      const attrs: Record<string, unknown> = { runId: child.id, drawingJson: encode(drawingMeta) };
+      // Inline images: resolve the relationship to a `data:` URL so the
+      // schema's `image.toDOM` can emit a real `<img>` tag. Drawings
+      // without a resolvable relId fall back to the placeholder chip.
+      if (child.subkind === "inline-image") {
+        const resolved = activeResolver ? activeResolver(child.relId) : null;
+        if (resolved) {
+          attrs.dataUrl = resolved.dataUrl;
+          attrs.width = emuToPx(child.cx);
+          attrs.height = emuToPx(child.cy);
+          if (typeof child.descr === "string") attrs.alt = child.descr;
+          else if (typeof child.name === "string") attrs.alt = child.name;
+        }
+      }
+      out.push(docxSchema.nodes.image.create(attrs, null, marks));
       return;
     }
     case "opaque": {
