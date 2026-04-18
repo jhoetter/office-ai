@@ -83,3 +83,7 @@ coverage/
 .parcel-cache/
 *.tgz
 .tmp/
+
+# Playwright artifacts
+playwright-report/
+test-results/
