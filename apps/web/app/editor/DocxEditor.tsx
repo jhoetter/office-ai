@@ -5,7 +5,8 @@ import { Loader2, MessageCircle, X } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import { DocxAgent, chunkIntoPages, mountDocxEditor, docxSchema, resolveEffectivePpr } from "@officeai/docx";
 import type { DocxSnapshot, MountResult, UnsupportedTx, TextFormat } from "@officeai/docx";
-import { getPageChunks, pageDecorationsPlugin, pageNumberForPos } from "@/lib/page-decorations";
+import { getPageChunks, gotoPage, pageDecorationsPlugin, pageNumberForPos } from "@/lib/page-decorations";
+import { pageKeymapPlugin } from "@/lib/page-keymap";
 import type { EditorView } from "prosemirror-view";
 import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
@@ -25,6 +26,7 @@ import {
 } from "@/lib/format-helpers";
 import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
 import { HeaderFooterPanel } from "./HeaderFooterPanel";
+import { PageRuler } from "./PageRuler";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
@@ -144,7 +146,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
         source: "human",
         onUnsupported,
         onError,
-        extraPlugins: [pageDecorationsPlugin(agentInstance)],
+        extraPlugins: [pageDecorationsPlugin(agentInstance), pageKeymapPlugin(agentInstance)],
       });
       mountRef.current = mount;
       setView(mount.view);
@@ -819,6 +821,7 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
               transformOrigin: "top center",
             }}
           >
+            <PageRuler snapshot={snapshot} />
             <div
               ref={setHostEl}
               className="prose-pm min-h-[60vh] w-[720px] px-8 py-12 outline-none"
@@ -1000,6 +1003,9 @@ function PageStatusBar(props: {
   onZoomChange: (z: number) => void;
 }) {
   const { view, totalPages, zoom, onZoomChange } = props;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
   const currentPage = (() => {
     if (!view) return 1;
     const chunks = getPageChunks(view.state);
@@ -1007,11 +1013,54 @@ function PageStatusBar(props: {
     return pageNumberForPos(chunks, view.state, view.state.selection.from);
   })();
 
+  const submitGoto = () => {
+    if (!view) {
+      setEditing(false);
+      return;
+    }
+    const n = Number.parseInt(draft, 10);
+    if (Number.isFinite(n) && n >= 1) {
+      gotoPage(view, n, getPageChunks(view.state));
+    }
+    setEditing(false);
+  };
+
   return (
     <div className="mt-2 flex items-center justify-between gap-3 px-1 text-xs text-secondary">
-      <span className="tabular-nums" data-testid="page-status">
-        Page {currentPage} of {totalPages}
-      </span>
+      {editing ? (
+        <span className="inline-flex items-center gap-1 tabular-nums">
+          <span>Page</span>
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitGoto();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            onBlur={submitGoto}
+            className="w-12 rounded border border-divider bg-background px-1 py-0.5 text-xs"
+            data-testid="page-goto-input"
+          />
+          <span>of {totalPages}</span>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(String(currentPage));
+            setEditing(true);
+          }}
+          className="rounded px-1 py-0.5 tabular-nums hover:bg-hover"
+          title="Go to page"
+          data-testid="page-status"
+        >
+          Page {currentPage} of {totalPages}
+        </button>
+      )}
       <div className="flex items-center gap-2">
         <button
           type="button"

@@ -8,6 +8,7 @@ import { formatRangeHandler } from "./format-range.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertHyperlinkHandler } from "./insert-hyperlink.js";
 import { insertImageHandler } from "./insert-image.js";
+import { insertPageBreakHandler } from "./insert-page-break.js";
 import { insertPageNumberHandler } from "./insert-page-number.js";
 import { insertParagraphHandler } from "./insert-paragraph.js";
 import { insertRowHandler } from "./insert-row.js";
@@ -58,6 +59,7 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   insertPageNumberHandler as CommandHandler<unknown, DocxSnapshot>,
   setSectionDifferentFirstHandler as CommandHandler<unknown, DocxSnapshot>,
   insertSectionBreakHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertPageBreakHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

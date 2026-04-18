@@ -30,6 +30,7 @@ export const DOCX_COMMAND_TYPES = [
   "docx:insert-page-number",
   "docx:set-section-different-first",
   "docx:insert-section-break",
+  "docx:insert-page-break",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];

@@ -1,6 +1,7 @@
-import { Plugin, PluginKey } from "prosemirror-state";
+import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorState, Transaction } from "prosemirror-state";
+import type { EditorView } from "prosemirror-view";
 import type { DocxAgent, PageChunk } from "@officeai/docx";
 import { chunkIntoPages } from "@officeai/docx";
 
@@ -154,4 +155,59 @@ export function pageNumberForPos(
     if (chunks[i].startBlock <= blockIdx) return chunks[i].pageNumber;
   }
   return 1;
+}
+
+/**
+ * P3.5 / W19 — move the caret to the start of the requested page and
+ * scroll it into view. Returns `true` when the jump succeeded.
+ *
+ * The page chunker (`getPageChunks`) gives us a `startBlock` for each
+ * chunk, indexed against `snapshot.root.body`. PM's top-level
+ * children mirror that array 1:1, so the same index resolves to a PM
+ * top-level child — we read its position and dispatch a selection +
+ * scroll transaction.
+ *
+ * Out-of-range pages (≤ 0 or > total) are clamped silently so the
+ * goto-page input can take any user input without throwing.
+ */
+export function gotoPage(
+  view: EditorView,
+  pageNumber: number,
+  chunks: ReadonlyArray<PageChunk>
+): boolean {
+  if (chunks.length === 0) return false;
+  const clampedPage = Math.max(1, Math.min(pageNumber, chunks.length));
+  const chunk = chunks.find((c) => c.pageNumber === clampedPage);
+  if (!chunk) return false;
+  const docNode = view.state.doc;
+  let pos = 0;
+  let i = 0;
+  let target: number | null = null;
+  docNode.forEach((child) => {
+    if (i === chunk.startBlock) target = pos;
+    pos += child.nodeSize;
+    i++;
+  });
+  if (target === null) return false;
+  const $pos = view.state.doc.resolve(target + 1);
+  const tr = view.state.tr.setSelection(TextSelection.between($pos, $pos)).scrollIntoView();
+  view.dispatch(tr);
+  view.focus();
+  return true;
+}
+
+/**
+ * P3.5 / W21 — move the caret to the start of the next (or previous)
+ * page chunk relative to the caret's current position. Returns
+ * `true` when the move succeeded; `false` when the caret was already
+ * on the first/last page (caller falls through to PM's default
+ * PageUp / PageDown handling).
+ */
+export function movePageRelative(view: EditorView, direction: 1 | -1): boolean {
+  const chunks = getPageChunks(view.state);
+  if (chunks.length === 0) return false;
+  const current = pageNumberForPos(chunks, view.state, view.state.selection.from);
+  const next = current + direction;
+  if (next < 1 || next > chunks.length) return false;
+  return gotoPage(view, next, chunks);
 }
