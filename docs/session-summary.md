@@ -2,6 +2,7 @@
 
 > Date: 2026-04-17
 > Scope (chosen at session start): full DOCX phase only (Analyze → Spec → Build → Validate). XLSX and PPTX deferred.
+> Sister documents: [`docs/session-summary-pptx.md`](./session-summary-pptx.md) — PowerPoint (slides) phase summary, shipped on `feat/pptx-night-shift`. [`docs/build-log/{docx,pptx,quality-gates}.md`](./build-log/) — live decision logs.
 
 ## TL;DR
 
