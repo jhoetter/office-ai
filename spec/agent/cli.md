@@ -55,6 +55,16 @@ office-agent docx set-list --file <path> --at <selector>
 office-agent docx remove-list --file <path> --at <selector>
        [--out <path>] [--no-approve]
   → applies docx:set-paragraph-list / docx:remove-paragraph-list
+
+office-agent docx align --file <path> --paragraph-id <id>
+       --alignment left|center|right|justify | --clear
+       [--out <path>] [--no-approve]
+  → applies docx:set-paragraph-alignment
+
+office-agent docx indent --file <path> --paragraph-id <id> --delta <twips>
+       [--out <path>] [--no-approve]
+  → applies docx:set-paragraph-indent (positive indents, negative outdents;
+    typical Word toolbar steps are ±360 twips = ¼ inch)
 ```
 
 ### Structural mutations

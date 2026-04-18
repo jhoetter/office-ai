@@ -84,6 +84,59 @@ export function activeMarks(state: EditorState): Set<string> {
   return out;
 }
 
+/** Sentinel returned by `activeMarkAttr` when the selection spans runs
+ * with conflicting values for a given mark attribute (e.g. half of the
+ * range is 11pt and half is 14pt). The toolbar dropdowns render this
+ * as "Mixed" / "—" so the user knows the selection is heterogeneous. */
+export const MIXED = Symbol("mixed");
+export type MaybeMixed<T> = T | typeof MIXED | undefined;
+
+/**
+ * Compute the dominant value of `markName.attrName` across the current
+ * PM selection. Returns:
+ *   - `undefined` when no run in the selection carries the mark,
+ *   - `MIXED` when runs carry the mark but with conflicting values,
+ *   - the value otherwise.
+ *
+ * Collapsed selections inspect the stored marks (the marks that would
+ * apply to the next typed character), matching the semantics of
+ * `activeMarks`.
+ */
+export function activeMarkAttr<T = unknown>(
+  state: EditorState,
+  markName: string,
+  attrName: string
+): MaybeMixed<T> {
+  const { from, to, empty, $from } = state.selection;
+  if (empty) {
+    const stored = state.storedMarks ?? $from.marks();
+    for (const m of stored) {
+      if (m.type.name === markName) return m.attrs[attrName] as T;
+    }
+    return undefined;
+  }
+  let seen: T | undefined;
+  let mixed = false;
+  let sawMark = false;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (mixed) return false;
+    if (!node.isText) return true;
+    const mark = node.marks.find((m) => m.type.name === markName);
+    if (!mark) return true;
+    sawMark = true;
+    const value = mark.attrs[attrName] as T;
+    if (seen === undefined) {
+      seen = value;
+    } else if (seen !== value) {
+      mixed = true;
+    }
+    return true;
+  });
+  if (mixed) return MIXED;
+  if (!sawMark) return undefined;
+  return seen;
+}
+
 /** Style id of a paragraph in the snapshot. Returns "Normal" if missing. */
 export function paragraphStyle(snapshot: DocxSnapshot, paragraphIndex: number): string {
   const block = snapshot.root.body[paragraphIndex];
@@ -105,8 +158,169 @@ export const PARAGRAPH_STYLES: ReadonlyArray<{ value: string; label: string }> =
   { value: "Heading3", label: "Heading 3" },
 ];
 
+/**
+ * Derive the paragraph-style picker contents from the **document** rather
+ * than the hard-coded list. We don't have a typed `styles.xml` model
+ * yet (planned for a later phase), so we approximate by walking the
+ * loaded body and collecting every `styleId` actually used in the
+ * doc. This means a freshly-uploaded thesis with `berschrift1`-`6` and
+ * `Untertitel` actually shows those entries instead of the demo
+ * defaults — which is the user-visible bug from the Masterthesis
+ * screenshot.
+ *
+ * Sort order: Title-family first, Heading 1-9 (English) next, then
+ * German Word equivalents, then Normal, then everything else
+ * alphabetically. The current `activeStyle` is always included even
+ * when it doesn't appear in the body (e.g. an empty document whose
+ * caret sits on a Heading1 stub).
+ */
+export function paragraphStyleOptions(
+  snapshot: DocxSnapshot | null,
+  activeStyle: string
+): ReadonlyArray<{ value: string; label: string }> {
+  const used = new Set<string>();
+  if (snapshot) {
+    for (const block of snapshot.root.body) {
+      if (block.kind !== "paragraph") continue;
+      const id = block.properties.styleId;
+      if (id) used.add(id);
+    }
+  }
+  // Always include the curated defaults so a brand-new doc still has
+  // sensible options.
+  for (const s of PARAGRAPH_STYLES) used.add(s.value);
+  if (activeStyle) used.add(activeStyle);
+
+  const seen = Array.from(used);
+  return seen
+    .map((value) => ({ value, label: humanizeStyleId(value) }))
+    .sort((a, b) => styleSortKey(a.value) - styleSortKey(b.value) || a.label.localeCompare(b.label));
+}
+
+function styleSortKey(id: string): number {
+  if (id === "Title" || id === "Titel") return 0;
+  if (id === "Subtitle" || id === "Untertitel") return 1;
+  const headingMatch = /^(Heading|berschrift)(\d)$/.exec(id);
+  if (headingMatch) return 10 + Number(headingMatch[2]);
+  if (id === "Normal") return 50;
+  if (id === "TOCHeading" || id === "Verzeichnis") return 60;
+  if (/^TOC\d/.test(id)) return 61;
+  return 100;
+}
+
+function humanizeStyleId(id: string): string {
+  // Word's German style ids drop the leading 'Ü' from `Überschrift` and
+  // are otherwise camel-case. Surface them in their canonical English
+  // form when possible so the dropdown reads naturally even when the
+  // doc was authored in Word DE.
+  switch (id) {
+    case "Title":
+    case "Titel":
+      return "Title";
+    case "Subtitle":
+    case "Untertitel":
+      return "Subtitle";
+    case "Normal":
+      return "Normal";
+    case "TOCHeading":
+    case "Verzeichnis":
+      return "TOC heading";
+  }
+  const heading = /^(Heading|berschrift)(\d)$/.exec(id);
+  if (heading) return `Heading ${heading[2]}`;
+  const toc = /^TOC(\d)$/.exec(id);
+  if (toc) return `TOC ${toc[1]}`;
+  // Generic camel-case → "Camel case" formatter as a fallback.
+  const spaced = id.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 /** Half-points multiplied by 2 — i.e. raw OOXML w:sz values. */
 export const FONT_SIZES: ReadonlyArray<number> = [16, 18, 20, 22, 24, 28, 32, 36, 40, 48, 56, 72];
+
+/** Default font family list shown in the toolbar when the document
+ *  doesn't carry an explicit fonts table or its fonts can't be parsed. */
+export const FONT_FAMILIES: ReadonlyArray<string> = [
+  "Calibri",
+  "Cambria",
+  "Times New Roman",
+  "Arial",
+  "Helvetica",
+  "Georgia",
+  "Verdana",
+  "Tahoma",
+  "Courier New",
+  "Consolas",
+];
+
+/** Discover an existing numbering definition for a given list kind. We
+ * don't yet auto-mint a `<w:num>`/`<w:abstractNum>` pair when the doc
+ * has no numbering.xml at all (P1.4 deferred this), so the toolbar
+ * falls back to "unsupported" in that case rather than silently
+ * no-op'ing. */
+export function discoverNumId(
+  snapshot: DocxSnapshot | null,
+  kind: "bullet" | "ordered"
+): { numId: number; ilvl: number } | null {
+  const numbering = snapshot?.root.numbering;
+  if (!numbering) return null;
+  for (const num of numbering.nums.values()) {
+    const abstract = numbering.abstractNums.get(num.abstractNumId);
+    if (!abstract) continue;
+    const level0 = abstract.levels.find((l) => l.ilvl === 0) ?? abstract.levels[0];
+    if (!level0) continue;
+    const fmt = level0.numFmt ?? "decimal";
+    const isBullet = fmt === "bullet";
+    if (kind === "bullet" && isBullet) return { numId: num.numId, ilvl: 0 };
+    if (kind === "ordered" && !isBullet) return { numId: num.numId, ilvl: 0 };
+  }
+  return null;
+}
+
+/**
+ * Look up the stable `paragraphId` of the paragraph containing the
+ * caret. Returns `null` when the caret sits inside an opaque/atomic
+ * block (table, image, opaque carrier).
+ */
+export function currentParagraphId(state: EditorState): string | null {
+  const { from } = state.selection;
+  let paragraphId: string | null = null;
+  state.doc.descendants((node, nodePos) => {
+    if (paragraphId !== null) return false;
+    if (node.type.name === "paragraph") {
+      if (from >= nodePos && from <= nodePos + node.nodeSize) {
+        const id = node.attrs.paragraphId;
+        if (typeof id === "string" && id.length > 0) paragraphId = id;
+        return false;
+      }
+    }
+    return true;
+  });
+  return paragraphId;
+}
+
+/** Alignment of the paragraph containing the caret, or `null` when the
+ * caret is not inside a paragraph (or the paragraph carries no
+ * explicit alignment). */
+export function currentParagraphAlignment(
+  state: EditorState
+): "left" | "center" | "right" | "justify" | null {
+  const { from } = state.selection;
+  let alignment: "left" | "center" | "right" | "justify" | null = null;
+  state.doc.descendants((node, nodePos) => {
+    if (node.type.name === "paragraph") {
+      if (from >= nodePos && from <= nodePos + node.nodeSize) {
+        const v = node.attrs.alignment;
+        if (v === "left" || v === "center" || v === "right" || v === "justify") {
+          alignment = v;
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+  return alignment;
+}
 
 /** Common color picker palette. Hex strings without the `#`. */
 export const COLOR_PALETTE: ReadonlyArray<{ name: string; hex: string }> = [

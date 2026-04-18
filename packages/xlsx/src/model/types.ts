@@ -1,4 +1,5 @@
 import type { DocumentSnapshot, NodeId, ooxml } from "@officeai/core";
+import type { StyleTable } from "./style-table.js";
 
 /**
  * XLSX in-memory model — Phase 5 surface.
@@ -74,6 +75,13 @@ export interface XlsxWorkbook {
    */
   readonly workbookRootAttrs: Readonly<Record<string, string>>;
   /**
+   * Typed style table parsed from `xl/styles.xml`. When the workbook
+   * has no styles part the parser substitutes `defaultStyleTable()`
+   * so commands can always intern through the same shape. Re-emitted
+   * by the serializer when `dirty.styles` is set.
+   */
+  readonly styles: StyleTable;
+  /**
    * Phase 4 escape hatch: the SheetJS `WorkBook` produced by
    * `XLSX.read(..., { dense: true, ... })` carrying the cell layer.
    * Phase 5 introduces a typed `cells: Map<string, Cell>` on each
@@ -129,6 +137,13 @@ export interface Cell {
    * in Phase 7 alongside the formula engine. Round-trips verbatim.
    */
   readonly formula?: Formula;
+  /**
+   * Index into `XlsxWorkbook.styles.cellXfs`. `undefined` = the
+   * implicit default xf (id 0). `xlsx:set-cell-format` is the only
+   * command that mutates this; other handlers preserve it on the
+   * cell and on the SheetJS round-trip via `sheet-sync`.
+   */
+  readonly styleId?: number;
 }
 
 export type CellValue = number | string | boolean | null | CellErrorValue;

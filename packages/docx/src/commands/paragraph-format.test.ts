@@ -154,12 +154,12 @@ describe("docx:set-paragraph-indent", () => {
   it("rejects non-integer deltas", async () => {
     const agent = await loadAgent([{ text: "abc" }]);
     const paragraphId = firstParagraphId(agent);
-    await expect(
-      agent.applyCommand({
-        type: "docx:set-paragraph-indent",
-        payload: { paragraphId, deltaTwips: 12.5 },
-        source: "human",
-      })
-    ).rejects.toBeInstanceOf(CommandError);
+    const m = await agent.applyCommand({
+      type: "docx:set-paragraph-indent",
+      payload: { paragraphId, deltaTwips: 12.5 },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("invalid-payload");
   });
 });

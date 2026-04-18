@@ -81,7 +81,10 @@ function applyIndentLeft(props: ParagraphProperties, leftTwips: number): Paragra
   const opaqueProps = props.opaqueProps?.filter((o) => o.tag !== "w:ind");
   const baseIndent = props.indentation ?? {};
   const nextIndentation =
-    leftTwips === 0 && baseIndent.right === undefined && baseIndent.firstLine === undefined && baseIndent.hanging === undefined
+    leftTwips === 0 &&
+    baseIndent.right === undefined &&
+    baseIndent.firstLine === undefined &&
+    baseIndent.hanging === undefined
       ? undefined
       : { ...baseIndent, left: leftTwips };
   const next: ParagraphProperties =
@@ -89,9 +92,7 @@ function applyIndentLeft(props: ParagraphProperties, leftTwips: number): Paragra
       ? { ...props, indentation: undefined }
       : { ...props, indentation: nextIndentation };
   const withOpaque: ParagraphProperties =
-    opaqueProps && opaqueProps.length > 0
-      ? { ...next, opaqueProps }
-      : { ...next, opaqueProps: undefined };
+    opaqueProps && opaqueProps.length > 0 ? { ...next, opaqueProps } : { ...next, opaqueProps: undefined };
   return stripUndefined(withOpaque);
 }
 

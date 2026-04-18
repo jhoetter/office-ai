@@ -666,6 +666,62 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
     );
 
   docx
+    .command("align")
+    .description("Set (or clear with --clear) a paragraph's <w:jc> alignment.")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph-id <id>", "Target paragraph id")
+    .option("--alignment <value>", "left | center | right | justify")
+    .option("--clear", "Clear any existing alignment", false)
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraphId: string;
+        alignment?: string;
+        clear: boolean;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        if (!opts.clear && !opts.alignment) {
+          throw new CliError(64, "align: pass --alignment <value> or --clear");
+        }
+        const alignment = opts.clear ? null : opts.alignment;
+        await runWrite(io, opts, "docx:set-paragraph-alignment", {
+          paragraphId: opts.paragraphId,
+          alignment,
+        });
+      }
+    );
+
+  docx
+    .command("indent")
+    .description("Step a paragraph's left indent by --delta twips (negative outdents).")
+    .requiredOption("--file <path>", "Path to a .docx file")
+    .requiredOption("--paragraph-id <id>", "Target paragraph id")
+    .requiredOption("--delta <twips>", "Signed delta in twips applied to indentation.left", parseIntOpt)
+    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        paragraphId: string;
+        delta: number;
+        out?: string;
+        approve: boolean;
+        pretty: boolean;
+      }) => {
+        await runWrite(io, opts, "docx:set-paragraph-indent", {
+          paragraphId: opts.paragraphId,
+          deltaTwips: opts.delta,
+        });
+      }
+    );
+
+  docx
     .command("header")
     .description("Replace one header paragraph's text content.")
     .requiredOption("--file <path>", "Path to a .docx file")

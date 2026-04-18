@@ -9,14 +9,19 @@ import type { EditorView } from "prosemirror-view";
 import { NotImplementedError, type Mutation } from "@officeai/core";
 import { buildSampleDocx } from "@/lib/sample-docx";
 import {
+  activeMarkAttr,
   activeMarks as computeActiveMarks,
   commentParagraphIndex,
   commentThreads,
+  currentParagraphAlignment,
+  currentParagraphId,
   currentParagraphIndex,
+  discoverNumId,
   paragraphStyle,
+  paragraphStyleOptions,
   pmSelectionToRange,
 } from "@/lib/format-helpers";
-import { Toolbar } from "./Toolbar";
+import { Toolbar, type AlignmentValue } from "./Toolbar";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesUI } from "./TrackedChangesUI";
 import { AgentPrompt, type AgentPromptDispatch } from "./AgentPrompt";
@@ -316,6 +321,88 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
     [pushToast]
   );
 
+  const setAlignment = useCallback(
+    async (alignment: AlignmentValue) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-alignment",
+          payload: { paragraphId, alignment },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const adjustIndent = useCallback(
+    async (deltaTwips: number) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-indent",
+          payload: { paragraphId, deltaTwips },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const toggleList = useCallback(
+    async (kind: "bullet" | "ordered") => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a paragraph first.");
+        return;
+      }
+      const snap = agent.getSnapshot();
+      const target = discoverNumId(snap, kind);
+      if (!target) {
+        pushToast(
+          "warn",
+          `This document has no ${kind === "bullet" ? "bullet" : "numbered"} list definition. Auto-creation is not yet supported in this build.`
+        );
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-list",
+          payload: { paragraphId, numId: target.numId, ilvl: target.ilvl },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const insertImageFromFile = useCallback(() => {
+    pushToast("info", "Image insertion arrives in P2.4. Use the API for now.");
+  }, [pushToast]);
+
   const scrollToComment = useCallback(
     (commentId: string) => {
       const host = hostEl;
@@ -450,6 +537,12 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
   const activeMarks = view ? computeActiveMarks(view.state) : new Set<string>();
   const currentParaIndex = view ? currentParagraphIndex(view.state) : 0;
   const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
+  const activeFontSize = view ? activeMarkAttr<number>(view.state, "font_size", "halfPoints") : undefined;
+  const activeFontFamily = view ? activeMarkAttr<string>(view.state, "font_family", "family") : undefined;
+  const activeColor = view ? activeMarkAttr<string>(view.state, "color", "rgb") : undefined;
+  const activeHighlight = view ? activeMarkAttr<string>(view.state, "highlight", "name") : undefined;
+  const activeAlignment = view ? currentParagraphAlignment(view.state) : null;
+  const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   void commentParagraphIndex;
 
   // Default dispatch routes through the LLM bridge (`/api/llm`). When the
@@ -475,11 +568,21 @@ export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
           docInfo={docInfo}
           activeStyle={activeStyle}
           activeMarks={activeMarks}
+          activeFontSize={activeFontSize}
+          activeFontFamily={activeFontFamily}
+          activeColor={activeColor}
+          activeHighlight={activeHighlight}
+          activeAlignment={activeAlignment}
+          styleOptions={styleOptions}
           onOpenFile={() => fileInputRef.current?.click()}
+          onInsertImage={insertImageFromFile}
           onExport={() => void handleExport()}
           onSetParagraphStyle={(s) => void setParagraphStyle(s)}
           onApplyFormat={(f) => void applyFormat(f)}
           onToggleMark={toggleMark}
+          onSetAlignment={(a) => void setAlignment(a)}
+          onAdjustIndent={(d) => void adjustIndent(d)}
+          onToggleList={(k) => void toggleList(k)}
           onAddComment={() => void insertCommentDemo()}
           onUnsupported={surfaceUnsupported}
         />

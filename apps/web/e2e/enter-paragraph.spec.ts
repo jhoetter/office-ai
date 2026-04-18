@@ -6,10 +6,10 @@ test.describe("editor: pressing Enter splits paragraphs", () => {
     await gotoEditor(page);
     await focusEditor(page);
 
-    const meta = page.getByText(/(\d+) blocks · rev \d+ · \d+ comments/);
+    const meta = page.getByText(/(\d+) paragraphs · rev \d+ · \d+ comments?/);
     await expect(meta).toBeVisible();
     const before = await meta.textContent();
-    const blocksBefore = Number(before?.match(/(\d+) blocks/)?.[1] ?? "0");
+    const paragraphsBefore = Number(before?.match(/(\d+) paragraphs/)?.[1] ?? "0");
 
     await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.press("Enter");
@@ -17,8 +17,8 @@ test.describe("editor: pressing Enter splits paragraphs", () => {
 
     await expect(meta).not.toHaveText(before ?? "", { timeout: 7_500 });
     const after = await meta.textContent();
-    const blocksAfter = Number(after?.match(/(\d+) blocks/)?.[1] ?? "0");
-    expect(blocksAfter).toBeGreaterThan(blocksBefore);
+    const paragraphsAfter = Number(after?.match(/(\d+) paragraphs/)?.[1] ?? "0");
+    expect(paragraphsAfter).toBeGreaterThan(paragraphsBefore);
     await expect(page.locator(".ProseMirror").first()).toContainText("New paragraph");
   });
 });

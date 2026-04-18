@@ -77,13 +77,9 @@ function applyAlignment(
   // single source of truth on re-serialize.
   const opaqueProps = props.opaqueProps?.filter((o) => o.tag !== "w:jc");
   const next: ParagraphProperties =
-    alignment === null
-      ? { ...props, alignment: undefined }
-      : { ...props, alignment };
+    alignment === null ? { ...props, alignment: undefined } : { ...props, alignment };
   const withOpaque: ParagraphProperties =
-    opaqueProps && opaqueProps.length > 0
-      ? { ...next, opaqueProps }
-      : { ...next, opaqueProps: undefined };
+    opaqueProps && opaqueProps.length > 0 ? { ...next, opaqueProps } : { ...next, opaqueProps: undefined };
   return stripUndefinedAlignmentAndOpaque(withOpaque);
 }
 
