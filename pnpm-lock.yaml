@@ -123,6 +123,9 @@ importers:
       '@officeai/docx':
         specifier: workspace:*
         version: link:../docx
+      '@officeai/xlsx':
+        specifier: workspace:*
+        version: link:../xlsx
       commander:
         specifier: ^12.1.0
         version: 12.1.0

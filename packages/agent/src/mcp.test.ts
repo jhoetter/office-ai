@@ -1,11 +1,22 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { XlsxAgent } from "@officeai/xlsx";
 import { createMcpServer, __resetMcpSessionsForTests } from "./mcp.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const xlsxFixtures = resolvePath(here, "../../../fixtures/xlsx/synthetic");
+
+function copyXlsxFixture(name: string, dest: string): string {
+  const target = join(dest, name);
+  writeFileSync(target, readFileSync(resolvePath(xlsxFixtures, name)));
+  return target;
+}
 
 async function makeFixture(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "mcp-fixture-"));
@@ -56,7 +67,7 @@ describe("OfficeAI MCP server", () => {
   beforeEach(() => __resetMcpSessionsForTests());
   afterEach(() => __resetMcpSessionsForTests());
 
-  it("lists every registered docx_* tool", async () => {
+  it("lists every registered docx_* and xlsx_* tool", async () => {
     const client = await makeClient();
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name).sort();
@@ -71,6 +82,30 @@ describe("OfficeAI MCP server", () => {
       "docx_reject",
       "docx_save",
       "docx_search",
+      "xlsx_add_comment",
+      "xlsx_add_sheet",
+      "xlsx_apply_command",
+      "xlsx_approve",
+      "xlsx_delete_column",
+      "xlsx_delete_row",
+      "xlsx_diff",
+      "xlsx_get_text",
+      "xlsx_insert_column",
+      "xlsx_insert_row",
+      "xlsx_inspect",
+      "xlsx_list_pending",
+      "xlsx_list_sheets",
+      "xlsx_load",
+      "xlsx_merge",
+      "xlsx_reject",
+      "xlsx_rename_sheet",
+      "xlsx_save",
+      "xlsx_search",
+      "xlsx_set_cell",
+      "xlsx_set_format",
+      "xlsx_set_formula",
+      "xlsx_set_range",
+      "xlsx_unmerge",
     ]);
   });
 
@@ -331,6 +366,203 @@ describe("OfficeAI MCP server", () => {
     const client = await makeClient();
     const r = await client.callTool({
       name: "docx_inspect",
+      arguments: { handle: "nope" },
+    });
+    expect(r.isError).toBe(true);
+  });
+});
+
+describe("OfficeAI MCP server — xlsx tools", () => {
+  beforeEach(() => __resetMcpSessionsForTests());
+  afterEach(() => __resetMcpSessionsForTests());
+
+  async function loadFixture(client: Client, name: string): Promise<{ handle: string; sheet: string }> {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-xlsx-"));
+    const path = copyXlsxFixture(name, dir);
+    const out = structured(await client.callTool({ name: "xlsx_load", arguments: { path } }));
+    const summary = out.summary as { sheets: Array<{ name: string; kind: string }> };
+    const sheet = summary.sheets.find((s) => s.kind === "worksheet")!.name;
+    return { handle: out.handle as string, sheet };
+  }
+
+  it("xlsx_load returns a handle and an inspection summary", async () => {
+    const client = await makeClient();
+    const dir = mkdtempSync(join(tmpdir(), "mcp-xlsx-load-"));
+    const path = copyXlsxFixture("01-single-sheet-numbers.xlsx", dir);
+    const out = structured(await client.callTool({ name: "xlsx_load", arguments: { path } }));
+    expect(typeof out.handle).toBe("string");
+    expect(out.path).toBe(path);
+    const summary = out.summary as { format: string; sheets: unknown[] };
+    expect(summary.format).toBe("xlsx");
+    expect(Array.isArray(summary.sheets)).toBe(true);
+  });
+
+  it("xlsx_apply_command with xlsx:set-cell-value updates the snapshot", async () => {
+    const client = await makeClient();
+    const { handle, sheet } = await loadFixture(client, "01-single-sheet-numbers.xlsx");
+    const apply = structured(
+      await client.callTool({
+        name: "xlsx_apply_command",
+        arguments: {
+          handle,
+          type: "xlsx:set-cell-value",
+          payload: { sheet, ref: "AA50", value: "via-apply-command" },
+        },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("approved");
+
+    const projection = structured(
+      await client.callTool({
+        name: "xlsx_get_text",
+        arguments: { handle, format: "json", sheet, range: "AA50:AA50" },
+      })
+    );
+    expect((projection.cells as Array<{ value: unknown }>)[0].value).toBe("via-apply-command");
+  });
+
+  it("xlsx_set_cell convenience tool produces an equivalent mutation", async () => {
+    const client = await makeClient();
+    const { handle, sheet } = await loadFixture(client, "01-single-sheet-numbers.xlsx");
+    const apply = structured(
+      await client.callTool({
+        name: "xlsx_set_cell",
+        arguments: { handle, sheet, ref: "AB1", value: 99 },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("approved");
+
+    const projection = structured(
+      await client.callTool({
+        name: "xlsx_get_text",
+        arguments: { handle, format: "json", sheet, range: "AB1:AB1" },
+      })
+    );
+    expect((projection.cells as Array<{ value: unknown }>)[0].value).toBe(99);
+  });
+
+  it("xlsx_save writes the modified workbook to disk", async () => {
+    const client = await makeClient();
+    const { handle, sheet } = await loadFixture(client, "01-single-sheet-numbers.xlsx");
+    await client.callTool({
+      name: "xlsx_set_cell",
+      arguments: { handle, sheet, ref: "AC1", value: "saved!" },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "mcp-xlsx-save-"));
+    const out = join(dir, "out.xlsx");
+    const saved = structured(
+      await client.callTool({ name: "xlsx_save", arguments: { handle, out_path: out } })
+    );
+    expect(saved.wrote).toBe(out);
+    const reloaded = await XlsxAgent.fromBuffer(readFileSync(out));
+    const reloadedSheet = reloaded.getSnapshot().root.sheets.find((s) => s.name === sheet)!;
+    const matched = [...reloadedSheet.cells.values()].find((c) => c.value === "saved!");
+    expect(matched).toBeDefined();
+  });
+
+  it("xlsx_diff works for both handle-pair and disk modes", async () => {
+    const client = await makeClient();
+    const dir = mkdtempSync(join(tmpdir(), "mcp-xlsx-diff-"));
+    const path = copyXlsxFixture("01-single-sheet-numbers.xlsx", dir);
+    const a = structured(await client.callTool({ name: "xlsx_load", arguments: { path } }));
+    const b = structured(await client.callTool({ name: "xlsx_load", arguments: { path } }));
+    const sheet = (a.summary as { sheets: Array<{ name: string; kind: string }> }).sheets.find(
+      (s) => s.kind === "worksheet"
+    )!.name;
+
+    await client.callTool({
+      name: "xlsx_set_cell",
+      arguments: { handle: b.handle, sheet, ref: "AD1", value: "diff" },
+    });
+
+    const handlePairDiff = structured(
+      await client.callTool({
+        name: "xlsx_diff",
+        arguments: { before: a.handle, after: b.handle },
+      })
+    );
+    expect(handlePairDiff.format).toBe("xlsx");
+    expect((handlePairDiff.changes as unknown[]).length).toBeGreaterThanOrEqual(1);
+
+    const diskDiff = structured(
+      await client.callTool({
+        name: "xlsx_diff",
+        arguments: { handle: b.handle, against: "disk" },
+      })
+    );
+    expect(diskDiff.format).toBe("xlsx");
+    expect((diskDiff.changes as unknown[]).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("xlsx pending review flow: list, approve, reject", async () => {
+    const client = await makeClient();
+    const { handle, sheet } = await loadFixture(client, "01-single-sheet-numbers.xlsx");
+
+    const apply = structured(
+      await client.callTool({
+        name: "xlsx_apply_command",
+        arguments: {
+          handle,
+          type: "xlsx:set-cell-value",
+          payload: { sheet, ref: "AE1", value: "pending" },
+          auto_approve: false,
+        },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("pending");
+    const id = (apply.mutation as { id: string }).id;
+
+    const list1 = structured(await client.callTool({ name: "xlsx_list_pending", arguments: { handle } }));
+    expect((list1.pending as Array<{ id: string }>).map((p) => p.id)).toContain(id);
+
+    const approve = structured(
+      await client.callTool({ name: "xlsx_approve", arguments: { handle, mutation_id: id } })
+    );
+    expect(approve.approved).toBe(id);
+
+    const list2 = structured(await client.callTool({ name: "xlsx_list_pending", arguments: { handle } }));
+    expect(list2.pending as unknown[]).toHaveLength(0);
+
+    const apply2 = structured(
+      await client.callTool({
+        name: "xlsx_apply_command",
+        arguments: {
+          handle,
+          type: "xlsx:set-cell-value",
+          payload: { sheet, ref: "AF1", value: "REJECTME" },
+          auto_approve: false,
+        },
+      })
+    );
+    const id2 = (apply2.mutation as { id: string }).id;
+    const rej = structured(
+      await client.callTool({
+        name: "xlsx_reject",
+        arguments: { handle, mutation_id: id2, reason: "nope" },
+      })
+    );
+    expect(rej.rejected).toBe(id2);
+    expect(rej.reason).toBe("nope");
+  });
+
+  it("xlsx_list_sheets returns sheets in tab order", async () => {
+    const client = await makeClient();
+    const dir = mkdtempSync(join(tmpdir(), "mcp-xlsx-list-"));
+    const path = copyXlsxFixture("02-multi-sheet.xlsx", dir);
+    const loaded = structured(await client.callTool({ name: "xlsx_load", arguments: { path } }));
+    const list = structured(
+      await client.callTool({ name: "xlsx_list_sheets", arguments: { handle: loaded.handle } })
+    );
+    const sheets = list.sheets as Array<{ name: string; index: number }>;
+    expect(sheets.length).toBeGreaterThan(1);
+    const indexes = sheets.map((s) => s.index);
+    expect(indexes).toEqual([...indexes].sort((a, b) => a - b));
+  });
+
+  it("returns an error for unknown xlsx handles", async () => {
+    const client = await makeClient();
+    const r = await client.callTool({
+      name: "xlsx_inspect",
       arguments: { handle: "nope" },
     });
     expect(r.isError).toBe(true);

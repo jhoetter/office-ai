@@ -7,11 +7,8 @@ import type { DocxComment, DocxPosition, DocxSnapshot, Paragraph } from "@office
 import type { CommandLite, Mutation } from "@officeai/core";
 import { parseSelector, SelectorError, type Selector } from "./selector.js";
 import { runMcpStdioServer } from "./mcp.js";
-
-interface IO {
-  stdout: NodeJS.WritableStream;
-  stderr: NodeJS.WritableStream;
-}
+import { CliError, parseIntOpt, stringifyJson, type IO } from "./cli-shared.js";
+import { registerXlsxSubcommands } from "./cli-xlsx.js";
 
 const defaultIO: IO = { stdout: process.stdout, stderr: process.stderr };
 
@@ -20,7 +17,7 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
   program
     .name("office-agent")
     .description(
-      "Headless agent CLI for OfficeAI. DOCX is supported in this build; XLSX/PPTX commands report 'not yet supported'. The 'docx' subcommand group is the canonical surface; top-level read/search/insert-text/comment/apply remain as backward-compatible shims."
+      "Headless agent CLI for OfficeAI. DOCX and XLSX are supported in this build; PPTX commands report 'not yet supported'. The 'docx' / 'xlsx' subcommand groups are the canonical surfaces; top-level read/search/insert-text/comment/apply remain as backward-compatible shims for DOCX."
     )
     .version("0.1.0")
     .exitOverride();
@@ -28,6 +25,10 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
   // ── docx subcommand group ───────────────────────────────────────────────
   const docx = program.command("docx").description("DOCX-specific commands. See `office-agent docx --help`.");
   registerDocxSubcommands(docx, io);
+
+  // ── xlsx subcommand group ───────────────────────────────────────────────
+  const xlsx = program.command("xlsx").description("XLSX-specific commands. See `office-agent xlsx --help`.");
+  registerXlsxSubcommands(xlsx, io);
 
   // ── Backward-compatible top-level shims ─────────────────────────────────
   // Old commands forwarded the same payloads. We keep them aliased so existing
@@ -45,17 +46,13 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       await runMcpStdioServer();
     });
 
-  // ── XLSX/PPTX deferral stubs ────────────────────────────────────────────
-  for (const stub of ["xlsx", "pptx"] as const) {
-    const cmd = new Command(stub).description(
-      `(stub) ${stub.toUpperCase()} support is deferred to a future session`
-    );
-    cmd.action(() => {
-      io.stderr.write(`${stub.toUpperCase()} support is not yet implemented in office-agent.\n`);
-      throw new CliError(2, `${stub} not implemented`);
-    });
-    program.addCommand(cmd);
-  }
+  // ── PPTX deferral stub ──────────────────────────────────────────────────
+  const pptxStub = new Command("pptx").description("(stub) PPTX support is deferred to a future session");
+  pptxStub.action(() => {
+    io.stderr.write(`PPTX support is not yet implemented in office-agent.\n`);
+    throw new CliError(2, `pptx not implemented`);
+  });
+  program.addCommand(pptxStub);
 
   try {
     await program.parseAsync(argv, { from: "user" });
@@ -961,15 +958,6 @@ function registerLegacyTopLevel(program: Command, io: IO): void {
 // Helpers shared by CLI and MCP server
 // ──────────────────────────────────────────────────────────────────────────
 
-class CliError extends Error {
-  constructor(
-    public readonly code: number,
-    message: string
-  ) {
-    super(message);
-  }
-}
-
 async function loadAgent(input: string): Promise<DocxAgent> {
   const buf = await readFile(resolve(input));
   return DocxAgent.fromBuffer(buf);
@@ -1028,13 +1016,6 @@ function parseBool(value: string, flag: string): boolean {
   if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
   if (v === "false" || v === "0" || v === "no" || v === "off") return false;
   throw new CliError(64, `${flag}: expected true|false, got "${value}"`);
-}
-
-/** commander option parser that coerces a flag to an integer (or rejects). */
-function parseIntOpt(value: string, _previous?: number): number {
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n)) throw new CliError(64, `expected integer, got "${value}"`);
-  return n;
 }
 
 /**
@@ -1371,10 +1352,6 @@ function normalizeCommands(
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
-}
-
-function stringifyJson(value: unknown, pretty: boolean): string {
-  return pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value);
 }
 
 function mapErrorToExitCode(err: unknown, io: IO): number {

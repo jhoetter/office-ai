@@ -1,11 +1,23 @@
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { runCli } from "./cli.js";
 import { DocxAgent } from "@officeai/docx";
+import { XlsxAgent } from "@officeai/xlsx";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const xlsxFixtures = resolvePath(here, "../../../fixtures/xlsx/synthetic");
+
+function copyFixture(name: string, dest: string): string {
+  const src = resolvePath(xlsxFixtures, name);
+  const target = join(dest, name);
+  writeFileSync(target, readFileSync(src));
+  return target;
+}
 
 class CapturedStream {
   chunks: string[] = [];
@@ -212,11 +224,11 @@ describe("office-agent CLI", () => {
     expect(agent.toMarkdown()).toContain("JSON first paragraph body");
   });
 
-  it("xlsx subcommand reports unimplemented with non-zero exit", async () => {
+  it("pptx subcommand reports unimplemented with non-zero exit", async () => {
     const { io, stderr } = makeIO();
-    const code = await runCli(["xlsx"], io);
+    const code = await runCli(["pptx"], io);
     expect(code).toBe(2);
-    expect(stderr.text()).toContain("XLSX support is not yet implemented");
+    expect(stderr.text()).toContain("PPTX support is not yet implemented");
   });
 
   it("invalid selector reports an error", async () => {
@@ -598,5 +610,162 @@ describe("office-agent docx subcommand group", () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(diffIo.stdout.text());
     expect(parsed.paragraphs.modified).toBe(1);
+  });
+});
+
+describe("office-agent xlsx subcommand group", () => {
+  it("xlsx inspect prints structural summary as JSON", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-inspect-"));
+    const input = copyFixture("02-multi-sheet.xlsx", dir);
+    const { io, stdout } = makeIO();
+    const code = await runCli(["xlsx", "inspect", "--file", input], io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout.text());
+    expect(parsed.format).toBe("xlsx");
+    expect(Array.isArray(parsed.sheets)).toBe(true);
+    expect(parsed.sheets.length).toBeGreaterThan(1);
+    expect(Array.isArray(parsed.parts)).toBe(true);
+    expect(parsed.parts.some((p: string) => p.includes("workbook.xml"))).toBe(true);
+  });
+
+  it("xlsx read --format json projects the first worksheet's bounding box", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-read-"));
+    const input = copyFixture("01-single-sheet-numbers.xlsx", dir);
+    const { io, stdout } = makeIO();
+    const code = await runCli(["xlsx", "read", "--file", input, "--format", "json"], io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout.text());
+    expect(parsed.format).toBe("xlsx");
+    expect(typeof parsed.sheet).toBe("string");
+    expect(Array.isArray(parsed.cells)).toBe(true);
+    expect(parsed.cells.length).toBeGreaterThan(0);
+  });
+
+  it("xlsx read --format markdown emits a sheet header", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-md-"));
+    const input = copyFixture("01-single-sheet-numbers.xlsx", dir);
+    const { io, stdout } = makeIO();
+    const code = await runCli(["xlsx", "read", "--file", input, "--format", "markdown"], io);
+    expect(code).toBe(0);
+    expect(stdout.text()).toMatch(/^## /m);
+  });
+
+  it("xlsx set-cell round-trips a literal value to disk", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-setcell-"));
+    const input = copyFixture("01-single-sheet-numbers.xlsx", dir);
+    const out = join(dir, "out.xlsx");
+    const baseline = await XlsxAgent.fromBuffer(readFileSync(input));
+    const sheetName = baseline.listSheets()[0]!.name;
+    const { io, stdout } = makeIO();
+    const code = await runCli(
+      [
+        "xlsx",
+        "set-cell",
+        "--file",
+        input,
+        "--out",
+        out,
+        "--sheet",
+        sheetName,
+        "--ref",
+        "AA50",
+        "--value",
+        '"agent-edit"',
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const summary = JSON.parse(stdout.text());
+    expect(summary.wrote).toBe(out);
+    expect(summary.mutation.status).toBe("approved");
+
+    const reloaded = await XlsxAgent.fromBuffer(readFileSync(out));
+    const sheet = reloaded.getSnapshot().root.sheets.find((s) => s.name === sheetName)!;
+    const matched = [...sheet.cells.values()].find((c) => c.value === "agent-edit");
+    expect(matched).toBeDefined();
+    expect(matched!.row).toBe(49);
+    expect(matched!.col).toBe(26);
+  });
+
+  it("xlsx add-sheet appends a worksheet that re-loads", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-add-"));
+    const input = copyFixture("01-single-sheet-numbers.xlsx", dir);
+    const out = join(dir, "out.xlsx");
+    const { io } = makeIO();
+    const code = await runCli(
+      ["xlsx", "add-sheet", "--file", input, "--out", out, "--name", "Brand new sheet"],
+      io
+    );
+    expect(code).toBe(0);
+    const reloaded = await XlsxAgent.fromBuffer(readFileSync(out));
+    const sheets = reloaded.listSheets().map((s) => s.name);
+    expect(sheets).toContain("Brand new sheet");
+  });
+
+  it("xlsx diff between two on-disk files reports the cell change", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-diff-"));
+    const before = copyFixture("01-single-sheet-numbers.xlsx", dir);
+    const after = join(dir, "after.xlsx");
+    const baseline = await XlsxAgent.fromBuffer(readFileSync(before));
+    const sheetName = baseline.listSheets()[0]!.name;
+
+    const writeIo = makeIO();
+    let code = await runCli(
+      [
+        "xlsx",
+        "set-cell",
+        "--file",
+        before,
+        "--out",
+        after,
+        "--sheet",
+        sheetName,
+        "--ref",
+        "Z99",
+        "--value",
+        "42",
+      ],
+      writeIo.io
+    );
+    expect(code).toBe(0);
+
+    const diffIo = makeIO();
+    code = await runCli(["xlsx", "diff", "--before", before, "--after", after], diffIo.io);
+    expect(code).toBe(0);
+    const diff = JSON.parse(diffIo.stdout.text());
+    expect(diff.format).toBe("xlsx");
+    expect(diff.changes.length).toBeGreaterThanOrEqual(1);
+    const summaries = diff.changes.map((c: { summary?: string }) => c.summary ?? "");
+    expect(summaries.some((s: string) => s.includes("Z99"))).toBe(true);
+  });
+
+  it("xlsx set-cell --no-approve reports a pending mutation summary", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-xlsx-pending-"));
+    const input = copyFixture("01-single-sheet-numbers.xlsx", dir);
+    const out = join(dir, "out.xlsx");
+    const baseline = await XlsxAgent.fromBuffer(readFileSync(input));
+    const sheetName = baseline.listSheets()[0]!.name;
+    const { io, stdout } = makeIO();
+    const code = await runCli(
+      [
+        "xlsx",
+        "set-cell",
+        "--file",
+        input,
+        "--out",
+        out,
+        "--sheet",
+        sheetName,
+        "--ref",
+        "AB1",
+        "--value",
+        "7",
+        "--no-approve",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const summary = JSON.parse(stdout.text());
+    expect(summary.mutation.status).toBe("pending");
   });
 });
