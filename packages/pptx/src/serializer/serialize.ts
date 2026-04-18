@@ -386,8 +386,7 @@ function paragraphToEntry(p: TextParagraph): Record<string, unknown> {
 }
 
 function runToEntry(r: TextRun): Record<string, unknown> {
-  const rPrChildren: unknown[] = [];
-  for (const c of r.properties.opaqueChildren ?? []) rPrChildren.push(opaqueToEntry(c));
+  const rPrChildren = buildRPrChildren(r);
   const rPrAttrs = mergeRunAttrs(r);
   const rPrEntry: Record<string, unknown> = { "a:rPr": rPrChildren };
   if (Object.keys(rPrAttrs).length > 0) rPrEntry[ATTR_KEY] = makeRawAttrs(rPrAttrs);
@@ -401,12 +400,43 @@ function runToEntry(r: TextRun): Record<string, unknown> {
 }
 
 function brToEntry(r: TextRun): Record<string, unknown> {
-  const rPrChildren: unknown[] = [];
-  for (const c of r.properties.opaqueChildren ?? []) rPrChildren.push(opaqueToEntry(c));
+  const rPrChildren = buildRPrChildren(r);
   const rPrAttrs = mergeRunAttrs(r);
   const rPrEntry: Record<string, unknown> = { "a:rPr": rPrChildren };
   if (Object.keys(rPrAttrs).length > 0) rPrEntry[ATTR_KEY] = makeRawAttrs(rPrAttrs);
   return makeEntry("a:br", [rPrEntry]);
+}
+
+/**
+ * Build a:rPr children: re-emit a:solidFill (color) and a:latin (font) from
+ * model properties, drop any matching captured children, and pass everything
+ * else through verbatim. This ensures format-text changes are reflected.
+ */
+function buildRPrChildren(r: TextRun): unknown[] {
+  const out: unknown[] = [];
+  const captured = r.properties.opaqueChildren ?? [];
+  const wantsSolidFill = r.properties.color !== undefined;
+  const wantsLatin = r.properties.fontFamily !== undefined;
+
+  // Emit fill first, then other children, then latin, matching OOXML order.
+  if (wantsSolidFill) {
+    out.push(
+      makeEntry("a:solidFill", [
+        makeEntry("a:srgbClr", [], { val: String(r.properties.color) }),
+      ])
+    );
+  }
+  for (const c of captured) {
+    // Drop captured a:solidFill / a:latin only when the model overrides them;
+    // otherwise pass through verbatim (preserves a:schemeClr etc.).
+    if (c.tag === "a:solidFill" && wantsSolidFill) continue;
+    if (c.tag === "a:latin" && wantsLatin) continue;
+    out.push(opaqueToEntry(c));
+  }
+  if (wantsLatin) {
+    out.push(makeEntry("a:latin", [], { typeface: String(r.properties.fontFamily) }));
+  }
+  return out;
 }
 
 function mergeRunAttrs(r: TextRun): Record<string, string> {
