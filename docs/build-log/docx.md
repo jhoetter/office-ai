@@ -1849,3 +1849,133 @@ serializer are untouched.
 - **Nested tables render shallowly.** Inner tables flatten to a
   single line of `" | "`-joined cell text. Rare in practice; deeper
   nesting can be added later without changing the outer schema.
+
+## P3 — Word-UX parity (style cascade, pages, header/footer authoring)
+
+**Date:** 2026-04-17 → 2026-04-18.
+**Spec:** `spec/docx/style-cascade.md`, `spec/docx/page-model.md`,
+`spec/docx/paged-renderer.md`, `spec/docx/header-footer-authoring.md`,
+`spec/docx/page-aware-editing.md`, `spec/docx/llm-page-surface.md`.
+
+### Goal
+
+Close the four user-visible gaps that kept the editor from feeling
+like Word:
+
+1. The toolbar didn't reflect inherited formatting (font / size /
+   color from a paragraph style cascade) — it only showed values
+   that were carried by direct PM marks. Result: open a thesis,
+   click into a heading, see "—" instead of "Calibri 16 pt".
+2. The document was rendered as one continuous stream — no page
+   boundaries, no page count, no Goto Page.
+3. Headers, footers, and section breaks couldn't be edited at all.
+4. The LLM / MCP surface didn't know about pages, so any prompt
+   that referred to "page 3" was meaningless.
+
+### Shape of the work
+
+Six batches of work-packages, each spec-first then code:
+
+| Batch | Workstream                                                                                                                                                                | Deliverables                                                                                                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P3.1  | Style cascade + toolbar inheritance                                                                                                                                       | Typed `StylesPart` + `StyleDefinition`; `resolveEffectiveRpr` / `resolveEffectivePpr` + cycle-safe `basedOn` walker; `activeRunAttr` toolbar helper; `docx:set-paragraph-spacing` command.   |
+| P3.2  | Typed page geometry + section model                                                                                                                                       | `SectionProperties` (pgSz, pgMar, cols, headerRefs, footerRefs, titlePg, sectionType); typed `PageBreakLeaf` + `LastRenderedPageBreakLeaf`; `parser/sections.ts`; `serializer/sections.ts`.  |
+| P3.3  | Paged-renderer foundation                                                                                                                                                 | `chunkIntoPages` (hard / hint / measured); `pageDecorationsPlugin` widget dividers ("Page N of M"); status bar with current/total; zoom 50–200 %.                                            |
+| P3.4  | Header/footer authoring                                                                                                                                                   | `PageNumberFieldLeaf` typed run child; `serializeRunOrFieldWrapper` to lift single-leaf runs into `<w:fldSimple>`; commands `docx:insert-page-number`, `set-section-different-first`, `insert-section-break`; `HeaderFooterPanel` MVP UI. |
+| P3.5  | Page-aware editing UX                                                                                                                                                     | `docx:insert-page-break` command; `Mod-Enter` keymap; `gotoPage` + click-to-jump in the status bar; `PageDown` / `PageUp` snap to the next chunk; locale-aware read-only `PageRuler`.       |
+| P3.6  | LLM + MCP surface for pages                                                                                                                                               | `snapshotToMarkdown({ withPageSections })` injecting `<!-- page N -->` anchors; `DocxAgent.getPages` / `pageForParagraph` / `getPageMarkdown` / `getPageText`; new MCP tools `docx_get_pages`, `docx_get_page_text`. |
+
+### Decisions worth remembering
+
+- **One PM instance for the body, widget decorations for the page
+  chrome.** We considered mounting one PM per visible page (Word's
+  literal model) but rejected it because: (a) every cross-page
+  selection becomes a multi-instance saga; (b) PM observers on
+  separate hosts fight over selection; (c) zoom has to scale a
+  cluster of hosts simultaneously. Decoration widgets keep the
+  editing surface as one PM and let CSS draw the page boundaries.
+  Pagination becomes a pure projection of the typed model.
+- **Page chunker is a pure function.** No DOM. Inputs are the
+  snapshot + an optional per-block height measurer (the browser
+  passes one wired to `getBoundingClientRect`; tests omit it and
+  rely on hard / hint breaks). This keeps the chunker testable
+  end-to-end without jsdom and means the LLM layer (P3.6) can
+  reason about pages without ever touching the renderer.
+- **Header/footer authoring is data-layer-first.** P3.4 ships a
+  collapsible `HeaderFooterPanel` instead of a full visual focus
+  model with separate PM instances. The panel surfaces every typed
+  command (set-header-text, insert-page-number, set-section-different-first)
+  so the data layer is fully exercised; the visual editing
+  experience overlays of "Header — First Page" with their own PM
+  instances are a P4 polish item. Decoupling lets P3.5 / P3.6 ship
+  without waiting on the more complex UX work.
+- **Typed leaves carry the field semantics, opaques carry the rest.**
+  `PageNumberFieldLeaf` covers `<w:fldSimple w:instr=" PAGE "/>`
+  (and `NUMPAGES`) — the only field shapes any P3 command emits.
+  Existing fields parsed from real-world documents still go through
+  `OpaqueRunChild` so byte-identical round-trip is preserved on
+  every untouched fixture. P4 will widen the typed surface to the
+  `<w:fldChar>`-bracketed multi-run grammar.
+- **Markdown page anchors are opt-in.** `snapshotToMarkdown` keeps
+  its old single-argument signature byte-identical. The new
+  `withPageSections: true` mode prepends `<!-- page N -->` + `## Page N`
+  per chunk. The HTML comment is the machine-readable anchor (regex
+  lifts cleanly even after a renderer mangles the heading); the
+  heading is the human fallback.
+
+### Round-trip invariants verified
+
+`tests/roundtrip/docx/p3-page-roundtrip.test.ts` adds 35 new test
+cases (one per fixture × five mutations). For every real-world
+fixture we assert that:
+
+- `docx:insert-page-break` re-emits only `word/document.xml`.
+- `docx:set-section-different-first` re-emits only `word/document.xml`.
+- `docx:insert-section-break` re-emits only `word/document.xml`.
+- `docx:insert-page-number` into the first header re-emits only that
+  header part — the body and other headers/footers stay byte-identical.
+- The page chunker output is identical before and after a no-op
+  load → save (typed sections + page-break leaves round-trip cleanly).
+
+These complement the existing `real-world-roundtrip.test.ts` suite
+which already pinned untouched parts as byte-identical for a
+single-character text edit.
+
+### Test counts
+
+| Suite                                        | Before P3 | After P3   |
+| -------------------------------------------- | --------: | ---------: |
+| `@officeai/docx`                             |       208 |        249 |
+| ↳ `commands/header-footer-authoring.test.ts` |         0 |         14 |
+| ↳ `commands/insert-page-break.test.ts`       |         0 |          6 |
+| ↳ `agent/pages.test.ts`                      |         0 |         12 |
+| ↳ `parser/sections.test.ts`                  |         0 |          7 |
+| ↳ `renderer/page-chunker.test.ts`            |         0 |          9 |
+| ↳ `agent/header-footer-graph.test.ts`        |         0 |          3 |
+| `@officeai/agent` (MCP tools)                |        47 |         50 |
+| `@officeai/integration-tests`                |        51 |         86 |
+| ↳ `roundtrip/docx/p3-page-roundtrip.test.ts` |         0 |         35 |
+
+### Caveats / out-of-scope (carried into P4)
+
+- **No measured pagination yet.** The chunker honors hard
+  `<w:br w:type="page"/>` and `<w:lastRenderedPageBreak/>` hints;
+  it does not run a layout pass that would split overflowing
+  paragraphs. The LLM surface uses the same logical pagination, so
+  AI page references are stable but may differ from Word's actual
+  rendered page count for documents that lack hint breaks.
+- **Header/footer authoring lives in a side panel.** The full
+  in-editor focus model (click into a header preview, body greys
+  out, toolbar retargets) is wired at the data layer but the
+  separate PM mount per part is not yet rendered into the page
+  divider widget. Acceptance criterion A5 of P3.4 is met by the
+  panel; the visual end-state is P4 polish.
+- **Different-odd-even / restart-numbering / page-number formatting**
+  are deferred. `<w:titlePg/>` is the only section-level toggle the
+  P3.4 command surface exposes.
+- **Ruler is read-only.** Drag-to-resize margins lands in P4 / R8.
+- **No auto-creation of header / footer parts.** Toggling
+  "Different first page" on a section that lacks a `first` header
+  flips the typed flag but does not synthesize the part. P4 will
+  add an "auto-create-on-toggle" path that mints the part and
+  registers the relationship.
