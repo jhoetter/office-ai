@@ -660,11 +660,18 @@ export interface PptxSnapshotSummary {
   masters: number;
   mediaParts: number;
   parts: string[];
-  shapeCounts: { text: number; pic: number; group: number; table: number; opaque: number };
+  shapeCounts: {
+    text: number;
+    pic: number;
+    group: number;
+    table: number;
+    chart: number;
+    opaque: number;
+  };
 }
 
 export function inspectSnapshot(snap: PptxSnapshot): PptxSnapshotSummary {
-  const counts = { text: 0, pic: 0, group: 0, table: 0, opaque: 0 };
+  const counts = { text: 0, pic: 0, group: 0, table: 0, chart: 0, opaque: 0 };
   for (const slide of snap.root.slides) walkShapes(slide.shapes, (s) => bumpShapeKind(counts, s));
   const parts = Array.from(snap.container.parts.keys()).sort();
   return {
@@ -887,7 +894,14 @@ function walkShapes(shapes: ReadonlyArray<Shape>, visit: (s: Shape) => void): vo
 }
 
 function bumpShapeKind(
-  counts: { text: number; pic: number; group: number; table: number; opaque: number },
+  counts: {
+    text: number;
+    pic: number;
+    group: number;
+    table: number;
+    chart: number;
+    opaque: number;
+  },
   s: Shape
 ): void {
   switch (s.kind) {
@@ -902,6 +916,9 @@ function bumpShapeKind(
       return;
     case "table":
       counts.table++;
+      return;
+    case "chart":
+      counts.chart++;
       return;
     case "opaque":
       counts.opaque++;

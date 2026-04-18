@@ -223,6 +223,61 @@ async function largeDeck() {
   });
 }
 
+async function withChart() {
+  // F3: chart fixture exercises the chart parser/serializer/commands.
+  // Picks a clustered bar chart with 2 series so set-chart-type, set-chart-data
+  // and set-chart-title each have something to round-trip.
+  await write("09-with-chart", async (pptx) => {
+    const slide = pptx.addSlide();
+    slide.addText("Quarterly performance", {
+      x: 0.5, y: 0.4, w: 12, h: 0.8,
+      fontSize: 28, bold: true, color: "111827",
+    });
+    slide.addChart(
+      pptx.ChartType.bar,
+      [
+        {
+          name: "Revenue",
+          labels: ["Q1", "Q2", "Q3", "Q4"],
+          values: [120, 145, 162, 210],
+        },
+        {
+          name: "Expenses",
+          labels: ["Q1", "Q2", "Q3", "Q4"],
+          values: [80, 95, 110, 130],
+        },
+      ],
+      {
+        x: 0.5, y: 1.5, w: 12, h: 5,
+        showTitle: true,
+        title: "Revenue vs Expenses (k$)",
+        showLegend: true,
+        legendPos: "b",
+        catAxisLabelColor: "1F2937",
+        valAxisLabelColor: "1F2937",
+      },
+    );
+  });
+}
+
+async function withAnimations() {
+  // F4: slide-transition + simple per-shape entrance animations fixture.
+  // pptxgenjs doesn't expose a high-level animations API, so this fixture
+  // is built minimally and the F4 implementation will use a real-world
+  // deck (added under fixtures/pptx/real/) for full animation coverage.
+  await write("10-with-anim", async (pptx) => {
+    const slide = pptx.addSlide();
+    slide.addText("Animated title", {
+      x: 0.5, y: 0.5, w: 12, h: 1.5,
+      fontSize: 44, bold: true, color: "111827",
+    });
+    slide.addText("Body line that should appear after the title.", {
+      x: 0.5, y: 2.5, w: 12, h: 1.0,
+      fontSize: 24, color: "1F2937",
+    });
+  });
+}
+
 await blank();
 await titleOnly();
 await titleAndContent();
@@ -231,4 +286,6 @@ await withImage();
 await withTable();
 await multiSlide();
 await largeDeck();
+await withChart();
+await withAnimations();
 console.log("\nDone. See fixtures/pptx/MANIFEST.md.");

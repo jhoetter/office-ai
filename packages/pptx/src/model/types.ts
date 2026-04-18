@@ -39,6 +39,8 @@ export interface PptxDirty {
   readonly layouts: ReadonlySet<string>;
   readonly theme: ReadonlySet<string>;
   readonly media: ReadonlySet<string>;
+  /** F3: chart parts to re-emit from the typed model rather than from container bytes. */
+  readonly charts: ReadonlySet<string>;
   readonly relationships: ReadonlySet<string>;
   readonly contentTypes: boolean;
 }
@@ -51,6 +53,7 @@ export const emptyDirty = (): PptxDirty => ({
   layouts: new Set<string>(),
   theme: new Set<string>(),
   media: new Set<string>(),
+  charts: new Set<string>(),
   relationships: new Set<string>(),
   contentTypes: false,
 });
@@ -101,6 +104,12 @@ export interface PptxPresentation {
   readonly themeDefault: ThemeColorScheme;
   readonly notesSlides: ReadonlyMap<string, OpaquePart>;
   readonly media: ReadonlyMap<string, MediaPart>;
+  /**
+   * F3: typed chart parts keyed by part path. Each `ChartShape` resolves
+   * its `chartPartPath` here. Anything in the chart XML we don't model
+   * is preserved as `OpaqueXml` inside the part.
+   */
+  readonly charts: ReadonlyMap<string, ChartPart>;
   readonly presentationRootAttrs: Readonly<Record<string, string>>;
   readonly presentationOpaqueTail: ReadonlyArray<OpaqueXml>;
   /**
@@ -134,6 +143,40 @@ export interface MediaPart {
   readonly sha256: string;
 }
 
+// ─── Chart parts (F3) ─────────────────────────────────────────────────────
+
+export type ChartType = "bar" | "line" | "pie" | "area" | "unsupported";
+
+export interface ChartSeries {
+  readonly id: NodeId;
+  /** `<c:ser><c:idx val>`. */
+  readonly idx: number;
+  readonly name?: string;
+  readonly values: ReadonlyArray<number>;
+}
+
+/**
+ * F3: typed chart part referenced from a `ChartShape`. Only the four typed
+ * fields (`title`, `chartType`, `categories`, `series`) are model-driven;
+ * everything else (axes, legend, plot-area styling, embedded xlsx) is
+ * preserved verbatim and re-emitted byte-for-byte unless the part is
+ * marked dirty.
+ */
+export interface ChartPart {
+  readonly partPath: string;
+  readonly contentType: string;
+  readonly chartType: ChartType;
+  readonly title?: string;
+  readonly categories: ReadonlyArray<string>;
+  readonly series: ReadonlyArray<ChartSeries>;
+  /** `<c:chartSpace>` head + tail (sans the children we model). Verbatim. */
+  readonly chartSpaceRaw: OpaqueXml;
+  /** `<c:plotArea>` siblings (axes, legend, …). Verbatim. */
+  readonly plotAreaTailRaw: ReadonlyArray<OpaqueXml>;
+  /** Verbatim `<c:ser>` head/tail keyed by series idx. */
+  readonly seriesRaw: ReadonlyMap<number, OpaqueXml>;
+}
+
 // ─── Slide ────────────────────────────────────────────────────────────────
 
 export interface Slide {
@@ -155,7 +198,13 @@ export interface Slide {
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-export type Shape = TextShape | Picture | TableShape | GroupShape | OpaqueShape;
+export type Shape =
+  | TextShape
+  | Picture
+  | TableShape
+  | ChartShape
+  | GroupShape
+  | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 
@@ -233,6 +282,23 @@ export interface TableCell {
   readonly tcPrRaw?: OpaqueXml;
   /** `<a:tc>` attrs (gridSpan, hMerge, vMerge, …). Verbatim. */
   readonly tcAttrs: Readonly<Record<string, string>>;
+}
+
+/**
+ * F3: typed chart graphic frame. Position/size are model-driven; the
+ * actual chart data lives in a referenced `ChartPart` (resolved via
+ * the slide's relationships file).
+ */
+export interface ChartShape extends ShapeBase {
+  readonly kind: "chart";
+  /** `<c:chart r:id>` relationship id (relative to the slide rels file). */
+  readonly chartRelId: string;
+  /** Resolved chart part path, e.g. `ppt/charts/chart1.xml`. */
+  readonly chartPartPath: string;
+  /** `<p:nvGraphicFramePr>` tail (sans `<p:cNvPr>` we typed). Verbatim. */
+  readonly nvGraphicFramePrTail: ReadonlyArray<OpaqueXml>;
+  /** `<a:graphicData @uri>`. Always the chart uri for a ChartShape. */
+  readonly graphicDataUri: string;
 }
 
 export interface GroupShape extends ShapeBase {

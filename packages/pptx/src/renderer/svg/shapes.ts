@@ -1,4 +1,6 @@
 import type {
+  ChartPart,
+  ChartShape,
   GroupShape,
   OpaqueShape,
   OpaqueXml,
@@ -19,6 +21,8 @@ export interface SvgRenderCtx {
   readonly theme?: ThemeColorScheme;
   /** Map from media partPath → URL (object URL or data URL). */
   readonly mediaUrls?: ReadonlyMap<string, string>;
+  /** F3: typed chart parts keyed by part path, used by chart renderer. */
+  readonly charts?: ReadonlyMap<string, ChartPart>;
 }
 
 export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
@@ -31,6 +35,8 @@ export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
       return groupShapeToSvg(shape, ctx);
     case "table":
       return tableToSvg(shape, ctx);
+    case "chart":
+      return chartToSvg(shape, ctx);
     case "opaque":
       return opaqueShapeToSvg(shape);
   }
@@ -268,6 +274,27 @@ function cellToFlatText(paragraphs: ReadonlyArray<TextParagraph>): string {
     p.runs.filter((r) => !r.isLineBreak).map((r) => r.text).join("")
   );
   return lines.filter((s) => s.length > 0).join(" / ");
+}
+
+/**
+ * Render a `ChartShape` as a placeholder rectangle with its title and
+ * type. F3.4 will replace this with actual bar/line/pie/area glyphs;
+ * for F3.1 we just need the renderer to not crash and to surface the
+ * fact that the slide contains a typed chart.
+ */
+function chartToSvg(shape: ChartShape, ctx: SvgRenderCtx): string {
+  const box = shapeBoundingBox(shape);
+  if (!box) return groupOpen("chart", shape.id) + groupClose();
+  const part = ctx.charts?.get(shape.chartPartPath);
+  const label = part
+    ? `${part.title ?? "chart"} · ${part.chartType}`
+    : "chart";
+  return [
+    groupOpen("chart", shape.id),
+    `<rect x="${box.x}" y="${box.y}" width="${box.cx}" height="${box.cy}" fill="#f9fafb" stroke="#9CA3AF"/>`,
+    `<text x="${box.x + box.cx / 2}" y="${box.y + box.cy / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${estimateLabelSizeEmu(box.cx, box.cy)}" fill="#374151">${escXml(label)}</text>`,
+    groupClose(),
+  ].join("");
 }
 
 function opaqueShapeToSvg(shape: OpaqueShape): string {

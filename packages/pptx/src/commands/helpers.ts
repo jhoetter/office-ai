@@ -1,5 +1,6 @@
 import { CommandError, type DiffChange, type DocumentDiff, type NodeId } from "@officeai/core";
 import type {
+  ChartShape,
   ContentTypesSnap,
   PptxDirty,
   PptxPresentation,
@@ -20,6 +21,7 @@ export interface DirtyMutator {
   removeSlides?: ReadonlyArray<string>;
   notesSlides?: ReadonlyArray<string>;
   media?: ReadonlyArray<string>;
+  charts?: ReadonlyArray<string>;
   relationships?: ReadonlyArray<string>;
 }
 
@@ -41,6 +43,7 @@ export function evolveSnapshot(
     layouts: snapshot.dirty.layouts,
     theme: snapshot.dirty.theme,
     media: extendSet(snapshot.dirty.media, mut.media ?? []),
+    charts: extendSet(snapshot.dirty.charts, mut.charts ?? []),
     relationships: extendSet(snapshot.dirty.relationships, mut.relationships ?? []),
     contentTypes: snapshot.dirty.contentTypes || (mut.contentTypes ?? false),
   };
@@ -176,6 +179,10 @@ export function isTextShape(s: Shape): s is TextShape {
 
 export function isTableShape(s: Shape): s is TableShape {
   return s.kind === "table";
+}
+
+export function isChartShape(s: Shape): s is ChartShape {
+  return s.kind === "chart";
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────

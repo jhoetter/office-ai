@@ -63,6 +63,11 @@ function renderShape(sh: Shape, depth: number): string[] {
       );
       out.push(...renderTable(sh, depth + 1));
       break;
+    case "chart":
+      out.push(
+        `${indent}- **chart** \`${sh.id}\` cNvPr=${sh.cNvPrId} part=\`${sh.chartPartPath || "?"}\` ${bbox}`
+      );
+      break;
     case "opaque":
       out.push(`${indent}- **opaque** \`${sh.id}\` <${sh.tag}> ${bbox}`);
       break;

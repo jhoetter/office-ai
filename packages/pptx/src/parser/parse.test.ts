@@ -86,6 +86,34 @@ describe("parsePptx", () => {
     expect(table.size?.cxEmu).toBeGreaterThan(0);
   });
 
+  it("parses charts in p:graphicFrame as typed ChartShape + ChartPart", async () => {
+    const path = join(FIXTURES_DIR.pathname, "09-with-chart.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+    const slide = snap.root.slides[0];
+    const chart = slide.shapes.find((s) => s.kind === "chart");
+    expect(chart).toBeDefined();
+    if (!chart || chart.kind !== "chart") return;
+    expect(chart.graphicDataUri).toBe(
+      "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    );
+    expect(chart.chartRelId).toMatch(/^rId\d+$/);
+    expect(chart.chartPartPath).toMatch(/^ppt\/charts\/chart\d+\.xml$/);
+    expect(chart.position?.xEmu).toBeGreaterThan(0);
+    expect(chart.size?.cxEmu).toBeGreaterThan(0);
+
+    // Chart part is reachable + typed.
+    const part = snap.root.charts.get(chart.chartPartPath);
+    expect(part).toBeDefined();
+    if (!part) return;
+    expect(["bar", "line", "pie", "area", "unsupported"]).toContain(part.chartType);
+    expect(part.series.length).toBeGreaterThanOrEqual(1);
+    for (const s of part.series) {
+      expect(s.values.length).toBeGreaterThan(0);
+    }
+    expect(part.categories.length).toBeGreaterThan(0);
+  });
+
   it("captures multiple slides in order", async () => {
     const path = join(FIXTURES_DIR.pathname, "07-multi-slide.pptx");
     const buf = await readFile(path);

@@ -235,6 +235,15 @@ function deepCloneShape(
       };
       return c;
     }
+    case "chart": {
+      const c: Shape = {
+        ...s,
+        id,
+        cNvPrId,
+        nvGraphicFramePrTail: s.nvGraphicFramePrTail.map(cloneOpaque),
+      };
+      return c;
+    }
     case "opaque": {
       const c: OpaqueShape = { ...s, id, cNvPrId, raw: cloneOpaque(s.raw) };
       return c;

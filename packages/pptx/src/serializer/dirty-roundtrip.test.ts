@@ -123,6 +123,53 @@ describe("targeted-edit roundtrip", () => {
     }
   });
 
+  it("rebuilds a typed ChartShape and survives parse → serialize → parse", async () => {
+    const path = join(FIXTURES_DIR.pathname, "09-with-chart.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+
+    const slide = snap.root.slides[0];
+    const chartA = slide.shapes.find((s) => s.kind === "chart");
+    expect(chartA).toBeDefined();
+    if (!chartA || chartA.kind !== "chart") return;
+    const partA = snap.root.charts.get(chartA.chartPartPath);
+    expect(partA).toBeDefined();
+    if (!partA) return;
+
+    // Dirty the slide AND the chart part to force both to be rebuilt
+    // from the typed model.
+    const dirtied: PptxSnapshot = {
+      ...snap,
+      dirty: {
+        ...snap.dirty,
+        slides: new Set([slide.partPath]),
+        charts: new Set([chartA.chartPartPath]),
+      },
+    };
+
+    const out = await serializePptx(dirtied);
+    const snap2 = await parsePptx(out);
+    const slide2 = snap2.root.slides[0];
+    const chartB = slide2.shapes.find((s) => s.kind === "chart");
+    expect(chartB).toBeDefined();
+    if (!chartB || chartB.kind !== "chart") return;
+    expect(chartB.chartRelId).toBe(chartA.chartRelId);
+    expect(chartB.chartPartPath).toBe(chartA.chartPartPath);
+    expect(chartB.position).toEqual(chartA.position);
+    expect(chartB.size).toEqual(chartA.size);
+
+    const partB = snap2.root.charts.get(chartB.chartPartPath);
+    expect(partB).toBeDefined();
+    if (!partB) return;
+    expect(partB.chartType).toBe(partA.chartType);
+    expect(partB.title).toBe(partA.title);
+    expect(partB.series.length).toBe(partA.series.length);
+    for (let i = 0; i < partA.series.length; i++) {
+      expect(partB.series[i]!.values).toEqual(partA.series[i]!.values);
+    }
+    expect(partB.categories).toEqual(partA.categories);
+  });
+
   it("re-emits a text edit while leaving other parts byte-identical", async () => {
     const path = join(FIXTURES_DIR.pathname, "02-title-only.pptx");
     const buf = await readFile(path);

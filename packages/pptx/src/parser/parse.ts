@@ -2,6 +2,10 @@ import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core
 import { DEFAULT_THEME, type ThemeColorScheme } from "../renderer/layout/color.js";
 import { parseThemeColorScheme } from "./theme.js";
 import type {
+  ChartPart,
+  ChartSeries,
+  ChartShape,
+  ChartType,
   ContentTypesSnap,
   GroupShape,
   MediaPart,
@@ -53,6 +57,7 @@ const REL_TYPE_THEME = "http://schemas.openxmlformats.org/officeDocument/2006/re
 const REL_TYPE_NOTES_SLIDE =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const REL_TYPE_CHART = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 
 export async function parsePptx(
   input: ArrayBuffer | Uint8Array,
@@ -260,6 +265,25 @@ export async function parsePptx(
     overrides: ct.overrides.map((o) => ({ partName: o.partName, contentType: o.contentType })),
   };
 
+  // ── Charts (F3): typed parts referenced by ChartShape graphic frames ─
+  const charts = new Map<string, ChartPart>();
+  const chartPartPaths = new Set<string>();
+  for (const slide of slides) {
+    walkShapesForCharts(slide.shapes, (path) => chartPartPaths.add(path));
+  }
+  for (const chartPath of chartPartPaths) {
+    if (!container.has(chartPath)) continue;
+    const chartXml = container.readText(chartPath);
+    const ctOverride = ct.overrides.find((o) => o.partName === `/${chartPath}`)?.contentType;
+    const ctype =
+      ctOverride ?? "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+    try {
+      charts.set(chartPath, parseChartPart(chartPath, chartXml, ctype, mintNodeId));
+    } catch {
+      // Skip malformed chart parts; they remain as opaque container bytes.
+    }
+  }
+
   const root: PptxPresentation = {
     id: mintNodeId(),
     slides,
@@ -271,6 +295,7 @@ export async function parsePptx(
     themeDefault,
     notesSlides,
     media,
+    charts,
     presentationRootAttrs,
     presentationOpaqueTail,
     sldIdLstAttrs,
@@ -413,8 +438,10 @@ function parseShape(
     case "p:grpSp":
       return parseGrpSp(entry, mintNodeId, partPath, slideRelTargets);
     case "p:graphicFrame": {
-      const typed = parseGraphicFrameTable(entry, mintNodeId);
-      if (typed) return typed;
+      const table = parseGraphicFrameTable(entry, mintNodeId);
+      if (table) return table;
+      const chart = parseGraphicFrameChart(entry, mintNodeId, partPath, slideRelTargets);
+      if (chart) return chart;
       return parseOpaqueShape(entry, mintNodeId);
     }
     default:
@@ -423,6 +450,90 @@ function parseShape(
 }
 
 const TABLE_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006/table";
+const CHART_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+
+/**
+ * Parse `<p:graphicFrame>` ⇒ `ChartShape` if its `<a:graphicData @uri>`
+ * is the chart URI. Returns `null` otherwise so the caller can fall
+ * back to `OpaqueShape` for SmartArt and friends.
+ */
+function parseGraphicFrameChart(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter,
+  slidePartPath: string,
+  slideRelTargets: ReadonlyMap<string, string>
+): ChartShape | null {
+  const children = (entry["p:graphicFrame"] as unknown[] | undefined) ?? [];
+  const nvGFPr = findElementEntry(children, "p:nvGraphicFramePr");
+  const xfrm = findElementEntry(children, "p:xfrm");
+  const graphic = findElementEntry(children, "a:graphic");
+  if (!graphic) return null;
+  const graphicData = findElementEntry(
+    (graphic["a:graphic"] as unknown[] | undefined) ?? [],
+    "a:graphicData"
+  );
+  if (!graphicData) return null;
+  const uri = attrOf(graphicData, "uri") ?? "";
+  if (uri !== CHART_GRAPHIC_DATA_URI) return null;
+  const chart = findElementEntry(
+    (graphicData["a:graphicData"] as unknown[] | undefined) ?? [],
+    "c:chart"
+  );
+  if (!chart) return null;
+  const chartRelId = attrOf(chart, "r:id") ?? "";
+  if (!chartRelId) return null;
+  const targetRel = slideRelTargets.get(chartRelId);
+  const chartPartPath = targetRel ? resolveTarget(slidePartPath, targetRel) : "";
+
+  let cNvPrId = 0;
+  let name = "";
+  const nvGFPrTail: OpaqueXml[] = [];
+  if (nvGFPr) {
+    for (const c of elementEntries(
+      (nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? []
+    )) {
+      const tag = ooxml.getTag(c);
+      if (tag === "p:cNvPr") {
+        cNvPrId = Number(attrOf(c, "id") ?? "0");
+        name = attrOf(c, "name") ?? "";
+      }
+      nvGFPrTail.push(captureOpaque(c));
+    }
+  }
+
+  let position: { xEmu: number; yEmu: number } | undefined;
+  let size: { cxEmu: number; cyEmu: number } | undefined;
+  if (xfrm) {
+    const xfrmChildren = (xfrm["p:xfrm"] as unknown[] | undefined) ?? [];
+    const off = findElementEntry(xfrmChildren, "a:off");
+    const ext = findElementEntry(xfrmChildren, "a:ext");
+    if (off) {
+      position = {
+        xEmu: Number(attrOf(off, "x") ?? "0"),
+        yEmu: Number(attrOf(off, "y") ?? "0"),
+      };
+    }
+    if (ext) {
+      size = {
+        cxEmu: Number(attrOf(ext, "cx") ?? "0"),
+        cyEmu: Number(attrOf(ext, "cy") ?? "0"),
+      };
+    }
+  }
+
+  return {
+    kind: "chart",
+    id: mintNodeId(),
+    cNvPrId,
+    name,
+    ...(position ? { position } : {}),
+    ...(size ? { size } : {}),
+    chartRelId,
+    chartPartPath,
+    nvGraphicFramePrTail: nvGFPrTail,
+    graphicDataUri: uri,
+  };
+}
 
 /**
  * Parse `<p:graphicFrame>` ⇒ `TableShape` if and only if its
@@ -1089,6 +1200,7 @@ export function resolvePictureMediaPath(
 }
 
 export {
+  REL_TYPE_CHART,
   REL_TYPE_IMAGE,
   REL_TYPE_NOTES_SLIDE,
   REL_TYPE_SLIDE,
@@ -1096,3 +1208,224 @@ export {
   REL_TYPE_SLIDE_MASTER,
   REL_TYPE_THEME,
 };
+
+function walkShapesForCharts(
+  shapes: ReadonlyArray<Shape>,
+  visit: (chartPartPath: string) => void
+): void {
+  for (const sh of shapes) {
+    if (sh.kind === "chart" && sh.chartPartPath) visit(sh.chartPartPath);
+    if (sh.kind === "group") walkShapesForCharts(sh.children, visit);
+  }
+}
+
+const CHART_TYPE_TAGS: ReadonlyArray<{ tag: string; type: ChartType }> = [
+  { tag: "c:barChart", type: "bar" },
+  { tag: "c:bar3DChart", type: "bar" },
+  { tag: "c:lineChart", type: "line" },
+  { tag: "c:line3DChart", type: "line" },
+  { tag: "c:pieChart", type: "pie" },
+  { tag: "c:pie3DChart", type: "pie" },
+  { tag: "c:doughnutChart", type: "pie" },
+  { tag: "c:areaChart", type: "area" },
+  { tag: "c:area3DChart", type: "area" },
+];
+
+/**
+ * Parse `ppt/charts/chart{N}.xml` ⇒ `ChartPart` with typed title, type,
+ * categories, and series. Everything we don't model is preserved verbatim
+ * so the serializer can rebuild the part byte-for-byte unless explicitly
+ * dirtied.
+ */
+function parseChartPart(
+  partPath: string,
+  xml: string,
+  contentType: string,
+  mintNodeId: IdMinter
+): ChartPart {
+  const tree = ooxml.parseXml(xml) as unknown[];
+  const chartSpace = findElementEntry(tree, "c:chartSpace");
+  if (!chartSpace) {
+    throw new PptxParseError("invalid-xml", `Missing <c:chartSpace> in ${partPath}`, {
+      partPath,
+    });
+  }
+  const chartSpaceChildren =
+    (chartSpace["c:chartSpace"] as unknown[] | undefined) ?? [];
+  const chart = findElementEntry(chartSpaceChildren, "c:chart");
+  const chartChildren = chart ? ((chart["c:chart"] as unknown[] | undefined) ?? []) : [];
+  const title = readChartTitle(chartChildren);
+  const plotArea = findElementEntry(chartChildren, "c:plotArea");
+  const plotAreaChildren = plotArea
+    ? ((plotArea["c:plotArea"] as unknown[] | undefined) ?? [])
+    : [];
+
+  let chartType: ChartType = "unsupported";
+  let chartTypeEntry: Record<string, unknown> | null = null;
+  for (const cand of CHART_TYPE_TAGS) {
+    const e = findElementEntry(plotAreaChildren, cand.tag);
+    if (e) {
+      chartType = cand.type;
+      chartTypeEntry = e;
+      break;
+    }
+  }
+
+  const plotAreaTailRaw: OpaqueXml[] = [];
+  for (const child of elementEntries(plotAreaChildren)) {
+    const tag = ooxml.getTag(child);
+    if (chartTypeEntry && tag === ooxml.getTag(chartTypeEntry)) continue;
+    plotAreaTailRaw.push(captureOpaque(child));
+  }
+
+  const series: ChartSeries[] = [];
+  const seriesRaw = new Map<number, OpaqueXml>();
+  let categories: ReadonlyArray<string> = [];
+  if (chartTypeEntry) {
+    const ctChildren =
+      (chartTypeEntry[ooxml.getTag(chartTypeEntry)] as unknown[] | undefined) ?? [];
+    for (const sEntry of elementEntries(ctChildren)) {
+      if (ooxml.getTag(sEntry) !== "c:ser") continue;
+      const sChildren = (sEntry["c:ser"] as unknown[] | undefined) ?? [];
+      const idxEntry = findElementEntry(sChildren, "c:idx");
+      const idx = idxEntry ? Number(attrOf(idxEntry, "val") ?? "0") : series.length;
+      const txEntry = findElementEntry(sChildren, "c:tx");
+      const name = txEntry ? readSeriesText(txEntry) : undefined;
+      const valEntry = findElementEntry(sChildren, "c:val");
+      const values = valEntry ? readNumericCache(valEntry, "c:val") : [];
+      const catEntry = findElementEntry(sChildren, "c:cat");
+      if (categories.length === 0 && catEntry) {
+        categories = readStringCache(catEntry, "c:cat");
+      }
+      series.push({
+        id: mintNodeId(),
+        idx,
+        ...(name !== undefined ? { name } : {}),
+        values,
+      });
+      seriesRaw.set(idx, captureOpaque(sEntry));
+    }
+  }
+
+  return {
+    partPath,
+    contentType,
+    chartType,
+    ...(title !== undefined ? { title } : {}),
+    categories,
+    series,
+    chartSpaceRaw: captureOpaque(chartSpace),
+    plotAreaTailRaw,
+    seriesRaw,
+  };
+}
+
+function readChartTitle(chartChildren: ReadonlyArray<unknown>): string | undefined {
+  const titleEntry = findElementEntry(chartChildren, "c:title");
+  if (!titleEntry) return undefined;
+  const tx = findElementEntry(
+    (titleEntry["c:title"] as unknown[] | undefined) ?? [],
+    "c:tx"
+  );
+  if (!tx) return undefined;
+  const rich = findElementEntry((tx["c:tx"] as unknown[] | undefined) ?? [], "c:rich");
+  if (!rich) {
+    const strRef = findElementEntry((tx["c:tx"] as unknown[] | undefined) ?? [], "c:strRef");
+    if (strRef) {
+      const f = findElementEntry((strRef["c:strRef"] as unknown[] | undefined) ?? [], "c:f");
+      if (f) return readText(f).trim() || undefined;
+    }
+    return undefined;
+  }
+  const richChildren = (rich["c:rich"] as unknown[] | undefined) ?? [];
+  const out: string[] = [];
+  for (const p of elementEntries(richChildren)) {
+    if (ooxml.getTag(p) !== "a:p") continue;
+    const pChildren = (p["a:p"] as unknown[] | undefined) ?? [];
+    for (const r of elementEntries(pChildren)) {
+      if (ooxml.getTag(r) !== "a:r") continue;
+      const rChildren = (r["a:r"] as unknown[] | undefined) ?? [];
+      const tEntry = findElementEntry(rChildren, "a:t");
+      if (tEntry) out.push(readText(tEntry));
+    }
+  }
+  const txt = out.join("").trim();
+  return txt.length > 0 ? txt : undefined;
+}
+
+function readSeriesText(txEntry: Record<string, unknown>): string | undefined {
+  const txChildren = (txEntry["c:tx"] as unknown[] | undefined) ?? [];
+  const strRef = findElementEntry(txChildren, "c:strRef");
+  if (strRef) {
+    const cache = findElementEntry(
+      (strRef["c:strRef"] as unknown[] | undefined) ?? [],
+      "c:strCache"
+    );
+    if (cache) {
+      const pt = findElementEntry((cache["c:strCache"] as unknown[] | undefined) ?? [], "c:pt");
+      if (pt) {
+        const v = findElementEntry((pt["c:pt"] as unknown[] | undefined) ?? [], "c:v");
+        if (v) return readText(v);
+      }
+    }
+  }
+  const v = findElementEntry(txChildren, "c:v");
+  if (v) return readText(v);
+  return undefined;
+}
+
+function readNumericCache(entry: Record<string, unknown>, parentTag: string): number[] {
+  const children = (entry[parentTag] as unknown[] | undefined) ?? [];
+  const ref = findElementEntry(children, "c:numRef");
+  const lit = findElementEntry(children, "c:numLit");
+  const cacheParent = ref ?? lit;
+  if (!cacheParent) return [];
+  const cacheChildren =
+    (cacheParent[ooxml.getTag(cacheParent)] as unknown[] | undefined) ?? [];
+  const cache = findElementEntry(cacheChildren, "c:numCache") ?? cacheParent;
+  const cacheNodeChildren =
+    (cache[ooxml.getTag(cache)] as unknown[] | undefined) ?? cacheChildren;
+  const out: number[] = [];
+  for (const pt of elementEntries(cacheNodeChildren)) {
+    if (ooxml.getTag(pt) !== "c:pt") continue;
+    const idx = Number(attrOf(pt, "idx") ?? `${out.length}`);
+    const v = findElementEntry((pt["c:pt"] as unknown[] | undefined) ?? [], "c:v");
+    if (v) out[idx] = Number(readText(v));
+  }
+  return out;
+}
+
+function readStringCache(entry: Record<string, unknown>, parentTag: string): string[] {
+  const children = (entry[parentTag] as unknown[] | undefined) ?? [];
+  const ref = findElementEntry(children, "c:strRef");
+  const lit = findElementEntry(children, "c:strLit");
+  const multi = findElementEntry(children, "c:multiLvlStrRef");
+  const cacheParent = ref ?? lit ?? multi;
+  if (!cacheParent) return [];
+  const cacheChildren =
+    (cacheParent[ooxml.getTag(cacheParent)] as unknown[] | undefined) ?? [];
+  const cache =
+    findElementEntry(cacheChildren, "c:strCache") ??
+    findElementEntry(cacheChildren, "c:multiLvlStrCache") ??
+    cacheParent;
+  const cacheNodeChildren =
+    (cache[ooxml.getTag(cache)] as unknown[] | undefined) ?? cacheChildren;
+  const out: string[] = [];
+  for (const node of elementEntries(cacheNodeChildren)) {
+    const tag = ooxml.getTag(node);
+    if (tag === "c:pt") {
+      const idx = Number(attrOf(node, "idx") ?? `${out.length}`);
+      const v = findElementEntry((node["c:pt"] as unknown[] | undefined) ?? [], "c:v");
+      if (v) out[idx] = readText(v);
+    } else if (tag === "c:lvl") {
+      const lvlChildren = (node["c:lvl"] as unknown[] | undefined) ?? [];
+      for (const pt of elementEntries(lvlChildren)) {
+        if (ooxml.getTag(pt) !== "c:pt") continue;
+        const idx = Number(attrOf(pt, "idx") ?? `${out.length}`);
+        const v = findElementEntry((pt["c:pt"] as unknown[] | undefined) ?? [], "c:v");
+        if (v && out[idx] === undefined) out[idx] = readText(v);
+      }
+    }
+  }
+  return out;
+}

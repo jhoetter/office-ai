@@ -1,5 +1,7 @@
 import { ooxml } from "@officeai/core";
 import type {
+  ChartPart,
+  ChartShape,
   GroupShape,
   OpaqueShape,
   OpaqueXml,
@@ -54,6 +56,22 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
       container.writeBytes(partPath, media.bytes);
     } else {
       container.addPart(partPath, media.bytes);
+    }
+  }
+
+  // 3b) Rewrite dirty chart parts (F3).
+  for (const chartPath of snapshot.dirty.charts) {
+    const part = snapshot.root.charts.get(chartPath);
+    if (!part) continue;
+    try {
+      const xml = serializeChartPartXml(part);
+      if (container.has(chartPath)) container.writeText(chartPath, xml);
+      else container.addPart(chartPath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError("chart-failed", `Failed to serialize ${chartPath}`, {
+        partPath: chartPath,
+        cause: err,
+      });
     }
   }
 
@@ -130,6 +148,8 @@ function shapeToEntry(shape: Shape): Record<string, unknown> {
       return groupShapeToEntry(shape);
     case "table":
       return tableShapeToEntry(shape);
+    case "chart":
+      return chartShapeToEntry(shape);
     case "opaque":
       return opaqueShapeToEntry(shape);
   }
@@ -340,6 +360,235 @@ function tableShapeToEntry(shape: TableShape): Record<string, unknown> {
   const tbl = makeEntry("a:tbl", tblChildren);
 
   const graphicData = makeEntry("a:graphicData", [tbl], { uri: shape.graphicDataUri });
+  const graphic = makeEntry("a:graphic", [graphicData]);
+
+  return makeEntry("p:graphicFrame", [nvGraphicFramePr, xfrm, graphic]);
+}
+
+// ─── Chart parts (F3) ─────────────────────────────────────────────────────
+
+/**
+ * Serialize a `ChartPart` back to XML. The strategy is dirty-flag-driven:
+ *  - Unmodified parts are never re-serialized; the container's original
+ *    bytes are preserved, guaranteeing byte-roundtrip for charts.
+ *  - When a chart is dirtied (after a chart command) we rebuild the
+ *    chart XML by replacing only the typed children inside `<c:chart>`
+ *    and `<c:plotArea>`, splicing them back into the verbatim
+ *    `<c:chartSpace>` subtree to keep axes, legend, embedded xlsx, and
+ *    other unmodeled bits intact.
+ */
+function serializeChartPartXml(part: ChartPart): string {
+  const subtree = part.chartSpaceRaw.subtree as unknown[];
+  const out: unknown[] = [];
+  for (const node of subtree) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      out.push(node);
+      continue;
+    }
+    const obj = node as Record<string, unknown>;
+    const tag = ooxml.getTag(obj);
+    if (tag === "c:chart") {
+      out.push(rebuildChartElement(part, obj));
+    } else {
+      out.push(obj);
+    }
+  }
+  const chartSpace: Record<string, unknown> = { "c:chartSpace": out };
+  if (Object.keys(part.chartSpaceRaw.rawAttrs).length > 0) {
+    chartSpace[ATTR_KEY] = { ...part.chartSpaceRaw.rawAttrs };
+  }
+  return ooxml.serializeXml([chartSpace]);
+}
+
+function rebuildChartElement(
+  part: ChartPart,
+  chart: Record<string, unknown>
+): Record<string, unknown> {
+  const chartChildren = (chart["c:chart"] as unknown[] | undefined) ?? [];
+  const out: unknown[] = [];
+  let titleEmitted = false;
+  for (const node of chartChildren) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      out.push(node);
+      continue;
+    }
+    const obj = node as Record<string, unknown>;
+    const tag = ooxml.getTag(obj);
+    if (tag === "c:title" && !titleEmitted) {
+      titleEmitted = true;
+      if (part.title !== undefined) out.push(rebuildChartTitle(part.title));
+      // If title is undefined we drop the element.
+      continue;
+    }
+    if (tag === "c:plotArea") {
+      out.push(rebuildPlotArea(part));
+      continue;
+    }
+    out.push(obj);
+  }
+  if (!titleEmitted && part.title !== undefined) {
+    out.unshift(rebuildChartTitle(part.title));
+  }
+  const result: Record<string, unknown> = { "c:chart": out };
+  const attrs = (chart[ATTR_KEY] as Record<string, unknown> | undefined) ?? undefined;
+  if (attrs) result[ATTR_KEY] = { ...attrs };
+  return result;
+}
+
+function rebuildChartTitle(title: string): Record<string, unknown> {
+  const aT = makeEntry("a:t", [{ "#text": title }]);
+  const aR = makeEntry("a:r", [aT]);
+  const aP = makeEntry("a:p", [aR]);
+  const cRich = makeEntry("c:rich", [aP]);
+  const cTx = makeEntry("c:tx", [cRich]);
+  const cOverlay = makeEntry("c:overlay", [], { val: "0" });
+  return makeEntry("c:title", [cTx, cOverlay]);
+}
+
+function rebuildPlotArea(part: ChartPart): Record<string, unknown> {
+  const out: unknown[] = [];
+  out.push(makeEntry("c:layout", []));
+  out.push(rebuildChartTypeElement(part));
+  for (const tail of part.plotAreaTailRaw) out.push(opaqueToEntry(tail));
+  return makeEntry("c:plotArea", out);
+}
+
+function rebuildChartTypeElement(part: ChartPart): Record<string, unknown> {
+  const tag = chartTypeTag(part.chartType);
+  const children: unknown[] = [];
+  if (part.chartType === "bar") {
+    children.push(makeEntry("c:barDir", [], { val: "col" }));
+    children.push(makeEntry("c:grouping", [], { val: "clustered" }));
+  }
+  for (const s of part.series) {
+    children.push(rebuildSeries(part, s));
+  }
+  return makeEntry(tag, children);
+}
+
+function chartTypeTag(t: ChartPart["chartType"]): string {
+  switch (t) {
+    case "bar":
+      return "c:barChart";
+    case "line":
+      return "c:lineChart";
+    case "pie":
+      return "c:pieChart";
+    case "area":
+      return "c:areaChart";
+    case "unsupported":
+      return "c:barChart";
+  }
+}
+
+function rebuildSeries(
+  part: ChartPart,
+  s: ChartPart["series"][number]
+): Record<string, unknown> {
+  const children: unknown[] = [];
+  children.push(makeEntry("c:idx", [], { val: String(s.idx) }));
+  children.push(makeEntry("c:order", [], { val: String(s.idx) }));
+  if (s.name !== undefined) {
+    children.push(
+      makeEntry("c:tx", [makeEntry("c:v", [{ "#text": s.name }])])
+    );
+  }
+  if (part.categories.length > 0) {
+    children.push(rebuildCategoryRef(part.categories));
+  }
+  children.push(rebuildValueRef(s.values));
+  return makeEntry("c:ser", children);
+}
+
+function rebuildCategoryRef(categories: ReadonlyArray<string>): Record<string, unknown> {
+  const ptCount = makeEntry("c:ptCount", [], { val: String(categories.length) });
+  const pts: unknown[] = [ptCount];
+  for (let i = 0; i < categories.length; i++) {
+    pts.push(
+      makeEntry("c:pt", [makeEntry("c:v", [{ "#text": categories[i] }])], { idx: String(i) })
+    );
+  }
+  // Use c:strRef + c:strCache (standard PowerPoint shape) so reparse
+  // round-trips cleanly. The `<c:f>` reference is a placeholder; the
+  // typed cache is the source of truth at our level of fidelity.
+  const cache = makeEntry("c:strCache", pts);
+  const ref = makeEntry("c:strRef", [
+    makeEntry("c:f", [{ "#text": "Sheet1!$A$2:$A$" + (categories.length + 1) }]),
+    cache,
+  ]);
+  return makeEntry("c:cat", [ref]);
+}
+
+function rebuildValueRef(values: ReadonlyArray<number>): Record<string, unknown> {
+  const ptCount = makeEntry("c:ptCount", [], { val: String(values.length) });
+  const pts: unknown[] = [ptCount];
+  for (let i = 0; i < values.length; i++) {
+    pts.push(
+      makeEntry(
+        "c:pt",
+        [makeEntry("c:v", [{ "#text": String(values[i] ?? 0) }])],
+        { idx: String(i) }
+      )
+    );
+  }
+  const cache = makeEntry("c:numCache", [
+    makeEntry("c:formatCode", [{ "#text": "General" }]),
+    ...pts,
+  ]);
+  const ref = makeEntry("c:numRef", [
+    makeEntry("c:f", [{ "#text": "Sheet1!$B$2:$B$" + (values.length + 1) }]),
+    cache,
+  ]);
+  return makeEntry("c:val", [ref]);
+}
+
+function chartShapeToEntry(shape: ChartShape): Record<string, unknown> {
+  const nvChildren: unknown[] = [];
+  let emittedCNvPr = false;
+  for (const o of shape.nvGraphicFramePrTail) {
+    if (o.tag === "p:cNvPr" && !emittedCNvPr) {
+      nvChildren.push(rebuildCNvPr(shape.cNvPrId, shape.name, o));
+      emittedCNvPr = true;
+    } else {
+      nvChildren.push(opaqueToEntry(o));
+    }
+  }
+  if (!emittedCNvPr) {
+    nvChildren.unshift(
+      makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name })
+    );
+  }
+  const nvGraphicFramePr = makeEntry("p:nvGraphicFramePr", nvChildren);
+
+  const xfrmChildren: unknown[] = [];
+  if (shape.position) {
+    xfrmChildren.push(
+      makeEntry("a:off", [], {
+        x: String(shape.position.xEmu),
+        y: String(shape.position.yEmu),
+      })
+    );
+  }
+  if (shape.size) {
+    xfrmChildren.push(
+      makeEntry("a:ext", [], {
+        cx: String(shape.size.cxEmu),
+        cy: String(shape.size.cyEmu),
+      })
+    );
+  }
+  const xfrm = makeEntry("p:xfrm", xfrmChildren);
+
+  const chartEntry: Record<string, unknown> = {
+    "c:chart": [],
+  };
+  chartEntry[ATTR_KEY] = makeRawAttrs({
+    "xmlns:c": "http://schemas.openxmlformats.org/drawingml/2006/chart",
+    "xmlns:r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "r:id": shape.chartRelId,
+  });
+
+  const graphicData = makeEntry("a:graphicData", [chartEntry], { uri: shape.graphicDataUri });
   const graphic = makeEntry("a:graphic", [graphicData]);
 
   return makeEntry("p:graphicFrame", [nvGraphicFramePr, xfrm, graphic]);
