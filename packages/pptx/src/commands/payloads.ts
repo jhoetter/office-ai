@@ -89,6 +89,53 @@ export interface AddTextBoxPayload {
   readonly name?: string;
 }
 
+// ─── Shape primitives (P2-lite) ───────────────────────────────────────────
+
+/**
+ * Subset of `<a:prstGeom prst="…">` values that the editor surfaces in its
+ * "Insert shape" menu. Anything else can still be parsed and round-tripped
+ * verbatim — the renderer just won't draw a typed glyph for it. Sticking
+ * to this short list keeps the shape picker UI manageable.
+ */
+export type ShapePreset =
+  | "rect"
+  | "roundRect"
+  | "ellipse"
+  | "triangle"
+  | "rtTriangle"
+  | "diamond"
+  | "line"
+  | "rightArrow";
+
+export interface AddShapePayload {
+  readonly slideIndex: number;
+  readonly preset: ShapePreset;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  /** 6-char hex (with or without leading `#`). Defaults to a friendly accent. */
+  readonly fill?: string;
+  /** 6-char hex; if omitted the shape draws without an explicit outline. */
+  readonly stroke?: string;
+  readonly strokeWidthEmu?: number;
+  /** Optional initial label rendered inside the shape. */
+  readonly text?: string;
+  readonly name?: string;
+}
+
+export interface DeleteShapePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+}
+
+export interface SetShapeFillPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  /** 6-char hex; pass `null` to clear the fill (renders as transparent). */
+  readonly fill: string | null;
+}
+
 // ─── F2 (Tables) payloads ─────────────────────────────────────────────────
 
 export interface TableSetCellTextPayload {
@@ -192,6 +239,9 @@ export const PPTX_COMMAND_TYPES = {
   formatText: "pptx:format-text",
   insertImage: "pptx:insert-image",
   addTextBox: "pptx:add-text-box",
+  addShape: "pptx:add-shape",
+  deleteShape: "pptx:delete-shape",
+  setShapeFill: "pptx:set-shape-fill",
   tableSetCellText: "pptx:table-set-cell-text",
   tableAddRow: "pptx:table-add-row",
   tableDeleteRow: "pptx:table-delete-row",

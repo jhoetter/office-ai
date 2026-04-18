@@ -1,4 +1,3 @@
-/* eslint-disable react/no-danger */
 import * as React from "react";
 import type { PptxAgent } from "../../agent/agent.js";
 import type { Shape, Slide, SlideSize, TextShape } from "../../model/types.js";
@@ -26,15 +25,33 @@ export interface SlideCanvasProps {
    * selected shape instead of guessing the first text shape on the slide.
    */
   readonly onSelectionChange?: (shapeId: string | null) => void;
+  /**
+   * Optional controlled selection. When provided, the canvas keeps its
+   * internal selection in sync with this value — useful when the parent
+   * wants to auto-select a freshly-inserted shape from the toolbar so the
+   * user can immediately drag, format, or delete it without an extra click.
+   */
+  readonly selectedShapeId?: string | null;
 }
+
+type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
+type DragMode = "move" | { resize: ResizeHandle };
 
 interface DragState {
   readonly shapeId: string;
-  readonly mode: "move" | "resize-se";
+  readonly mode: DragMode;
   readonly startX: number;
   readonly startY: number;
   readonly origin: BoundingBox;
   readonly emuPerPx: number;
+}
+
+interface DragPreview {
+  readonly box: BoundingBox;
+  readonly dx: number;
+  readonly dy: number;
+  readonly dw: number;
+  readonly dh: number;
 }
 
 export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null {
@@ -43,6 +60,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const slideSize: SlideSize = snap.root.slideSize;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [drag, setDrag] = React.useState<DragState | null>(null);
+  const [preview, setPreview] = React.useState<DragPreview | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [selectedId, setSelectedIdState] = React.useState<string | null>(null);
   const onSelectionChange = props.onSelectionChange;
@@ -59,6 +77,16 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     onSelectionChange?.(null);
   }, [props.slideIndex, onSelectionChange]);
 
+  // Mirror the controlled prop into local state so a parent that just
+  // dispatched an "insert shape" command can programmatically select it.
+  // We don't echo back through `onSelectionChange` here — the parent is
+  // already the source of truth — to avoid a render loop.
+  const controlledSelectedId = props.selectedShapeId;
+  React.useEffect(() => {
+    if (controlledSelectedId === undefined) return;
+    setSelectedIdState((prev) => (prev === controlledSelectedId ? prev : controlledSelectedId));
+  }, [controlledSelectedId]);
+
   const themeDefault = snap.root.themeDefault ?? DEFAULT_THEME;
   const charts = snap.root.charts;
   const ctx: SvgRenderCtx = React.useMemo(
@@ -66,22 +94,43 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     [slideSize, props.mediaUrls, themeDefault, charts]
   );
 
+  // Hide the dragged shape from the static SVG layer while a drag is in
+  // flight — the React-managed ghost mirrors it at the live position so
+  // we don't have to invalidate the whole SVG string on every pointer move.
+  const hiddenIds = React.useMemo(() => {
+    const set = new Set<string>();
+    if (editingId) set.add(editingId);
+    if (drag) set.add(drag.shapeId);
+    return set;
+  }, [editingId, drag]);
+
   const svgInner = React.useMemo(() => {
     if (!slide) return "";
     return slide.shapes
-      .filter((s) => s.id !== editingId)
+      .filter((s) => !hiddenIds.has(s.id))
       .map((s) => shapeToSvg(s, ctx))
       .join("");
-  }, [slide, ctx, editingId]);
+  }, [slide, ctx, hiddenIds]);
+
+  // The SVG snapshot of the dragged shape, captured once at drag start so
+  // we don't recompute it on every pointermove. The transform is applied
+  // via the wrapping <g> so we still get sub-pixel updates without any
+  // string churn.
+  const dragGhostSvg = React.useMemo(() => {
+    if (!drag || !slide) return "";
+    const sh = findShape(slide.shapes, drag.shapeId);
+    if (!sh) return "";
+    return shapeToSvg(sh, ctx);
+  }, [drag, slide, ctx]);
 
   const onPointerDown = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!slide || !containerRef.current) return;
+      if (e.button !== 0) return;
       const target = e.target as Element | null;
       const handleEl = target?.closest("[data-handle]") as HTMLElement | null;
       const shapeEl = target?.closest("[data-shape-id]") as SVGGElement | null;
-      const shapeId =
-        handleEl?.dataset.shapeId ?? shapeEl?.dataset.shapeId ?? null;
+      const shapeId = handleEl?.dataset.shapeId ?? shapeEl?.dataset.shapeId ?? null;
       if (!shapeId) {
         setSelectedId(null);
         return;
@@ -93,19 +142,27 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (!box) return;
       const rect = containerRef.current.getBoundingClientRect();
       const emuPerPx = slideSize.cxEmu / rect.width;
-      const mode: DragState["mode"] = handleEl?.dataset.handle === "resize-se" ? "resize-se" : "move";
+      const handle = handleEl?.dataset.handle as ResizeHandle | "move" | undefined;
+      const mode: DragMode = handle && handle !== "move" ? { resize: handle as ResizeHandle } : "move";
       setDrag({ shapeId, mode, startX: e.clientX, startY: e.clientY, origin: box, emuPerPx });
-      (e.target as Element).setPointerCapture?.(e.pointerId);
+      setPreview({ box, dx: 0, dy: 0, dw: 0, dh: 0 });
+      // Capture on the container — handles get unmounted/replaced when the
+      // preview state updates, which would otherwise lose pointer capture
+      // mid-drag and freeze the gesture.
+      containerRef.current.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
     },
-    [slide, slideSize]
+    [slide, slideSize, setSelectedId]
   );
 
   const onPointerMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!drag) return;
-      // Visual feedback only — actual command dispatched on pointerup.
-      // (We could mirror SVG transform here for live preview; deferred.)
-      void e;
+      const dxPx = e.clientX - drag.startX;
+      const dyPx = e.clientY - drag.startY;
+      const dxEmu = Math.round(dxPx * drag.emuPerPx);
+      const dyEmu = Math.round(dyPx * drag.emuPerPx);
+      setPreview(computePreview(drag, dxEmu, dyEmu));
     },
     [drag]
   );
@@ -117,49 +174,70 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       const dyPx = e.clientY - drag.startY;
       const dxEmu = Math.round(dxPx * drag.emuPerPx);
       const dyEmu = Math.round(dyPx * drag.emuPerPx);
+      const final = computePreview(drag, dxEmu, dyEmu);
+      const noChange = final.dx === 0 && final.dy === 0 && final.dw === 0 && final.dh === 0;
+      const shapeId = drag.shapeId;
+      // Clear drag/preview FIRST so the React-managed ghost vanishes the
+      // moment we hand off to the snapshot — otherwise there's a flicker
+      // between command apply and snapshot re-render.
+      setDrag(null);
+      setPreview(null);
+      containerRef.current?.releasePointerCapture?.(e.pointerId);
+      if (noChange) return;
       try {
         if (drag.mode === "move") {
-          if (dxEmu !== 0 || dyEmu !== 0) {
+          await props.agent.applyCommand({
+            type: "pptx:set-position",
+            source: "human",
+            payload: {
+              slideIndex: props.slideIndex,
+              shapeId,
+              x: final.box.x,
+              y: final.box.y,
+            },
+          });
+        } else {
+          // For resize-from-anywhere we may also need to update position
+          // (resizing from N/W/NW/etc shifts the origin). Issue both.
+          if (final.dx !== 0 || final.dy !== 0) {
             await props.agent.applyCommand({
               type: "pptx:set-position",
               source: "human",
               payload: {
                 slideIndex: props.slideIndex,
-                shapeId: drag.shapeId,
-                x: drag.origin.x + dxEmu,
-                y: drag.origin.y + dyEmu,
+                shapeId,
+                x: final.box.x,
+                y: final.box.y,
               },
             });
           }
-        } else if (drag.mode === "resize-se") {
-          const newW = Math.max(100000, drag.origin.cx + dxEmu);
-          const newH = Math.max(100000, drag.origin.cy + dyEmu);
-          if (newW !== drag.origin.cx || newH !== drag.origin.cy) {
+          if (final.box.cx !== drag.origin.cx || final.box.cy !== drag.origin.cy) {
             await props.agent.applyCommand({
               type: "pptx:set-size",
               source: "human",
               payload: {
                 slideIndex: props.slideIndex,
-                shapeId: drag.shapeId,
-                width: newW,
-                height: newH,
+                shapeId,
+                width: final.box.cx,
+                height: final.box.cy,
               },
             });
           }
         }
       } catch (err) {
         props.onError?.(err as Error);
-      } finally {
-        setDrag(null);
       }
     },
     [drag, props]
   );
 
-  const startEditing = React.useCallback((shapeId: string) => {
-    setEditingId(shapeId);
-    setSelectedId(shapeId);
-  }, []);
+  const startEditing = React.useCallback(
+    (shapeId: string) => {
+      setEditingId(shapeId);
+      setSelectedId(shapeId);
+    },
+    [setSelectedId]
+  );
 
   const finishEditing = React.useCallback(
     async (shape: TextShape, newText: string) => {
@@ -185,6 +263,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const aspect = slideAspectRatio(slideSize);
   const zoom = clampZoom(props.zoom ?? 1);
   const dpi = props.dpi ?? DEFAULT_DPI;
+  const previewBox = preview?.box ?? null;
 
   return (
     <div
@@ -200,10 +279,13 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         background: "white",
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         userSelect: "none",
+        cursor: drag ? cursorForDrag(drag.mode) : "default",
+        touchAction: "none",
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onDoubleClick={(e) => {
         const t = e.target as Element | null;
         const shapeEl = t?.closest("[data-shape-id]") as SVGGElement | null;
@@ -219,12 +301,25 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         preserveAspectRatio="xMidYMid meet"
         style={{ width: "100%", height: "100%", display: "block" }}
         dangerouslySetInnerHTML={{
-          __html: `<rect width="100%" height="100%" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide)}${selectionOverlaySvg(slide, selectedId)}`,
+          __html: `<rect width="100%" height="100%" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
         }}
       />
-      {editingId
-        ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing)
-        : null}
+      {drag && previewBox ? (
+        <DragGhostSvg
+          slideSize={slideSize}
+          ghostSvg={dragGhostSvg}
+          previewBox={previewBox}
+          originBox={drag.origin}
+        />
+      ) : null}
+      <SelectionOverlaySvg
+        slide={slide}
+        slideSize={slideSize}
+        selectedId={selectedId}
+        previewBox={previewBox}
+        previewTargetId={drag?.shapeId ?? null}
+      />
+      {editingId ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing) : null}
     </div>
   );
 }
@@ -246,13 +341,236 @@ function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
 }
 
 /**
+ * Compute the preview box from the drag's origin + accumulated pointer
+ * delta. Move drags translate; resize drags adjust the corresponding
+ * edge(s) and shift the origin so the opposite edge stays anchored.
+ * A small minimum size (250k EMU ≈ 26 px @ 96 DPI) keeps the shape
+ * grabbable after the drag ends.
+ */
+function computePreview(drag: DragState, dxEmu: number, dyEmu: number): DragPreview {
+  const MIN = 250_000;
+  const o = drag.origin;
+  if (drag.mode === "move") {
+    return {
+      box: { x: o.x + dxEmu, y: o.y + dyEmu, cx: o.cx, cy: o.cy },
+      dx: dxEmu,
+      dy: dyEmu,
+      dw: 0,
+      dh: 0,
+    };
+  }
+  const h = drag.mode.resize;
+  let nx = o.x;
+  let ny = o.y;
+  let nw = o.cx;
+  let nh = o.cy;
+  if (h.includes("e")) nw = Math.max(MIN, o.cx + dxEmu);
+  if (h.includes("s")) nh = Math.max(MIN, o.cy + dyEmu);
+  if (h.includes("w")) {
+    const newCx = Math.max(MIN, o.cx - dxEmu);
+    nx = o.x + (o.cx - newCx);
+    nw = newCx;
+  }
+  if (h.includes("n")) {
+    const newCy = Math.max(MIN, o.cy - dyEmu);
+    ny = o.y + (o.cy - newCy);
+    nh = newCy;
+  }
+  return {
+    box: { x: nx, y: ny, cx: nw, cy: nh },
+    dx: nx - o.x,
+    dy: ny - o.y,
+    dw: nw - o.cx,
+    dh: nh - o.cy,
+  };
+}
+
+function cursorForDrag(mode: DragMode): string {
+  if (mode === "move") return "grabbing";
+  switch (mode.resize) {
+    case "n":
+    case "s":
+      return "ns-resize";
+    case "e":
+    case "w":
+      return "ew-resize";
+    case "ne":
+    case "sw":
+      return "nesw-resize";
+    case "nw":
+    case "se":
+      return "nwse-resize";
+  }
+}
+
+interface DragGhostProps {
+  readonly slideSize: SlideSize;
+  readonly ghostSvg: string;
+  readonly previewBox: BoundingBox;
+  readonly originBox: BoundingBox;
+}
+
+/**
+ * Renders the dragged shape at its live position by reusing its baked
+ * SVG output and applying a translate+scale via the wrapping <g>. This
+ * avoids touching the static SVG string on every pointer move while
+ * still giving the user pixel-perfect feedback.
+ */
+function DragGhostSvg({ slideSize, ghostSvg, previewBox, originBox }: DragGhostProps) {
+  const tx = px(previewBox.x - originBox.x);
+  const ty = px(previewBox.y - originBox.y);
+  const sx = originBox.cx > 0 ? previewBox.cx / originBox.cx : 1;
+  const sy = originBox.cy > 0 ? previewBox.cy / originBox.cy : 1;
+  // Scale around the origin's top-left so translate+scale compose cleanly.
+  const ox = px(originBox.x);
+  const oy = px(originBox.y);
+  // `transform` order matters: translate to the new top-left, then
+  // re-anchor to the origin's top-left, scale, then anchor back. This
+  // produces the visual the user expects when grabbing a side handle.
+  const transform = `translate(${tx} ${ty}) translate(${ox} ${oy}) scale(${sx} ${sy}) translate(${-ox} ${-oy})`;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        opacity: 0.9,
+      }}
+      dangerouslySetInnerHTML={{ __html: `<g transform="${transform}">${ghostSvg}</g>` }}
+    />
+  );
+}
+
+interface SelectionOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly selectedId: string | null;
+  readonly previewBox: BoundingBox | null;
+  readonly previewTargetId: string | null;
+}
+
+/**
+ * Renders the selection chrome (dashed outline + 8 resize handles) in
+ * its own SVG layer so handle hit-testing is independent of the static
+ * shape SVG. Handles are sized in CSS pixels so they stay clickable
+ * regardless of zoom; we accomplish this by reading the container's
+ * displayed width via a `vector-effect: non-scaling-stroke` on the
+ * outline and an absolute pixel size on the rects.
+ */
+function SelectionOverlaySvg({
+  slide,
+  slideSize,
+  selectedId,
+  previewBox,
+  previewTargetId,
+}: SelectionOverlayProps): React.ReactElement | null {
+  if (!selectedId) return null;
+  const shape = findShape(slide.shapes, selectedId);
+  if (!shape) return null;
+  const baseBox = shapeBoundingBox(shape);
+  if (!baseBox) return null;
+  const box = previewTargetId === selectedId && previewBox ? previewBox : baseBox;
+  const x = px(box.x);
+  const y = px(box.y);
+  const cx = px(box.cx);
+  const cy = px(box.cy);
+  const handleSize = 10; // CSS pixels — applied via `vectorEffect` below.
+  const sid = escAttr(selectedId);
+
+  const handles: ReadonlyArray<{ readonly h: ResizeHandle; readonly hx: number; readonly hy: number }> = [
+    { h: "nw", hx: x, hy: y },
+    { h: "n", hx: x + cx / 2, hy: y },
+    { h: "ne", hx: x + cx, hy: y },
+    { h: "e", hx: x + cx, hy: y + cy / 2 },
+    { h: "se", hx: x + cx, hy: y + cy },
+    { h: "s", hx: x + cx / 2, hy: y + cy },
+    { h: "sw", hx: x, hy: y + cy },
+    { h: "w", hx: x, hy: y + cy / 2 },
+  ];
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      <rect
+        x={x}
+        y={y}
+        width={cx}
+        height={cy}
+        fill="none"
+        stroke="#7c3aed"
+        strokeWidth={1.5}
+        strokeDasharray="4 2"
+        vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
+      />
+      {/* Move handle: an invisible rectangle covering the body of the
+          shape so any drag inside the selection is treated as a "move",
+          not as a pointerdown on the unrelated shape behind it. */}
+      <rect
+        data-shape-id={sid}
+        data-handle="move"
+        x={x}
+        y={y}
+        width={cx}
+        height={cy}
+        fill="transparent"
+        style={{ cursor: "move" }}
+      />
+      {handles.map((it) => (
+        <rect
+          key={it.h}
+          data-shape-id={sid}
+          data-handle={it.h}
+          x={it.hx}
+          y={it.hy}
+          width={handleSize}
+          height={handleSize}
+          transform={`translate(${-handleSize / 2} ${-handleSize / 2})`}
+          fill="#ffffff"
+          stroke="#7c3aed"
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+          style={{ cursor: cursorForHandle(it.h) }}
+        />
+      ))}
+    </svg>
+  );
+}
+
+function cursorForHandle(h: ResizeHandle): string {
+  switch (h) {
+    case "n":
+    case "s":
+      return "ns-resize";
+    case "e":
+    case "w":
+      return "ew-resize";
+    case "ne":
+    case "sw":
+      return "nesw-resize";
+    case "nw":
+    case "se":
+      return "nwse-resize";
+  }
+}
+
+/**
  * F4: render a small badge near each shape that has at least one typed
  * entrance animation. The badge shows the 1-based animation order so the
  * user can see the entrance sequence at a glance. Drawn inside the SVG
  * so it scales with the canvas, but with `pointer-events="none"` so it
  * never steals clicks from the underlying shape.
  */
-function animationBadgesSvg(slide: Slide): string {
+function animationBadgesSvg(slide: Slide, hiddenIds: ReadonlySet<string>): string {
   if (slide.animations.length === 0) return "";
   const byCNvPrId = new Map<number, Shape>();
   collectShapesByCNvPrId(slide.shapes, byCNvPrId);
@@ -260,6 +578,7 @@ function animationBadgesSvg(slide: Slide): string {
   for (const a of slide.animations) {
     const shape = byCNvPrId.get(a.targetCNvPrId);
     if (!shape) continue;
+    if (hiddenIds.has(shape.id)) continue;
     const box = shapeBoundingBox(shape);
     if (!box) continue;
     const r = px(90000);
@@ -288,25 +607,6 @@ function collectShapesByCNvPrId(shapes: ReadonlyArray<Shape>, out: Map<number, S
   }
 }
 
-function selectionOverlaySvg(slide: Slide, selectedId: string | null): string {
-  if (!selectedId) return "";
-  const shape = findShape(slide.shapes, selectedId);
-  if (!shape) return "";
-  const box = shapeBoundingBox(shape);
-  if (!box) return "";
-  const handleSize = px(80000);
-  const x = px(box.x);
-  const y = px(box.y);
-  const cx = px(box.cx);
-  const cy = px(box.cy);
-  return [
-    `<g class="selection" pointer-events="none">`,
-    `<rect x="${x}" y="${y}" width="${cx}" height="${cy}" fill="none" stroke="#7c3aed" stroke-width="${px(20000)}" stroke-dasharray="${px(40000)},${px(20000)}"/>`,
-    `</g>`,
-    `<rect data-shape-id="${escAttr(selectedId)}" data-handle="resize-se" x="${x + cx - handleSize / 2}" y="${y + cy - handleSize / 2}" width="${handleSize}" height="${handleSize}" fill="#7c3aed" pointer-events="all" style="cursor:nwse-resize"/>`,
-  ].join("");
-}
-
 function escAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
@@ -323,7 +623,6 @@ function renderEditingOverlay(
   const box = shapeBoundingBox(shape);
   if (!box) return null;
   const initial = textShapePlain(shape);
-  // Position the overlay relative to the SVG's viewBox by percentages.
   const leftPct = (box.x / slideSize.cxEmu) * 100;
   const topPct = (box.y / slideSize.cyEmu) * 100;
   const widthPct = (box.cx / slideSize.cxEmu) * 100;
@@ -398,11 +697,7 @@ function TextEditOverlay({ initial, style, onCommit }: TextEditOverlayProps): Re
 
 function textShapePlain(shape: TextShape): string {
   return shape.txBody.paragraphs
-    .map((p) =>
-      p.runs
-        .map((r) => (r.isLineBreak ? "\n" : r.text))
-        .join("")
-    )
+    .map((p) => p.runs.map((r) => (r.isLineBreak ? "\n" : r.text)).join(""))
     .join("\n");
 }
 

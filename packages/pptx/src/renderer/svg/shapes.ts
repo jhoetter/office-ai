@@ -77,18 +77,19 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   }
 
   const rectFill = fill ? `#${fill}` : "transparent";
-  const strokeAttrs = stroke
-    ? ` stroke="#${stroke.color}" stroke-width="${u(stroke.widthEmu)}"`
-    : "";
+  const strokeAttrs = stroke ? ` stroke="#${stroke.color}" stroke-width="${u(stroke.widthEmu)}"` : "";
 
   const hasText = shape.txBody.paragraphs.some((p) =>
     p.runs.some((r) => !r.isLineBreak && r.text.length > 0)
   );
 
-  const out = [
-    groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }),
-    `<rect width="${u(box.cx)}" height="${u(box.cy)}" fill="${rectFill}"${strokeAttrs}/>`,
-  ];
+  // Draw the actual geometry (ellipse, triangle, …) so `pptx:add-shape`
+  // produces a visually distinct shape rather than an undifferentiated
+  // rectangle. Falls back to a rect for `prst="rect"` and for any preset
+  // we don't yet model — the bounding box is preserved either way.
+  const geometry = renderGeometry(prst, box.cx, box.cy, rectFill, strokeAttrs);
+
+  const out = [groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }), geometry];
   if (hasText) {
     const lines = shape.txBody.paragraphs.map((p) => paragraphToTSpan(p, theme));
     const fontSizePx = u(estimateFontSizeEmu(shape.txBody.paragraphs[0]));
@@ -101,6 +102,56 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   }
   out.push(groupClose());
   return out.join("");
+}
+
+/**
+ * Build the SVG primitive(s) for a given `<a:prstGeom>` preset. Accepts
+ * EMU dimensions and returns scaled, ready-to-emit XML. The `prst` value
+ * comes from `readPrstGeom` and is `null` when the shape didn't declare
+ * one — we then default to a rectangle so untyped placeholders still
+ * have a visible bounding box.
+ *
+ * Only the presets the editor's "Insert shape" menu can produce are
+ * special-cased; everything else (`hexagon`, `cloud`, …) renders as a
+ * plain rect, which is enough to preserve the layout while we wait to
+ * port the full preset geometry library from `presetShapeDefinitions`.
+ */
+function renderGeometry(
+  prst: string | null,
+  cxEmu: number,
+  cyEmu: number,
+  fill: string,
+  strokeAttrs: string
+): string {
+  const w = u(cxEmu);
+  const h = u(cyEmu);
+  switch (prst) {
+    case "ellipse":
+      return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="${fill}"${strokeAttrs}/>`;
+    case "roundRect": {
+      // ~12% corner radius matches PowerPoint's default `<a:avLst>` value.
+      const r = Math.min(w, h) * 0.12;
+      return `<rect width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "triangle":
+      return `<polygon points="${w / 2},0 ${w},${h} 0,${h}" fill="${fill}"${strokeAttrs}/>`;
+    case "rtTriangle":
+      return `<polygon points="0,0 0,${h} ${w},${h}" fill="${fill}"${strokeAttrs}/>`;
+    case "diamond":
+      return `<polygon points="${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}" fill="${fill}"${strokeAttrs}/>`;
+    case "rightArrow": {
+      // Body height = 60% of total; head occupies the right 30% width.
+      const bodyH = h * 0.6;
+      const bodyTop = (h - bodyH) / 2;
+      const bodyBot = bodyTop + bodyH;
+      const headStart = w * 0.7;
+      return `<polygon points="0,${bodyTop} ${headStart},${bodyTop} ${headStart},0 ${w},${h / 2} ${headStart},${h} ${headStart},${bodyBot} 0,${bodyBot}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "rect":
+    case null:
+    default:
+      return `<rect width="${w}" height="${h}" fill="${fill}"${strokeAttrs}/>`;
+  }
 }
 
 interface StrokeStyle {
@@ -176,10 +227,7 @@ function readPrstGeom(children: ReadonlyArray<OpaqueXml>): string | null {
  * or opaque `solidFill`) still win — this only affects runs that fell back
  * to the default.
  */
-function pickContrastingTextColor(
-  fillHex: string | null,
-  theme: ThemeColorScheme
-): string {
+function pickContrastingTextColor(fillHex: string | null, theme: ThemeColorScheme): string {
   if (!fillHex) return theme.tx1;
   const v = fillHex.replace(/^#/, "");
   if (v.length !== 6) return theme.tx1;
@@ -194,9 +242,7 @@ function paragraphToTSpan(p: TextParagraph, theme: ThemeColorScheme): string {
   if (p.runs.length === 0) {
     return `<tspan x="0" dy="1em"></tspan>`;
   }
-  const tspans = p.runs
-    .map((r) => runToTSpan(r, theme))
-    .join("");
+  const tspans = p.runs.map((r) => runToTSpan(r, theme)).join("");
   return `<tspan x="0" dy="1em">${tspans}</tspan>`;
 }
 
@@ -231,10 +277,7 @@ function resolveRunFill(r: TextRun, theme: ThemeColorScheme): string {
   return theme.tx1;
 }
 
-function readFillFromOpaque(
-  children: ReadonlyArray<OpaqueXml>,
-  theme: ThemeColorScheme
-): string | null {
+function readFillFromOpaque(children: ReadonlyArray<OpaqueXml>, theme: ThemeColorScheme): string | null {
   for (const c of children) {
     if (c.tag !== "a:solidFill") continue;
     for (const inner of c.subtree) {
@@ -250,23 +293,18 @@ function readFillFromOpaque(
  * to a 6-char hex colour, taking literal/sys/scheme colours into account.
  * Exported so the slide-level `<p:bg>` walker can share the same logic.
  */
-export function resolveSchemeOrLiteralColor(
-  inner: unknown,
-  theme: ThemeColorScheme
-): string | null {
+export function resolveSchemeOrLiteralColor(inner: unknown, theme: ThemeColorScheme): string | null {
   if (!inner || typeof inner !== "object" || Array.isArray(inner)) return null;
   const obj = inner as Record<string, unknown>;
   const keys = Object.keys(obj).filter((k) => k !== ":@");
   if (keys.length !== 1) return null;
   const tag = keys[0];
   const attrs = obj[":@"] as Record<string, unknown> | undefined;
-  const val =
-    attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
+  const val = attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
   if (typeof val !== "string") return null;
   if (tag === "a:srgbClr") return val;
   if (tag === "a:sysClr") {
-    const last =
-      attrs && typeof attrs === "object" ? attrs["@_lastClr"] : undefined;
+    const last = attrs && typeof attrs === "object" ? attrs["@_lastClr"] : undefined;
     return typeof last === "string" ? last : val;
   }
   if (tag === "a:schemeClr") {
@@ -378,9 +416,7 @@ function tableToSvg(shape: TableShape, ctx: SvgRenderCtx): string {
 
   const parts: string[] = [];
   parts.push(groupOpen("table", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }));
-  parts.push(
-    `<rect x="0" y="0" width="${u(box.cx)}" height="${u(box.cy)}" fill="white" stroke="#9CA3AF"/>`
-  );
+  parts.push(`<rect x="0" y="0" width="${u(box.cx)}" height="${u(box.cy)}" fill="white" stroke="#9CA3AF"/>`);
 
   let yAcc = 0;
   for (let r = 0; r < shape.rows.length; r++) {
@@ -411,7 +447,10 @@ function tableToSvg(shape: TableShape, ctx: SvgRenderCtx): string {
 
 function cellToFlatText(paragraphs: ReadonlyArray<TextParagraph>): string {
   const lines = paragraphs.map((p) =>
-    p.runs.filter((r) => !r.isLineBreak).map((r) => r.text).join("")
+    p.runs
+      .filter((r) => !r.isLineBreak)
+      .map((r) => r.text)
+      .join("")
   );
   return lines.filter((s) => s.length > 0).join(" / ");
 }
@@ -636,9 +675,7 @@ function chartPieSvg(
   const cxc = box.x + padX + innerCx / 2;
   const cyc = box.y + padY + titleHeight + innerCy / 2;
   if (!series || series.values.length === 0) {
-    out.push(
-      `<circle cx="${u(cxc)}" cy="${u(cyc)}" r="${u(r)}" fill="#F3F4F6" stroke="#9CA3AF"/>`
-    );
+    out.push(`<circle cx="${u(cxc)}" cy="${u(cyc)}" r="${u(r)}" fill="#F3F4F6" stroke="#9CA3AF"/>`);
     out.push(groupClose());
     return out.join("");
   }
@@ -684,15 +721,8 @@ function estimateLabelSizeEmu(cx: number, cy: number): number {
   return Math.max(60000, Math.floor(Math.min(cx, cy) / 8));
 }
 
-function groupOpen(
-  cls: string,
-  id: string,
-  extra: Record<string, string> = {}
-): string {
-  const a: string[] = [
-    `class="shape ${cls}"`,
-    `data-shape-id="${escXml(id)}"`,
-  ];
+function groupOpen(cls: string, id: string, extra: Record<string, string> = {}): string {
+  const a: string[] = [`class="shape ${cls}"`, `data-shape-id="${escXml(id)}"`];
   for (const [k, v] of Object.entries(extra)) a.push(`${k}="${escXml(v)}"`);
   return `<g ${a.join(" ")}>`;
 }

@@ -7,7 +7,7 @@ import { PptxAgent } from "@officeai/pptx/agent";
 import { SlideCanvas, SlidesSidebar } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import type { Mutation } from "@officeai/core";
-import type { TextShape } from "@officeai/pptx";
+import type { Shape, ShapePreset, TextShape } from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
 import { dispatchToLlmPptx } from "@/lib/llm-client-pptx";
 import { PptxToolbar } from "./PptxToolbar";
@@ -18,6 +18,16 @@ interface ToastMessage {
   kind: "info" | "warn" | "error";
   text: string;
 }
+
+const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/bmp",
+  "image/webp",
+  "image/svg+xml",
+]);
 
 export function PptxEditor(): React.ReactNode {
   const [agent, setAgent] = useState<PptxAgent | null>(null);
@@ -48,6 +58,7 @@ export function PptxEditor(): React.ReactNode {
     agentRef.current = next;
     setAgent(next);
     setActiveIndex(0);
+    setSelectedShapeId(null);
     setPending([...next.getPendingMutations()]);
     setReady(true);
     setTick((t) => t + 1);
@@ -116,16 +127,31 @@ export function PptxEditor(): React.ReactNode {
   const slides = snap?.root.slides ?? [];
   const slideSize = snap?.root.slideSize ?? { cxEmu: 9144000, cyEmu: 6858000 };
   const themeDefault = snap?.root.themeDefault;
+  const slide = slides[activeIndex];
+
+  const selectedShape = useMemo<Shape | null>(() => {
+    if (!slide || !selectedShapeId) return null;
+    return findShape(slide.shapes, selectedShapeId);
+  }, [slide, selectedShapeId]);
+
+  const currentFill = useMemo(() => {
+    if (!selectedShape || selectedShape.kind !== "text") return null;
+    return readSolidFill(selectedShape) ?? null;
+  }, [selectedShape]);
+
+  const currentFontPt = useMemo(() => {
+    if (!selectedShape || selectedShape.kind !== "text") return null;
+    const r = selectedShape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak && x.text.length > 0);
+    if (!r) return null;
+    if (r.properties.fontSizeHundredths == null) return null;
+    return r.properties.fontSizeHundredths / 100;
+  }, [selectedShape]);
 
   const addSlide = useCallback(async () => {
     const a = agentRef.current;
     if (!a) return;
     try {
-      await a.applyCommand({
-        type: "pptx:add-slide",
-        payload: {},
-        source: "human",
-      });
+      await a.applyCommand({ type: "pptx:add-slide", payload: {}, source: "human" });
       setActiveIndex(a.getSnapshot().root.slides.length - 1);
     } catch (err) {
       onError(err);
@@ -166,55 +192,184 @@ export function PptxEditor(): React.ReactNode {
     }
   }, [activeIndex, onError]);
 
+  // Each "Insert" command drops the new shape near the slide centre at a
+  // sensible default size. We avoid stacking duplicates by nudging by an
+  // extra (count * step) so successive inserts don't pile up at the exact
+  // same coordinates.
+  const insertOffset = useCallback((): { x: number; y: number } => {
+    const a = agentRef.current;
+    const s = a?.getSnapshot().root.slides[activeIndex];
+    const count = s?.shapes.length ?? 0;
+    const step = 200_000;
+    return {
+      x: 1_000_000 + (count % 8) * step,
+      y: 1_000_000 + (count % 8) * step,
+    };
+  }, [activeIndex]);
+
   const addTextBox = useCallback(async () => {
     const a = agentRef.current;
     if (!a) return;
     try {
+      const off = insertOffset();
       await a.applyCommand({
         type: "pptx:add-text-box",
         payload: {
           slideIndex: activeIndex,
           text: "New text box",
-          x: 1000000,
-          y: 1000000,
-          width: 4000000,
-          height: 800000,
+          x: off.x,
+          y: off.y,
+          width: 4_000_000,
+          height: 800_000,
         },
         source: "human",
       });
+      const s = a.getSnapshot().root.slides[activeIndex];
+      setSelectedShapeId(s.shapes[s.shapes.length - 1]!.id);
     } catch (err) {
       onError(err);
     }
-  }, [activeIndex, onError]);
+  }, [activeIndex, insertOffset, onError]);
+
+  const addShape = useCallback(
+    async (preset: ShapePreset) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        const off = insertOffset();
+        const isLine = preset === "line";
+        await a.applyCommand({
+          type: "pptx:add-shape",
+          payload: {
+            slideIndex: activeIndex,
+            preset,
+            x: off.x,
+            y: off.y,
+            width: isLine ? 3_000_000 : 2_500_000,
+            height: isLine ? 0 : preset === "ellipse" ? 1_500_000 : 1_500_000,
+          },
+          source: "human",
+        });
+        const s = a.getSnapshot().root.slides[activeIndex];
+        setSelectedShapeId(s.shapes[s.shapes.length - 1]!.id);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, insertOffset, onError]
+  );
+
+  const insertImage = useCallback(
+    async (file: File) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const mime = (file.type || "").toLowerCase();
+      if (!SUPPORTED_IMAGE_MIME.has(mime)) {
+        pushToast(
+          "error",
+          `Unsupported image type "${mime || "unknown"}". Use PNG, JPEG, GIF, BMP, or WEBP.`
+        );
+        return;
+      }
+      try {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        const intrinsic = await readIntrinsicSize(bytes, mime);
+        // Cap the displayed width at ~half a 16:9 slide; preserves aspect.
+        const maxWidthEmu = Math.floor(slideSize.cxEmu / 2);
+        let widthEmu = intrinsic.width * 9525; // 1 px ≈ 9525 EMU @ 96 DPI
+        let heightEmu = intrinsic.height * 9525;
+        if (widthEmu > maxWidthEmu) {
+          const r = maxWidthEmu / widthEmu;
+          widthEmu = Math.round(widthEmu * r);
+          heightEmu = Math.round(heightEmu * r);
+        }
+        if (widthEmu <= 0 || heightEmu <= 0) {
+          widthEmu = 2_000_000;
+          heightEmu = 2_000_000;
+        }
+        const off = insertOffset();
+        await a.applyCommand({
+          type: "pptx:insert-image",
+          payload: {
+            slideIndex: activeIndex,
+            data: bytes,
+            mimeType: mime === "image/jpg" ? "image/jpeg" : mime,
+            x: off.x,
+            y: off.y,
+            width: widthEmu,
+            height: heightEmu,
+            altText: file.name,
+            name: file.name,
+          },
+          source: "human",
+        });
+        const s = a.getSnapshot().root.slides[activeIndex];
+        setSelectedShapeId(s.shapes[s.shapes.length - 1]!.id);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, insertOffset, onError, pushToast, slideSize.cxEmu]
+  );
+
+  const deleteSelectedShape = useCallback(async () => {
+    const a = agentRef.current;
+    if (!a || !selectedShapeId) return;
+    try {
+      await a.applyCommand({
+        type: "pptx:delete-shape",
+        payload: { slideIndex: activeIndex, shapeId: selectedShapeId },
+        source: "human",
+      });
+      setSelectedShapeId(null);
+    } catch (err) {
+      onError(err);
+    }
+  }, [activeIndex, onError, selectedShapeId]);
+
+  const changeFill = useCallback(
+    async (hex: string | null) => {
+      const a = agentRef.current;
+      if (!a || !selectedShapeId) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-shape-fill",
+          payload: { slideIndex: activeIndex, shapeId: selectedShapeId, fill: hex },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, selectedShapeId]
+  );
 
   // Picks the text shape to format: prefer the selected shape (if it is
-  // text + has runs); otherwise fall back to the first non-empty text shape
-  // on the slide. This keeps the toolbar useful even before the user has
-  // clicked anywhere — the previous "first shape on the slide" logic broke
-  // on real-world decks because the first shape is usually a decorative rect.
+  // text); otherwise fall back to the first non-empty text shape on the
+  // slide. Allows formatting to apply to a freshly-added shape that has
+  // no body runs yet (the format goes to the empty paragraph).
   const pickFormattingTarget = useCallback((): TextShape | null => {
     const a = agentRef.current;
     if (!a) return null;
-    const slide = a.getSnapshot().root.slides[activeIndex];
-    if (!slide) return null;
-    const isFormattable = (s: unknown): s is TextShape => {
-      if (!s || typeof s !== "object") return false;
-      const sh = s as { kind?: string; txBody?: { paragraphs?: ReadonlyArray<{ runs?: ReadonlyArray<{ isLineBreak?: boolean; text?: string }> }> } };
-      if (sh.kind !== "text") return false;
-      return (sh.txBody?.paragraphs ?? []).some((p) =>
-        (p.runs ?? []).some((r) => !r.isLineBreak && (r.text?.length ?? 0) > 0)
-      );
-    };
+    const s = a.getSnapshot().root.slides[activeIndex];
+    if (!s) return null;
+    const isText = (sh: Shape | null | undefined): sh is TextShape => sh?.kind === "text";
     if (selectedShapeId) {
-      const sel = slide.shapes.find((s) => s.id === selectedShapeId);
-      if (isFormattable(sel)) return sel;
+      const sel = findShape(s.shapes, selectedShapeId);
+      if (isText(sel)) return sel;
     }
-    const first = slide.shapes.find(isFormattable);
-    return first ?? null;
+    return s.shapes.find((sh): sh is TextShape => sh.kind === "text") ?? null;
   }, [activeIndex, selectedShapeId]);
 
-  const toggleMark = useCallback(
-    async (mark: "bold" | "italic" | "underline") => {
+  const applyFormat = useCallback(
+    async (format: {
+      bold?: boolean;
+      italic?: boolean;
+      underline?: boolean;
+      color?: string;
+      fontSizeHundredths?: number;
+    }) => {
       const a = agentRef.current;
       if (!a) return;
       const ts = pickFormattingTarget();
@@ -230,8 +385,8 @@ export function PptxEditor(): React.ReactNode {
           payload: {
             slideIndex: activeIndex,
             shapeId: ts.id,
-            range: { paragraph: 0, start: 0, end: flatLen },
-            format: { [mark]: true },
+            range: { paragraph: 0, start: 0, end: Math.max(flatLen, 0) },
+            format,
           },
           source: "human",
         });
@@ -240,6 +395,21 @@ export function PptxEditor(): React.ReactNode {
       }
     },
     [activeIndex, onError, pickFormattingTarget, pushToast]
+  );
+
+  const toggleMark = useCallback(
+    (mark: "bold" | "italic" | "underline") => applyFormat({ [mark]: true }),
+    [applyFormat]
+  );
+
+  const changeTextColor = useCallback(
+    (hex: string) => applyFormat({ color: hex.replace(/^#/, "").toUpperCase() }),
+    [applyFormat]
+  );
+
+  const changeFontSize = useCallback(
+    (pt: number) => applyFormat({ fontSizeHundredths: Math.round(pt * 100) }),
+    [applyFormat]
   );
 
   // Routes prompts through the shared `/api/llm` bridge with `format: "pptx"`.
@@ -262,23 +432,47 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, pushToast]
   );
 
-  // Empty media URL map for now (no embedded images in the sample).
-  const mediaUrls = useMemo(() => new Map<string, string>(), []);
+  // Build object-URL map for every embedded media part so the renderer
+  // can paint <Picture> shapes inserted via the toolbar. We rebuild on
+  // every snapshot tick — cheap because URLs are deduplicated by part path.
+  const mediaUrls = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!snap) return map;
+    for (const [path, part] of snap.root.media) {
+      const blob = new Blob([part.bytes as BlobPart], { type: part.contentType });
+      map.set(path, URL.createObjectURL(blob));
+    }
+    return map;
+  }, [snap]);
+  useEffect(() => {
+    return () => {
+      for (const url of mediaUrls.values()) URL.revokeObjectURL(url);
+    };
+  }, [mediaUrls]);
 
   return (
     <div className="pptx-editor flex h-full min-h-0 flex-col gap-3">
       <PptxToolbar
         disabled={!ready}
         slideCount={slides.length}
+        hasSelection={selectedShapeId != null}
+        currentFill={currentFill ? `#${currentFill}` : null}
+        currentFontPt={currentFontPt}
         onOpenFile={() => fileInputRef.current?.click()}
         onExport={() => void handleExport()}
         onAddSlide={() => void addSlide()}
         onDeleteSlide={() => void deleteSlide()}
         onDuplicateSlide={() => void duplicateSlide()}
         onAddTextBox={() => void addTextBox()}
+        onAddShape={(p) => void addShape(p)}
+        onInsertImage={(f) => void insertImage(f)}
+        onDeleteShape={() => void deleteSelectedShape()}
         onToggleBold={() => void toggleMark("bold")}
         onToggleItalic={() => void toggleMark("italic")}
         onToggleUnderline={() => void toggleMark("underline")}
+        onChangeFill={(h) => void changeFill(h)}
+        onChangeTextColor={(h) => void changeTextColor(h)}
+        onChangeFontSize={(pt) => void changeFontSize(pt)}
         zoom={zoom}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
@@ -323,6 +517,7 @@ export function PptxEditor(): React.ReactNode {
                 onError={onError}
                 zoom={zoom}
                 onSelectionChange={setSelectedShapeId}
+                selectedShapeId={selectedShapeId}
               />
             </div>
           ) : null}
@@ -367,4 +562,65 @@ export function PptxEditor(): React.ReactNode {
       </div>
     </div>
   );
+}
+
+function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
+  for (const s of shapes) {
+    if (s.id === id) return s;
+    if (s.kind === "group") {
+      const inner = findShape(s.children, id);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+
+/** Walks `spPrTail` for the first `<a:solidFill><a:srgbClr val="…"/></a:solidFill>`. */
+function readSolidFill(shape: TextShape): string | null {
+  for (const c of shape.spPrTail) {
+    if (c.tag !== "a:solidFill") continue;
+    for (const inner of c.subtree) {
+      if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+      const obj = inner as Record<string, unknown>;
+      const attrs = obj[":@"] as Record<string, unknown> | undefined;
+      const val = attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
+      if (typeof val === "string" && /^[0-9a-fA-F]{6}$/.test(val)) {
+        return val.toUpperCase();
+      }
+    }
+  }
+  return null;
+}
+
+async function readIntrinsicSize(
+  bytes: Uint8Array,
+  mime: string
+): Promise<{ width: number; height: number }> {
+  if (typeof window === "undefined") return { width: 0, height: 0 };
+  const blob = new Blob([bytes as BlobPart], { type: mime });
+  if (typeof createImageBitmap === "function" && mime !== "image/svg+xml") {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const w = bitmap.width;
+      const h = bitmap.height;
+      bitmap.close?.();
+      return { width: w, height: h };
+    } catch {
+      // fall through to <img> path
+    }
+  }
+  return await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const out = { width: img.naturalWidth, height: img.naturalHeight };
+      URL.revokeObjectURL(url);
+      resolve(out);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not decode image to read intrinsic size."));
+    };
+    img.src = url;
+  });
 }

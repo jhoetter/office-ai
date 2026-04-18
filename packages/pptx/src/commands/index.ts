@@ -1,8 +1,11 @@
 import type { CommandHandler } from "@officeai/core";
 import type { PptxSnapshot } from "../model/types.js";
+import { addShapeHandler } from "./add-shape.js";
 import { addSlideHandler } from "./add-slide.js";
 import { addTextBoxHandler } from "./add-text-box.js";
+import { deleteShapeHandler } from "./delete-shape.js";
 import { deleteSlideHandler } from "./delete-slide.js";
+import { setShapeFillHandler } from "./set-shape-fill.js";
 import { duplicateSlideHandler } from "./duplicate-slide.js";
 import { formatTextHandler } from "./format-text.js";
 import { insertImageHandler } from "./insert-image.js";
@@ -17,11 +20,7 @@ import {
   tableDeleteRowHandler,
   tableSetCellTextHandler,
 } from "./table-commands.js";
-import {
-  setChartDataHandler,
-  setChartTitleHandler,
-  setChartTypeHandler,
-} from "./chart-commands.js";
+import { setChartDataHandler, setChartTitleHandler, setChartTypeHandler } from "./chart-commands.js";
 import {
   addShapeAnimationHandler,
   removeShapeAnimationHandler,
@@ -30,9 +29,12 @@ import {
 } from "./animation-commands.js";
 
 export * from "./payloads.js";
+export { addShapeHandler } from "./add-shape.js";
 export { addSlideHandler } from "./add-slide.js";
 export { addTextBoxHandler } from "./add-text-box.js";
+export { deleteShapeHandler } from "./delete-shape.js";
 export { deleteSlideHandler } from "./delete-slide.js";
+export { setShapeFillHandler } from "./set-shape-fill.js";
 export { duplicateSlideHandler } from "./duplicate-slide.js";
 export { formatTextHandler } from "./format-text.js";
 export { insertImageHandler } from "./insert-image.js";
@@ -47,11 +49,7 @@ export {
   tableDeleteRowHandler,
   tableSetCellTextHandler,
 } from "./table-commands.js";
-export {
-  setChartDataHandler,
-  setChartTitleHandler,
-  setChartTypeHandler,
-} from "./chart-commands.js";
+export { setChartDataHandler, setChartTitleHandler, setChartTypeHandler } from "./chart-commands.js";
 export {
   addShapeAnimationHandler,
   removeShapeAnimationHandler,
@@ -70,6 +68,9 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   formatTextHandler,
   insertImageHandler,
   addTextBoxHandler,
+  addShapeHandler,
+  deleteShapeHandler,
+  setShapeFillHandler,
   tableSetCellTextHandler,
   tableAddRowHandler,
   tableDeleteRowHandler,
@@ -84,5 +85,6 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   reorderShapeAnimationsHandler,
 ] as ReadonlyArray<CommandHandler<unknown, PptxSnapshot>>;
 
-export const pptxHandlersById: ReadonlyMap<string, CommandHandler<unknown, PptxSnapshot>> =
-  new Map(allPptxHandlers.map((h) => [h.type, h]));
+export const pptxHandlersById: ReadonlyMap<string, CommandHandler<unknown, PptxSnapshot>> = new Map(
+  allPptxHandlers.map((h) => [h.type, h])
+);
