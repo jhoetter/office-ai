@@ -118,6 +118,11 @@ the original `feature-scope.md` deferred list):
    — lexer / AST / evaluator / dependency graph contract.
 7. [`docs/build-log/xlsx.md`](build-log/xlsx.md) — what actually
    shipped, in order, with caveats.
+8. [`docs/architecture-xlsx-deltas.md`](architecture-xlsx-deltas.md)
+   — cross-cutting architectural choices that distinguish the XLSX
+   product from the DOCX baseline (renderer, formula engine, style
+   table, selection model, sizing, diff vocabulary, drag UX,
+   parallel-agent build methodology, test pyramid).
 
 ## How to run
 
