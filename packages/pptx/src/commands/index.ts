@@ -3,6 +3,7 @@ import type { PptxSnapshot } from "../model/types.js";
 import { addShapeHandler } from "./add-shape.js";
 import { addSlideHandler } from "./add-slide.js";
 import { addTextBoxHandler } from "./add-text-box.js";
+import { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 import { deleteShapeHandler } from "./delete-shape.js";
 import { deleteSlideHandler } from "./delete-slide.js";
 import { setShapeFillHandler } from "./set-shape-fill.js";
@@ -32,6 +33,7 @@ export * from "./payloads.js";
 export { addShapeHandler } from "./add-shape.js";
 export { addSlideHandler } from "./add-slide.js";
 export { addTextBoxHandler } from "./add-text-box.js";
+export { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 export { deleteShapeHandler } from "./delete-shape.js";
 export { deleteSlideHandler } from "./delete-slide.js";
 export { setShapeFillHandler } from "./set-shape-fill.js";
@@ -71,6 +73,8 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   addShapeHandler,
   deleteShapeHandler,
   setShapeFillHandler,
+  alignShapesHandler,
+  distributeShapesHandler,
   tableSetCellTextHandler,
   tableAddRowHandler,
   tableDeleteRowHandler,

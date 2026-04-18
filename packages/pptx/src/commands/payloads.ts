@@ -136,6 +136,33 @@ export interface SetShapeFillPayload {
   readonly fill: string | null;
 }
 
+// ─── Alignment / distribution (multi-select operations) ───────────────────
+
+/**
+ * Mirrors PowerPoint's "Align" submenu. `left/right/center-h` operate on
+ * x-axis; `top/bottom/middle-v` operate on y-axis. Each shape is moved
+ * so its corresponding edge or center matches the union bounding box of
+ * the selection.
+ */
+export type AlignMode = "left" | "center-h" | "right" | "top" | "middle-v" | "bottom";
+
+export interface AlignShapesPayload {
+  readonly slideIndex: number;
+  readonly shapeIds: ReadonlyArray<NodeId>;
+  readonly mode: AlignMode;
+}
+
+/**
+ * Mirrors PowerPoint's "Distribute Horizontally / Vertically". The two
+ * extreme shapes stay anchored; intermediate shapes get re-positioned so
+ * their *centres* are equidistant along the chosen axis.
+ */
+export interface DistributeShapesPayload {
+  readonly slideIndex: number;
+  readonly shapeIds: ReadonlyArray<NodeId>;
+  readonly axis: "horizontal" | "vertical";
+}
+
 // ─── F2 (Tables) payloads ─────────────────────────────────────────────────
 
 export interface TableSetCellTextPayload {
@@ -242,6 +269,8 @@ export const PPTX_COMMAND_TYPES = {
   addShape: "pptx:add-shape",
   deleteShape: "pptx:delete-shape",
   setShapeFill: "pptx:set-shape-fill",
+  alignShapes: "pptx:align-shapes",
+  distributeShapes: "pptx:distribute-shapes",
   tableSetCellText: "pptx:table-set-cell-text",
   tableAddRow: "pptx:table-add-row",
   tableDeleteRow: "pptx:table-delete-row",
