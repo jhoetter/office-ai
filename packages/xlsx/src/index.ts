@@ -56,6 +56,17 @@ export {
   type XlsxWorkbook,
 } from "./model/index.js";
 
+export { flattenCellXf, type EffectiveStyle } from "./model/style-mutate.js";
+export {
+  type StyleAlignment,
+  type StyleBorder,
+  type StyleBorderSide,
+  type StyleColor,
+  type StyleFill,
+  type StyleFont,
+  type StyleTable,
+} from "./model/style-table.js";
+
 export {
   allXlsxHandlers,
   xlsxHandlersById,

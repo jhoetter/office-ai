@@ -8,8 +8,10 @@ import {
   XlsxAgent,
   cellKey,
   colToLetter,
+  flattenCellXf,
   formatA1,
   formatRange,
+  type CellFormatPatch,
   type CellValue,
   type Sheet,
   type XlsxSnapshot,
@@ -29,6 +31,8 @@ import {
   applySuggestion,
   getSuggestions,
 } from "./FormulaSuggest";
+import { Toolbar } from "./Toolbar";
+import { formatCellValue as renderCellValue } from "./styles";
 
 interface ToastMessage {
   id: number;
@@ -194,7 +198,9 @@ export function XlsxEditor(): ReactNode {
   const derivedFormulaDisplay = (() => {
     if (!selectedCell) return "";
     if (selectedCell.formula) return `=${selectedCell.formula.text}`;
-    return formatCellValue(selectedCell.value);
+    // Formula bar shows the raw value (e.g. `0.25`, not `25.00%`) so
+    // edits don't accidentally rewrite the underlying numeric value.
+    return renderCellValue(selectedCell.value, 0);
   })();
   const formulaValue = formulaFocused ? formulaDraft : derivedFormulaDisplay;
 
@@ -508,6 +514,28 @@ export function XlsxEditor(): ReactNode {
     if (suggestHighlight !== 0) setSuggestHighlight(0);
   }
 
+  const onApplyFormat = useCallback(
+    (patch: CellFormatPatch) => {
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return;
+      const range = formatSelection(selection);
+      void a
+        .applyCommand({
+          type: "xlsx:set-cell-format",
+          payload: {
+            sheet: activeSheet.name,
+            range,
+            format: patch,
+          },
+          source: "human",
+        })
+        .catch((err: unknown) => {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        });
+    },
+    [activeSheet, selection, pushToast]
+  );
+
   const acceptSuggestion = useCallback(
     (info: Parameters<typeof applySuggestion>[1]) => {
       if (!suggestionSpan) return;
@@ -605,6 +633,16 @@ export function XlsxEditor(): ReactNode {
         </div>
       ) : null}
 
+      {snapshot ? (
+        <Toolbar
+          disabled={!agent || !selection}
+          anchorStyleId={selectedCell?.styleId}
+          styles={snapshot.root.styles}
+          selection={selection}
+          onApply={onApplyFormat}
+        />
+      ) : null}
+
       <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
         <span
           data-testid="cell-ref"
@@ -696,9 +734,10 @@ export function XlsxEditor(): ReactNode {
       </div>
 
       <div className="relative flex-1 min-h-0">
-        {activeSheet ? (
+        {activeSheet && snapshot ? (
           <Grid
             sheet={activeSheet}
+            styles={snapshot.root.styles}
             selection={selection}
             onSelect={handleGridSelect}
             onCommitEdit={onCommitGridEdit}
@@ -789,22 +828,6 @@ export function XlsxEditor(): ReactNode {
       </div>
     </div>
   );
-}
-
-function formatCellValue(value: CellValue): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  switch (value.kind) {
-    case "error":
-      return value.code;
-    default: {
-      const _exhaustive: never = value.kind;
-      void _exhaustive;
-      return "";
-    }
-  }
 }
 
 /**

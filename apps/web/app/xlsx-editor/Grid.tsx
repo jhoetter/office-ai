@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { cellKey, colToLetter, type Sheet, type CellValue } from "@officeai/xlsx";
+import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
 import {
   containsCell,
   isSingle,
@@ -11,6 +11,7 @@ import {
   type CellPos,
   type Selection,
 } from "./selection";
+import { formatCellValue, styleForCell } from "./styles";
 
 /**
  * Fixed cell geometry. Excel's defaults are 64px wide × 20px tall;
@@ -34,6 +35,8 @@ export type GridSelection = Selection;
 
 export interface GridProps {
   readonly sheet: Sheet;
+  /** Workbook style table — flattened per-cell to render fonts/fills/etc. */
+  readonly styles: StyleTable;
   readonly selection: Selection | null;
   /**
    * Drives selection moves. `extend` mirrors Shift-click / drag-extend:
@@ -65,7 +68,7 @@ export interface GridProps {
  *     like Excel even when the user drags up/left.
  */
 export function Grid(props: GridProps): ReactNode {
-  const { sheet, selection, onSelect, onCommitEdit } = props;
+  const { sheet, styles, selection, onSelect, onCommitEdit } = props;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -119,7 +122,8 @@ export function Grid(props: GridProps): ReactNode {
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         const cell = sheet.cells.get(cellKey(r, c));
-        const display = cell ? formatDisplay(cell.value) : "";
+        const cellStyle = styleForCell(styles, cell?.styleId);
+        const display = cell ? formatCellValue(cell.value, cellStyle.effective.numFmtId) : "";
         const inSel = !!selection && containsCell(selection, r, c);
         const anchorCell =
           !!selection && selection.anchor.row === r && selection.anchor.col === c;
@@ -186,6 +190,13 @@ export function Grid(props: GridProps): ReactNode {
               cursor: "cell",
               userSelect: "none",
               zIndex: anchorCell ? 1 : 0,
+              ...cellStyle.css,
+              // Selection background wins over a per-cell fill so the
+              // user can still see what's highlighted, except for the
+              // anchor where Excel keeps the cell's real fill.
+              ...(inSel && !anchorCell
+                ? { background: "var(--ai-violet-light)" }
+                : {}),
             }}
           >
             {isEditing ? (
@@ -223,7 +234,7 @@ export function Grid(props: GridProps): ReactNode {
       }
     }
     return out;
-  }, [sheet, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
+  }, [sheet, styles, startRow, endRow, startCol, endCol, selection, editing, onSelect, onCommitEdit]);
 
   // Bounding-box marquee — positioned over the union of the selection.
   let marquee: ReactNode = null;
@@ -361,19 +372,3 @@ export function Grid(props: GridProps): ReactNode {
 // two adjacent modules.
 export { singleSelection } from "./selection";
 export type { CellPos, Selection } from "./selection";
-
-function formatDisplay(value: CellValue): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  switch (value.kind) {
-    case "error":
-      return value.code;
-    default: {
-      const _exhaustive: never = value.kind;
-      void _exhaustive;
-      return "";
-    }
-  }
-}
