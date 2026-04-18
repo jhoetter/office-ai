@@ -289,6 +289,9 @@ describe("OfficeAI MCP server — PPTX tools", () => {
   const PPTX_FIXTURE = resolve(
     fileURLToPath(new URL("../../../fixtures/pptx/synthetic/03-title-and-content.pptx", import.meta.url))
   );
+  const PPTX_TABLE_FIXTURE = resolve(
+    fileURLToPath(new URL("../../../fixtures/pptx/synthetic/06-with-table.pptx", import.meta.url))
+  );
 
   it("pptx_load returns a handle and an inspection summary", async () => {
     const client = await makeClient();
@@ -382,6 +385,48 @@ describe("OfficeAI MCP server — PPTX tools", () => {
       })
     );
     expect(Array.isArray(r.matches)).toBe(true);
+  });
+
+  it("pptx_apply_command dispatches typed table commands", async () => {
+    const client = await makeClient();
+    const loaded = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: PPTX_TABLE_FIXTURE } })
+    );
+    const handle = loaded.handle as string;
+
+    const json = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "json" } })
+    ) as unknown as {
+      slides: Array<{ index: number; shapes: Array<{ id: string; kind: string }> }>;
+    };
+    let slideIndex = -1;
+    let tableId = "";
+    for (const slide of json.slides) {
+      const t = slide.shapes.find((s) => s.kind === "table");
+      if (t) {
+        slideIndex = slide.index;
+        tableId = t.id;
+        break;
+      }
+    }
+    expect(tableId).not.toBe("");
+
+    const apply = structured(
+      await client.callTool({
+        name: "pptx_apply_command",
+        arguments: {
+          handle,
+          type: "pptx:table-set-cell-text",
+          payload: { slideIndex, shapeId: tableId, row: 0, column: 0, text: "MCP Cell" },
+        },
+      })
+    );
+    expect((apply.mutation as { status: string }).status).toBe("approved");
+
+    const after = structured(
+      await client.callTool({ name: "pptx_get_text", arguments: { handle, format: "text" } })
+    );
+    expect((after.content as string).includes("MCP Cell")).toBe(true);
   });
 
   it("returns an error for unknown pptx handles", async () => {

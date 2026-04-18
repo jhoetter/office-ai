@@ -2,6 +2,7 @@ import type {
   PptxSnapshot,
   Shape,
   Slide,
+  TableShape,
   TextShape,
   TextParagraph,
 } from "../model/types.js";
@@ -56,6 +57,12 @@ function renderShape(sh: Shape, depth: number): string[] {
       out.push(`${indent}- **group** \`${sh.id}\` cNvPr=${sh.cNvPrId} ${bbox}`);
       for (const c of sh.children) out.push(...renderShape(c, depth + 1));
       break;
+    case "table":
+      out.push(
+        `${indent}- **table** \`${sh.id}\` cNvPr=${sh.cNvPrId} ${sh.rows.length}×${sh.columnWidths.length} ${bbox}`
+      );
+      out.push(...renderTable(sh, depth + 1));
+      break;
     case "opaque":
       out.push(`${indent}- **opaque** \`${sh.id}\` <${sh.tag}> ${bbox}`);
       break;
@@ -66,6 +73,23 @@ function renderShape(sh: Shape, depth: number): string[] {
 function renderTextBody(shape: TextShape, depth: number): string[] {
   const indent = "  ".repeat(depth);
   return shape.txBody.paragraphs.map((p) => `${indent}> ${paragraphText(p) || "(empty)"}`);
+}
+
+function renderTable(table: TableShape, depth: number): string[] {
+  const indent = "  ".repeat(depth);
+  const out: string[] = [];
+  for (let r = 0; r < table.rows.length; r++) {
+    const row = table.rows[r];
+    const cells = row.cells.map((c) => {
+      const txt = c.txBody.paragraphs.map((p) => paragraphText(p)).join(" / ").trim();
+      return txt.length > 0 ? txt : "(empty)";
+    });
+    out.push(`${indent}| ${cells.join(" | ")} |`);
+    if (r === 0) {
+      out.push(`${indent}|${row.cells.map(() => "---").join("|")}|`);
+    }
+  }
+  return out;
 }
 
 export function paragraphText(p: TextParagraph): string {

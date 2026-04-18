@@ -420,6 +420,11 @@ export function createMcpServer(): McpServer {
               lines.push(`## Slide ${s.index + 1} — \`${s.partPath}\` (slideId=${s.slideId})`);
               for (const sh of s.shapes) {
                 if (sh.kind === "text" && sh.text) lines.push(`> ${sh.text.replaceAll("\n", " · ")}`);
+                if (sh.kind === "table" && sh.table) {
+                  for (const row of sh.table.cells) {
+                    lines.push(`| ${row.map((c) => (c.length > 0 ? c.replaceAll("\n", " · ") : "(empty)")).join(" | ")} |`);
+                  }
+                }
               }
             }
             return ok({ format: fmt, content: lines.join("\n") });
@@ -429,9 +434,18 @@ export function createMcpServer(): McpServer {
           case "text": {
             const proj = pptxSnapshotToJsonProjection(snap, range);
             const lines: string[] = [];
-            for (const s of proj.slides)
-              for (const sh of s.shapes)
+            for (const s of proj.slides) {
+              for (const sh of s.shapes) {
                 if (sh.kind === "text" && sh.text) lines.push(sh.text);
+                if (sh.kind === "table" && sh.table) {
+                  for (const row of sh.table.cells) {
+                    for (const cell of row) {
+                      if (cell.length > 0) lines.push(cell);
+                    }
+                  }
+                }
+              }
+            }
             return ok({ format: fmt, content: lines.join("\n") });
           }
           default: {

@@ -51,6 +51,7 @@ const FIXTURE = (name: string): string =>
 
 const SINGLE = FIXTURE("03-title-and-content.pptx");
 const MULTI = FIXTURE("07-multi-slide.pptx");
+const TABLE = FIXTURE("06-with-table.pptx");
 
 describe("office-agent pptx subcommand group", () => {
   it("pptx inspect prints structural counts as JSON", async () => {
@@ -315,6 +316,167 @@ describe("office-agent pptx subcommand group", () => {
     const after = await PptxAgent.fromBuffer(readFileSync(out));
     expect(after.getSnapshot().root.slides.length).toBe(2);
     expect(after.toMarkdown()).toContain("Hello apply");
+  });
+
+  describe("table CLI subcommands", () => {
+    async function findTable(path: string): Promise<{ slide: number; shapeId: string }> {
+      const agent = await loadDeterministic(path);
+      const slides = agent.getSnapshot().root.slides;
+      for (let i = 0; i < slides.length; i++) {
+        const t = slides[i].shapes.find((s) => s.kind === "table");
+        if (t) return { slide: i, shapeId: t.id };
+      }
+      throw new Error("no table shape in fixture");
+    }
+
+    it("table-set-cell-text rewrites a single cell", async () => {
+      const { slide, shapeId } = await findTable(TABLE);
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-tbl-set-"));
+      const out = join(dir, "out.pptx");
+      const { io } = makeIO();
+      const code = await runCli(
+        [
+          "pptx", "table-set-cell-text",
+          "--file", TABLE, "--out", out,
+          "--slide", String(slide),
+          "--shape", shapeId,
+          "--row", "0", "--column", "0",
+          "--text", "CLI Cell",
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const after = await loadDeterministic(out);
+      const tbl = after.getSnapshot().root.slides[slide].shapes.find((s) => s.kind === "table");
+      if (!tbl || tbl.kind !== "table") throw new Error("table missing");
+      const cell = tbl.rows[0].cells[0];
+      const text = cell.txBody.paragraphs
+        .flatMap((p) => p.runs.map((r) => (r.isLineBreak ? "\n" : r.text)))
+        .join("");
+      expect(text).toBe("CLI Cell");
+    });
+
+    it("table-add-row and table-add-column grow the grid", async () => {
+      const before = await loadDeterministic(TABLE);
+      const beforeTbl = before
+        .getSnapshot()
+        .root.slides.flatMap((s, i) => s.shapes.map((sh) => ({ slide: i, sh })))
+        .find((x) => x.sh.kind === "table");
+      if (!beforeTbl || beforeTbl.sh.kind !== "table") throw new Error("table missing");
+      const beforeRows = beforeTbl.sh.rows.length;
+      const beforeCols = beforeTbl.sh.columnWidths.length;
+
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-tbl-grow-"));
+      const a = join(dir, "a.pptx");
+      const b = join(dir, "b.pptx");
+      const { io } = makeIO();
+
+      let code = await runCli(
+        [
+          "pptx", "table-add-row",
+          "--file", TABLE, "--out", a,
+          "--slide", String(beforeTbl.slide),
+          "--shape", beforeTbl.sh.id,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+
+      // IDs are minted from the parser, and adding a row shifts later IDs.
+      // Re-resolve the table id from the saved file before the next call.
+      const aAgent = await loadDeterministic(a);
+      const aTbl = aAgent
+        .getSnapshot()
+        .root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
+      if (!aTbl) throw new Error("table missing in intermediate file");
+
+      code = await runCli(
+        [
+          "pptx", "table-add-column",
+          "--file", a, "--out", b,
+          "--slide", String(beforeTbl.slide),
+          "--shape", aTbl.id,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+
+      const after = await loadDeterministic(b);
+      const tbl = after.getSnapshot().root.slides[beforeTbl.slide].shapes.find(
+        (s) => s.kind === "table"
+      );
+      if (!tbl || tbl.kind !== "table") throw new Error("table missing");
+      expect(tbl.rows.length).toBe(beforeRows + 1);
+      expect(tbl.columnWidths.length).toBe(beforeCols + 1);
+      for (const row of tbl.rows) {
+        expect(row.cells.length).toBe(beforeCols + 1);
+      }
+    });
+
+    it("table-delete-row and table-delete-column shrink the grid", async () => {
+      const before = await loadDeterministic(TABLE);
+      const beforeTbl = before
+        .getSnapshot()
+        .root.slides.flatMap((s, i) => s.shapes.map((sh) => ({ slide: i, sh })))
+        .find((x) => x.sh.kind === "table");
+      if (!beforeTbl || beforeTbl.sh.kind !== "table") throw new Error("table missing");
+      const beforeRows = beforeTbl.sh.rows.length;
+      const beforeCols = beforeTbl.sh.columnWidths.length;
+      if (beforeRows < 2 || beforeCols < 2) {
+        throw new Error("fixture must have ≥2 rows and ≥2 columns");
+      }
+
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-tbl-shrink-"));
+      const a = join(dir, "a.pptx");
+      const b = join(dir, "b.pptx");
+      const { io } = makeIO();
+
+      let code = await runCli(
+        [
+          "pptx", "table-delete-row",
+          "--file", TABLE, "--out", a,
+          "--slide", String(beforeTbl.slide),
+          "--shape", beforeTbl.sh.id,
+          "--row", String(beforeRows - 1),
+        ],
+        io
+      );
+      expect(code).toBe(0);
+
+      const aAgent = await loadDeterministic(a);
+      const aTbl = aAgent
+        .getSnapshot()
+        .root.slides[beforeTbl.slide].shapes.find((s) => s.kind === "table");
+      if (!aTbl) throw new Error("table missing in intermediate file");
+
+      code = await runCli(
+        [
+          "pptx", "table-delete-column",
+          "--file", a, "--out", b,
+          "--slide", String(beforeTbl.slide),
+          "--shape", aTbl.id,
+          "--column", String(beforeCols - 1),
+        ],
+        io
+      );
+      expect(code).toBe(0);
+
+      const after = await loadDeterministic(b);
+      const tbl = after.getSnapshot().root.slides[beforeTbl.slide].shapes.find(
+        (s) => s.kind === "table"
+      );
+      if (!tbl || tbl.kind !== "table") throw new Error("table missing");
+      expect(tbl.rows.length).toBe(beforeRows - 1);
+      expect(tbl.columnWidths.length).toBe(beforeCols - 1);
+    });
+
+    it("inspect reports table count after a no-op load", async () => {
+      const { io, stdout } = makeIO();
+      const code = await runCli(["pptx", "inspect", "--file", TABLE], io);
+      expect(code).toBe(0);
+      const parsed = JSON.parse(stdout.text());
+      expect(parsed.shapeCounts.table).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it("pptx diff reports slide and shape counts", async () => {

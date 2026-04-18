@@ -443,6 +443,166 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
       }
     );
 
+  // ── Tables (F2) ─────────────────────────────────────────────────────
+  pptx
+    .command("table-set-cell-text")
+    .description("Set the text of a single cell in a typed TableShape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Table shape NodeId")
+    .requiredOption("--row <n>", "0-based row index", parseIntArg)
+    .requiredOption("--column <n>", "0-based column index", parseIntArg)
+    .requiredOption("--text <text>", "Replacement text (\\n splits paragraphs)")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        row: number;
+        column: number;
+        text: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:table-set-cell-text",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              row: opts.row,
+              column: opts.column,
+              text: opts.text,
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("table-add-row")
+    .description("Insert a new row into a typed TableShape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Table shape NodeId")
+    .addOption(new Option("--at <n>", "0-based insert position (default: append)").argParser(parseIntArg))
+    .addOption(new Option("--height <emu>", "Row height in EMU (default: median of existing rows)").argParser(parseIntArg))
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        at?: number;
+        height?: number;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:table-add-row",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              ...(opts.at !== undefined ? { at: opts.at } : {}),
+              ...(opts.height !== undefined ? { height: opts.height } : {}),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("table-delete-row")
+    .description("Delete a row from a typed TableShape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Table shape NodeId")
+    .requiredOption("--row <n>", "0-based row index", parseIntArg)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        row: number;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:table-delete-row",
+            payload: { slideIndex: opts.slide, shapeId: opts.shape, row: opts.row },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("table-add-column")
+    .description("Insert a new column into a typed TableShape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Table shape NodeId")
+    .addOption(new Option("--at <n>", "0-based insert position (default: append)").argParser(parseIntArg))
+    .addOption(new Option("--width <emu>", "Column width in EMU (default: average of existing columns)").argParser(parseIntArg))
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        at?: number;
+        width?: number;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:table-add-column",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              ...(opts.at !== undefined ? { at: opts.at } : {}),
+              ...(opts.width !== undefined ? { width: opts.width } : {}),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("table-delete-column")
+    .description("Delete a column from a typed TableShape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Table shape NodeId")
+    .requiredOption("--column <n>", "0-based column index", parseIntArg)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        column: number;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:table-delete-column",
+            payload: { slideIndex: opts.slide, shapeId: opts.shape, column: opts.column },
+          },
+        ]);
+      }
+    );
+
   pptx
     .command("apply")
     .description("Apply a JSON command file (single command or { commands: [...] }) and write the result.")
@@ -500,11 +660,11 @@ export interface PptxSnapshotSummary {
   masters: number;
   mediaParts: number;
   parts: string[];
-  shapeCounts: { text: number; pic: number; group: number; opaque: number };
+  shapeCounts: { text: number; pic: number; group: number; table: number; opaque: number };
 }
 
 export function inspectSnapshot(snap: PptxSnapshot): PptxSnapshotSummary {
-  const counts = { text: 0, pic: 0, group: 0, opaque: 0 };
+  const counts = { text: 0, pic: 0, group: 0, table: 0, opaque: 0 };
   for (const slide of snap.root.slides) walkShapes(slide.shapes, (s) => bumpShapeKind(counts, s));
   const parts = Array.from(snap.container.parts.keys()).sort();
   return {
@@ -540,6 +700,11 @@ export interface PptxSnapshotProjection {
       name?: string;
       bbox?: { x: number; y: number; cx: number; cy: number };
       text?: string;
+      table?: {
+        rows: number;
+        columns: number;
+        cells: ReadonlyArray<ReadonlyArray<string>>;
+      };
     }>;
   }>;
 }
@@ -573,6 +738,7 @@ function projectShape(sh: Shape): PptxSnapshotProjection["slides"][number]["shap
     name?: string;
     bbox?: { x: number; y: number; cx: number; cy: number };
     text?: string;
+    table?: { rows: number; columns: number; cells: ReadonlyArray<ReadonlyArray<string>> };
   } = { id: sh.id, kind: sh.kind };
   if ("cNvPrId" in sh) base.cNvPrId = sh.cNvPrId;
   if ("name" in sh && sh.name) base.name = sh.name;
@@ -585,6 +751,19 @@ function projectShape(sh: Shape): PptxSnapshotProjection["slides"][number]["shap
     };
   }
   if (sh.kind === "text") base.text = textShapePlainText(sh);
+  if (sh.kind === "table") {
+    base.table = {
+      rows: sh.rows.length,
+      columns: sh.columnWidths.length,
+      cells: sh.rows.map((row) =>
+        row.cells.map((cell) =>
+          cell.txBody.paragraphs
+            .map((p) => p.runs.map((r) => (r.isLineBreak ? "\n" : r.text)).join(""))
+            .join("\n")
+        )
+      ),
+    };
+  }
   return base;
 }
 
@@ -708,7 +887,7 @@ function walkShapes(shapes: ReadonlyArray<Shape>, visit: (s: Shape) => void): vo
 }
 
 function bumpShapeKind(
-  counts: { text: number; pic: number; group: number; opaque: number },
+  counts: { text: number; pic: number; group: number; table: number; opaque: number },
   s: Shape
 ): void {
   switch (s.kind) {
@@ -720,6 +899,9 @@ function bumpShapeKind(
       return;
     case "group":
       counts.group++;
+      return;
+    case "table":
+      counts.table++;
       return;
     case "opaque":
       counts.opaque++;

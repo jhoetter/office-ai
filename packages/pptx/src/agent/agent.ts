@@ -46,6 +46,8 @@ export interface PptxSearchResult {
   match: string;
   start: number;
   end: number;
+  /** Present when the match is inside a typed TableShape cell. */
+  tableCell?: { row: number; column: number };
 }
 
 /**
@@ -113,21 +115,48 @@ export class PptxAgent {
       : new RegExp(escapeRegex(spec.query), flags);
     for (let si = 0; si < slides.length; si++) {
       walkShapes(slides[si].shapes, (shape) => {
-        if (shape.kind !== "text") return;
-        for (let pi = 0; pi < shape.txBody.paragraphs.length; pi++) {
-          const text = paragraphText(shape.txBody.paragraphs[pi]);
-          let m: RegExpExecArray | null;
-          while ((m = pattern.exec(text)) !== null) {
-            out.push({
-              slideIndex: si,
-              shapeId: shape.id,
-              paragraphIndex: pi,
-              start: m.index,
-              end: m.index + m[0].length,
-              match: m[0],
-              preview: snippet(text, m.index, m.index + m[0].length),
-            });
-            if (m[0].length === 0) pattern.lastIndex++;
+        if (shape.kind === "text") {
+          for (let pi = 0; pi < shape.txBody.paragraphs.length; pi++) {
+            const text = paragraphText(shape.txBody.paragraphs[pi]);
+            let m: RegExpExecArray | null;
+            while ((m = pattern.exec(text)) !== null) {
+              out.push({
+                slideIndex: si,
+                shapeId: shape.id,
+                paragraphIndex: pi,
+                start: m.index,
+                end: m.index + m[0].length,
+                match: m[0],
+                preview: snippet(text, m.index, m.index + m[0].length),
+              });
+              if (m[0].length === 0) pattern.lastIndex++;
+            }
+          }
+          return;
+        }
+        if (shape.kind === "table") {
+          for (let ri = 0; ri < shape.rows.length; ri++) {
+            const row = shape.rows[ri];
+            for (let ci = 0; ci < row.cells.length; ci++) {
+              const cell = row.cells[ci];
+              for (let pi = 0; pi < cell.txBody.paragraphs.length; pi++) {
+                const text = paragraphText(cell.txBody.paragraphs[pi]);
+                let m: RegExpExecArray | null;
+                while ((m = pattern.exec(text)) !== null) {
+                  out.push({
+                    slideIndex: si,
+                    shapeId: shape.id,
+                    paragraphIndex: pi,
+                    start: m.index,
+                    end: m.index + m[0].length,
+                    match: m[0],
+                    preview: snippet(text, m.index, m.index + m[0].length),
+                    tableCell: { row: ri, column: ci },
+                  });
+                  if (m[0].length === 0) pattern.lastIndex++;
+                }
+              }
+            }
           }
         }
       });
@@ -196,10 +225,22 @@ export class PptxAgent {
 function slidePlainText(slide: Slide): string {
   const out: string[] = [];
   walkShapes(slide.shapes, (shape) => {
-    if (shape.kind !== "text") return;
-    for (const p of shape.txBody.paragraphs) {
-      const t = paragraphText(p);
-      if (t.length > 0) out.push(t);
+    if (shape.kind === "text") {
+      for (const p of shape.txBody.paragraphs) {
+        const t = paragraphText(p);
+        if (t.length > 0) out.push(t);
+      }
+      return;
+    }
+    if (shape.kind === "table") {
+      for (const row of shape.rows) {
+        for (const cell of row.cells) {
+          for (const p of cell.txBody.paragraphs) {
+            const t = paragraphText(p);
+            if (t.length > 0) out.push(t);
+          }
+        }
+      }
     }
   });
   return out.join("\n");
