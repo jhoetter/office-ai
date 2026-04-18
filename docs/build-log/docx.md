@@ -1850,6 +1850,252 @@ serializer are untouched.
   single line of `" | "`-joined cell text. Rare in practice; deeper
   nesting can be added later without changing the outer schema.
 
+## P2.1 + P2.2 — Visual wins + selection-aware toolbar
+
+**Date:** 2026-04-18.
+**Commit:** `233ac3a`.
+**Spec input:** none new (refines `spec/docx/agent-commands.md`).
+
+### What shipped
+
+**P2.1 — Immediate visual wins (model-safe).** The status strip in
+`Toolbar.tsx` now reports paragraph count (vs. raw block count, which
+over-counts opaque carriers and section breaks) and comment-thread
+count (vs. raw comment count, which double-counts threaded replies).
+Label format: `"{N} paragraphs · rev {R} · {C} comments"` with proper
+singular / plural handling. E2E specs (`enter-paragraph`, `add-comment`,
+`open-fixture`) updated to match.
+
+**P2.2 — Selection-aware toolbar + paragraph-format commands.**
+The toolbar finally reflects what the caret is sitting in:
+
+- New `activeMarkAttr<T>(state, markName, attrName)` helper in
+  `format-helpers.ts`: returns the dominant value across the PM
+  selection, the `MIXED` sentinel when the selection straddles
+  conflicting values, or `undefined` when no run carries the mark.
+- `paragraphStyleOptions(snapshot, activeStyle)` derives the style
+  picker from the loaded document instead of a hard-coded list.
+  Surfaces both English (`Heading1`) and German Word style ids
+  (`berschrift1`, `Untertitel`, `Titel`, `Verzeichnis`) under their
+  canonical English labels and always includes the active style so
+  the dropdown never silently drops an unrecognised value.
+- `currentParagraphId` and `currentParagraphAlignment` resolve the
+  PM caret to the typed paragraph node so alignment / indent buttons
+  target stable paragraph ids without an index round-trip.
+- `discoverNumId(snapshot, kind)` picks the first bullet vs. ordered
+  numbering definition out of `snapshot.root.numbering` so the
+  bullet / numbered-list buttons can dispatch `docx:set-paragraph-list`
+  against an existing definition. Auto-minting a fresh `<w:abstractNum>`
+  is deferred (P3+); the toolbar surfaces a clear toast when no
+  definition exists.
+
+Toolbar contract changes:
+
+- `FontSizePicker` is now controlled, displays "11" when the cursor
+  sits in an 11 pt run, "—" when the selection is mixed, and "Size"
+  only when no run carries a `font_size` mark.
+- New `FontFamilyPicker` with the same shape, populated from a default
+  `FONT_FAMILIES` list plus the current value when out-of-list.
+- `ColorPicker` triggers render an active-value swatch stripe under
+  the icon for both Color and Highlight pickers.
+- Alignment buttons wired to a new `docx:set-paragraph-alignment` and
+  reflect the caret paragraph's alignment via `aria-pressed`.
+- Indent / outdent buttons wired to a new `docx:set-paragraph-indent`
+  command at ±360 twips per click (Word's standard ¼-inch step).
+- Bullet / numbered list buttons wired to existing
+  `docx:set-paragraph-list` via `discoverNumId`.
+- Image-insert button placeholder added (full UX lands in P2.4); shows
+  an honest "arrives in P2.4" toast for now.
+
+New mutations in `@officeai/docx`:
+
+- `docx:set-paragraph-alignment` — sets / clears `<w:jc>` on a
+  paragraph identified by stable id (works in body and table cells
+  via `locateParagraph`). No-op writes short-circuit before bumping
+  `revision` / `dirty.body`.
+- `docx:set-paragraph-indent` — steps `indentation.left` by a signed
+  delta in twips, clamped to `[0, 31680]` (the OOXML legal range).
+  Drops any stale `<w:ind>` opaque carrier so the typed field stays
+  the single source of truth on re-serialize.
+
+CLI: new `docx align` and `docx indent` subcommands in `office-agent`
+expose the two new mutations on the wire (documented in
+`spec/agent/cli.md`).
+
+### Caveats
+
+- Auto-minting a numbering definition when none exists is deferred.
+  Bullet / numbered list buttons fail loudly via toast rather than
+  silently picking an arbitrary `numId`.
+- The German style-id whitelist is hard-coded; a generalised
+  language-pack mapping is a P4 polish item.
+
+## P2.3 — Unwrap SDT/TOC content into typed children for the renderer
+
+**Date:** 2026-04-18.
+**Commit:** `44ef6b3`.
+**Spec input:** updated `spec/docx/document-model.md` with the
+`children` + `subtreeDirty` fields on opaque carriers.
+
+### Problem
+
+Real-world DOCX files (e.g. the `masterthesis` fixture) wrap the
+table of contents, signature blocks, and other "managed content" in
+`<w:sdt>` / `<w:fldSimple>` / `<mc:AlternateContent>` carriers. Until
+now the parser treated these as opaque blobs and the renderer
+collapsed each subtree into a single italic preview chip — so the
+user saw `"Inhaltsverzeichnis 1 Einleitung 4 …"` as one
+undifferentiated line and could not tell that the document had a TOC
+at all.
+
+### What shipped
+
+- Extended `OpaqueBlock` / `OpaqueInline` with optional typed
+  `children` and a `subtreeDirty` flag. `raw` remains the source of
+  truth for serialization; `children` is a render-side projection
+  populated by the parser when the carrier has a recognised content
+  slot.
+- Taught `parseOpaqueBlock` / `parseInline` to descend into the
+  wrapper's content slot (`<w:sdtContent>` for SDTs,
+  `<mc:Choice>` / `<mc:Fallback>` for MC alternate content, direct
+  children for `w:fldSimple`, `w:smartTag`, `w:customXml`) and
+  parse the result as typed `BlockNode`s / `InlineNode`s.
+- New `opaque_block_wrapper` and `opaque_inline_wrapper` PM node
+  types render the unwrapped children as structured HTML
+  (`<h1>` / `<p>` via `paragraphHtmlTag`, with text alignment) inside
+  a soft-bordered wrapper carrying a `data-tag` chip so the user can
+  still see the carrier kind. **Read-only for now (atomic)** —
+  editing through a carrier is gated on the dirty-flag plumbing
+  introduced here.
+- Serializer dirty path: when `subtreeDirty === true` the wrapper is
+  rebuilt by splicing serialized children back into the content slot.
+  When `false` (the default) the cached `raw` subtree is re-emitted
+  byte-for-byte.
+- Added `fixtures/docx/real-world/07-toc-sdt.docx` (Masterthesis TOC)
+  and a serializer round-trip test that asserts every part hashes
+  identically while the SDT children are still present after parse.
+
+Closed work-packages W12–W18 of P2.3.
+
+### Caveats
+
+- Editing inside a TOC / SDT wrapper is intentionally blocked for
+  this iteration; the carrier still re-emits byte-identically as
+  long as no command flips `subtreeDirty`.
+- Only the four wrapper kinds above are unwrapped. Other opaque
+  carriers continue to render as preview chips.
+
+## P2.4 — Real `<img>` rendering + drag/drop/paste image insertion
+
+**Date:** 2026-04-18.
+**Commit:** `d697125`.
+**Spec input:** none new (extends the existing `docx:insert-image`
+contract).
+
+### What shipped
+
+Wires the existing `docx:insert-image` command up to a polished UX so
+"Insert Picture" works end-to-end:
+
+- `renderer/schema`: image node now carries
+  `dataUrl` / `width` / `height` / `alt` and emits a real
+  `<img class="pm-image">` when the resolver supplies a `data:` URL,
+  falling back to the `[image]` placeholder when not.
+- `renderer/doc-to-pm`: builds a per-render `MediaResolver` from
+  `snapshot.media` + `snapshot.relationships`, converts EMU → px, and
+  hands base64 data URLs to the schema.
+- Web app: dedicated hidden file input + toolbar button, shared
+  drag-over / drop / paste handler in `image-insert.ts` that validates
+  MIME, reads intrinsic size via `createImageBitmap` (with `<img>`
+  fallback), scales to the editor's content column, and dispatches
+  `docx:insert-image` at the caret's paragraph.
+- Styles: `.pm-image` keeps the displayed image inside the page column.
+- Tests: renderer asserts the dataUrl / intrinsic-size pipeline and
+  the `toDOM` placeholder fallback. New Playwright spec uploads a
+  1×1 PNG through the hidden input and asserts a `data:image/png`
+  `<img>` lands in the doc.
+
+Bumped the schema-validate self-test fixture pin to 7 to account for
+P2.3's `07-toc-sdt.docx`, which had silently broken `make verify`.
+
+### Caveats
+
+- Image resize handles, alt-text editing, and float/wrap controls are
+  still TODO. The model already carries the data; only the UX is
+  missing.
+
+## P2.5 — Real comment composer + selection-aware LLM dispatch
+
+**Date:** 2026-04-18.
+**Commit:** `e1e9472`.
+**Spec input:** refines `spec/docx/agent-commands.md` for
+selection-aware dispatch.
+
+### What shipped
+
+**W24 — Comment composer popover.** Replaced the long-standing
+hard-coded `text: "Looks good?"` recipe with a proper composer
+(`CommentComposer.tsx`). The popover anchors to the user's selection
+via `view.coordsAtPos`, quotes the selected snippet, lets the user
+write the actual comment body, supports `Cmd+Enter` to submit and
+`Escape` to dismiss, and gates the submit button behind a non-empty
+draft.
+
+**W25 — Selection-aware LLM dispatch.** `/api/llm` now accepts an
+optional `selection` field (`{ text, paragraph, runs? }`) and threads
+it into the user message so the model defaults to operating on the
+highlighted snippet instead of guessing from full-doc Markdown. The
+web client passes live selection context (text + range + paragraph
+index) on every prompt.
+
+**W26 — Shared `DOCX_COMMAND_TYPES` allow-list.** Both the route and
+`llm-client` now source the allow-list from the canonical
+`DOCX_COMMAND_TYPES` export in `@officeai/docx`, filtering out
+human-only commands (`accept-change` / `reject-change`). The client
+re-validates server output as defence-in-depth so a regressed route
+can't smuggle through a non-DOCX command.
+
+**W27 — Honest offline fallback.** Without `OPENAI_API_KEY` the old
+fallback inserted `"[AI] "` into the document — pretending to "edit"
+without an LLM. The new fallback attaches a single comment carrying
+the prompt verbatim, anchored to the live selection when there is
+one, with an explicit "no LLM was called" rationale that surfaces as
+a toast.
+
+Composer also exposes an optional "Draft with AI" affordance that
+calls the same `dispatchToLlm` pipeline; when a real LLM returns an
+`add-comment` payload its `text` is lifted into the textarea, and
+when the offline fallback runs the rationale becomes the draft (so
+the user sees the offline note up-front).
+
+E2E: `add-comment.spec.ts` now drives the composer end-to-end
+(fill body, submit) and adds a second case for `Escape` dismissal.
+`comments-sidebar.spec.ts` shares an `addComment` helper that goes
+through the composer instead of clicking the toolbar button alone.
+
+### Caveats
+
+- The composer has no preview / formatted body, no replies UI, no
+  thread resolution from the popover. Threaded replies still go
+  through the right-rail sidebar.
+
+## P2.6 — Eigenpal deep-dive synthesis + R1–R12 follow-up roadmap
+
+**Date:** 2026-04-18.
+**Commit:** `e95d745`.
+**Output:** `spec/docx/eigenpal-synthesis.md` (337 lines, marked
+explicitly as "research note, not a spec") + roadmap pointer in
+`docs/roadmap-docx-p1.md`.
+
+Code-level read of `eigenpal/docx-js-editor` (and its byte-identical
+mirror `docx-editor`). Captures the architectural deltas vs ours, the
+fidelity gaps worth closing, and 12 candidate follow-up items
+(R1–R7 fed directly into P3, R8–R12 into P4+) that the next roadmap
+pass should sequence. The single most consequential decision driven
+by this synthesis was choosing **single-PM + widget decorations**
+over their dual-rendering layout-painter for our paged renderer (see
+P3.3 and the long-form rationale in `spec/docx/paged-renderer.md`).
+
 ## P3 — Word-UX parity (style cascade, pages, header/footer authoring)
 
 **Date:** 2026-04-17 → 2026-04-18.
