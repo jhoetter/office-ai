@@ -150,6 +150,35 @@ export interface SetChartTypePayload {
   readonly chartType: "bar" | "line" | "pie" | "area";
 }
 
+// ─── F4 (Animations) payloads ─────────────────────────────────────────────
+
+export interface SetSlideTransitionPayload {
+  readonly slideIndex: number;
+  /** Pass `"none"` to remove an existing transition. */
+  readonly kind: "none" | "fade" | "push" | "wipe" | "split" | "cut";
+  readonly speed?: "slow" | "med" | "fast";
+}
+
+export interface AddShapeAnimationPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly effect: "appear" | "fade" | "fly-in" | "wipe";
+  /** Insert position in the main entrance sequence. Defaults to append. */
+  readonly at?: number;
+  readonly durationMs?: number;
+}
+
+export interface RemoveShapeAnimationPayload {
+  readonly slideIndex: number;
+  readonly animationId: NodeId;
+}
+
+export interface ReorderShapeAnimationsPayload {
+  readonly slideIndex: number;
+  /** New order, must be a permutation of the slide's current animations[].id. */
+  readonly order: ReadonlyArray<NodeId>;
+}
+
 // ─── Type tags ────────────────────────────────────────────────────────────
 
 export const PPTX_COMMAND_TYPES = {
@@ -171,6 +200,10 @@ export const PPTX_COMMAND_TYPES = {
   setChartTitle: "pptx:set-chart-title",
   setChartData: "pptx:set-chart-data",
   setChartType: "pptx:set-chart-type",
+  setSlideTransition: "pptx:set-slide-transition",
+  addShapeAnimation: "pptx:add-shape-animation",
+  removeShapeAnimation: "pptx:remove-shape-animation",
+  reorderShapeAnimations: "pptx:reorder-shape-animations",
 } as const;
 
 export type PptxCommandType = (typeof PPTX_COMMAND_TYPES)[keyof typeof PPTX_COMMAND_TYPES];

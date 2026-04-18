@@ -198,7 +198,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         preserveAspectRatio="xMidYMid meet"
         style={{ width: "100%", height: "100%", display: "block" }}
         dangerouslySetInnerHTML={{
-          __html: `<rect width="100%" height="100%" fill="white"/>${svgInner}${selectionOverlaySvg(slide, selectedId)}`,
+          __html: `<rect width="100%" height="100%" fill="white"/>${svgInner}${animationBadgesSvg(slide)}${selectionOverlaySvg(slide, selectedId)}`,
         }}
       />
       {editingId
@@ -217,6 +217,44 @@ function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
     }
   }
   return null;
+}
+
+/**
+ * F4: render a small badge near each shape that has at least one typed
+ * entrance animation. The badge shows the 1-based animation order so the
+ * user can see the entrance sequence at a glance. Drawn inside the SVG
+ * so it scales with the canvas, but with `pointer-events="none"` so it
+ * never steals clicks from the underlying shape.
+ */
+function animationBadgesSvg(slide: Slide): string {
+  if (slide.animations.length === 0) return "";
+  const byCNvPrId = new Map<number, Shape>();
+  collectShapesByCNvPrId(slide.shapes, byCNvPrId);
+  const parts: string[] = [];
+  for (const a of slide.animations) {
+    const shape = byCNvPrId.get(a.targetCNvPrId);
+    if (!shape) continue;
+    const box = shapeBoundingBox(shape);
+    if (!box) continue;
+    const r = 90000;
+    const cx = box.x + r;
+    const cy = box.y + r;
+    const order = a.order + 1;
+    parts.push(
+      `<g class="anim-badge" pointer-events="none">`,
+      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#facc15" stroke="#1f2937" stroke-width="12000"/>`,
+      `<text x="${cx}" y="${cy + 36000}" text-anchor="middle" font-size="100000" font-family="sans-serif" font-weight="700" fill="#1f2937">${order}</text>`,
+      `</g>`
+    );
+  }
+  return parts.join("");
+}
+
+function collectShapesByCNvPrId(shapes: ReadonlyArray<Shape>, out: Map<number, Shape>): void {
+  for (const s of shapes) {
+    if (s.cNvPrId > 0 && !out.has(s.cNvPrId)) out.set(s.cNvPrId, s);
+    if (s.kind === "group") collectShapesByCNvPrId(s.children, out);
+  }
 }
 
 function selectionOverlaySvg(slide: Slide, selectedId: string | null): string {

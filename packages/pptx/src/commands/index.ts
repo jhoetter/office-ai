@@ -22,6 +22,12 @@ import {
   setChartTitleHandler,
   setChartTypeHandler,
 } from "./chart-commands.js";
+import {
+  addShapeAnimationHandler,
+  removeShapeAnimationHandler,
+  reorderShapeAnimationsHandler,
+  setSlideTransitionHandler,
+} from "./animation-commands.js";
 
 export * from "./payloads.js";
 export { addSlideHandler } from "./add-slide.js";
@@ -46,6 +52,12 @@ export {
   setChartTitleHandler,
   setChartTypeHandler,
 } from "./chart-commands.js";
+export {
+  addShapeAnimationHandler,
+  removeShapeAnimationHandler,
+  reorderShapeAnimationsHandler,
+  setSlideTransitionHandler,
+} from "./animation-commands.js";
 
 export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot>> = [
   addSlideHandler,
@@ -66,6 +78,10 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setChartTitleHandler,
   setChartDataHandler,
   setChartTypeHandler,
+  setSlideTransitionHandler,
+  addShapeAnimationHandler,
+  removeShapeAnimationHandler,
+  reorderShapeAnimationsHandler,
 ] as ReadonlyArray<CommandHandler<unknown, PptxSnapshot>>;
 
 export const pptxHandlersById: ReadonlyMap<string, CommandHandler<unknown, PptxSnapshot>> =

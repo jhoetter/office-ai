@@ -2,6 +2,7 @@ import { ooxml } from "@officeai/core";
 import type {
   ChartPart,
   ChartShape,
+  EntranceAnimation,
   GroupShape,
   OpaqueShape,
   OpaqueXml,
@@ -139,7 +140,14 @@ function serializeSlideXml(slide: Slide): string {
   // children to mirror PowerPoint's element order: cSld → clrMapOvr →
   // transition → timing → extLst.
   if (slide.transition) sldChildren.push(transitionToEntry(slide.transition));
-  if (slide.timingTailRaw) sldChildren.push(opaqueToEntry(slide.timingTailRaw));
+  if (slide.timingTailRaw) {
+    sldChildren.push(opaqueToEntry(slide.timingTailRaw));
+  } else if (slide.animations.length > 0) {
+    // F4: animations were edited via typed commands, which dropped the
+    // verbatim <p:timing> blob. Rebuild a minimal timing tree from the
+    // typed list so the entrance sequence survives the roundtrip.
+    sldChildren.push(timingFromAnimations(slide.animations));
+  }
   const sld = makeEntry("p:sld", sldChildren, slide.slideRootAttrs);
 
   return ooxml.serializeXml([sld]);
@@ -152,6 +160,109 @@ function transitionToEntry(t: SlideTransition): Record<string, unknown> {
     inner.push(makeEntry(`p:${t.kind}`, []));
   }
   return makeEntry("p:transition", inner, t.speed ? { spd: t.speed } : {});
+}
+
+// ─── F4: Build a fresh <p:timing> tree from typed entrance animations ───
+//
+// Mirrors the structure PowerPoint emits for click-effect entrance
+// sequences and what `parseSlideTiming` expects:
+//
+//   <p:timing>
+//     <p:tnLst>
+//       <p:par>
+//         <p:cTn id=1 dur="indefinite" restart="never" nodeType="tmRoot">
+//           <p:childTnLst>
+//             <p:seq concurrent="1" nextAc="seek">
+//               <p:cTn id=2 dur="indefinite" nodeType="mainSeq">
+//                 <p:childTnLst>
+//                   <p:par>          ← per typed animation
+//                     <p:cTn id=N presetID=X presetClass="entr" …>
+//                       <p:childTnLst><p:set>…<p:spTgt spid="…"/>…</p:set></p:childTnLst>
+//                     </p:cTn>
+//                   </p:par>
+//                 </p:childTnLst>
+//               </p:cTn>
+//             </p:seq>
+//           </p:childTnLst>
+//         </p:cTn>
+//       </p:par>
+//     </p:tnLst>
+//   </p:timing>
+const ENTRANCE_EFFECT_PRESET_ID: Readonly<Record<string, number>> = {
+  appear: 1,
+  "fly-in": 2,
+  fade: 3,
+  wipe: 10,
+};
+
+function timingFromAnimations(
+  animations: ReadonlyArray<EntranceAnimation>
+): Record<string, unknown> {
+  let cTnId = 3; // 1 = tmRoot, 2 = mainSeq, ≥3 = per-animation cTn ids
+  const animPars: unknown[] = [];
+  for (const a of animations) {
+    const presetId = ENTRANCE_EFFECT_PRESET_ID[a.effect] ?? 1;
+    const animCTnId = cTnId++;
+    const innerCTnId = cTnId++;
+    const setEntry = makeEntry("p:set", [
+      makeEntry("p:cBhvr", [
+        makeEntry("p:cTn", [], {
+          id: String(innerCTnId),
+          dur: "1",
+          fill: "hold",
+        }),
+        makeEntry("p:tgtEl", [
+          makeEntry("p:spTgt", [], { spid: String(a.targetCNvPrId) }),
+        ]),
+        makeEntry("p:attrNameLst", [
+          makeEntry("p:attrName", [{ "#text": "style.visibility" }]),
+        ]),
+      ]),
+      makeEntry("p:to", [
+        makeEntry("p:strVal", [], { val: "visible" }),
+      ]),
+    ]);
+    const animCTnAttrs: Record<string, string> = {
+      id: String(animCTnId),
+      presetID: String(presetId),
+      presetClass: "entr",
+      presetSubtype: "0",
+      fill: "hold",
+      nodeType: "clickEffect",
+    };
+    if (a.durationMs !== undefined) animCTnAttrs.dur = String(a.durationMs);
+    animPars.push(
+      makeEntry("p:par", [
+        makeEntry(
+          "p:cTn",
+          [makeEntry("p:childTnLst", [setEntry])],
+          animCTnAttrs
+        ),
+      ])
+    );
+  }
+  const seq = makeEntry(
+    "p:seq",
+    [
+      makeEntry(
+        "p:cTn",
+        [makeEntry("p:childTnLst", animPars)],
+        { id: "2", dur: "indefinite", nodeType: "mainSeq" }
+      ),
+    ],
+    { concurrent: "1", nextAc: "seek" }
+  );
+  const tmRoot = makeEntry(
+    "p:par",
+    [
+      makeEntry(
+        "p:cTn",
+        [makeEntry("p:childTnLst", [seq])],
+        { id: "1", dur: "indefinite", restart: "never", nodeType: "tmRoot" }
+      ),
+    ]
+  );
+  return makeEntry("p:timing", [makeEntry("p:tnLst", [tmRoot])]);
 }
 
 function shapeToEntry(shape: Shape): Record<string, unknown> {
