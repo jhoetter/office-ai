@@ -280,21 +280,45 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
       }),
     [props.slide, props.slideSize, props.mediaUrls, props.theme, props.charts]
   );
+  // CSS-only `aspect-ratio` + `max-width/max-height: 100%` collapses to
+  // 0×0 inside a flex parent because the inline SVG carries no
+  // intrinsic size (only viewBox), so neither axis ever resolves to a
+  // definite length. Measure the available area and compute the
+  // largest aspect-preserving rect that fits — this is what made the
+  // present-mode stage render as a solid black screen.
+  const fitRef = React.useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = React.useState<{ width: number; height: number } | null>(null);
+  React.useLayoutEffect(() => {
+    const el = fitRef.current;
+    if (!el) return;
+    const update = (): void => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const containerAspect = rect.width / rect.height;
+      const w = containerAspect > props.aspectRatio ? rect.height * props.aspectRatio : rect.width;
+      const h = containerAspect > props.aspectRatio ? rect.height : rect.width / props.aspectRatio;
+      setSize((prev) =>
+        prev && Math.abs(prev.width - w) < 0.5 && Math.abs(prev.height - h) < 0.5 ? prev : { width: w, height: h }
+      );
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [props.aspectRatio]);
   return (
     <div
-      className="bg-white shadow-2xl"
-      style={{
-        aspectRatio: String(props.aspectRatio),
-        // Fit-to-container while preserving aspect; the SVG itself
-        // uses `preserveAspectRatio="xMidYMid meet"` so letter-/
-        // pillar-boxing happens inside the white surface.
-        maxWidth: "100%",
-        maxHeight: "100%",
-        width: "auto",
-        height: "auto",
-      }}
+      ref={fitRef}
+      className="flex h-full w-full items-center justify-center"
     >
-      <div style={{ width: "100%", height: "100%" }} dangerouslySetInnerHTML={{ __html: svg }} />
+      {size ? (
+        <div
+          className="bg-white shadow-2xl"
+          style={{ width: size.width, height: size.height }}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : null}
     </div>
   );
 }
