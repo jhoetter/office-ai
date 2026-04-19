@@ -226,6 +226,31 @@ describe("P0 shape commands", () => {
     expect(xml).toContain('y="7654321"');
   });
 
+  it("set-position accepts off-slide coordinates and round-trips them through serialize/parse", async () => {
+    // The editor's "scratch canvas" lets users park shapes outside the
+    // slide rectangle (negative x / y, or x/y past the slide width/
+    // height). The data model has no clamp, the serializer writes the
+    // raw EMU values, and the parser reads them back unchanged — so a
+    // round-trip must preserve the off-slide position exactly. If a
+    // future change starts clamping, this test catches the regression
+    // before users notice their parked shapes snapping into the slide.
+    const agent = await loadAgent("04-multi-shape.pptx");
+    const slide = agent.getSnapshot().root.slides[0];
+    const ts = slide.shapes.find((s) => s.kind === "text")!;
+    const offSlideX = -500_000;
+    const offSlideY = slide.shapes.length > 0 ? 12_000_000 : -1_000_000;
+    await agent.applyCommand({
+      type: "pptx:set-position",
+      payload: { slideIndex: 0, shapeId: ts.id, x: offSlideX, y: offSlideY },
+      source: "system",
+    });
+    const out = await agent.exportFile();
+    const reparsed = await parsePptx(out);
+    const reparsedShape = reparsed.root.slides[0].shapes.find((s) => s.id === ts.id || s.cNvPrId === ts.cNvPrId);
+    expect(reparsedShape).toBeDefined();
+    expect(reparsedShape?.position).toEqual({ xEmu: offSlideX, yEmu: offSlideY });
+  });
+
   it("set-position rejects opaque shapes & non-finite values", async () => {
     const agent = await loadAgent("04-multi-shape.pptx");
     const slide = agent.getSnapshot().root.slides[0];
