@@ -1,12 +1,15 @@
 import { ooxml } from "@officeai/core";
 import { pxToEmu, type ImageBlob, type SheetImage } from "../model/index.js";
+import type { SheetChart } from "../model/types.js";
 import { DRAWING_REL_TYPE, IMAGE_REL_TYPE } from "../parser/drawings.js";
+import { CHART_REL_TYPE } from "./charts.js";
 
 export const DRAWING_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawing+xml";
 
 const SPREADSHEET_DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
 const DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const RELS_OFFICE_DOC_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const DRAWINGML_CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 
 /**
  * Serialize a sheet's `images` array into an `xdr:wsDr` XML payload.
@@ -24,14 +27,19 @@ const RELS_OFFICE_DOC_NS = "http://schemas.openxmlformats.org/officeDocument/200
  */
 export function serializeDrawingPart(
   images: ReadonlyArray<SheetImage>,
-  embedRidByMediaPath: ReadonlyMap<string, string>
+  embedRidByMediaPath: ReadonlyMap<string, string>,
+  charts: ReadonlyArray<SheetChart> = [],
+  chartRidByChartId: ReadonlyMap<string, string> = new Map()
 ): string {
   const parts: string[] = [];
-  let nextPicId = 1;
+  // We share the OOXML id namespace between pictures and graphic
+  // frames; both live inside `xdr:nvSpPr/cNvPr/@id` and Excel will
+  // refuse the file if two anchors collide on it.
+  let nextElemId = 1;
   for (const img of images) {
     const rid = embedRidByMediaPath.get(img.mediaRef);
     if (!rid) continue;
-    const id = nextPicId++;
+    const id = nextElemId++;
     const name = escapeXmlAttr(img.name ?? `Picture ${id}`);
     const altText = img.altText ? ` descr="${escapeXmlAttr(img.altText)}"` : "";
 
@@ -87,6 +95,61 @@ export function serializeDrawingPart(
     );
   }
 
+  for (const chart of charts) {
+    const rid = chartRidByChartId.get(chart.id);
+    if (!rid) continue;
+    const id = nextElemId++;
+    const name = escapeXmlAttr(chart.title ?? `Chart ${id}`);
+
+    const fromOff = {
+      cx: pxToEmu(chart.anchor.fromOffsetXPx),
+      cy: pxToEmu(chart.anchor.fromOffsetYPx),
+    };
+    const ext = {
+      cx: pxToEmu(chart.anchor.widthPx),
+      cy: pxToEmu(chart.anchor.heightPx),
+    };
+    const toRow = chart.anchor.fromRow + 1;
+    const toCol = chart.anchor.fromCol + 1;
+
+    parts.push(
+      `<xdr:twoCellAnchor editAs="${escapeXmlAttr(chart.anchor.editAs)}">` +
+        `<xdr:from>` +
+        `<xdr:col>${chart.anchor.fromCol}</xdr:col>` +
+        `<xdr:colOff>${fromOff.cx}</xdr:colOff>` +
+        `<xdr:row>${chart.anchor.fromRow}</xdr:row>` +
+        `<xdr:rowOff>${fromOff.cy}</xdr:rowOff>` +
+        `</xdr:from>` +
+        `<xdr:to>` +
+        `<xdr:col>${toCol}</xdr:col>` +
+        `<xdr:colOff>0</xdr:colOff>` +
+        `<xdr:row>${toRow}</xdr:row>` +
+        `<xdr:rowOff>0</xdr:rowOff>` +
+        `</xdr:to>` +
+        `<xdr:graphicFrame macro="">` +
+        `<xdr:nvGraphicFramePr>` +
+        `<xdr:cNvPr id="${id}" name="${name}"/>` +
+        `<xdr:cNvGraphicFramePr/>` +
+        `</xdr:nvGraphicFramePr>` +
+        // The transform inside the graphic frame is required by some
+        // older Office builds even though `from`/`to` already pin the
+        // box. Excel happily round-trips zeros here when `editAs` is
+        // `oneCell` / `twoCell`.
+        `<xdr:xfrm>` +
+        `<a:off x="0" y="0"/>` +
+        `<a:ext cx="${ext.cx}" cy="${ext.cy}"/>` +
+        `</xdr:xfrm>` +
+        `<a:graphic>` +
+        `<a:graphicData uri="${DRAWINGML_CHART_NS}">` +
+        `<c:chart xmlns:c="${DRAWINGML_CHART_NS}" xmlns:r="${RELS_OFFICE_DOC_NS}" r:id="${escapeXmlAttr(rid)}"/>` +
+        `</a:graphicData>` +
+        `</a:graphic>` +
+        `</xdr:graphicFrame>` +
+        `<xdr:clientData/>` +
+        `</xdr:twoCellAnchor>`
+    );
+  }
+
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<xdr:wsDr xmlns:xdr="${SPREADSHEET_DRAWING_NS}" xmlns:a="${DRAWINGML_NS}">` +
@@ -103,8 +166,13 @@ export function serializeDrawingPart(
 export function buildDrawingRels(
   drawingPartPath: string,
   images: ReadonlyArray<SheetImage>,
-  workbookImages: ReadonlyMap<string, ImageBlob>
-): { graph: ooxml.RelationshipGraph; embedRidByMediaPath: Map<string, string> } {
+  workbookImages: ReadonlyMap<string, ImageBlob>,
+  charts: ReadonlyArray<{ readonly id: string; readonly chartPartPath: string }> = []
+): {
+  graph: ooxml.RelationshipGraph;
+  embedRidByMediaPath: Map<string, string>;
+  chartRidByChartId: Map<string, string>;
+} {
   const relsPath = ooxml.RelationshipGraph.relsPathFor(drawingPartPath);
   const graph = new ooxml.RelationshipGraph(relsPath, []);
   const embedRidByMediaPath = new Map<string, string>();
@@ -115,7 +183,13 @@ export function buildDrawingRels(
     const r = graph.add({ type: IMAGE_REL_TYPE, target });
     embedRidByMediaPath.set(img.mediaRef, r.id);
   }
-  return { graph, embedRidByMediaPath };
+  const chartRidByChartId = new Map<string, string>();
+  for (const c of charts) {
+    const target = relsRelativeTarget(drawingPartPath, c.chartPartPath);
+    const r = graph.add({ type: CHART_REL_TYPE, target });
+    chartRidByChartId.set(c.id, r.id);
+  }
+  return { graph, embedRidByMediaPath, chartRidByChartId };
 }
 
 /**

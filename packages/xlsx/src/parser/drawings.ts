@@ -79,6 +79,14 @@ export function resolveDrawings(
   const images: SheetImage[] = [];
   const mediaBlobs: ImageBlob[] = [];
   const seenMedia = new Map<string, ImageBlob>();
+  // Track whether the drawing part contains anything we don't model
+  // (chart frames, vector shapes, group shapes, …). If so we MUST
+  // NOT claim ownership of the part — re-serialising would only emit
+  // the picture anchors we understand, silently dropping the rest.
+  // Letting it stay in `opaqueParts` keeps mixed image+chart files
+  // round-tripping byte-perfectly, at the cost of treating images on
+  // those sheets as read-only.
+  let hasUnmodeledAnchor = false;
 
   for (const child of root.children) {
     const el = ooxml.asElement(child);
@@ -99,7 +107,12 @@ export function resolveDrawings(
     if (!decoded) continue;
 
     const pic = findDescendant(el.children, "xdr:pic");
-    if (!pic) continue;
+    if (!pic) {
+      // Chart frames, group shapes, vector shapes — anything that
+      // isn't a picture goes through the opaque-preservation path.
+      hasUnmodeledAnchor = true;
+      continue;
+    }
     const blipFill = ooxml.findChild(pic.children, "xdr:blipFill");
     const blip = blipFill ? ooxml.findChild(blipFill.children, "a:blip") : null;
     const embedId = blip?.attrs["r:embed"];
@@ -130,6 +143,12 @@ export function resolveDrawings(
     });
   }
 
+  if (hasUnmodeledAnchor) {
+    // Surrender the drawing part to the opaque round-trip path.
+    // Drop the would-be modeled images so the model doesn't show
+    // pictures whose underlying part we can't re-emit safely.
+    return { images: [], mediaBlobs: [] };
+  }
   return { drawingPartPath, images, mediaBlobs };
 }
 

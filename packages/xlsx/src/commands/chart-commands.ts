@@ -1,7 +1,7 @@
-import { CommandError, type CommandHandler } from "@officeai/core";
+import { CommandError, ooxml, type CommandHandler } from "@officeai/core";
 import type { ImageAnchor } from "../model/drawings.js";
 import type { Sheet, SheetChart, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
-import { buildDiff, evolveSnapshot, replaceSheet } from "./helpers.js";
+import { buildDiff, evolveSnapshot, replaceSheet, type PartialDirtyFlags } from "./helpers.js";
 import type {
   AddChartPayload,
   MoveChartPayload,
@@ -12,6 +12,24 @@ import { parseRangeRef, resolveSheet } from "./validation.js";
 
 const DEFAULT_WIDTH_PX = 480;
 const DEFAULT_HEIGHT_PX = 280;
+
+/**
+ * Chart mutations always touch the same triplet: the sheet itself
+ * (so the worksheet XML can splice in the `<drawing>` ref), the
+ * sheet's drawing part (where the `xdr:graphicFrame` lives), the
+ * sheet's rels (for the drawing relationship) and content-types
+ * (for the chart override entries the serializer materialises from
+ * the container after the drawing pass). We bundle them up here so
+ * the three command handlers stay in lock-step.
+ */
+function chartDirtyPatch(sheet: Sheet): PartialDirtyFlags {
+  return {
+    sheets: [sheet.partPath],
+    drawings: [sheet.partPath],
+    sheetRels: [ooxml.RelationshipGraph.relsPathFor(sheet.partPath)],
+    contentTypes: true,
+  };
+}
 
 /**
  * `xlsx:add-chart` — drop a typed chart on a worksheet.
@@ -62,7 +80,7 @@ export const addChartHandler: CommandHandler<AddChartPayload, XlsxSnapshot> = {
 
     const nextSheet: Sheet = { ...sheet, charts: [...sheet.charts, newChart] };
     const nextWorkbook: XlsxWorkbook = replaceSheet(snapshot.root, nextSheet);
-    const next = evolveSnapshot(snapshot, nextWorkbook, { sheets: [sheet.partPath] });
+    const next = evolveSnapshot(snapshot, nextWorkbook, chartDirtyPatch(sheet));
     return {
       next,
       diff: buildDiff(snapshot.revision, next.revision, [
@@ -93,9 +111,7 @@ export const removeChartHandler: CommandHandler<RemoveChartPayload, XlsxSnapshot
     const charts = sheet.charts.slice();
     charts.splice(idx, 1);
     const nextSheet: Sheet = { ...sheet, charts };
-    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, nextSheet), {
-      sheets: [sheet.partPath],
-    });
+    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, nextSheet), chartDirtyPatch(sheet));
     return {
       next,
       diff: buildDiff(snapshot.revision, next.revision, [
@@ -132,9 +148,7 @@ export const moveChartHandler: CommandHandler<MoveChartPayload, XlsxSnapshot> = 
     const nextChart: SheetChart = { ...chart, anchor: nextAnchor };
     const charts = sheet.charts.slice();
     charts[idx] = nextChart;
-    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, { ...sheet, charts }), {
-      sheets: [sheet.partPath],
-    });
+    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, { ...sheet, charts }), chartDirtyPatch(sheet));
     return {
       next,
       diff: buildDiff(snapshot.revision, next.revision, [
@@ -170,9 +184,7 @@ export const resizeChartHandler: CommandHandler<ResizeChartPayload, XlsxSnapshot
     };
     const charts = sheet.charts.slice();
     charts[idx] = nextChart;
-    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, { ...sheet, charts }), {
-      sheets: [sheet.partPath],
-    });
+    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, { ...sheet, charts }), chartDirtyPatch(sheet));
     return {
       next,
       diff: buildDiff(snapshot.revision, next.revision, [
