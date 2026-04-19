@@ -229,6 +229,19 @@ roundtrip-libre-all: roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-p
 	@echo ""
 	@echo "✅ roundtrip-libre-all: docx + xlsx + pptx fixtures roundtrip clean."
 
+# ── Attribute-fidelity round-trip audit ──────────────────────────────
+# Parses → exports → re-parses every fixture and counts the curated
+# set of formatting attributes (font, size, alignment, list, page,
+# charts, …) on both sides. Fails-soft (exit 0) but writes a JSON
+# summary to docs/build-log/roundtrip-audit-night.json that ops can
+# diff between runs to catch regressions. Cheap (~ 1s for the 30
+# bundled fixtures) so it's safe to call from any developer machine
+# without LibreOffice installed.
+.PHONY: audit-roundtrip
+audit-roundtrip:
+	pnpm --filter @officeai/docx --filter @officeai/xlsx --filter @officeai/pptx build
+	node scripts/audit-roundtrip.mjs
+
 # `e2e-web` builds the workspace first so apps/web's Next.js compile and
 # the @officeai/docx dist outputs are ready, then runs Playwright against
 # `next start`. Run `pnpm --filter @officeai/web e2e:install` once to

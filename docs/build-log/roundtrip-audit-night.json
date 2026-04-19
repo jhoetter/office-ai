@@ -1,0 +1,176 @@
+{
+  "generatedAt": "2026-04-19T23:46:46.311Z",
+  "formats": [
+    {
+      "id": "docx",
+      "total": 11,
+      "ok": 11,
+      "fixtures": [
+        {
+          "fixture": "fixtures/docx/real-world/01-styled-letter.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/02-report-headers-footers.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/03-numbered-list.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/04-table-grid.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/05-inline-image.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/06-comments-and-changes.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/07-toc-sdt.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/08-shaded-callout-table.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/09-multi-column-section.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/10-landscape-section.docx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/docx/real-world/11-textbox.docx",
+          "ok": true,
+          "losses": []
+        }
+      ]
+    },
+    {
+      "id": "xlsx",
+      "total": 6,
+      "ok": 6,
+      "fixtures": [
+        {
+          "fixture": "fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/xlsx/synthetic/02-multi-sheet.xlsx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/xlsx/synthetic/03-formulas-basic.xlsx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/xlsx/synthetic/04-merged-and-formatted.xlsx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/xlsx/synthetic/05-comments-hyperlinks.xlsx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/xlsx/synthetic/06-large-grid.xlsx",
+          "ok": true,
+          "losses": []
+        }
+      ]
+    },
+    {
+      "id": "pptx",
+      "total": 13,
+      "ok": 13,
+      "fixtures": [
+        {
+          "fixture": "fixtures/pptx/synthetic/01-blank.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/02-title-only.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/03-title-and-content.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/04-multi-shape.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/05-with-image.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/06-with-table.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/07-multi-slide.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/08-large-deck.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/09-with-chart.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/synthetic/10-with-anim.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/real/01-styled-deck.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/real/02-mixed-media.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
+          "fixture": "fixtures/pptx/real/03-large-real-deck.pptx",
+          "ok": true,
+          "losses": []
+        }
+      ]
+    }
+  ]
+}
