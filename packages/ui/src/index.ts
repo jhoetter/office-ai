@@ -28,6 +28,9 @@ export { CommentComposer, type CommentComposerProps } from "./primitives/comment
 /* Realtime presence */
 export { PresenceStack, type PresenceStackProps, type PresencePeer } from "./primitives/presence-stack";
 
+/* Toolbar grouping (Word/Excel/PowerPoint cluster + caption) */
+export { ToolbarGroup, type ToolbarGroupProps } from "./primitives/toolbar-group";
+
 /* Hooks */
 export { useFocusTrap } from "./hooks/use-focus-trap";
 

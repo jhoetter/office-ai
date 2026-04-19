@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CommentComposer, CommentsSidebar, cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   EditorShell,
@@ -315,6 +316,7 @@ export function XlsxEditor({
   initialSource,
   initialBlank,
 }: XlsxEditorProps = {}): ReactNode {
+  const { t } = useTranslator();
   const agentRef = useRef<XlsxAgent | null>(null);
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
@@ -3958,8 +3960,25 @@ export function XlsxEditor({
           )
         }
         statusBarLeft={
-          <span className="text-[11px] tabular-nums text-tertiary">
-            rev {revision} · {pendingCount} pending
+          <span className="flex items-center gap-3 text-[11px] tabular-nums text-tertiary">
+            <span>
+              rev {revision} · {pendingCount} pending
+            </span>
+            {formulaEditing ? (
+              <span
+                className="inline-flex items-center gap-1 rounded bg-[var(--accent-light)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] shadow-sm"
+                data-testid="xlsx-formula-ref-hint"
+                aria-live="polite"
+              >
+                {/*
+                  Surfaces what cell-grid clicks do while the formula
+                  bar is open. Without this hint users routinely think
+                  clicks deselect their formula draft; in fact they
+                  insert the picked cell as a reference.
+                */}
+                {t("xlsx.selection.formulaPickHint")}
+              </span>
+            ) : null}
           </span>
         }
         body={

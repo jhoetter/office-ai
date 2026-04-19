@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommentComposer, CommentsSidebar } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import { createPptxCommentsProvider } from "./pptxCommentsProvider";
 import { PptxAgent } from "@officeai/pptx/agent";
 import {
@@ -2114,6 +2115,13 @@ export function PptxEditor({
             notesOpen={notesOpen}
           />
         }
+        statusBarLeft={
+          <PptxSelectionHint
+            selectedCount={selectedShapeIds.length}
+            slideIndex={activeIndex}
+            slideCount={slides.length}
+          />
+        }
         statusBarRight={
           <ZoomControl
             value={zoom}
@@ -2431,3 +2439,40 @@ async function readIntrinsicSize(
     img.src = url;
   });
 }
+
+/**
+ * Status-bar hint that surfaces "what is selected" and "where am I"
+ * for the slide canvas. Live region so screen readers announce
+ * selection changes; tabular numerals so the slide counter doesn't
+ * jitter as the index advances.
+ */
+function PptxSelectionHint({
+  selectedCount,
+  slideIndex,
+  slideCount,
+}: {
+  readonly selectedCount: number;
+  readonly slideIndex: number;
+  readonly slideCount: number;
+}): ReactNode {
+  const { t } = useTranslator();
+  return (
+    <span
+      className="flex items-center gap-3 text-[11px] tabular-nums text-tertiary"
+      data-testid="pptx-selection-hint"
+      aria-live="polite"
+    >
+      {slideCount > 0 ? (
+        <span>{t("status.slideOf", { n: slideIndex + 1, total: slideCount })}</span>
+      ) : null}
+      {selectedCount > 0 ? (
+        <span className="rounded bg-[var(--accent-light)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+          {t("status.shapesSelected", { n: selectedCount })}
+        </span>
+      ) : (
+        <span className="opacity-60">{t("status.selectionEmpty")}</span>
+      )}
+    </span>
+  );
+}
+

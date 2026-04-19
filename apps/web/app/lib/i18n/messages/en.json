@@ -249,6 +249,7 @@
     },
     "selection": {
       "selectingForFormula": "Selecting reference for formula",
+      "formulaPickHint": "Click cells to insert reference · Esc to cancel",
       "rangeSelected": "{range} selected",
       "cellSelected": "{cell} selected",
       "sheet": "Sheet"

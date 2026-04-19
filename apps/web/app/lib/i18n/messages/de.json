@@ -249,6 +249,7 @@
     },
     "selection": {
       "selectingForFormula": "Bezug für Formel auswählen",
+      "formulaPickHint": "Zellen anklicken zum Einfügen des Bezugs · Esc zum Abbrechen",
       "rangeSelected": "{range} ausgewählt",
       "cellSelected": "{cell} ausgewählt",
       "sheet": "Tabellenblatt"
