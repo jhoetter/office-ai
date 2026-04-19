@@ -128,18 +128,25 @@ export function LoadingScreen({
  * value parsing for CSS variables.
  *
  * The accent ring's `animationDelay` is anchored to the wall clock
- * (negative so it counts as "already running"). The page-level
- * splash means the badge usually mounts only once per bootstrap, so
- * this mostly serves as defence-in-depth: if the badge ever does
- * remount (e.g. the `fill` variant is reused elsewhere alongside a
- * `splash`), the freshly-mounted ring picks up the same rotation
- * angle the old one was at instead of snapping back to 0°.
+ * (negative so it counts as "already running") so that if the badge
+ * ever remounts (e.g. the `fill` variant is reused elsewhere
+ * alongside a `splash`), the freshly-mounted ring picks up the same
+ * rotation angle the old one was at instead of snapping back to 0°.
+ *
+ * The delay is intentionally set *after* mount: SSR'd HTML must be
+ * deterministic, and `Date.now()` differs between the server render
+ * and client hydration, which would trip React's hydration check
+ * (the inline `style` would mismatch). We render with no delay on
+ * the server and the first client paint, then sync the wall-clock
+ * delay in an effect — visually indistinguishable for a fresh mount,
+ * and only the remount-mid-bootstrap edge case relies on it anyway.
  */
 function ProductBadge({ product }: { readonly product: ProductKind }): ReactNode {
   const Icon = PRODUCT_ICON[product];
-  const [animationDelay] = useState(
-    () => `${-((Date.now() % SPIN_DURATION_MS) / 1000)}s`
-  );
+  const [animationDelay, setAnimationDelay] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    setAnimationDelay(`${-((Date.now() % SPIN_DURATION_MS) / 1000)}s`);
+  }, []);
   return (
     <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-hover text-secondary">
       <Icon size={22} />
