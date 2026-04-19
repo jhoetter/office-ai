@@ -62,6 +62,8 @@ import {
   snapshotToSlideSvg,
   snapshotToSvgZip,
 } from "./lib/export-images";
+import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import { applyXlsxRangeToPptx } from "@/lib/embed/applyXlsxRangeToPptx";
 
 const SCALE_OPTIONS = {
   type: "select" as const,
@@ -523,6 +525,47 @@ export function PptxEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [activeIndex, selectedShapeIds]);
+
+  // Cross-format embed paste (XLSX → PPTX text box). Gated on the
+  // NEXT_PUBLIC_OAI_EMBED flag. Lives on `window` rather than a
+  // canvas-scoped element because the slide canvas itself doesn't
+  // own a tab-focusable host (selection is mouse-driven), and the
+  // paste shortcut should land on whichever slide is active.
+  useEffect(() => {
+    if (!isEmbedEnabled()) return;
+    const isFormField = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (target.isContentEditable) return true;
+      return false;
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isFormField(e.target)) return;
+      const raw = e.clipboardData?.getData(EMBED_MIME);
+      const env = parseEnvelope(raw);
+      if (!env || env.payload.kind !== "xlsx-range") return;
+      const agent = agentRef.current;
+      if (!agent) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const slideIndex = slideIndexRef.current;
+      const payload = env.payload;
+      void (async () => {
+        try {
+          await applyXlsxRangeToPptx({
+            agent,
+            snapshot: payload.snapshot,
+            slideIndex,
+          });
+        } catch (err) {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        }
+      })();
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [pushToast]);
 
   const handleFile = useCallback(
     async (file: File, handle?: FileSystemFileHandle) => {

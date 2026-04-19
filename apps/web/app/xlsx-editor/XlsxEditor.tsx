@@ -106,6 +106,7 @@ import {
   writeToSystemClipboard,
   readFromSystemClipboard,
 } from "./clipboard";
+import { EMBED_MIME } from "@/lib/embed/envelope";
 
 const SAMPLE_NAME = "sample.xlsx";
 const BLANK_NAME = "Untitled.xlsx";
@@ -1144,6 +1145,7 @@ export function XlsxEditor({
         const payload = marshalClipboard(snap);
         e.clipboardData.setData("text/plain", payload.tsv);
         e.clipboardData.setData("text/html", payload.html);
+        if (payload.embed) e.clipboardData.setData(EMBED_MIME, payload.embed);
         setMarchingAnts({
           sheet: activeSheet.name,
           r1: range.start.row,
@@ -1174,6 +1176,7 @@ export function XlsxEditor({
         const payload = marshalClipboard(snap);
         e.clipboardData.setData("text/plain", payload.tsv);
         e.clipboardData.setData("text/html", payload.html);
+        if (payload.embed) e.clipboardData.setData(EMBED_MIME, payload.embed);
         setMarchingAnts({
           sheet: activeSheet.name,
           r1: range.start.row,

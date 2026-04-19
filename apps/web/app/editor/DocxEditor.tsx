@@ -89,6 +89,8 @@ import { CommentComposer } from "./CommentComposer";
 import { collectRevisions } from "@/lib/format-helpers";
 import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
+import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
 import {
   PresenceSlot,
   roomIdForSource,
@@ -1179,6 +1181,34 @@ export function DocxEditor({
       void handleImageFile(file);
     };
     const onPaste = (e: ClipboardEvent) => {
+      // 1) Cross-format embed (XLSX → DOCX table). Gated on the
+      //    NEXT_PUBLIC_OAI_EMBED flag so existing PM HTML-table
+      //    paste behaviour stays the default in production.
+      if (isEmbedEnabled()) {
+        const raw = e.clipboardData?.getData(EMBED_MIME);
+        const env = parseEnvelope(raw);
+        if (env && env.payload.kind === "xlsx-range") {
+          const agent = agentRef.current;
+          const mount = mountRef.current;
+          if (!agent) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const paragraphIndex = mount ? currentParagraphIndex(mount.view.state) : 0;
+          void (async () => {
+            try {
+              await applyXlsxRangeToDocx({
+                agent,
+                snapshot: env.payload.kind === "xlsx-range" ? env.payload.snapshot : (() => { throw new Error("unreachable"); })(),
+                paragraphIndex: Math.max(0, paragraphIndex),
+              });
+            } catch (err) {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            }
+          })();
+          return;
+        }
+      }
+      // 2) Image paste — screenshots, drag-and-drop file pastes.
       const file = pickImageFile(e.clipboardData?.files);
       if (!file) return;
       e.preventDefault();
@@ -1192,7 +1222,7 @@ export function DocxEditor({
       hostEl.removeEventListener("drop", onDrop);
       hostEl.removeEventListener("paste", onPaste);
     };
-  }, [hostEl, handleImageFile]);
+  }, [hostEl, handleImageFile, pushToast]);
 
   const scrollToComment = useCallback(
     (commentId: string) => {
