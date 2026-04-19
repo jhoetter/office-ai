@@ -158,6 +158,64 @@ test.describe("pptx-editor route", () => {
     await expect(trigger).toHaveAttribute("data-active-type", "curved");
   });
 
+  test("text alignment buttons re-render the active text shape with the chosen alignment", async ({
+    page,
+  }) => {
+    await gotoPptxEditor(page);
+
+    // Pick the first text shape on the canvas. The sample deck always
+    // ships a title shape with at least one paragraph, so this is a
+    // stable target.
+    const shape = page.locator(".pptx-editor svg g.shape").first();
+    await expect(shape).toBeVisible();
+    await shape.click();
+
+    // The cluster gates on `hasTextShapeFocus`; with the text shape
+    // selected it should now be enabled. We assert disabled-state
+    // inversion via aria-pressed instead of `disabled` to avoid being
+    // brittle against the surrounding wrapper layout.
+    const alignCenter = page.getByTestId("pptx-text-align-center");
+    const alignRight = page.getByTestId("pptx-text-align-right");
+    const anchorMiddle = page.getByTestId("pptx-text-anchor-middle");
+    const anchorBottom = page.getByTestId("pptx-text-anchor-bottom");
+    await expect(alignCenter).toBeEnabled();
+    await expect(anchorMiddle).toBeEnabled();
+
+    // Read paragraph element under the active shape's foreignObject
+    // for verification. The renderer emits one `<div>` per paragraph
+    // with `text-align:<value>` baked into the inline style.
+    const paragraph = shape.locator("foreignObject div div").first();
+    await expect(paragraph).toBeVisible();
+
+    await alignCenter.click();
+    await expect
+      .poll(async () => paragraph.getAttribute("style"), { timeout: 5_000 })
+      .toMatch(/text-align:\s*center/);
+    await expect(alignCenter).toHaveAttribute("aria-pressed", "true");
+
+    await alignRight.click();
+    await expect
+      .poll(async () => paragraph.getAttribute("style"), { timeout: 5_000 })
+      .toMatch(/text-align:\s*right/);
+    await expect(alignRight).toHaveAttribute("aria-pressed", "true");
+
+    // The vertical anchor lives on the foreignObject's outer flex
+    // container — `justify-content` switches between flex-start (top),
+    // center (middle), and flex-end (bottom).
+    const anchorContainer = shape.locator("foreignObject > div").first();
+    await anchorMiddle.click();
+    await expect
+      .poll(async () => anchorContainer.getAttribute("style"), { timeout: 5_000 })
+      .toMatch(/justify-content:\s*center/);
+    await expect(anchorMiddle).toHaveAttribute("aria-pressed", "true");
+
+    await anchorBottom.click();
+    await expect
+      .poll(async () => anchorContainer.getAttribute("style"), { timeout: 5_000 })
+      .toMatch(/justify-content:\s*flex-end/);
+    await expect(anchorBottom).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("zoom controls rescale the slide canvas and reset to 100%", async ({ page }) => {
     await gotoPptxEditor(page);
 

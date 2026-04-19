@@ -86,3 +86,25 @@ export async function buildSampleXlsx(): Promise<ArrayBuffer> {
   z.file("xl/styles.xml", STYLES_XML);
   return z.generateAsync({ type: "arraybuffer" });
 }
+
+// Blank companion to `buildSampleXlsx`. Same workbook/styles shape but
+// the worksheet has no rows — the parser still gets a valid
+// `sheetData` element so the grid mounts cleanly. Used when the user
+// picks "New spreadsheet" on the home page.
+const BLANK_SHEET_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <dimension ref="A1"/>
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetData/>
+</worksheet>`;
+
+export async function buildBlankXlsx(): Promise<ArrayBuffer> {
+  const z = new JSZip();
+  z.file("[Content_Types].xml", CONTENT_TYPES);
+  z.file("_rels/.rels", PKG_RELS);
+  z.file("xl/workbook.xml", WORKBOOK_XML);
+  z.file("xl/_rels/workbook.xml.rels", WORKBOOK_RELS);
+  z.file("xl/worksheets/sheet1.xml", BLANK_SHEET_XML);
+  z.file("xl/styles.xml", STYLES_XML);
+  return z.generateAsync({ type: "arraybuffer" });
+}

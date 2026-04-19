@@ -61,7 +61,7 @@ import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog
 import type { EditorView } from "prosemirror-view";
 import { TextSelection } from "prosemirror-state";
 import { NotImplementedError } from "@officeai/core";
-import { buildSampleDocx } from "@/lib/sample-docx";
+import { buildBlankDocx, buildSampleDocx } from "@/lib/sample-docx";
 import {
   activeMarkAttr,
   commentParagraphIndex,
@@ -181,6 +181,18 @@ export interface DocxEditorProps {
    * unveil the editor. Stays `false` until the agent is mounted and
    * the first snapshot has been rendered, then `true`. */
   readonly onBootstrapReady?: (ready: boolean) => void;
+  /** Optional pre-loaded document. When provided, the editor fetches
+   * the bytes at `url` instead of building the synthetic welcome
+   * sample, and uses `name` as the document title (so subsequent
+   * Save / Export keep the original filename). Used by the home
+   * page's "sample files" listing. */
+  readonly initialSource?: { readonly url: string; readonly name: string };
+  /** When true, the editor bootstraps with a truly empty document
+   * (single blank paragraph) instead of the synthetic welcome
+   * sample. Used by the home page's "New document" action so users
+   * land in a fresh file rather than the demo content. Ignored when
+   * `initialSource` is set. */
+  readonly initialBlank?: boolean;
 }
 
 /**
@@ -203,7 +215,11 @@ export interface DocxEditorProps {
  * integration point for third-party agents. The bus stays the same
  * either way; this UI only shows human-driven actions.
  */
-export function DocxEditor({ onBootstrapReady }: DocxEditorProps = {}): React.ReactNode {
+export function DocxEditor({
+  onBootstrapReady,
+  initialSource,
+  initialBlank,
+}: DocxEditorProps = {}): React.ReactNode {
   // The editor host DOM node is exposed via a callback ref so that
   // descendants (e.g. TrackedChangesUI's hover delegation) can read it
   // from React state during render — accessing `hostRef.current`
@@ -234,7 +250,9 @@ export function DocxEditor({ onBootstrapReady }: DocxEditorProps = {}): React.Re
     onBootstrapReady?.(agentReady);
   }, [agentReady, onBootstrapReady]);
   const [toasts, setToasts] = useState<ReadonlyArray<ToastItem>>([]);
-  const [docName, setDocName] = useState("welcome.docx");
+  const [docName, setDocName] = useState(
+    initialSource?.name ?? (initialBlank ? "Untitled.docx" : "welcome.docx")
+  );
   const [docInfo, setDocInfo] = useState<{
     paragraphs: number;
     revision: number;
@@ -371,9 +389,31 @@ export function DocxEditor({ onBootstrapReady }: DocxEditorProps = {}): React.Re
     let cancelled = false;
     let cleanup: (() => void) | undefined;
     void (async () => {
-      const buf = await buildSampleDocx();
-      if (cancelled) return;
-      cleanup = await mountAgent(buf, hostEl);
+      try {
+        // Three bootstrap paths, picked in priority order:
+        //   1. `initialSource` — fetch a pre-existing .docx (sample
+        //      files listing on the home page).
+        //   2. `initialBlank` — build a truly empty document (the
+        //      "New document" action on the home page).
+        //   3. Default — build the synthetic welcome sample so the
+        //      editor route is never empty when navigated to
+        //      directly.
+        const buf = initialSource
+          ? await fetch(initialSource.url).then(async (res) => {
+              if (!res.ok) {
+                throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
+              }
+              return res.arrayBuffer();
+            })
+          : initialBlank
+            ? await buildBlankDocx()
+            : await buildSampleDocx();
+        if (cancelled) return;
+        cleanup = await mountAgent(buf, hostEl);
+      } catch (err) {
+        if (cancelled) return;
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
     })();
     return () => {
       cancelled = true;
@@ -384,7 +424,7 @@ export function DocxEditor({ onBootstrapReady }: DocxEditorProps = {}): React.Re
       setAgent(null);
       setView(null);
     };
-  }, [mountAgent, hostEl]);
+  }, [mountAgent, hostEl, initialSource, initialBlank, pushToast]);
 
   // Re-derive toolbar UI state on every selection change so Bold/Italic
   // pressed-state and the paragraph style picker stay in sync with the

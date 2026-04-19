@@ -427,6 +427,102 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     );
 
   pptx
+    .command("set-paragraph-alignment")
+    .description(
+      "Set (or clear with --clear) the horizontal alignment on one or every paragraph of a text shape."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Shape NodeId")
+    .addOption(
+      new Option("--alignment <value>", "Horizontal alignment to apply").choices([
+        "left",
+        "center",
+        "right",
+        "justify",
+      ])
+    )
+    .option(
+      "--paragraph <n>",
+      "0-based paragraph index inside the shape (repeat to target many; omit to apply shape-wide)",
+      collectInts,
+      [] as number[]
+    )
+    .option("--clear", "Clear any existing alignment override on the targeted paragraphs", false)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        alignment?: string;
+        paragraph: number[];
+        clear: boolean;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        if (!opts.clear && !opts.alignment) {
+          throw new CliError(
+            64,
+            "set-paragraph-alignment: pass --alignment <left|center|right|justify> or --clear"
+          );
+        }
+        if (opts.clear && opts.alignment) {
+          throw new CliError(64, "set-paragraph-alignment: --alignment and --clear are mutually exclusive");
+        }
+        const alignment = opts.clear ? null : (opts.alignment as "left" | "center" | "right" | "justify");
+        const payload: Record<string, unknown> = {
+          slideIndex: opts.slide,
+          shapeId: opts.shape,
+          alignment,
+        };
+        if (opts.paragraph.length > 0) payload.paragraphs = opts.paragraph;
+        await dispatchAndWrite(opts, io, [
+          { type: "pptx:set-paragraph-alignment", payload },
+        ]);
+      }
+    );
+
+  pptx
+    .command("set-text-anchor")
+    .description("Set (or clear with --clear) the vertical text anchor on a text shape.")
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Shape NodeId")
+    .addOption(
+      new Option("--anchor <value>", "Vertical anchor to apply").choices(["top", "middle", "bottom"])
+    )
+    .option("--clear", "Clear any existing anchor override on the shape", false)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        anchor?: string;
+        clear: boolean;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        if (!opts.clear && !opts.anchor) {
+          throw new CliError(64, "set-text-anchor: pass --anchor <top|middle|bottom> or --clear");
+        }
+        if (opts.clear && opts.anchor) {
+          throw new CliError(64, "set-text-anchor: --anchor and --clear are mutually exclusive");
+        }
+        const anchor = opts.clear ? null : (opts.anchor as "top" | "middle" | "bottom");
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-text-anchor",
+            payload: { slideIndex: opts.slide, shapeId: opts.shape, anchor },
+          },
+        ]);
+      }
+    );
+
+  pptx
     .command("insert-image")
     .description("Insert an image (PNG/JPEG/etc.) on a slide. SHA-256 dedup'd against existing media.")
     .requiredOption("--file <path>", "Path to a .pptx file")
@@ -1411,6 +1507,16 @@ function parseFloatArg(v: string): number {
   const n = Number(v);
   if (!Number.isFinite(n)) throw new Error(`expected a number, got "${v}"`);
   return n;
+}
+
+/**
+ * Commander variadic-option collector for repeated `--paragraph <n>`
+ * flags. Each invocation appends one parsed integer to the running
+ * list, so callers can write `--paragraph 0 --paragraph 2` to target
+ * a paragraph subset.
+ */
+function collectInts(value: string, previous: number[]): number[] {
+  return [...previous, parseIntArg(value)];
 }
 
 /**

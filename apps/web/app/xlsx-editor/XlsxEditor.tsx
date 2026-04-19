@@ -54,7 +54,7 @@ import {
 } from "@officeai/xlsx";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import { computeXlsxActive, createXlsxFormatProvider } from "./xlsxFormatProvider";
-import { buildSampleXlsx } from "@/lib/sample-xlsx";
+import { buildBlankXlsx, buildSampleXlsx } from "@/lib/sample-xlsx";
 import { handleUndoRedo } from "@/lib/undo-redo";
 import {
   Grid,
@@ -105,6 +105,7 @@ import {
 } from "./clipboard";
 
 const SAMPLE_NAME = "sample.xlsx";
+const BLANK_NAME = "Untitled.xlsx";
 
 const XLSX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
   {
@@ -294,9 +295,24 @@ export interface XlsxEditorProps {
    * EmptyState recovery affordance as "ready" so the splash unveils
    * it). */
   readonly onBootstrapReady?: (ready: boolean) => void;
+  /** Optional pre-loaded workbook. When provided, the editor fetches
+   * the bytes at `url` instead of building the synthetic sample, and
+   * uses `name` as the workbook title (so subsequent Save / Export
+   * keep the original filename). Used by the home page's "sample
+   * files" listing. */
+  readonly initialSource?: { readonly url: string; readonly name: string };
+  /** When true, the editor bootstraps with a truly empty workbook
+   * (one blank sheet, no rows) instead of the synthetic sample. Used
+   * by the home page's "New spreadsheet" action. Ignored when
+   * `initialSource` is set. */
+  readonly initialBlank?: boolean;
 }
 
-export function XlsxEditor({ onBootstrapReady }: XlsxEditorProps = {}): ReactNode {
+export function XlsxEditor({
+  onBootstrapReady,
+  initialSource,
+  initialBlank,
+}: XlsxEditorProps = {}): ReactNode {
   const agentRef = useRef<XlsxAgent | null>(null);
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
@@ -319,7 +335,9 @@ export function XlsxEditor({ onBootstrapReady }: XlsxEditorProps = {}): ReactNod
   // affordance — kept separate from the workbook open input so the
   // accept= filter doesn't bleed across the two flows.
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const [filename, setFilename] = useState<string>(SAMPLE_NAME);
+  const [filename, setFilename] = useState<string>(
+    initialSource?.name ?? (initialBlank ? BLANK_NAME : SAMPLE_NAME)
+  );
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const fileHandleRef = useRef<FileSystemFileHandle | undefined>(undefined);
   const [ctxMenu, setCtxMenu] = useState<{
@@ -414,11 +432,27 @@ export function XlsxEditor({ onBootstrapReady }: XlsxEditorProps = {}): ReactNod
     let cancelled = false;
     void (async () => {
       try {
-        const buf = await buildSampleXlsx();
+        // Three bootstrap paths, picked in priority order:
+        //   1. `initialSource` — fetch a pre-existing .xlsx (sample
+        //      files listing on the home page).
+        //   2. `initialBlank` — build an empty workbook (the "New
+        //      spreadsheet" action on the home page).
+        //   3. Default — build the synthetic sample so the route is
+        //      never empty when navigated to directly.
+        const buf = initialSource
+          ? await fetch(initialSource.url).then(async (res) => {
+              if (!res.ok) {
+                throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
+              }
+              return res.arrayBuffer();
+            })
+          : initialBlank
+            ? await buildBlankXlsx()
+            : await buildSampleXlsx();
         if (cancelled) return;
         const a = await XlsxAgent.fromBuffer(buf);
         if (cancelled) return;
-        mountAgent(a, SAMPLE_NAME);
+        mountAgent(a, initialSource?.name ?? (initialBlank ? BLANK_NAME : SAMPLE_NAME));
       } catch (err) {
         if (cancelled) return;
         // Sample build failed — fall back to the EmptyState so the
@@ -435,7 +469,7 @@ export function XlsxEditor({ onBootstrapReady }: XlsxEditorProps = {}): ReactNod
       agentRef.current = null;
       setAgent(null);
     };
-  }, [pushToast, mountAgent]);
+  }, [pushToast, mountAgent, initialSource, initialBlank]);
 
   const openFile = useCallback(
     async (file: File, handle?: FileSystemFileHandle) => {

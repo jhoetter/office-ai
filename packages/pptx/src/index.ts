@@ -34,11 +34,14 @@ export type {
   SetShapeFillPayload,
   ReorderShapePayload,
   ReorderShapeMode,
+  SetParagraphAlignmentPayload,
   SetSizePayload,
   SetSlideLayoutPayload,
   SetSlideNotesPayload,
+  SetTextAnchorPayload,
   SetTextPayload,
   ShapePreset,
+  TextAnchor,
   TextFormatPayload,
 } from "./commands/payloads.js";
 export { BUILTIN_LAYOUTS, type BuiltinLayout } from "./layouts/builtin.js";

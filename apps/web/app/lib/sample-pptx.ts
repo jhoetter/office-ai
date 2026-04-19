@@ -181,3 +181,40 @@ export async function buildSamplePptx(): Promise<ArrayBuffer> {
   z.file("ppt/theme/theme1.xml", THEME_XML);
   return z.generateAsync({ type: "arraybuffer" });
 }
+
+// Blank companion to `buildSamplePptx`. Same package shape but slide 1
+// has only the empty group container — no title or subtitle shapes —
+// so the canvas opens on a fresh white slide. Used when the user picks
+// "New presentation" on the home page.
+const BLANK_SLIDE_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr>
+        <p:cNvPr id="1" name=""/>
+        <p:cNvGrpSpPr/>
+        <p:nvPr/>
+      </p:nvGrpSpPr>
+      <p:grpSpPr>
+        <a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm>
+      </p:grpSpPr>
+    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>`;
+
+export async function buildBlankPptx(): Promise<ArrayBuffer> {
+  const z = new JSZip();
+  z.file("[Content_Types].xml", CONTENT_TYPES);
+  z.file("_rels/.rels", PKG_RELS);
+  z.file("ppt/_rels/presentation.xml.rels", PRES_RELS);
+  z.file("ppt/presentation.xml", PRESENTATION_XML);
+  z.file("ppt/slides/_rels/slide1.xml.rels", SLIDE_RELS);
+  z.file("ppt/slides/slide1.xml", BLANK_SLIDE_XML);
+  z.file("ppt/slideLayouts/_rels/slideLayout1.xml.rels", LAYOUT_RELS);
+  z.file("ppt/slideLayouts/slideLayout1.xml", LAYOUT_XML);
+  z.file("ppt/slideMasters/_rels/slideMaster1.xml.rels", MASTER_RELS);
+  z.file("ppt/slideMasters/slideMaster1.xml", MASTER_XML);
+  z.file("ppt/theme/theme1.xml", THEME_XML);
+  return z.generateAsync({ type: "arraybuffer" });
+}

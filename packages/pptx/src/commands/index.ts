@@ -15,8 +15,10 @@ import { formatTextHandler } from "./format-text.js";
 import { insertImageHandler } from "./insert-image.js";
 import { replacePictureMediaHandler } from "./replace-picture-media.js";
 import { moveSlideHandler } from "./move-slide.js";
+import { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
 import { setPositionHandler } from "./set-position.js";
 import { setSizeHandler } from "./set-size.js";
+import { setTextAnchorHandler } from "./set-text-anchor.js";
 import { setTextHandler } from "./set-text.js";
 import {
   tableAddColumnHandler,
@@ -66,8 +68,10 @@ export { formatTextHandler } from "./format-text.js";
 export { insertImageHandler } from "./insert-image.js";
 export { replacePictureMediaHandler } from "./replace-picture-media.js";
 export { moveSlideHandler } from "./move-slide.js";
+export { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
 export { setPositionHandler } from "./set-position.js";
 export { setSizeHandler } from "./set-size.js";
+export { setTextAnchorHandler } from "./set-text-anchor.js";
 export { setTextHandler } from "./set-text.js";
 export {
   tableAddColumnHandler,
@@ -110,6 +114,8 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setPositionHandler,
   setSizeHandler,
   formatTextHandler,
+  setParagraphAlignmentHandler,
+  setTextAnchorHandler,
   insertImageHandler,
   replacePictureMediaHandler,
   addTextBoxHandler,

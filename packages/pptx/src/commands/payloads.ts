@@ -244,6 +244,42 @@ export interface AddTextBoxPayload {
   readonly name?: string;
 }
 
+// ─── Text alignment / anchor ──────────────────────────────────────────────
+
+/**
+ * Mirrors PowerPoint's "Align Text" Left/Center/Right/Justify in the
+ * Home ribbon. Per-paragraph; when `paragraphs` is omitted the change
+ * is applied to every paragraph in the shape (matching the behaviour
+ * the user gets by clicking "Align" with the shape selected but no
+ * text-edit caret open). Pass `alignment: null` to clear an existing
+ * `<a:pPr algn>` so the paragraph re-inherits from its style chain.
+ */
+export interface SetParagraphAlignmentPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly alignment: "left" | "center" | "right" | "justify" | null;
+  /**
+   * Optional 0-based paragraph indices to target. Omit to apply the
+   * change to every paragraph in the shape.
+   */
+  readonly paragraphs?: ReadonlyArray<number>;
+}
+
+export type TextAnchor = "top" | "middle" | "bottom";
+
+/**
+ * Mirrors PowerPoint's "Align Text" Top/Middle/Bottom in the Home
+ * ribbon — the shape-wide vertical anchor that lives on
+ * `<a:bodyPr anchor="t|ctr|b">`. Pass `anchor: null` to clear an
+ * existing override so the shape re-inherits the layout/master
+ * default (PowerPoint treats no attribute as "top").
+ */
+export interface SetTextAnchorPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly anchor: TextAnchor | null;
+}
+
 // ─── Shape primitives (P2-lite) ───────────────────────────────────────────
 
 /**
@@ -590,6 +626,8 @@ export const PPTX_COMMAND_TYPES = {
   setPosition: "pptx:set-position",
   setSize: "pptx:set-size",
   formatText: "pptx:format-text",
+  setParagraphAlignment: "pptx:set-paragraph-alignment",
+  setTextAnchor: "pptx:set-text-anchor",
   insertImage: "pptx:insert-image",
   replacePictureMedia: "pptx:replace-picture-media",
   addTextBox: "pptx:add-text-box",

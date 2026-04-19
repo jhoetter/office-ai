@@ -2,14 +2,21 @@
 
 import * as React from "react";
 import {
+  AlignCenter,
   AlignCenterHorizontal,
   AlignCenterVertical,
   AlignEndHorizontal,
   AlignEndVertical,
   AlignHorizontalDistributeCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
   ChevronDown,
   ChevronsDown,
   ChevronsUp,
@@ -38,7 +45,15 @@ import {
 } from "lucide-react";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import type { AlignMode, LayoutKindPayload, ReorderShapeMode, ShapePreset } from "@officeai/pptx";
+import type {
+  AlignMode,
+  LayoutKindPayload,
+  ReorderShapeMode,
+  ShapePreset,
+  TextAnchor,
+} from "@officeai/pptx";
+
+export type TextAlignment = "left" | "center" | "right" | "justify";
 import { LayoutTemplate } from "lucide-react";
 import { ToolbarMenu, ToolbarRow } from "../lib/shell";
 
@@ -86,6 +101,24 @@ export interface PptxToolbarProps {
   readonly canGroup: boolean;
   readonly canUngroup: boolean;
   readonly onChangeFill: (hex: string | null) => void;
+  /**
+   * Per-paragraph horizontal text alignment inside the active text
+   * shape (or the paragraph the text-edit caret is in). Pass `null`
+   * to clear an existing override.
+   */
+  readonly onSetTextAlignment: (alignment: TextAlignment | null) => void;
+  /** Shape-wide vertical text anchor for the active text shape. */
+  readonly onSetTextAnchor: (anchor: TextAnchor | null) => void;
+  /**
+   * Currently effective alignment / anchor on the active text shape,
+   * used to render pressed-state highlighting. `null` means "no text
+   * shape is active" (controls render disabled) or "no explicit
+   * value" (no button is highlighted).
+   */
+  readonly activeTextAlignment: TextAlignment | null;
+  readonly activeTextAnchor: TextAnchor | null;
+  /** True when the toolbar should enable the text-alignment cluster. */
+  readonly hasTextShapeFocus: boolean;
   /**
    * Open the comments composer. The editor decides where the new pin
    * lands: shape-anchored when a shape is selected, free-pin centred
@@ -309,6 +342,76 @@ export function PptxToolbar(props: PptxToolbarProps) {
           testIdPrefix="pptx-format"
         />
       </div>
+      <Sep />
+      {/*
+        Text-alignment cluster. PowerPoint's "Align Text" controls:
+        the four horizontal options drive `pptx:set-paragraph-alignment`
+        and the three vertical ones drive `pptx:set-text-anchor`. Both
+        target the currently active text shape (selection caret's shape
+        if a text-edit overlay is open, otherwise the canvas-selected
+        shape). The `data-pptx-keep-edit` wrapper is the same trick the
+        TextFormatBar uses — it stops mousedown from blurring an open
+        contenteditable.
+      */}
+      <div data-pptx-keep-edit className="inline-flex items-center gap-0.5">
+        <TextAlignToggle
+          label="Align text left"
+          icon={<AlignLeft size={14} />}
+          active={props.activeTextAlignment === "left"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAlignment("left")}
+          testId="pptx-text-align-left"
+        />
+        <TextAlignToggle
+          label="Align text center"
+          icon={<AlignCenter size={14} />}
+          active={props.activeTextAlignment === "center"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAlignment("center")}
+          testId="pptx-text-align-center"
+        />
+        <TextAlignToggle
+          label="Align text right"
+          icon={<AlignRight size={14} />}
+          active={props.activeTextAlignment === "right"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAlignment("right")}
+          testId="pptx-text-align-right"
+        />
+        <TextAlignToggle
+          label="Justify text"
+          icon={<AlignJustify size={14} />}
+          active={props.activeTextAlignment === "justify"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAlignment("justify")}
+          testId="pptx-text-align-justify"
+        />
+        <span className="mx-0.5 h-5 w-px bg-divider" aria-hidden />
+        <TextAlignToggle
+          label="Align text top"
+          icon={<AlignVerticalJustifyStart size={14} />}
+          active={props.activeTextAnchor === "top"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAnchor("top")}
+          testId="pptx-text-anchor-top"
+        />
+        <TextAlignToggle
+          label="Align text middle"
+          icon={<AlignVerticalJustifyCenter size={14} />}
+          active={props.activeTextAnchor === "middle"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAnchor("middle")}
+          testId="pptx-text-anchor-middle"
+        />
+        <TextAlignToggle
+          label="Align text bottom"
+          icon={<AlignVerticalJustifyEnd size={14} />}
+          active={props.activeTextAnchor === "bottom"}
+          disabled={disabled || !props.hasTextShapeFocus}
+          onClick={() => props.onSetTextAnchor("bottom")}
+          testId="pptx-text-anchor-bottom"
+        />
+      </div>
       <ColorWell
         label="Fill"
         value={currentFill ?? "#ffffff"}
@@ -377,6 +480,47 @@ function IconButton({ onClick, icon, label, disabled }: ToolbarButtonProps) {
       aria-label={label}
       data-testid={`pptx-${label.toLowerCase().replace(/\s+/g, "-")}`}
       className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {icon}
+    </button>
+  );
+}
+
+interface TextAlignToggleProps {
+  readonly label: string;
+  readonly icon: React.ReactNode;
+  readonly active: boolean;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+  readonly testId: string;
+}
+
+/**
+ * Pressed-state aware icon button for the text-alignment cluster.
+ * Mirrors `IconButton`'s sizing so the row reads as one cohesive
+ * group, and renders an active ring when its alignment / anchor
+ * matches the currently focused shape.
+ */
+function TextAlignToggle({
+  label,
+  icon,
+  active,
+  disabled,
+  onClick,
+  testId,
+}: TextAlignToggleProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      data-testid={testId}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
+        active ? "bg-hover ring-1 ring-[var(--accent)]/40" : ""
+      }`}
     >
       {icon}
     </button>

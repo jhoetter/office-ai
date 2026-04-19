@@ -51,15 +51,45 @@ test.describe("pptx editor: keyboard shortcuts", () => {
     await expect(shape).toBeVisible();
     const beforeTransform = await shape.getAttribute("transform");
 
+    // Clicking a shape now focuses the slide surface implicitly via
+    // its pointer-down handler, so the keyboard shortcut works without
+    // an extra `focusSurface()` step. Arrow + Shift = +10 px; the
+    // larger delta is easier to assert without rounding noise.
     await shape.click();
-    await focusSurface(page);
-
-    // Arrow + Shift = +10 px; the larger delta is easier to assert
-    // without rounding noise.
     await page.keyboard.press("Shift+ArrowRight");
 
     await expect
       .poll(async () => shape.getAttribute("transform"), { timeout: 5_000 })
       .not.toBe(beforeTransform);
+  });
+
+  test("Delete removes the selected shape after a click", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    const shapes = page.locator('[data-testid="pptx-slide-surface"] svg g.shape');
+    await expect(shapes.first()).toBeVisible();
+    const before = await shapes.count();
+    expect(before).toBeGreaterThan(0);
+
+    const target = shapes.first();
+    const targetId = await target.getAttribute("data-shape-id");
+    expect(targetId).not.toBeNull();
+
+    // Click → select → Delete should remove the shape without needing
+    // a separate `focusSurface()` step. Regression for the issue where
+    // focus stayed on <body> after clicking an SVG shape, so the
+    // Delete shortcut never reached `usePptxShortcuts`.
+    await target.click();
+    await page.keyboard.press("Delete");
+
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator(`[data-testid="pptx-slide-surface"] svg g.shape[data-shape-id="${targetId}"]`)
+            .count(),
+        { timeout: 5_000 }
+      )
+      .toBe(0);
   });
 });

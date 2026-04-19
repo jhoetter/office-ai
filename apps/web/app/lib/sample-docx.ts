@@ -234,3 +234,30 @@ export async function buildSampleDocx(): Promise<ArrayBuffer> {
   z.file("word/theme/theme1.xml", THEME_XML);
   return z.generateAsync({ type: "arraybuffer" });
 }
+
+// Blank companion to `buildSampleDocx`. Same package shape — we keep
+// styles + theme so headings/font scheme still resolve once the user
+// types — but the body is a single empty paragraph instead of the
+// welcome copy. Used when the user picks "New document" on the home
+// page.
+const BLANK_DOC_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p/>
+    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/>
+    </w:sectPr>
+  </w:body>
+</w:document>`;
+
+export async function buildBlankDocx(): Promise<ArrayBuffer> {
+  const z = new JSZip();
+  z.file("[Content_Types].xml", CONTENT_TYPES);
+  z.file("_rels/.rels", PKG_RELS);
+  z.file("word/_rels/document.xml.rels", DOC_RELS);
+  z.file("word/document.xml", BLANK_DOC_XML);
+  z.file("word/styles.xml", STYLES_XML);
+  z.file("word/theme/theme1.xml", THEME_XML);
+  return z.generateAsync({ type: "arraybuffer" });
+}

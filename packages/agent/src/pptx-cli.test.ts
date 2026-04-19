@@ -145,6 +145,180 @@ describe("office-agent pptx subcommand group", () => {
     expect(movedAgent.getSnapshot().root.slides.length).toBe(baseLen + 1);
   });
 
+  it("pptx set-paragraph-alignment writes algn=\"ctr\" into the slide XML", async () => {
+    const baseAgent = await loadDeterministic(SINGLE);
+    const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
+    if (!textShape) throw new Error("expected text shape");
+
+    const dir = mkdtempSync(join(tmpdir(), "pptx-cli-align-"));
+    const out = join(dir, "out.pptx");
+    const { io } = makeIO();
+    const code = await runCli(
+      [
+        "pptx",
+        "set-paragraph-alignment",
+        "--file",
+        SINGLE,
+        "--out",
+        out,
+        "--slide",
+        "0",
+        "--shape",
+        textShape.id,
+        "--alignment",
+        "center",
+        "--paragraph",
+        "0",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const after = await loadDeterministic(out);
+    const ts = after.getSnapshot().root.slides[0].shapes.find(
+      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
+    );
+    expect(ts?.txBody.paragraphs[0].properties.alignment).toBe("center");
+  });
+
+  it("pptx set-paragraph-alignment --clear strips the override", async () => {
+    const baseAgent = await loadDeterministic(SINGLE);
+    const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
+    if (!textShape) throw new Error("expected text shape");
+
+    const dir = mkdtempSync(join(tmpdir(), "pptx-cli-align-clear-"));
+    const aligned = join(dir, "aligned.pptx");
+    const cleared = join(dir, "cleared.pptx");
+    const { io } = makeIO();
+
+    let code = await runCli(
+      [
+        "pptx",
+        "set-paragraph-alignment",
+        "--file",
+        SINGLE,
+        "--out",
+        aligned,
+        "--slide",
+        "0",
+        "--shape",
+        textShape.id,
+        "--alignment",
+        "right",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+
+    code = await runCli(
+      [
+        "pptx",
+        "set-paragraph-alignment",
+        "--file",
+        aligned,
+        "--out",
+        cleared,
+        "--slide",
+        "0",
+        "--shape",
+        textShape.id,
+        "--clear",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const after = await loadDeterministic(cleared);
+    const ts = after.getSnapshot().root.slides[0].shapes.find(
+      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
+    );
+    for (const p of ts?.txBody.paragraphs ?? []) {
+      expect(p.properties.alignment).toBeUndefined();
+    }
+  });
+
+  it("pptx set-text-anchor sets and clears the bodyPr anchor", async () => {
+    const baseAgent = await loadDeterministic(SINGLE);
+    const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
+    if (!textShape) throw new Error("expected text shape");
+
+    const dir = mkdtempSync(join(tmpdir(), "pptx-cli-anchor-"));
+    const out = join(dir, "out.pptx");
+    const cleared = join(dir, "cleared.pptx");
+    const { io } = makeIO();
+
+    let code = await runCli(
+      [
+        "pptx",
+        "set-text-anchor",
+        "--file",
+        SINGLE,
+        "--out",
+        out,
+        "--slide",
+        "0",
+        "--shape",
+        textShape.id,
+        "--anchor",
+        "middle",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const after = await loadDeterministic(out);
+    const ts = after.getSnapshot().root.slides[0].shapes.find(
+      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
+    );
+    expect(ts?.txBody.bodyPrRaw?.attrs.anchor).toBe("ctr");
+
+    code = await runCli(
+      [
+        "pptx",
+        "set-text-anchor",
+        "--file",
+        out,
+        "--out",
+        cleared,
+        "--slide",
+        "0",
+        "--shape",
+        textShape.id,
+        "--clear",
+      ],
+      io
+    );
+    expect(code).toBe(0);
+    const cleanedAgent = await loadDeterministic(cleared);
+    const ts2 = cleanedAgent.getSnapshot().root.slides[0].shapes.find(
+      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
+    );
+    expect(ts2?.txBody.bodyPrRaw?.attrs.anchor).toBeUndefined();
+  });
+
+  it("pptx set-paragraph-alignment rejects --alignment combined with --clear", async () => {
+    const baseAgent = await loadDeterministic(SINGLE);
+    const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
+    if (!textShape) throw new Error("expected text shape");
+
+    const { io, stderr } = makeIO();
+    const code = await runCli(
+      [
+        "pptx",
+        "set-paragraph-alignment",
+        "--file",
+        SINGLE,
+        "--slide",
+        "0",
+        "--shape",
+        textShape.id,
+        "--alignment",
+        "left",
+        "--clear",
+      ],
+      io
+    );
+    expect(code).not.toBe(0);
+    expect(stderr.text()).toMatch(/mutually exclusive/);
+  });
+
   it("pptx set-text replaces a TextShape's plain text", async () => {
     const baseAgent = await loadDeterministic(SINGLE);
     const slide0 = baseAgent.getSnapshot().root.slides[0];

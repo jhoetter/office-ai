@@ -19,9 +19,10 @@ import {
   type PptxSnapshot,
   type Shape,
   type ShapePreset,
+  type TextAnchor,
   type TextShape,
 } from "@officeai/pptx";
-import { buildSamplePptx } from "@/lib/sample-pptx";
+import { buildBlankPptx, buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
 import {
   ConnectorContextBar,
@@ -275,9 +276,24 @@ export interface PptxEditorProps {
    * unveil the editor. Stays `false` until the agent is mounted and
    * the first deck has been parsed, then `true`. */
   readonly onBootstrapReady?: (ready: boolean) => void;
+  /** Optional pre-loaded deck. When provided, the editor fetches the
+   * bytes at `url` instead of building the synthetic welcome sample,
+   * and uses `name` as the deck title (so subsequent Save / Export
+   * keep the original filename). Used by the home page's "sample
+   * files" listing. */
+  readonly initialSource?: { readonly url: string; readonly name: string };
+  /** When true, the editor bootstraps with an empty deck (one blank
+   * slide, no title/subtitle) instead of the synthetic welcome
+   * sample. Used by the home page's "New presentation" action.
+   * Ignored when `initialSource` is set. */
+  readonly initialBlank?: boolean;
 }
 
-export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.ReactNode {
+export function PptxEditor({
+  onBootstrapReady,
+  initialSource,
+  initialBlank,
+}: PptxEditorProps = {}): React.ReactNode {
   const [agent, setAgent] = useState<PptxAgent | null>(null);
   const agentRef = useRef<PptxAgent | null>(null);
   const [ready, setReady] = useState(false);
@@ -289,7 +305,9 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
   useEffect(() => {
     onBootstrapReady?.(ready);
   }, [ready, onBootstrapReady]);
-  const [docName, setDocName] = useState("welcome.pptx");
+  const [docName, setDocName] = useState(
+    initialSource?.name ?? (initialBlank ? "Untitled.pptx" : "welcome.pptx")
+  );
   const [activeIndex, setActiveIndex] = useState(0);
   const [tick, setTick] = useState(0);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -405,7 +423,23 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
     let cancelled = false;
     void (async () => {
       try {
-        const buf = await buildSamplePptx();
+        // Three bootstrap paths, picked in priority order:
+        //   1. `initialSource` — fetch a pre-existing .pptx (sample
+        //      files listing on the home page).
+        //   2. `initialBlank` — build an empty deck (the "New
+        //      presentation" action on the home page).
+        //   3. Default — build the synthetic welcome deck so the
+        //      route is never empty when navigated to directly.
+        const buf = initialSource
+          ? await fetch(initialSource.url).then(async (res) => {
+              if (!res.ok) {
+                throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
+              }
+              return res.arrayBuffer();
+            })
+          : initialBlank
+            ? await buildBlankPptx()
+            : await buildSamplePptx();
         if (!cancelled) await mountAgent(buf);
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
@@ -414,7 +448,7 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
     return () => {
       cancelled = true;
     };
-  }, [mountAgent, pushToast]);
+  }, [mountAgent, pushToast, initialSource, initialBlank]);
 
   const onError = useCallback(
     (err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)),
@@ -694,6 +728,41 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
     void tick;
     return computePptxActive(agent, activeIndex, textSelection, selectedShapeId);
   }, [agent, activeIndex, textSelection, selectedShapeId, tick]);
+
+  // Resolve the text shape the alignment / anchor controls should
+  // operate on: prefer a live text-edit caret's shape, fall back to
+  // the canvas's primary shape selection. Mirrors what the shared
+  // `pptxFormatProvider` does for run-level formatting.
+  const activeTextShape = useMemo<TextShape | null>(() => {
+    void tick;
+    if (!slide) return null;
+    if (textSelection) {
+      const s = findShape(slide.shapes, textSelection.shapeId);
+      if (s && s.kind === "text") return s;
+    }
+    if (selectedShape && selectedShape.kind === "text") return selectedShape;
+    return null;
+  }, [slide, textSelection, selectedShape, tick]);
+
+  const activeTextAlignment = useMemo<
+    "left" | "center" | "right" | "justify" | null
+  >(() => {
+    if (!activeTextShape) return null;
+    const paraIdx = textSelection?.paragraph ?? 0;
+    const para = activeTextShape.txBody.paragraphs[paraIdx];
+    return para?.properties.alignment ?? null;
+  }, [activeTextShape, textSelection]);
+
+  const activeTextAnchor = useMemo<TextAnchor | null>(() => {
+    if (!activeTextShape) return null;
+    const v =
+      activeTextShape.txBody.bodyPrRaw?.attrs.anchor ??
+      activeTextShape.txBody.bodyPrRaw?.rawAttrs["@_anchor"];
+    if (v === "ctr") return "middle";
+    if (v === "b") return "bottom";
+    if (v === "t") return "top";
+    return null;
+  }, [activeTextShape]);
 
   const addSlide = useCallback(async () => {
     const a = agentRef.current;
@@ -1544,6 +1613,61 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
     [activeIndex, onError, selectedShapeId]
   );
 
+  const setTextAlignment = useCallback(
+    async (alignment: "left" | "center" | "right" | "justify" | null) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const target = activeTextShape;
+      if (!target) {
+        pushToast("info", "Select a text shape first.");
+        return;
+      }
+      // PowerPoint's per-paragraph H-alignment: when a text-edit caret
+      // is open we just align the paragraph it's parked in; otherwise
+      // we align every paragraph in the shape (matches what users get
+      // when they click a shape and hit Align without opening edit
+      // mode).
+      const paragraphs = textSelection ? [textSelection.paragraph] : undefined;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-paragraph-alignment",
+          payload: {
+            slideIndex: activeIndex,
+            shapeId: target.id,
+            alignment,
+            ...(paragraphs ? { paragraphs } : {}),
+          },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, activeTextShape, onError, pushToast, textSelection]
+  );
+
+  const setTextAnchorAction = useCallback(
+    async (anchor: TextAnchor | null) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const target = activeTextShape;
+      if (!target) {
+        pushToast("info", "Select a text shape first.");
+        return;
+      }
+      try {
+        await a.applyCommand({
+          type: "pptx:set-text-anchor",
+          payload: { slideIndex: activeIndex, shapeId: target.id, anchor },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, activeTextShape, onError, pushToast]
+  );
+
   // Toolbar "Add comment" entry point. The shared right-rail owns the
   // comments panel + composer; this just opens it and focuses the
   // textarea via a custom event the rail listens for.
@@ -1973,6 +2097,11 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
             canGroup={selectedShapeIds.length >= 2}
             canUngroup={selectedShapeIds.length === 1 && selectedShape?.kind === "group"}
             onChangeFill={(h) => void changeFill(h)}
+            onSetTextAlignment={(alignment) => void setTextAlignment(alignment)}
+            onSetTextAnchor={(anchor) => void setTextAnchorAction(anchor)}
+            activeTextAlignment={activeTextAlignment}
+            activeTextAnchor={activeTextAnchor}
+            hasTextShapeFocus={activeTextShape != null}
             onAddComment={focusCommentComposer}
             onPresent={() => startPresenting(true)}
             canPresent={ready && slides.length > 0}
@@ -2019,7 +2148,38 @@ export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.Re
                     tabIndex={-1}
                     data-testid="pptx-slide-surface"
                     className="relative flex min-h-0 flex-1 overflow-hidden rounded-md border border-divider"
-                    style={{ backgroundColor: "var(--page-backdrop)" }}
+                    // The slide surface receives programmatic focus
+                    // on pointer-down so keyboard shortcuts work
+                    // (see onPointerDown below). It's not a real
+                    // interactive control though — the actual focus
+                    // affordance is the selection chrome painted by
+                    // the canvas — so we suppress the global
+                    // `:focus-visible` accent outline here. Done via
+                    // inline `outline: none` rather than Tailwind so
+                    // it wins against the cascade unconditionally.
+                    style={{ backgroundColor: "var(--page-backdrop)", outline: "none" }}
+                    onPointerDown={(e) => {
+                      // Focus the surface on pointer interaction so
+                      // keyboard shortcuts (Delete / arrows / PageUp /
+                      // PageDown …) fire after clicking a shape. The
+                      // section has tabIndex=-1 so neither the SVG
+                      // shape children nor the section itself receive
+                      // focus on click — without this, key events go
+                      // to <body> and `usePptxShortcuts` skips them.
+                      // Skip when the click landed in something with
+                      // its own caret (the in-place text editor, a
+                      // floating input, …) so we don't yank focus
+                      // away from it.
+                      const t = e.target as HTMLElement | null;
+                      if (
+                        t &&
+                        (t.isContentEditable ||
+                          t.closest('[contenteditable="true"], input, textarea, select') !== null)
+                      ) {
+                        return;
+                      }
+                      slideSurfaceRef.current?.focus({ preventScroll: true });
+                    }}
                   >
                     <div className="relative min-h-0 w-full flex-1">
                       <SlideCanvas
