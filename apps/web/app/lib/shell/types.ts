@@ -25,15 +25,29 @@ export type SaveState = "saved" | "modified" | "saving" | "error" | "unknown";
 export type ExportFormatKind = "instant" | "dialog";
 
 /** Visual grouping in the Export dropdown / dialog left rail. The
- * shell renders the groups in the order they appear here:
- *  - `current` — exports of the current page / slide / sheet
- *    (always rendered first because it's almost always what the user
- *    wants when they reach for "Export this");
- *  - `native` — the product's own format;
+ * shell renders the groups in the order they appear here. Deck /
+ * whole-document exports lead because that's the overwhelmingly
+ * common ask ("download the .pptx", "PDF the document"); the
+ * `current` bucket is intentionally last as the special-case path
+ * for "just this slide / page / sheet".
+ *
+ *  - `deck`    — "whole presentation / workbook / document" bucket,
+ *    used by products (PPTX) where the native / pdf-web / images
+ *    sub-buckets would each only hold 1–2 entries and reading them
+ *    as separate sections feels chopped up. DOCX/XLSX keep the
+ *    finer-grained groups below;
+ *  - `native`  — the product's own format;
  *  - `pdf-web` — PDF / HTML (server-side conversion);
- *  - `data`   — CSV/TSV/JSON/MD;
- *  - `images` — PNG/SVG/JPEG bundles. */
-export type ExportFormatGroup = "current" | "native" | "pdf-web" | "data" | "images";
+ *  - `data`    — CSV/TSV/JSON/MD;
+ *  - `images`  — PNG/SVG/JPEG bundles;
+ *  - `current` — exports of the current page / slide / sheet. */
+export type ExportFormatGroup =
+  | "deck"
+  | "native"
+  | "pdf-web"
+  | "data"
+  | "images"
+  | "current";
 
 /** Lucide icon family used for the format row. The shell maps these
  * to concrete icons (kept here so adapters don't import lucide). */

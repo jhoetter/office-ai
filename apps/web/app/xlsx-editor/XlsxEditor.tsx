@@ -160,9 +160,16 @@ const XLSX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
     group: "pdf-web",
     icon: "code",
   },
+  // Data exports are sorted active-sheet first (the common ask),
+  // then the all-sheets variants. The "<Scope> — <FORMAT> (.ext)"
+  // shape mirrors PPTX's "Current slide — PDF (.pdf)" /
+  // "All slides — PNG (.zip)" so the dropdown reads consistently
+  // across products. We use "Active sheet" rather than "Current
+  // sheet" because that's Excel's own vernacular in Save As
+  // (likewise "Current slide" matches PowerPoint).
   {
     id: "csv",
-    label: "CSV (active sheet)",
+    label: "Active sheet — CSV (.csv)",
     description: "Comma-separated values for the active sheet only.",
     extension: "csv",
     mime: "text/csv;charset=utf-8",
@@ -171,18 +178,8 @@ const XLSX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
     icon: "text",
   },
   {
-    id: "csv-all",
-    label: "CSV — all sheets (.zip)",
-    description: "One CSV per worksheet, bundled as a zip.",
-    extension: "zip",
-    mime: "application/zip",
-    kind: "instant",
-    group: "data",
-    icon: "text",
-  },
-  {
     id: "tsv",
-    label: "Tab-separated (.tsv)",
+    label: "Active sheet — TSV (.tsv)",
     description: "Tab-separated values for the active sheet.",
     extension: "tsv",
     mime: "text/tab-separated-values;charset=utf-8",
@@ -191,8 +188,18 @@ const XLSX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
     icon: "text",
   },
   {
+    id: "csv-all",
+    label: "All sheets — CSV (.zip)",
+    description: "One CSV per worksheet, bundled as a zip.",
+    extension: "zip",
+    mime: "application/zip",
+    kind: "instant",
+    group: "data",
+    icon: "text",
+  },
+  {
     id: "json",
-    label: "JSON",
+    label: "All sheets — JSON (.json)",
     description: "Structured cell values per sheet, keyed by column letter.",
     extension: "json",
     mime: "application/json;charset=utf-8",

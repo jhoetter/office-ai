@@ -48,19 +48,21 @@ export interface ExportDialogProps {
 }
 
 const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
-  "current",
+  "deck",
   "native",
   "pdf-web",
   "data",
   "images",
+  "current",
 ];
 
 const GROUP_LABEL: Record<ExportFormatGroup, string> = {
-  current: "This page",
+  deck: "Whole deck",
   native: "Native format",
   "pdf-web": "PDF & web",
   data: "Data",
   images: "Images",
+  current: "This slide",
 };
 
 /**

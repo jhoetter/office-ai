@@ -61,6 +61,111 @@ const SCALE_OPTIONS = {
 };
 
 const PPTX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
+  // ── Whole deck ─────────────────────────────────────────────────
+  // Deck-level exports lead the dropdown because "download the
+  // .pptx / PDF the deck" is overwhelmingly the common ask. We
+  // collapse what would otherwise be Native / PDF & web / Images
+  // into a single bucket: in PPTX each holds only 1–2 entries, and
+  // rendering them as separate sections reads as a chopped-up
+  // dropdown. Order: native (round-trip-true) first, then PDF and
+  // HTML, then the bundles (PNG before SVG to mirror the per-slide
+  // ordering further down).
+  {
+    id: "pptx",
+    label: "PowerPoint presentation (.pptx)",
+    description: "Round-trip native OOXML — opens in PowerPoint, Keynote and LibreOffice Impress.",
+    extension: "pptx",
+    mime: PRODUCT_FILE_TYPES.pptx.primaryMime,
+    kind: "instant",
+    group: "deck",
+    icon: "slides",
+  },
+  {
+    id: "pdf",
+    label: "PDF document (.pdf)",
+    description: "Server-side conversion via LibreOffice. One slide per PDF page.",
+    extension: "pdf",
+    mime: "application/pdf",
+    kind: "dialog",
+    group: "deck",
+    icon: "pdf",
+    optionFields: [
+      {
+        id: "slideRange",
+        label: "Slide range",
+        control: { type: "text", placeholder: "All slides — try 1,3-5" },
+        hint: "Leave blank for every slide. Examples: 1,3 — 2-5 — 1,4-7,10.",
+      },
+      {
+        id: "pageSize",
+        label: "Page size",
+        control: {
+          type: "select",
+          defaultId: "source",
+          options: [
+            { id: "source", label: "Use slide size" },
+            { id: "a4", label: "A4 landscape" },
+            { id: "letter", label: "Letter landscape" },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "html",
+    label: "Web page (.html)",
+    description: "Server-side HTML export. Ships an interactive viewer with each slide.",
+    extension: "html",
+    mime: "text/html",
+    kind: "instant",
+    group: "deck",
+    icon: "code",
+  },
+  {
+    id: "png-zip",
+    label: "All slides — PNG (.zip)",
+    description: "One PNG per slide, bundled as a zip. Pick a scale for retina exports.",
+    extension: "zip",
+    mime: "application/zip",
+    kind: "dialog",
+    group: "deck",
+    icon: "image",
+    optionFields: [
+      { id: "scale", label: "Resolution", control: SCALE_OPTIONS },
+      {
+        id: "slideRange",
+        label: "Slide range",
+        control: { type: "text", placeholder: "All slides — try 1,3-5" },
+        hint: "Leave blank for every slide.",
+      },
+    ],
+  },
+  {
+    id: "svg-zip",
+    label: "All slides — SVG (.zip)",
+    description: "Resolution-independent SVG per slide.",
+    extension: "zip",
+    mime: "application/zip",
+    kind: "instant",
+    group: "deck",
+    icon: "image",
+  },
+  // ── This slide ─────────────────────────────────────────────────
+  // Special-case bucket at the bottom: "I just want this one slide
+  // out". Order within the group is most-shareable → most-
+  // specialised: PDF (universal single-page handout), PNG (default
+  // raster for chat / docs), JPEG (smaller raster), SVG (vector
+  // for designers).
+  {
+    id: "slide-pdf",
+    label: "Current slide — PDF (.pdf)",
+    description: "Single-page PDF of the current slide. Server-side via LibreOffice.",
+    extension: "pdf",
+    mime: "application/pdf",
+    kind: "instant",
+    group: "current",
+    icon: "pdf",
+  },
   {
     id: "slide-png",
     label: "Current slide — PNG (.png)",
@@ -107,108 +212,6 @@ const PPTX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
     mime: "image/svg+xml",
     kind: "instant",
     group: "current",
-    icon: "image",
-  },
-  {
-    id: "slide-pdf",
-    label: "Current slide — PDF (.pdf)",
-    description: "Single-page PDF of the current slide. Server-side via LibreOffice.",
-    extension: "pdf",
-    mime: "application/pdf",
-    kind: "instant",
-    group: "current",
-    icon: "pdf",
-  },
-  {
-    id: "pptx",
-    label: "PowerPoint presentation (.pptx)",
-    description: "Round-trip native OOXML — opens in PowerPoint, Keynote and LibreOffice Impress.",
-    extension: "pptx",
-    mime: PRODUCT_FILE_TYPES.pptx.primaryMime,
-    kind: "instant",
-    group: "native",
-    icon: "slides",
-  },
-  {
-    id: "pdf",
-    label: "PDF document (.pdf)",
-    description: "Server-side conversion via LibreOffice. One slide per PDF page.",
-    extension: "pdf",
-    mime: "application/pdf",
-    kind: "dialog",
-    group: "pdf-web",
-    icon: "pdf",
-    optionFields: [
-      {
-        id: "slideRange",
-        label: "Slide range",
-        control: { type: "text", placeholder: "All slides — try 1,3-5" },
-        hint: "Leave blank for every slide. Examples: 1,3 — 2-5 — 1,4-7,10.",
-      },
-      {
-        id: "pageSize",
-        label: "Page size",
-        control: {
-          type: "select",
-          defaultId: "source",
-          options: [
-            { id: "source", label: "Use slide size" },
-            { id: "a4", label: "A4 landscape" },
-            { id: "letter", label: "Letter landscape" },
-          ],
-        },
-      },
-    ],
-  },
-  {
-    id: "html",
-    label: "Web page (.html)",
-    description: "Server-side HTML export. Ships an interactive viewer with each slide.",
-    extension: "html",
-    mime: "text/html",
-    kind: "instant",
-    group: "pdf-web",
-    icon: "code",
-  },
-  {
-    id: "png-zip",
-    label: "Slide images — PNG (.zip)",
-    description: "One PNG per slide, bundled as a zip. Pick a scale for retina exports.",
-    extension: "zip",
-    mime: "application/zip",
-    kind: "dialog",
-    group: "images",
-    icon: "image",
-    optionFields: [
-      {
-        id: "scale",
-        label: "Resolution",
-        control: {
-          type: "select",
-          defaultId: "2",
-          options: [
-            { id: "1", label: "1× (standard)" },
-            { id: "2", label: "2× (retina)" },
-            { id: "3", label: "3× (high-DPI)" },
-          ],
-        },
-      },
-      {
-        id: "slideRange",
-        label: "Slide range",
-        control: { type: "text", placeholder: "All slides — try 1,3-5" },
-        hint: "Leave blank for every slide.",
-      },
-    ],
-  },
-  {
-    id: "svg-zip",
-    label: "Slide vectors — SVG (.zip)",
-    description: "Resolution-independent SVG per slide.",
-    extension: "zip",
-    mime: "application/zip",
-    kind: "instant",
-    group: "images",
     icon: "image",
   },
 ];

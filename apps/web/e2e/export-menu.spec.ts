@@ -5,8 +5,11 @@ import { gotoEditor, gotoXlsxEditor } from "./_helpers";
  * Rich Export — dropdown smoke per product.
  *
  * Each editor exposes the same `shell-export` button. Clicking it
- * always opens a categorized dropdown (Native / PDF & web / Data /
- * Images) populated from the product adapter's `exportFormats`.
+ * always opens a categorized dropdown populated from the product
+ * adapter's `exportFormats` — DOCX/XLSX use the fine-grained
+ * Native / PDF & web / Data / Images groups, PPTX collapses the
+ * deck-level entries into a single "Whole deck" group beneath
+ * "This slide".
  * "Instant" formats download immediately; formats with options route
  * through the rich Export dialog, and a trailing "More options…" item
  * always opens the dialog explicitly.
@@ -92,7 +95,7 @@ test.describe("export dropdown — PPTX", () => {
     await gotoPptxEditor(page);
     await openExportDropdown(page);
 
-    // The new "This page" group sits at the top with single-slide
+    // The "This slide" group sits at the top with single-slide
     // exports for the slide that's currently in view.
     await expect(page.getByTestId("shell-export-slide-png")).toBeVisible();
     await expect(page.getByTestId("shell-export-slide-jpeg")).toBeVisible();

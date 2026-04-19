@@ -263,18 +263,20 @@ function SaveStatePill({ state }: { readonly state: SaveState }): React.ReactNod
 }
 
 const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
-  "current",
+  "deck",
   "native",
   "pdf-web",
   "data",
   "images",
+  "current",
 ];
 const GROUP_LABEL: Record<ExportFormatGroup, string> = {
-  current: "This page",
+  deck: "Whole deck",
   native: "Native",
   "pdf-web": "PDF & web",
   data: "Data",
   images: "Images",
+  current: "This slide",
 };
 
 function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.ReactNode {
