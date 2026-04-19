@@ -18,6 +18,7 @@
   --surface: #fbfbfa;
   --accent: #3b82f6;
   --accent-light: #eaf2fe;
+  --on-accent: #ffffff;
 
   /* Brand accents */
   --office-blue: #3b82f6;
@@ -37,6 +38,9 @@
   --error-bg: #fef2f2;
   --error-border: #fecaca;
   --error-muted: rgba(216, 75, 62, 0.1);
+
+  /* Editor surfaces — backdrop is the grey "desk" the page card sits on. */
+  --page-backdrop: color-mix(in srgb, var(--divider) 25%, var(--surface));
 }
 
 /* ── Dark mode (class-based for next-themes + media query fallback) ── */
@@ -51,6 +55,7 @@ html.dark {
   --surface: #202020;
   --accent: #60a5fa;
   --accent-light: #1e2d45;
+  --on-accent: #0b1322;
 
   --office-blue: #60a5fa;
   --office-blue-light: #1e2d45;
@@ -67,6 +72,8 @@ html.dark {
   --error-bg: rgba(153, 27, 27, 0.2);
   --error-border: rgba(153, 27, 27, 0.35);
   --error-muted: rgba(239, 68, 68, 0.1);
+
+  --page-backdrop: #0e0e0e;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -80,6 +87,7 @@ html.dark {
     --surface: #202020;
     --accent: #60a5fa;
     --accent-light: #1e2d45;
+    --on-accent: #0b1322;
 
     --office-blue: #60a5fa;
     --office-blue-light: #1e2d45;
@@ -96,6 +104,8 @@ html.dark {
     --error-bg: rgba(153, 27, 27, 0.2);
     --error-border: rgba(153, 27, 27, 0.35);
     --error-muted: rgba(239, 68, 68, 0.1);
+
+    --page-backdrop: #0e0e0e;
   }
 }
 
@@ -1084,27 +1094,6 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
   background: #131313;
 }
 
-.prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label {
-  position: absolute;
-  right: 16px;
-  bottom: 6px;
-  display: inline-block;
-  padding: 1px 8px;
-  background: rgba(0, 0, 0, 0.06);
-  border-radius: 999px;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--secondary);
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-}
-
-.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label,
-html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label {
-  background: rgba(255, 255, 255, 0.07);
-}
-
 /* Header / footer zone — the actual interactive surface inside a
  * page cap or page edge. Word-flavoured: small italic placeholder,
  * a dashed separator from the body, a label badge that fades in on
@@ -1134,6 +1123,31 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label {
   border-top: 1px dashed var(--divider);
   padding-top: 6px;
   margin-top: 8px;
+}
+
+/* Sections without a header/footer part: collapse the zone so it
+ * doesn't read as a second heading at the top of the page. The
+ * dashed separator + pill only return on hover, mirroring Word. */
+.prose-pm .ProseMirror .pm-page-zone:has(.pm-page-zone-no-part) {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-height: 8px;
+}
+
+.prose-pm .ProseMirror .pm-page-zone:has(.pm-page-zone-no-part):hover {
+  border-bottom: 1px dashed var(--divider);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.prose-pm .ProseMirror .pm-page-zone-footer:has(.pm-page-zone-no-part):hover {
+  border-top: 1px dashed var(--divider);
+  border-bottom: 0;
+  padding-top: 6px;
+  padding-bottom: 0;
+  margin-top: 8px;
+  margin-bottom: 0;
 }
 
 .prose-pm .ProseMirror .pm-page-zone:hover {
@@ -1182,34 +1196,59 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap-label {
 
 /* ── Active editing — Word's "Header & Footer" mode.
  *
- * When the React shell opens the inline `PageZoneEditor`, it adds
- * `data-zone-editing="header"` (or "footer") to the host `.prose-pm`.
- * That pulls in:
- *   - All page-zones become semi-translucent except the active one.
- *   - All body content dims to 0.4 opacity, mirroring Word.
- *   - The active zone's label badge stays pinned. */
-.prose-pm[data-zone-editing] .ProseMirror > .pm-page-block,
-.prose-pm[data-zone-editing] .ProseMirror > hr {
+ * Each zone's content element is `contenteditable=true`. When focus
+ * lands inside one, the host `.prose-pm` matches `:has(...:focus)`
+ * and we dim the body + highlight the active zone. No JS required —
+ * the focus-driven CSS is self-correcting on tab-out / blur.
+ */
+.prose-pm:has(.pm-page-zone-header [contenteditable="true"]:focus) .ProseMirror > .pm-page-block,
+.prose-pm:has(.pm-page-zone-header [contenteditable="true"]:focus) .ProseMirror > hr,
+.prose-pm:has(.pm-page-zone-footer [contenteditable="true"]:focus) .ProseMirror > .pm-page-block,
+.prose-pm:has(.pm-page-zone-footer [contenteditable="true"]:focus) .ProseMirror > hr {
   opacity: 0.35;
   pointer-events: none;
   transition: opacity 0.16s ease;
 }
 
-.prose-pm[data-zone-editing="header"] .pm-page-zone-footer,
-.prose-pm[data-zone-editing="footer"] .pm-page-zone-header {
+.prose-pm:has(.pm-page-zone-header [contenteditable="true"]:focus) .pm-page-zone-footer,
+.prose-pm:has(.pm-page-zone-footer [contenteditable="true"]:focus) .pm-page-zone-header {
   opacity: 0.4;
   pointer-events: none;
 }
 
-.prose-pm[data-zone-editing="header"] .pm-page-zone-header,
-.prose-pm[data-zone-editing="footer"] .pm-page-zone-footer {
+.pm-page-zone:focus-within .pm-page-zone-content {
   background-color: color-mix(in srgb, var(--accent-light) 80%, transparent);
   box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--foreground);
+  border-radius: 2px;
 }
 
-.prose-pm[data-zone-editing="header"] .pm-page-zone-header::before,
-.prose-pm[data-zone-editing="footer"] .pm-page-zone-footer::before {
-  opacity: 1;
+.pm-page-zone:focus-within::before {
+  opacity: 1 !important;
   background: var(--accent);
+}
+
+/* Empty placeholder hint — uses ::after on contenteditable empty
+ * elements so it disappears the moment the user starts typing. */
+.pm-page-zone-content.pm-page-zone-empty[contenteditable="true"]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--tertiary);
+  font-style: italic;
+  pointer-events: none;
+}
+
+/* When the section has no header/footer part at all, keep the zone
+ * visually silent (matching Word's behaviour). The "No header for
+ * this section" hint is only painted when the user hovers the zone
+ * region, so a clean document never looks like it has two headers. */
+.pm-page-zone-content.pm-page-zone-no-part {
+  min-height: 0;
+  padding: 0;
+}
+
+.pm-page-zone:hover .pm-page-zone-content.pm-page-zone-no-part::before {
+  content: attr(data-empty-text);
+  color: var(--tertiary);
+  font-style: italic;
+  pointer-events: none;
 }

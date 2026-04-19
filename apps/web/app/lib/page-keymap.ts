@@ -5,6 +5,15 @@ import { currentParagraphId, pmSelectionToRange } from "./format-helpers";
 import { movePageRelative } from "./page-decorations";
 
 /**
+ * Custom event fired when the user invokes "Go to page" via Mod+G
+ * inside the editor surface. The editor host listens for this on
+ * `window` and opens its goto dialog. Decoupled via an event so the
+ * keymap plugin (which lives one layer below the React tree) does
+ * not need a direct ref to component state.
+ */
+export const GOTO_PAGE_EVENT = "docx:goto-page";
+
+/**
  * P3.5 — page-aware keymap plugin.
  *
  * Binds:
@@ -12,6 +21,8 @@ import { movePageRelative } from "./page-decorations";
  *    dispatch `docx:insert-page-break` against the paragraph + offset
  *    that the caret is in. Mirrors Word's "Insert → Page Break"
  *    shortcut.
+ *  - `Mod-G` → fires the {@link GOTO_PAGE_EVENT} window event so the
+ *    editor host can open its "Go to page" dialog (B10).
  *  - `PageDown` → advance the caret by one page chunk (W21).
  *  - `PageUp` → retreat the caret by one page chunk (W21).
  *
@@ -32,6 +43,11 @@ export function pageKeymapPlugin(agent: DocxAgent): Plugin {
         const isMod = event.metaKey || event.ctrlKey;
         if (event.key === "Enter" && isMod && !event.shiftKey && !event.altKey) {
           return handleInsertPageBreak(view, agent);
+        }
+        if ((event.key === "g" || event.key === "G") && isMod && !event.shiftKey && !event.altKey) {
+          window.dispatchEvent(new CustomEvent(GOTO_PAGE_EVENT));
+          event.preventDefault();
+          return true;
         }
         if (event.key === "PageDown") {
           return movePageRelative(view, 1);

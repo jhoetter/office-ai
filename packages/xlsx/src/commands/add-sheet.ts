@@ -64,6 +64,11 @@ export const addSheetHandler: CommandHandler<AddSheetPayload, XlsxSnapshot> = {
       rowHeights: new Map(),
       hiddenRows: new Set(),
       images: [],
+      conditionalFormats: [],
+      opaqueConditionalFormats: [],
+      dataValidations: [],
+      tables: [],
+      charts: [],
     };
 
     const sheets = snapshot.root.sheets.slice();

@@ -55,8 +55,12 @@ export const pasteRangeHandler: CommandHandler<PasteRangePayload, XlsxSnapshot> 
     // Stage cell updates in a fresh map; the recalc at the end may
     // mutate the same map again with cached formula values.
     const cells = new Map(sheet.cells);
-    const writeCell = mode === "all" || mode === "values";
+    const writeCell = mode === "all" || mode === "values" || mode === "formulas";
     const writeStyle = mode === "all" || mode === "formats";
+    // In "values" mode formulas collapse to their cached value so the
+    // destination ends up with literals only. "formulas" keeps the
+    // formula text (relative-shifted); "all" does both.
+    const keepFormula = mode === "all" || mode === "formulas";
 
     const cellChanges: DiffChange[] = [];
     const formulaTargets: Array<{ row: number; col: number; text: string }> = [];
@@ -87,7 +91,7 @@ export const pasteRangeHandler: CommandHandler<PasteRangePayload, XlsxSnapshot> 
 
         // Re-shift formula refs against the destination anchor.
         let formulaText: string | null = null;
-        if (writeCell && src.formula) {
+        if (writeCell && keepFormula && src.formula) {
           formulaText = shiftFormula(
             src.formula,
             source.origin.sheet || sheet.name,
@@ -135,7 +139,7 @@ export const pasteRangeHandler: CommandHandler<PasteRangePayload, XlsxSnapshot> 
     // happen to live in the destination — that would surprise the user.
     // Instead, partial overlap aborts the paste with `merge-overlap`.
     let nextMerges = sheet.merges;
-    if (source.merges.length > 0) {
+    if (source.merges.length > 0 && mode === "all") {
       const incoming: MergedCell[] = source.merges.map((m) => {
         const dr0 = transpose ? m.c0 : m.r0;
         const dc0 = transpose ? m.r0 : m.c0;

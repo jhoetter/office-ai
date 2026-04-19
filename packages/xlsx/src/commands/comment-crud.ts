@@ -150,9 +150,7 @@ export const editCommentHandler: CommandHandler<EditCommentPayload, XlsxSnapshot
     }
     const nextSheet: Sheet = {
       ...sheet,
-      comments: sheet.comments.map((c) =>
-        c.id === payload.commentId ? { ...c, text: payload.text } : c
-      ),
+      comments: sheet.comments.map((c) => (c.id === payload.commentId ? { ...c, text: payload.text } : c)),
     };
     return commit(snapshot, sheet, nextSheet, [
       {
@@ -168,12 +166,7 @@ export const editCommentHandler: CommandHandler<EditCommentPayload, XlsxSnapshot
 
 // ─── Internals ────────────────────────────────────────────────────────────
 
-function commit(
-  snapshot: XlsxSnapshot,
-  prevSheet: Sheet,
-  nextSheet: Sheet,
-  changes: DiffChange[]
-) {
+function commit(snapshot: XlsxSnapshot, prevSheet: Sheet, nextSheet: Sheet, changes: DiffChange[]) {
   const nextWorkbook = replaceSheet(snapshot.root, nextSheet);
   const dirtyPatch: Parameters<typeof evolveSnapshot>[2] = {};
   if (prevSheet.commentsPartPath) {

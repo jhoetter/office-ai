@@ -32,8 +32,7 @@ export function createXlsxCommentsProvider(opts: XlsxCommentsProviderOptions): C
       return groupThreads(bodies);
     },
     async add(input) {
-      const ref =
-        input.anchor.kind === "xlsx-cell" ? input.anchor.ref : opts.defaultRef ?? "A1";
+      const ref = input.anchor.kind === "xlsx-cell" ? input.anchor.ref : (opts.defaultRef ?? "A1");
       await agent.applyCommand({
         type: "xlsx:add-comment",
         payload: { sheet: sheetName, ref, author: input.author, text: input.text },

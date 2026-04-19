@@ -55,7 +55,8 @@ export function createDocxCommentsProvider(opts: DocxCommentsProviderOptions): C
       return groupThreads(bodies);
     },
     async add(input) {
-      const range = input.anchor.kind === "docx-range" ? (input.anchor.range as DocxSelection | undefined) : undefined;
+      const range =
+        input.anchor.kind === "docx-range" ? (input.anchor.range as DocxSelection | undefined) : undefined;
       if (!range) {
         throw new Error(
           "DocxCommentsProvider.add(): the docx-range anchor must carry an opaque DocxSelection range"

@@ -9,7 +9,10 @@ import { cellKey } from "../model/refs.js";
 import { defaultStyleTable } from "../model/style-table.js";
 import type { Cell, Sheet, XlsxSnapshot } from "../model/types.js";
 
-function makeSheet(name: string, rows: ReadonlyArray<ReadonlyArray<string | number | boolean | null>>): Sheet {
+function makeSheet(
+  name: string,
+  rows: ReadonlyArray<ReadonlyArray<string | number | boolean | null>>
+): Sheet {
   const cells = new Map<string, Cell>();
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r]!;
@@ -35,6 +38,11 @@ function makeSheet(name: string, rows: ReadonlyArray<ReadonlyArray<string | numb
     rowHeights: new Map(),
     hiddenRows: new Set(),
     images: [],
+    conditionalFormats: [],
+    opaqueConditionalFormats: [],
+    dataValidations: [],
+    tables: [],
+    charts: [],
   };
 }
 

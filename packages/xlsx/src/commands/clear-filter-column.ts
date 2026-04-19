@@ -15,10 +15,7 @@ export const clearFilterColumnHandler: CommandHandler<ClearFilterColumnPayload, 
   apply(snapshot, payload) {
     const sheet = resolveSheet(snapshot.root, payload.sheet);
     if (!sheet.autoFilter) {
-      throw new CommandError(
-        "invalid-state",
-        `sheet "${sheet.name}" has no active AutoFilter`
-      );
+      throw new CommandError("invalid-state", `sheet "${sheet.name}" has no active AutoFilter`);
     }
     if (!sheet.autoFilter.columns.has(payload.colId)) {
       const noop = evolveSnapshot(snapshot, snapshot.root, {});

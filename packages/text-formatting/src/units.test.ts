@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  halfPointsToPt,
-  hundredthsOfPtToPt,
-  ptToHalfPoints,
-  ptToHundredthsOfPt,
-} from "./units";
+import { halfPointsToPt, hundredthsOfPtToPt, ptToHalfPoints, ptToHundredthsOfPt } from "./units";
 
 describe("units", () => {
   it("round-trips common pt sizes through half-points", () => {

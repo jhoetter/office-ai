@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { useFocusTrap } from "@officeai/ui";
 import {
   SHORTCUT_CATALOGS,
   type ShortcutCatalog,
@@ -35,15 +36,19 @@ export function KeyboardShortcutsDialog(props: KeyboardShortcutsDialogProps) {
   const catalog = SHORTCUT_CATALOGS[product];
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const isMac = useIsMac();
 
   useEffect(() => {
     if (!open) return;
     setQuery("");
-    // Defer focus to next tick so the dialog DOM is painted first;
-    // otherwise Safari occasionally misses the autofocus.
-    requestAnimationFrame(() => inputRef.current?.focus());
   }, [open]);
+
+  useFocusTrap(panelRef, {
+    enabled: open,
+    initialFocusRef: inputRef,
+    onEscape: onClose,
+  });
 
   const filtered = useMemo(() => filterCatalog(catalog, query), [catalog, query]);
 
@@ -62,7 +67,9 @@ export function KeyboardShortcutsDialog(props: KeyboardShortcutsDialogProps) {
       }}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg border border-divider bg-surface shadow-2xl"
+        ref={panelRef}
+        tabIndex={-1}
+        className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg border border-divider bg-surface shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3">
@@ -118,9 +125,7 @@ export function KeyboardShortcutsDialog(props: KeyboardShortcutsDialogProps) {
                       // unique.
                       key={`${group.category}-${entry.label}-${entry.keys.join("+")}`}
                       className={`flex items-center justify-between gap-3 rounded px-2 py-1.5 ${
-                        entry.status === "planned"
-                          ? "text-secondary opacity-60"
-                          : "text-default"
+                        entry.status === "planned" ? "text-secondary opacity-60" : "text-default"
                       }`}
                       data-shortcut-label={entry.label}
                     >

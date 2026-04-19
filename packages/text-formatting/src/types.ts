@@ -12,13 +12,7 @@
  * See spec/shared/text-formatting.md for the wider contract.
  */
 
-export type UnderlineStyle =
-  | "single"
-  | "double"
-  | "thick"
-  | "dotted"
-  | "dashed"
-  | "wavy";
+export type UnderlineStyle = "single" | "double" | "thick" | "dotted" | "dashed" | "wavy";
 
 /**
  * A patch of formatting to apply to the current selection. Every

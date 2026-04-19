@@ -22,10 +22,7 @@ import { gotoEditor } from "./_helpers";
 // Playwright CJS / ESM hybrid loader (using `import.meta.url`
 // crashed with `ReferenceError: require is not defined` when the
 // test file was loaded under the CJS pipeline).
-const FIXTURE_PATH = resolve(
-  process.cwd(),
-  "../../fixtures/docx/real-world/06-comments-and-changes.docx"
-);
+const FIXTURE_PATH = resolve(process.cwd(), "../../fixtures/docx/real-world/06-comments-and-changes.docx");
 
 async function loadTrackedFixture(page: import("@playwright/test").Page): Promise<void> {
   await gotoEditor(page);
@@ -35,9 +32,7 @@ async function loadTrackedFixture(page: import("@playwright/test").Page): Promis
   // input by its `accept` attribute because the toolbar also wires
   // up an image-upload input that would otherwise clash on the
   // bare `input[type="file"]` selector.
-  await page
-    .locator('input[type="file"][accept*=".docx"]')
-    .setInputFiles(FIXTURE_PATH);
+  await page.locator('input[type="file"][accept*=".docx"]').setInputFiles(FIXTURE_PATH);
   // Fixture's first paragraph reads "Draft" (Heading2). Wait for it
   // so we know mountAgent finished.
   await expect(page.getByText("Draft", { exact: false })).toBeVisible({ timeout: 15_000 });

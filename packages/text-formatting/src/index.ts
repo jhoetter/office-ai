@@ -9,12 +9,7 @@ export {
   type UnderlineStyle,
 } from "./types";
 
-export {
-  ptToHalfPoints,
-  halfPointsToPt,
-  ptToHundredthsOfPt,
-  hundredthsOfPtToPt,
-} from "./units";
+export { ptToHalfPoints, halfPointsToPt, ptToHundredthsOfPt, hundredthsOfPtToPt } from "./units";
 
 export { normalizeColor, renderColor } from "./color";
 

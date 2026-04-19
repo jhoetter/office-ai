@@ -208,6 +208,23 @@ export class PptxAgent {
     this.bus.rollback(toRevision);
   }
 
+  // ── Undo / Redo ────────────────────────────────────────────────────────
+  canUndo(): boolean {
+    return this.bus.canUndo();
+  }
+
+  canRedo(): boolean {
+    return this.bus.canRedo();
+  }
+
+  undo(): Mutation<PptxSnapshot> | null {
+    return this.bus.undo();
+  }
+
+  redo(): Mutation<PptxSnapshot> | null {
+    return this.bus.redo();
+  }
+
   // ── I/O ────────────────────────────────────────────────────────────────
   async exportFile(): Promise<ArrayBuffer> {
     return serializePptx(this.getSnapshot());

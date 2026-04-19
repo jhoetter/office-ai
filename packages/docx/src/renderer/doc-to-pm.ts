@@ -482,9 +482,7 @@ function tableToRenderable(table: Table): RenderableTable {
   const out: { -readonly [K in keyof RenderableTable]: RenderableTable[K] } = {
     rows: table.rows.map(rowToRenderable),
   };
-  const gridCols = table.grid
-    .map((g) => g.w ?? 0)
-    .filter((w): w is number => Number.isFinite(w));
+  const gridCols = table.grid.map((g) => g.w ?? 0).filter((w): w is number => Number.isFinite(w));
   if (gridCols.length > 0) out.gridCols = gridCols;
   const props = tablePropsToRenderable(table);
   if (props) out.props = props;
@@ -558,9 +556,7 @@ function cellToRenderable(cell: TableCell): RenderableTableCell {
               {
                 text: block.rows
                   .map((r) =>
-                    r.cells
-                      .map((c) => c.body.map(extractBlockText).filter(Boolean).join(" "))
-                      .join(" | ")
+                    r.cells.map((c) => c.body.map(extractBlockText).filter(Boolean).join(" ")).join(" | ")
                   )
                   .join("\n"),
               },

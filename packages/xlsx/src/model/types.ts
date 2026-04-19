@@ -127,6 +127,46 @@ export interface XlsxWorkbook {
    * part (deduped on `ImageBlob.hash`).
    */
   readonly images: ReadonlyMap<string, ImageBlob>;
+  /**
+   * Workbook-scoped (or sheet-scoped) named ranges. Mirror of OOXML
+   * `<workbook><definedNames><definedName name="…" localSheetId="…">
+   * Sheet1!$A$1:$B$2</definedName></definedNames></workbook>`.
+   *
+   * Spec: see C12 in the night-shift unification plan.
+   */
+  readonly definedNames: ReadonlyArray<DefinedName>;
+}
+
+/**
+ * Workbook- or sheet-scoped named range (a.k.a. defined name).
+ * `refersTo` is the raw OOXML reference text, with `=` prefix
+ * stripped at parse time. We keep the original string verbatim so
+ * round-trip survives even when the reference can't be parsed
+ * cleanly (e.g. cross-sheet, cross-workbook, formulas).
+ */
+export interface DefinedName {
+  /** Unique identifier within the snapshot (synthetic). */
+  readonly id: string;
+  /** Display name as used in formulas (`MyName`). Case-sensitive. */
+  readonly name: string;
+  /** OOXML refersTo text (without leading `=`). */
+  readonly refersTo: string;
+  /**
+   * Sheet scope. `undefined` = workbook-scoped (visible from any
+   * sheet); a string = scoped to the sheet with that name. OOXML
+   * stores this as the 0-based `localSheetId` index — we resolve
+   * it to a name at parse time so add / rename / delete are
+   * straightforward.
+   */
+  readonly scope?: string;
+  /** Optional comment shown in the Name Manager. */
+  readonly comment?: string;
+  /**
+   * Hide the name from the Name Box dropdown. Excel uses this for
+   * print areas and pivot caches; we preserve it but our UI never
+   * sets it.
+   */
+  readonly hidden?: boolean;
 }
 
 export interface Sheet {
@@ -200,6 +240,20 @@ export interface Sheet {
    */
   readonly hiddenRows: ReadonlySet<number>;
   /**
+   * Frozen-pane configuration. `rows` rows from the top stay visible
+   * when scrolling vertically; `cols` columns from the left stay
+   * visible when scrolling horizontally. `0` on either axis means
+   * "no freeze on this axis"; `undefined` means "no freeze at all".
+   *
+   * OOXML mirror: `<sheetView><pane xSplit="cols" ySplit="rows"
+   * topLeftCell="…" state="frozen"/></sheetView>`. We only emit the
+   * `frozen` state — Excel's `frozenSplit` (movable split bar) is a
+   * niche feature we don't expose in the toolbar, so the
+   * round-trip preserves it as opaque if a file already had it
+   * (the parser falls back to ignoring non-`frozen` panes).
+   */
+  readonly freeze?: FreezePanes;
+  /**
    * Free-floating images anchored to this sheet (raster only in v1).
    * Render order = array order (= z-order: later items overlay
    * earlier ones), matching Excel's drawing list semantics.
@@ -211,7 +265,271 @@ export interface Sheet {
    * Undefined when the sheet has no images.
    */
   readonly drawingPartPath?: string;
+  /**
+   * Typed conditional-formatting rules authored in this session.
+   * Rules are evaluated at render time by the editor and applied
+   * as visual overlays on top of the cell's base style.
+   *
+   * P0 round-trip: typed rules are NOT yet emitted to OOXML on
+   * serialize — they live only in the in-memory model. Existing
+   * `<conditionalFormatting>` blocks from the parsed workbook are
+   * preserved verbatim via {@link Sheet.opaqueConditionalFormats}
+   * so opening + saving doesn't destroy them.
+   *
+   * Spec: see C10 in the night-shift unification plan.
+   */
+  readonly conditionalFormats: ReadonlyArray<ConditionalFormat>;
+  /**
+   * Verbatim `<conditionalFormatting …>…</conditionalFormatting>`
+   * blocks captured from the parsed worksheet. Re-emitted byte-
+   * identically on dirty serialize so existing CF rules survive
+   * round-trip even though we don't (yet) model them typed.
+   */
+  readonly opaqueConditionalFormats: ReadonlyArray<string>;
+  /**
+   * Typed data-validation rules authored in this session.
+   * The editor surfaces these as in-cell dropdown arrows and
+   * (optionally) input gating. Each rule covers one A1 range.
+   *
+   * P0 round-trip: typed `list` rules ARE emitted on serialize
+   * (a new `<dataValidations>` block replaces any pre-existing
+   * one for dirty sheets); other kinds are deferred to a future
+   * pass and stay only in {@link Sheet.opaqueDataValidations}.
+   *
+   * Spec: see C11 in the night-shift unification plan.
+   */
+  readonly dataValidations: ReadonlyArray<DataValidation>;
+  /**
+   * Verbatim `<dataValidations …>…</dataValidations>` block
+   * captured from the parsed worksheet (a single block per
+   * sheet per OOXML spec). Re-emitted byte-identically on dirty
+   * serialize when the typed list is empty so existing
+   * non-`list` validations survive round-trip even though we
+   * don't (yet) model them typed. When the user adds typed
+   * `list` rules, the typed emitter takes over and the opaque
+   * block is dropped — Excel's dialog would do the same.
+   */
+  readonly opaqueDataValidations?: string;
+  /**
+   * Excel Tables (a.k.a. ListObjects) attached to this sheet (C14).
+   * Each entry maps 1:1 to an `xl/tables/tableN.xml` part. The
+   * parser hydrates them, the serializer re-emits any tables flagged
+   * dirty, and the editor renders alternating row banding + a bold
+   * header band over `range` so the user gets the Excel-Tables look
+   * even before structured references / auto-extend ship.
+   */
+  readonly tables: ReadonlyArray<TableDef>;
+  /**
+   * Charts attached to this sheet (C15). Each entry is a free-floating
+   * overlay with a typed series binding so the editor can paint a
+   * lightweight SVG preview without depending on a charting library.
+   *
+   * Round-trip caveat: existing chart parts (`xl/charts/*.xml`) live
+   * in `opaqueParts` and survive saves verbatim. Charts added via
+   * `xlsx:add-chart` are in-memory only — re-emitting brand-new
+   * DrawingML chart parts ships in a follow-up.
+   */
+  readonly charts: ReadonlyArray<SheetChart>;
 }
+
+/**
+ * Subset of Excel chart kinds we render natively. Existing chart
+ * parts in the source workbook are *not* coerced into this union —
+ * they round-trip opaquely and we draw a placeholder instead.
+ */
+export type ChartKind = "column" | "bar" | "line" | "pie";
+
+/**
+ * Free-floating chart on a worksheet (C15).
+ *
+ * Same anchor model as {@link SheetImage}: a from-cell + pixel
+ * offset and a CSS-pixel size. The renderer reads `dataRange` out
+ * of the sheet's cells at draw time so the chart auto-updates
+ * when the underlying values change.
+ */
+export interface SheetChart {
+  readonly id: NodeId;
+  readonly kind: ChartKind;
+  /** A1 range covering header row + body rows of the chart's data. */
+  readonly dataRange: string;
+  /** When `true`, the first row of `dataRange` is treated as a header. */
+  readonly hasHeaderRow: boolean;
+  /** When `true`, the first column of `dataRange` provides category labels. */
+  readonly hasCategoryColumn: boolean;
+  readonly title?: string;
+  readonly anchor: import("./drawings.js").ImageAnchor;
+}
+
+/**
+ * Excel Table (ListObject). Mirrors the subset of `xl/tables/*.xml`
+ * we read + emit. The OOXML element supports a *lot* more
+ * (calculated columns, totals row functions, custom xml mappings…),
+ * but those round-trip via {@link TableDef.opaqueXml} — the parser
+ * holds the original bytes so we re-emit unchanged tables verbatim.
+ *
+ * Spec: ECMA-376 §18.5.
+ */
+export interface TableDef {
+  readonly id: NodeId;
+  /** OOXML `id` attr — sheet-scoped numeric id used by formulas. */
+  readonly tableId: string;
+  /** OOXML `name` attr — internal name (matches `displayName` by default). */
+  readonly name: string;
+  /** OOXML `displayName` attr — what shows in the Name Box / formula refs. */
+  readonly displayName: string;
+  /** A1 range covered by the table, headers + body + totals row. */
+  readonly range: string;
+  /** OOXML `headerRowCount` attr. `0` = no headers (rare); `1` = standard. */
+  readonly headerRowCount: number;
+  /** OOXML `totalsRowCount` attr. `0` = no totals row; `1` = standard. */
+  readonly totalsRowCount: number;
+  /**
+   * Column display names, in `range` column order. We always read at
+   * least the names from `<tableColumns>` so column-style banding
+   * can label them correctly even when the header cells are blank.
+   */
+  readonly columnNames: ReadonlyArray<string>;
+  /** OOXML style descriptor — kept opaque to round-trip the styling pack. */
+  readonly styleInfoXml?: string;
+  /**
+   * OOXML autoFilter range, if the table has filter buttons enabled.
+   * We default to the table's own range when adding a new table; when
+   * round-tripping we preserve whatever the source file had.
+   */
+  readonly autoFilterRange?: string;
+  /**
+   * Verbatim original `<table …>…</table>` XML. Re-emitted byte-
+   * identically when the table is *not* dirty. Cleared on edits so
+   * the typed serializer takes over.
+   */
+  readonly opaqueXml?: string;
+  /**
+   * OOXML part path (`xl/tables/tableN.xml`). Stable across the
+   * session so sheet rels can target it.
+   */
+  readonly partPath: string;
+  /**
+   * Relationship id used by the sheet's rels part to reference the
+   * table part. Stable across the session so rels round-trip cleanly.
+   */
+  readonly relId: string;
+}
+
+/**
+ * Frozen-pane configuration. See `Sheet.freeze` for the OOXML
+ * mapping. Both axes default to `0` (no freeze on that axis).
+ */
+export interface FreezePanes {
+  readonly rows: number;
+  readonly cols: number;
+}
+
+/**
+ * Visual override emitted by a conditional-formatting rule when
+ * its predicate matches a cell. Sparse — only the fields the rule
+ * needs to set are populated; everything else falls back to the
+ * cell's base style.
+ */
+export interface ConditionalFormatOverlay {
+  /** Background fill, RRGGBB hex without `#`. */
+  readonly fill?: string;
+  /** Font colour, RRGGBB hex without `#`. */
+  readonly fontColor?: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  /** Bar fill for `dataBar` rules, RRGGBB without `#`. */
+  readonly barColor?: string;
+  /** 0..1 — relative width of the data-bar overlay. */
+  readonly barFraction?: number;
+}
+
+/**
+ * Discriminated union of supported conditional-formatting rule
+ * kinds. Mirrors Excel's most-used CF dialog entries; OOXML
+ * round-trip is deferred to a future pass.
+ */
+export type ConditionalFormat =
+  | {
+      readonly kind: "cellIs";
+      readonly id: string;
+      /** A1 ranges (multi-area allowed, comma-separated). */
+      readonly range: string;
+      readonly op: "gt" | "ge" | "lt" | "le" | "eq" | "ne" | "between" | "notBetween";
+      /** Single threshold for unary operators; lower bound for between. */
+      readonly value: number;
+      /** Upper bound for `between` / `notBetween`. */
+      readonly value2?: number;
+      readonly overlay: ConditionalFormatOverlay;
+    }
+  | {
+      readonly kind: "top10";
+      readonly id: string;
+      readonly range: string;
+      readonly bottom: boolean;
+      readonly percent: boolean;
+      readonly rank: number;
+      readonly overlay: ConditionalFormatOverlay;
+    }
+  | {
+      readonly kind: "containsText";
+      readonly id: string;
+      readonly range: string;
+      readonly text: string;
+      /** True for "contains", false for "does not contain". */
+      readonly contains: boolean;
+      readonly overlay: ConditionalFormatOverlay;
+    }
+  | {
+      readonly kind: "duplicate";
+      readonly id: string;
+      readonly range: string;
+      readonly unique: boolean;
+      readonly overlay: ConditionalFormatOverlay;
+    }
+  | {
+      readonly kind: "colorScale";
+      readonly id: string;
+      readonly range: string;
+      /** Min stop colour (RRGGBB). */
+      readonly minColor: string;
+      /** Optional midpoint colour for 3-stop scales. */
+      readonly midColor?: string;
+      /** Max stop colour. */
+      readonly maxColor: string;
+    }
+  | {
+      readonly kind: "dataBar";
+      readonly id: string;
+      readonly range: string;
+      readonly color: string;
+    };
+
+/**
+ * Data-validation rule. C11 currently models the `list` kind
+ * (in-cell dropdown picker) typed; everything else (whole, decimal,
+ * date, textLength, custom) preserves through the opaque round-trip
+ * path on `Sheet.opaqueDataValidations` until we extend the model.
+ */
+export type DataValidation = {
+  readonly kind: "list";
+  readonly id: string;
+  /** A1 range string (single area; multi-area authoring stays as opaque). */
+  readonly range: string;
+  /**
+   * List source. Either a literal comma-separated string of values
+   * (`"Yes,No,Maybe"`) or a formula reference (`"=Sheet1!$A$1:$A$5"`).
+   * `formula=true` flips the OOXML `formula1` element from a
+   * quoted-literal to a reference.
+   */
+  readonly source: string;
+  readonly formula: boolean;
+  /** Show the in-cell dropdown arrow (Excel default = true). */
+  readonly showDropDown: boolean;
+  /** Reject values outside the list (Excel "Stop" style). Default = true. */
+  readonly stopOnInvalid: boolean;
+  /** Allow the cell to be empty even if the list doesn't include "". */
+  readonly allowBlank: boolean;
+};
 
 /**
  * Excel `<autoFilter>` element. Anchored to a rectangular range whose

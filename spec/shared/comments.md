@@ -20,7 +20,7 @@
    rendering (margin balloons, free-pin overlays) lives in each
    editor's own UI module.
 4. **Provider-driven dispatch.** The sidebar calls `provider.add /
-   reply / resolve / delete`; adapters translate to the appropriate
+reply / resolve / delete`; adapters translate to the appropriate
    command-bus command (`docx:reply-comment`, `xlsx:add-comment`,
    `pptx:resolve-comment`, …) so all mutations still flow through the
    single `CommandBus` audit trail.
@@ -88,11 +88,11 @@ themselves if they don't want to hand the provider to the sidebar.
 
 ## Anchor semantics per format
 
-| Format | Anchor variant | Native location |
-|---|---|---|
-| DOCX | `docx-range` | `<w:commentRangeStart/>` … `<w:commentRangeEnd/>` straddling runs |
-| XLSX | `xlsx-cell` | `<comment ref="B7" authorId="…"/>` in `xl/comments{N}.xml` |
-| PPTX | `pptx-pin` | `<p:cm pos="x,y"/>` in `ppt/comments/comment{N}.xml`, optionally tied to a shape via `officeai-shapeId` extension |
+| Format | Anchor variant | Native location                                                                                                   |
+| ------ | -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| DOCX   | `docx-range`   | `<w:commentRangeStart/>` … `<w:commentRangeEnd/>` straddling runs                                                 |
+| XLSX   | `xlsx-cell`    | `<comment ref="B7" authorId="…"/>` in `xl/comments{N}.xml`                                                        |
+| PPTX   | `pptx-pin`     | `<p:cm pos="x,y"/>` in `ppt/comments/comment{N}.xml`, optionally tied to a shape via `officeai-shapeId` extension |
 
 Each adapter is free to add a `nativeRef` so a future format-aware
 view (e.g. revision-style comment cards in DOCX) can recover the
@@ -100,11 +100,11 @@ native blob without re-querying the agent.
 
 ## Threading + resolved state on the wire
 
-| Format | Threading carrier | Resolved carrier |
-|---|---|---|
-| DOCX | `<w:commentReply w:id="…" w:parentId="…"/>` (W15 `commentsExtended`) | `<w15:commentEx w15:done="1"/>` |
-| XLSX | `officeai-parentId` attr on `<comment>` (round-trips through Excel as opaque attr) | `officeai-resolved="1"` attr |
-| PPTX | `officeai-parentId` attr on `<p:cm>` extension list | `officeai-resolved="1"` attr |
+| Format | Threading carrier                                                                  | Resolved carrier                |
+| ------ | ---------------------------------------------------------------------------------- | ------------------------------- |
+| DOCX   | `<w:commentReply w:id="…" w:parentId="…"/>` (W15 `commentsExtended`)               | `<w15:commentEx w15:done="1"/>` |
+| XLSX   | `officeai-parentId` attr on `<comment>` (round-trips through Excel as opaque attr) | `officeai-resolved="1"` attr    |
+| PPTX   | `officeai-parentId` attr on `<p:cm>` extension list                                | `officeai-resolved="1"` attr    |
 
 XLSX and PPTX use custom `officeai-*` attributes because OOXML's
 threaded-comment parts are optional and not preserved by older
@@ -118,11 +118,11 @@ because both formats preserve unknown attributes on known elements.
 Each editor exposes a small adapter that normalises its native
 comments into the canonical shape:
 
-| Editor | Adapter |
-|---|---|
-| DOCX | `apps/web/app/editor/docxCommentsProvider.ts` |
-| XLSX | `apps/web/app/xlsx-editor/xlsxCommentsProvider.ts` |
-| PPTX | `apps/web/app/pptx-editor/pptxCommentsProvider.ts` |
+| Editor | Adapter                                            |
+| ------ | -------------------------------------------------- |
+| DOCX   | `apps/web/app/editor/docxCommentsProvider.ts`      |
+| XLSX   | `apps/web/app/xlsx-editor/xlsxCommentsProvider.ts` |
+| PPTX   | `apps/web/app/pptx-editor/pptxCommentsProvider.ts` |
 
 Each adapter:
 
@@ -147,6 +147,7 @@ Each adapter:
   All three editors auto-open the comments rail when `onScrollTo`
   fires, so a click from the dashboard / outline still surfaces the
   conversation.
+
 - Optionally accepts a `onToast` hook so the editor surface can
   surface success/error toasts without duplicating try/catch logic.
 
@@ -155,11 +156,11 @@ Each adapter:
 Adding a new top-level comment is editor-specific because it needs a
 fresh anchor:
 
-| Editor | Composer surface |
-|---|---|
-| DOCX | Floating `CommentComposer` popover anchored to the live PM selection; submits with a `DocxSelection` range. |
-| XLSX | Inline `CommentComposer` in the sidebar; uses the active cell selection as the `xlsx-cell` anchor. |
-| PPTX | Click-to-pin overlay on the slide canvas; commits a `pptx-pin` anchor (optionally bound to the clicked shape). |
+| Editor | Composer surface                                                                                               |
+| ------ | -------------------------------------------------------------------------------------------------------------- |
+| DOCX   | Floating `CommentComposer` popover anchored to the live PM selection; submits with a `DocxSelection` range.    |
+| XLSX   | Inline `CommentComposer` in the sidebar; uses the active cell selection as the `xlsx-cell` anchor.             |
+| PPTX   | Click-to-pin overlay on the slide canvas; commits a `pptx-pin` anchor (optionally bound to the clicked shape). |
 
 The composer dispatches through `provider.add(...)` so the sidebar
 re-renders immediately after the agent's snapshot updates.

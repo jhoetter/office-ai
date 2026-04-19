@@ -1,11 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import {
-  FONT_SIZES_PT,
-  MIXED,
-  type MaybeMixed,
-} from "@officeai/text-formatting";
+import { FONT_SIZES_PT, MIXED, type MaybeMixed } from "@officeai/text-formatting";
 
 export interface FontSizePickerProps {
   /** Active size in points. */
@@ -29,14 +25,8 @@ export function FontSizePicker({
   sizes = FONT_SIZES_PT,
   className,
 }: FontSizePickerProps): ReactNode {
-  const display =
-    value === MIXED
-      ? "—"
-      : typeof value === "number"
-      ? formatPt(value)
-      : "Size";
-  const concreteValue =
-    typeof value === "number" && sizes.includes(value) ? String(value) : "";
+  const display = value === MIXED ? "—" : typeof value === "number" ? formatPt(value) : "Size";
+  const concreteValue = typeof value === "number" && sizes.includes(value) ? String(value) : "";
   return (
     <label className="inline-flex items-center gap-1 text-xs text-secondary">
       <span className="sr-only">Font size</span>

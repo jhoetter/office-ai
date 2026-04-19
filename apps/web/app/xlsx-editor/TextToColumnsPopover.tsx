@@ -83,10 +83,7 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div
-        ref={dialogRef}
-        className="w-[320px] rounded-lg border border-divider bg-surface p-4 shadow-lg"
-      >
+      <div ref={dialogRef} className="w-[320px] rounded-lg border border-divider bg-surface p-4 shadow-lg">
         <h2 id="ttoc-title" className="mb-2 text-sm font-medium text-foreground">
           Text to Columns
         </h2>

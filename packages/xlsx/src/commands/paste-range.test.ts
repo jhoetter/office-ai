@@ -243,6 +243,50 @@ describe("xlsx:paste-range — modes", () => {
     expect(after?.styleId).toBe(beforeStyleId);
   });
 
+  it("formulas-only paste keeps the formula and drops styles", async () => {
+    const { bus } = await makeBus("01-single-sheet-numbers.xlsx");
+    // Pre-stamp the source value at A1, then pre-stamp the
+    // destination with a sentinel style so we can prove `formulas`
+    // mode does NOT overwrite cell formatting.
+    await bus.dispatch({
+      type: "xlsx:set-cell-value",
+      payload: { sheet: "Inventory", ref: "A1", value: 10 },
+    });
+    await bus.dispatch({
+      type: "xlsx:set-cell-format",
+      payload: { sheet: "Inventory", range: "B2", format: { font: { bold: true } } },
+    });
+    const beforeStyleB2 = bus.getWorking().root.sheets[0].cells.get(cellKey(1, 1))?.styleId;
+    expect(beforeStyleB2).toBeTypeOf("number");
+
+    // Snapshot with snapshot-relative formula text: row 0 is empty,
+    // row 1 has a formula referencing the cell directly above it.
+    // The clipboard layer keeps formulas in snapshot-relative coords
+    // so `shiftFormula` can reapply the right delta at paste time.
+    const source: XlsxClipboardSnapshot = {
+      origin: { sheet: "Inventory", range: "A1:A2" },
+      width: 1,
+      height: 2,
+      cells: [
+        [{ value: 7 }],
+        // Includes a styleId so we can verify it's NOT applied to the
+        // destination in `formulas` mode.
+        [{ value: null, formula: "A1*2", styleId: 999 }],
+      ],
+      merges: [],
+    };
+
+    await bus.dispatch({
+      type: "xlsx:paste-range",
+      payload: { sheet: "Inventory", target: "B1", source, mode: "formulas" },
+    });
+    const next = bus.getWorking().root.sheets[0];
+    const b2 = next.cells.get(cellKey(1, 1));
+    expect(b2?.formula?.text).toBe("B1*2");
+    expect(b2?.value).toBe(14);
+    expect(b2?.styleId).toBe(beforeStyleB2);
+  });
+
   it("formats-only preserves destination value", async () => {
     const { bus } = await makeBus("01-single-sheet-numbers.xlsx");
     await bus.dispatch({

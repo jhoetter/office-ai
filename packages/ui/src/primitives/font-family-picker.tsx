@@ -1,11 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import {
-  FONT_FAMILIES,
-  MIXED,
-  type MaybeMixed,
-} from "@officeai/text-formatting";
+import { FONT_FAMILIES, MIXED, type MaybeMixed } from "@officeai/text-formatting";
 
 export interface FontFamilyPickerProps {
   value: MaybeMixed<string>;
@@ -31,9 +27,7 @@ export function FontFamilyPicker({
 }: FontFamilyPickerProps): ReactNode {
   const concreteValue = typeof value === "string" ? value : "";
   const augmented =
-    concreteValue && !families.includes(concreteValue)
-      ? [concreteValue, ...families]
-      : families;
+    concreteValue && !families.includes(concreteValue) ? [concreteValue, ...families] : families;
   const placeholder = value === MIXED ? "—" : "Font";
   return (
     <label className="inline-flex items-center gap-1 text-xs text-secondary">

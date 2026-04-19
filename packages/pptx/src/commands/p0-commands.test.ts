@@ -151,6 +151,45 @@ describe("P0 shape commands", () => {
     expect(xml).toContain("Line two");
   });
 
+  it("set-text accepts structured paragraphs preserving per-run formatting", async () => {
+    // D12 — structured commit: each run carries its own properties
+    // (or an inheritFromRun hint) so bold/italic spans inside one
+    // paragraph survive a blur-commit round-trip.
+    const agent = await loadAgent("04-multi-shape.pptx");
+    const slide = agent.getSnapshot().root.slides[0];
+    const ts = slide.shapes.find((s): s is TextShape => s.kind === "text");
+    if (!ts) throw new Error("expected a text shape in 04-multi-shape.pptx");
+
+    const m = await agent.applyCommand({
+      type: "pptx:set-text",
+      payload: {
+        slideIndex: 0,
+        shapeId: ts.id,
+        paragraphs: [
+          {
+            runs: [
+              { text: "Hello ", properties: { bold: true } },
+              { text: "world", properties: { italic: true } },
+            ],
+          },
+          {
+            runs: [{ text: "Second line", inheritFromRun: 0 }],
+          },
+        ],
+      },
+      source: "human",
+    });
+    expect(m.status).toBe("approved");
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
+    expect(updated.txBody.paragraphs.length).toBe(2);
+    expect(updated.txBody.paragraphs[0].runs.length).toBe(2);
+    expect(updated.txBody.paragraphs[0].runs[0].text).toBe("Hello ");
+    expect(updated.txBody.paragraphs[0].runs[0].properties.bold).toBe(true);
+    expect(updated.txBody.paragraphs[0].runs[1].text).toBe("world");
+    expect(updated.txBody.paragraphs[0].runs[1].properties.italic).toBe(true);
+    expect(updated.txBody.paragraphs[1].runs[0].text).toBe("Second line");
+  });
+
   it("set-text rejects non-text shapes", async () => {
     const agent = await loadAgent("05-with-image.pptx");
     const slide = agent.getSnapshot().root.slides[0];

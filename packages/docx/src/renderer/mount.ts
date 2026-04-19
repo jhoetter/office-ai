@@ -141,9 +141,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       const isTracked =
         result.commands.length > 0 &&
         result.commands.some(
-          (c) =>
-            c.type === "docx:insert-text-tracked" ||
-            c.type === "docx:delete-range-tracked"
+          (c) => c.type === "docx:insert-text-tracked" || c.type === "docx:delete-range-tracked"
         );
 
       if (isTracked) {
@@ -187,10 +185,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       void agent.applyCommands(result.commands).catch((err) => {
         // Make sure we don't leak the suppression count if the
         // bus rejected our commands.
-        pendingFunnelCount = Math.max(
-          0,
-          pendingFunnelCount - result.commands.length
-        );
+        pendingFunnelCount = Math.max(0, pendingFunnelCount - result.commands.length);
         opts.onError?.(err);
       });
     },

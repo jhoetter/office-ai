@@ -138,7 +138,48 @@ export interface MoveSlidePayload {
 export interface SetTextPayload {
   readonly slideIndex: number;
   readonly shapeId: NodeId;
+  /**
+   * Plain-text replacement. Splits on `\n` into paragraphs, each
+   * collapsed to a single run that inherits the first existing
+   * paragraph/run's properties. This was the original v0 contract;
+   * prefer `paragraphs` for non-trivial commits so multi-run
+   * formatting (bold/italic/colour spans within a paragraph) isn't
+   * silently flattened.
+   */
+  readonly text?: string;
+  /**
+   * Structured replacement. When present, takes precedence over
+   * `text` and lets callers preserve the existing per-run formatting
+   * structure (bold spans, mixed colours, line breaks). Each paragraph
+   * is replaced wholesale; runs inherit per-run properties when
+   * provided, otherwise inherit from the corresponding existing
+   * shape paragraph/run when available.
+   */
+  readonly paragraphs?: ReadonlyArray<SetTextParagraphPatch>;
+}
+
+export interface SetTextParagraphPatch {
+  /** Paragraph properties; if omitted, inherits from the same-index existing paragraph. */
+  readonly properties?: import("../model/types.js").TextParagraphProperties;
+  readonly runs: ReadonlyArray<SetTextRunPatch>;
+}
+
+export interface SetTextRunPatch {
   readonly text: string;
+  /**
+   * Run properties; if omitted, inherits from the run referenced by
+   * `inheritFromRun` (when present and valid), otherwise from the
+   * first run of the same-index existing paragraph, otherwise from
+   * the shape's first run.
+   */
+  readonly properties?: import("../model/types.js").TextRunProperties;
+  readonly isLineBreak?: boolean;
+  /**
+   * Index hint pointing at the original run this slice originated
+   * from, so the command handler can copy its full property bag
+   * (including opaque XML) without losing fidelity.
+   */
+  readonly inheritFromRun?: number;
 }
 
 export interface SetPositionPayload {
@@ -174,6 +215,23 @@ export interface InsertImagePayload {
   readonly height: number;
   readonly altText?: string;
   readonly name?: string;
+}
+
+/**
+ * Replace the bitmap behind an existing `Picture` with a new file
+ * while preserving its position, size, alt-text and `spPrTail` (so any
+ * border / shadow / corner-radius styling stays intact). Mints a new
+ * media part if the bytes don't match an existing one (sha-256 dedup),
+ * adds a slide-rels entry if needed, and updates the picture's
+ * `mediaRelId`/`mediaPartPath`.
+ */
+export interface ReplacePictureMediaPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly data: Uint8Array | ArrayBuffer;
+  readonly mimeType: string;
+  /** Optional new alt text — leave undefined to preserve the existing descr. */
+  readonly altText?: string;
 }
 
 export interface AddTextBoxPayload {
@@ -226,6 +284,14 @@ export interface DeleteShapePayload {
   readonly shapeId: NodeId;
 }
 
+export type ReorderShapeMode = "to-front" | "to-back" | "forward" | "backward";
+
+export interface ReorderShapePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly mode: ReorderShapeMode;
+}
+
 export interface SetShapeFillPayload {
   readonly slideIndex: number;
   readonly shapeId: NodeId;
@@ -247,6 +313,16 @@ export interface AlignShapesPayload {
   readonly slideIndex: number;
   readonly shapeIds: ReadonlyArray<NodeId>;
   readonly mode: AlignMode;
+  /**
+   * Reference frame for the alignment math.
+   *   "selection" (default) — every shape snaps to the union box of
+   *     the selection; needs ≥ 2 alignable shapes. Mirrors
+   *     PowerPoint's "Align Selected Objects".
+   *   "slide"               — every shape snaps to the slide bounds
+   *     (`<p:sldSz>`); works with a single selected shape too. Mirrors
+   *     PowerPoint's "Align to Slide".
+   */
+  readonly relativeTo?: "selection" | "slide";
 }
 
 /**
@@ -258,6 +334,56 @@ export interface DistributeShapesPayload {
   readonly slideIndex: number;
   readonly shapeIds: ReadonlyArray<NodeId>;
   readonly axis: "horizontal" | "vertical";
+}
+
+/**
+ * Group two-or-more top-level shapes into a `GroupShape`. The group's
+ * bounding box is the union of the children's positions/sizes; the
+ * children are removed from the slide and re-inserted as the group's
+ * `children`. Connectors anchored to the regrouped shapes keep working
+ * because they reference shapes by `cNvPrId`, not by tree path.
+ *
+ * Restrictions:
+ *   • All shape ids must resolve to top-level shapes (no nested-group
+ *     children — PowerPoint allows this but we keep it simple for now).
+ *   • Every shape must carry an explicit `position` and `size`. Implicit
+ *     placeholders are refused so the synthesised group has a meaningful
+ *     bounding box.
+ *   • At least 2 shape ids are required.
+ */
+export interface GroupShapesPayload {
+  readonly slideIndex: number;
+  readonly shapeIds: ReadonlyArray<NodeId>;
+  readonly name?: string;
+}
+
+/**
+ * Dissolve a `GroupShape`, re-inserting its children at the group's
+ * position in the slide's shape array. Children keep their original
+ * absolute positions (the group's `chOff` was synthesised on `group` to
+ * equal its `position`, so this is a no-op coordinate-wise).
+ */
+export interface UngroupShapePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+}
+
+/**
+ * Duplicate a single shape on a slide. The clone is appended to the
+ * top-level shape array (it ends up in front of every other shape) and
+ * gets a unique `cNvPrId` so connectors and animations don't get
+ * confused. Optional `dxEmu`/`dyEmu` nudge the clone's position so it
+ * doesn't perfectly overlap the source. Connector targets are NOT
+ * rewritten — duplicated connectors keep referencing the original
+ * source/end shapes, matching PowerPoint's `Cmd+D` behaviour.
+ */
+export interface DuplicateShapePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  /** Default 228_600 (¼ inch) — same nudge as PowerPoint's `Cmd+D`. */
+  readonly dxEmu?: number;
+  /** Default 228_600 (¼ inch). */
+  readonly dyEmu?: number;
 }
 
 // ─── F2 (Tables) payloads ─────────────────────────────────────────────────
@@ -418,10 +544,15 @@ export const PPTX_COMMAND_TYPES = {
   setSize: "pptx:set-size",
   formatText: "pptx:format-text",
   insertImage: "pptx:insert-image",
+  replacePictureMedia: "pptx:replace-picture-media",
   addTextBox: "pptx:add-text-box",
   addShape: "pptx:add-shape",
   deleteShape: "pptx:delete-shape",
   setShapeFill: "pptx:set-shape-fill",
+  reorderShape: "pptx:reorder-shape",
+  duplicateShape: "pptx:duplicate-shape",
+  groupShapes: "pptx:group-shapes",
+  ungroupShape: "pptx:ungroup-shape",
   alignShapes: "pptx:align-shapes",
   distributeShapes: "pptx:distribute-shapes",
   tableSetCellText: "pptx:table-set-cell-text",

@@ -1,9 +1,5 @@
 import { CommandError, ooxml, sha256Hex, type CommandHandler, type DiffChange } from "@officeai/core";
-import {
-  EXTENSION_BY_CONTENT_TYPE,
-  type ImageBlob,
-  type SheetImage,
-} from "../model/drawings.js";
+import { EXTENSION_BY_CONTENT_TYPE, type ImageBlob, type SheetImage } from "../model/drawings.js";
 import type { Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
 import { buildDiff, evolveSnapshot, replaceSheet, type PartialDirtyFlags } from "./helpers.js";
 import type {
@@ -141,10 +137,7 @@ export const moveImageHandler: CommandHandler<MoveImagePayload, XlsxSnapshot> = 
     const sheet = resolveSheet(snapshot.root, payload.sheet);
     const idx = sheet.images.findIndex((i) => i.id === payload.imageId);
     if (idx === -1) {
-      throw new CommandError(
-        "image-not-found",
-        `Image ${payload.imageId} not found on ${payload.sheet}`
-      );
+      throw new CommandError("image-not-found", `Image ${payload.imageId} not found on ${payload.sheet}`);
     }
     if (payload.fromRow < 0 || payload.fromCol < 0) {
       throw new CommandError(
@@ -198,10 +191,7 @@ export const resizeImageHandler: CommandHandler<ResizeImagePayload, XlsxSnapshot
     const sheet = resolveSheet(snapshot.root, payload.sheet);
     const idx = sheet.images.findIndex((i) => i.id === payload.imageId);
     if (idx === -1) {
-      throw new CommandError(
-        "image-not-found",
-        `Image ${payload.imageId} not found on ${payload.sheet}`
-      );
+      throw new CommandError("image-not-found", `Image ${payload.imageId} not found on ${payload.sheet}`);
     }
     if (payload.widthPx <= 0 || payload.heightPx <= 0) {
       throw new CommandError(
@@ -253,18 +243,14 @@ export const removeImageHandler: CommandHandler<RemoveImagePayload, XlsxSnapshot
     const sheet = resolveSheet(snapshot.root, payload.sheet);
     const idx = sheet.images.findIndex((i) => i.id === payload.imageId);
     if (idx === -1) {
-      throw new CommandError(
-        "image-not-found",
-        `Image ${payload.imageId} not found on ${payload.sheet}`
-      );
+      throw new CommandError("image-not-found", `Image ${payload.imageId} not found on ${payload.sheet}`);
     }
     const removed = sheet.images[idx]!;
     const images = sheet.images.slice();
     images.splice(idx, 1);
 
-    const nextSheet: Sheet = images.length === 0
-      ? { ...sheet, images, drawingPartPath: undefined }
-      : { ...sheet, images };
+    const nextSheet: Sheet =
+      images.length === 0 ? { ...sheet, images, drawingPartPath: undefined } : { ...sheet, images };
 
     // GC orphan media: a media blob is orphaned when no sheet (after
     // this removal) still references it. We diff at workbook scope to

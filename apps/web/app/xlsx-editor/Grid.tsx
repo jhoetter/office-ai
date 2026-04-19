@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
 import { ImageOverlay, type AnchorFromPx } from "./ImageOverlay";
+import { ChartOverlay } from "./ChartOverlay";
 import {
   containsCell,
   isSingle,
@@ -13,6 +14,7 @@ import {
   type Selection,
 } from "./selection";
 import { formatCellValue, styleForCell } from "./styles";
+import { buildGridDims, colXsView, rowYsView, type AxisLookup, type GridDims } from "./gridDimensions";
 
 /**
  * Default cell geometry — used for any column / row that doesn't
@@ -29,12 +31,13 @@ const MIN_COL_WIDTH = 24;
 const MIN_ROW_HEIGHT = 16;
 
 /**
- * Total grid extents. The visible viewport is much smaller (we render
- * only what fits + a small overscan), but the inner spacer must be the
- * full virtual size so the browser scrollbar matches a "real" sheet.
+ * Total grid extents. C1 — Excel's true bounds. We never instantiate
+ * dense per-cell arrays of this size: virtualisation paints only the
+ * visible viewport, and {@link GridDims} resolves x/y positions in
+ * O(log n) where n = number of column/row overrides (typically < 100).
  */
-const TOTAL_ROWS = 1000;
-const TOTAL_COLS = 26;
+const TOTAL_ROWS = 1_048_576;
+const TOTAL_COLS = 16_384;
 const OVERSCAN = 4;
 
 export type GridSelection = Selection;
@@ -43,13 +46,33 @@ export interface GridProps {
   readonly sheet: Sheet;
   /** Workbook style table — flattened per-cell to render fonts/fills/etc. */
   readonly styles: StyleTable;
+  /**
+   * C10 — sparse map of `r:c` → conditional-format overlay,
+   * pre-computed by the parent so the Grid only has to apply it.
+   * Empty / undefined when no rules are armed.
+   */
+  readonly cfOverlays?: ReadonlyMap<string, import("@officeai/xlsx").ConditionalFormatOverlay>;
+  /**
+   * C11 — sparse map of `r:c` → resolved list options for cells
+   * covered by a typed `list` data-validation rule. The Grid uses
+   * presence in this map to render the in-cell dropdown arrow and
+   * pops a tiny picker when the arrow is clicked.
+   */
+  readonly dvIndex?: ReadonlyMap<string, ReadonlyArray<string>>;
   readonly selection: Selection | null;
+  /**
+   * C13 — Extra disjoint rectangles in the selection (Ctrl/Cmd-click).
+   * The active area lives in `selection`; everything in here is just
+   * additional marquee for Excel-parity multi-area selection.
+   */
+  readonly extraAreas?: ReadonlyArray<Selection>;
   /**
    * Drives selection moves. `extend` mirrors Shift-click / drag-extend:
    * keep `anchor`, replace `focus`. Single-cell mousedown leaves both
-   * pinned to the same `pos`.
+   * pinned to the same `pos`. `additive` (Ctrl/Cmd-click on Mac) starts
+   * a new disjoint area without dropping the existing selection.
    */
-  readonly onSelect: (pos: CellPos, opts?: { extend?: boolean }) => void;
+  readonly onSelect: (pos: CellPos, opts?: { extend?: boolean; additive?: boolean }) => void;
   /**
    * Called when the user commits an in-cell edit (double-click → type
    * → Enter). Parent dispatches `xlsx:set-cell-value` /
@@ -166,6 +189,15 @@ export interface GridProps {
    * cell context menu underneath (Excel parity).
    */
   readonly onImageContextMenu?: (imageId: string, coords: { x: number; y: number }) => void;
+  /**
+   * C15 — chart overlays. The Grid pins each `sheet.charts` entry
+   * to its anchor (same coordinate model as images). Selection +
+   * removal route through the parent's `xlsx:remove-chart` /
+   * `xlsx:move-chart` handlers; v1 has no inline drag.
+   */
+  readonly selectedChartId?: string | null;
+  readonly onSelectChart?: (id: string | null) => void;
+  readonly onRemoveChart?: (id: string) => void;
 }
 
 export interface CommentMarker {
@@ -234,7 +266,14 @@ export function Grid(props: GridProps): ReactNode {
     onMoveImage,
     onResizeImage,
     onImageContextMenu,
+    cfOverlays,
+    dvIndex,
+    extraAreas,
+    selectedChartId,
+    onSelectChart,
+    onRemoveChart,
   } = props;
+  const extras: ReadonlyArray<Selection> = extraAreas ?? [];
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -243,6 +282,8 @@ export function Grid(props: GridProps): ReactNode {
   // the highlight fades on its own.
   const [flashCell, setFlashCell] = useState<{ row: number; col: number } | null>(null);
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
+  // C11 — Open data-validation list popover for the named cell.
+  const [dvPicker, setDvPicker] = useState<{ row: number; col: number } | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   // True while the user holds the primary mouse button after a
   // mousedown on a body cell — drag-extends the selection.
@@ -345,50 +386,44 @@ export function Grid(props: GridProps): ReactNode {
     };
   }, [rowDrag, onResizeRow]);
 
-
   const onScroll = useCallback((ev: React.UIEvent<HTMLDivElement>) => {
     const el = ev.currentTarget;
     setScroll({ top: el.scrollTop, left: el.scrollLeft });
   }, []);
 
-  // Compute the per-column width and per-row height with current
-  // overrides + transient drag applied. Memoised on the inputs so
-  // unchanged sheets reuse the prefix arrays (cheap, but it keeps
-  // re-renders allocation-light).
-  const { colWidths, rowHeights, colXs, rowYs, totalWidth, totalHeight } = useMemo(() => {
-    const cw = new Array<number>(TOTAL_COLS);
-    for (let c = 0; c < TOTAL_COLS; c++) {
-      const override = sheet.columnWidths.get(c);
-      let w = override ?? COL_WIDTH;
-      if (colDrag && colDrag.col === c) w = colDrag.widthPx;
-      cw[c] = Math.max(MIN_COL_WIDTH, w);
+  // C1 — Real Excel bounds (1,048,576 × 16,384) demand an
+  // index-backed dimension model: dense prefix sums over a million
+  // rows would burn ~10 ms per re-render. Instead we fold the sparse
+  // override maps + transient drag state into a single `GridDims`
+  // object that resolves any `xAt(c)` / `yAt(r)` query in O(log n)
+  // where n = number of column/row overrides (typically < 100).
+  const dims: GridDims = useMemo(() => {
+    const colOverrides = new Map<number, number>(sheet.columnWidths);
+    if (colDrag) {
+      colOverrides.set(colDrag.col, Math.max(MIN_COL_WIDTH, colDrag.widthPx));
     }
-    const rh = new Array<number>(TOTAL_ROWS);
-    for (let r = 0; r < TOTAL_ROWS; r++) {
-      if (sheet.hiddenRows.has(r)) {
-        rh[r] = 0;
-        continue;
-      }
-      const override = sheet.rowHeights.get(r);
-      let h = override ?? ROW_HEIGHT;
-      if (rowDrag && rowDrag.row === r) h = rowDrag.heightPx;
-      rh[r] = Math.max(MIN_ROW_HEIGHT, h);
+    const rowOverrides = new Map<number, number>(sheet.rowHeights);
+    for (const r of sheet.hiddenRows) rowOverrides.set(r, 0);
+    if (rowDrag) {
+      rowOverrides.set(rowDrag.row, Math.max(MIN_ROW_HEIGHT, rowDrag.heightPx));
     }
-    const cx = new Array<number>(TOTAL_COLS + 1);
-    cx[0] = 0;
-    for (let c = 0; c < TOTAL_COLS; c++) cx[c + 1] = cx[c]! + cw[c]!;
-    const ry = new Array<number>(TOTAL_ROWS + 1);
-    ry[0] = 0;
-    for (let r = 0; r < TOTAL_ROWS; r++) ry[r + 1] = ry[r]! + rh[r]!;
-    return {
-      colWidths: cw,
-      rowHeights: rh,
-      colXs: cx,
-      rowYs: ry,
-      totalWidth: cx[TOTAL_COLS]!,
-      totalHeight: ry[TOTAL_ROWS]!,
-    };
+    return buildGridDims({
+      columnWidths: colOverrides,
+      rowHeights: rowOverrides,
+      defaultColWidth: COL_WIDTH,
+      defaultRowHeight: ROW_HEIGHT,
+      totalRows: TOTAL_ROWS,
+      totalCols: TOTAL_COLS,
+    });
   }, [sheet.columnWidths, sheet.rowHeights, sheet.hiddenRows, colDrag, rowDrag]);
+
+  // Array-like proxies preserve the existing `colXs[c]` access shape.
+  // Reads delegate to `dims.xAt(c)` / `dims.yAt(r)` so the rest of
+  // the file stays readable without a 50-callsite rewrite.
+  const colXs: AxisLookup = useMemo(() => colXsView(dims), [dims]);
+  const rowYs: AxisLookup = useMemo(() => rowYsView(dims), [dims]);
+  const totalWidth = dims.totalWidth;
+  const totalHeight = dims.totalHeight;
 
   const visibleH = Math.max(viewport.height - HEADER_ROW_HEIGHT, ROW_HEIGHT);
   const visibleW = Math.max(viewport.width - HEADER_COL_WIDTH, COL_WIDTH);
@@ -428,22 +463,41 @@ export function Grid(props: GridProps): ReactNode {
     return () => window.clearTimeout(handle);
   }, [scrollTargetNonce, scrollTargetRow, scrollTargetCol, colXs, rowYs]);
 
-  // Binary-search the prefix arrays to find the first / last visible
-  // index, then pad with the overscan window.
-  const lower = (arr: ReadonlyArray<number>, target: number): number => {
-    let lo = 0;
-    let hi = arr.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (arr[mid + 1]! <= target) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-  const startRow = Math.max(0, lower(rowYs, scroll.top) - OVERSCAN);
-  const endRow = Math.min(TOTAL_ROWS - 1, lower(rowYs, scroll.top + visibleH) + OVERSCAN);
-  const startCol = Math.max(0, lower(colXs, scroll.left) - OVERSCAN);
-  const endCol = Math.min(TOTAL_COLS - 1, lower(colXs, scroll.left + visibleW) + OVERSCAN);
+  // C1 — derive the visible window via the lazy index. `colAtX` /
+  // `rowAtY` resolve to the index whose left/top edge is the largest
+  // ≤ the given pixel position, exactly what the old prefix-array
+  // binary search returned.
+  const startRow = Math.max(0, dims.rowAtY(scroll.top) - OVERSCAN);
+  const endRow = Math.min(TOTAL_ROWS - 1, dims.rowAtY(scroll.top + visibleH) + OVERSCAN);
+  const startCol = Math.max(0, dims.colAtX(scroll.left) - OVERSCAN);
+  const endCol = Math.min(TOTAL_COLS - 1, dims.colAtX(scroll.left + visibleW) + OVERSCAN);
+
+  // C3 — Freeze panes. The first `freezeRows` rows / `freezeCols`
+  // columns stay pinned to the viewport edge as the user scrolls,
+  // mirroring Excel's classic `View > Freeze Panes`. The
+  // implementation uses scroll-offset positioning rather than four
+  // separate scroll containers: a pinned cell's DOM `top` is set to
+  // `scroll.top + …` so that the inner container's scroll-induced
+  // upward shift is exactly cancelled out, leaving the cell at a
+  // fixed viewport position. The trade-off is that the "scrolled"
+  // cells render *behind* the pinned ones (z-index 0 vs 2) and rely
+  // on the frozen cells' opaque background to hide them. That's
+  // visually equivalent for a 2D viewport and avoids the
+  // synchronised-scroll dance a true 4-quadrant DOM would need.
+  const freezeRows = Math.min(sheet.freeze?.rows ?? 0, TOTAL_ROWS);
+  const freezeCols = Math.min(sheet.freeze?.cols ?? 0, TOTAL_COLS);
+  const hasFreeze = freezeRows > 0 || freezeCols > 0;
+  const freezeYPx = freezeRows > 0 ? dims.yAt(freezeRows) : 0;
+  const freezeXPx = freezeCols > 0 ? dims.xAt(freezeCols) : 0;
+
+  const topFor = useCallback(
+    (r: number): number => HEADER_ROW_HEIGHT + (rowYs[r] ?? 0) + (r < freezeRows ? scroll.top : 0),
+    [rowYs, freezeRows, scroll.top]
+  );
+  const leftFor = useCallback(
+    (c: number): number => HEADER_COL_WIDTH + (colXs[c] ?? 0) + (c < freezeCols ? scroll.left : 0),
+    [colXs, freezeCols, scroll.left]
+  );
 
   // Global mouse handlers for the fill-handle drag. Lives here (after
   // colXs / rowYs are computed) so the cursor → cell hit-test sees
@@ -456,8 +510,8 @@ export function Grid(props: GridProps): ReactNode {
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left + el.scrollLeft - HEADER_COL_WIDTH;
       const y = e.clientY - rect.top + el.scrollTop - HEADER_ROW_HEIGHT;
-      const cellRow = Math.max(0, Math.min(TOTAL_ROWS - 1, lower(rowYs, Math.max(0, y))));
-      const cellCol = Math.max(0, Math.min(TOTAL_COLS - 1, lower(colXs, Math.max(0, x))));
+      const cellRow = Math.max(0, Math.min(TOTAL_ROWS - 1, dims.rowAtY(Math.max(0, y))));
+      const cellCol = Math.max(0, Math.min(TOTAL_COLS - 1, dims.colAtX(Math.max(0, x))));
       setFillDrag((prev) => {
         if (!prev) return prev;
         const src = prev.source;
@@ -519,7 +573,7 @@ export function Grid(props: GridProps): ReactNode {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [fillDrag, colXs, rowYs, onFill]);
+  }, [fillDrag, dims, onFill]);
 
   const innerStyle: CSSProperties = {
     position: "relative",
@@ -546,11 +600,34 @@ export function Grid(props: GridProps): ReactNode {
     return { topLeft, covered };
   }, [sheet.merges]);
 
+  // Build the union of frozen + visible rows / cols so we render each
+  // cell exactly once. Frozen rows/cols are always present; the
+  // unfrozen visible window starts past the freeze split so we don't
+  // double-paint the same coordinate in two quadrants.
+  const rowsToRender: number[] = useMemo(() => {
+    const out: number[] = [];
+    for (let r = 0; r < freezeRows; r++) out.push(r);
+    const start = Math.max(freezeRows, startRow);
+    for (let r = start; r <= endRow; r++) out.push(r);
+    return out;
+  }, [freezeRows, startRow, endRow]);
+
+  const colsToRender: number[] = useMemo(() => {
+    const out: number[] = [];
+    for (let c = 0; c < freezeCols; c++) out.push(c);
+    const start = Math.max(freezeCols, startCol);
+    for (let c = start; c <= endCol; c++) out.push(c);
+    return out;
+  }, [freezeCols, startCol, endCol]);
+
   const cellList: ReactNode[] = useMemo(() => {
     const out: ReactNode[] = [];
-    for (let r = startRow; r <= endRow; r++) {
+    for (const r of rowsToRender) {
       if (sheet.hiddenRows.has(r)) continue;
-      for (let c = startCol; c <= endCol; c++) {
+      const rFrozen = r < freezeRows;
+      for (const c of colsToRender) {
+        const cFrozen = c < freezeCols;
+        const cellFrozen = rFrozen || cFrozen;
         const k = cellKey(r, c);
         if (mergeIndex.covered.has(k)) continue;
         const merge = mergeIndex.topLeft.get(k);
@@ -559,14 +636,17 @@ export function Grid(props: GridProps): ReactNode {
         const cell = sheet.cells.get(k);
         const cellStyle = styleForCell(styles, cell?.styleId);
         const display = cell ? formatCellValue(cell.value, cellStyle.effective.numFmtId) : "";
-        const inSel = !!selection && containsCell(selection, r, c);
+        const cfOverlay = cfOverlays?.get(k);
+        const inSel =
+          (!!selection && containsCell(selection, r, c)) || extras.some((a) => containsCell(a, r, c));
         const anchorCell = !!selection && selection.anchor.row === r && selection.anchor.col === c;
         const isEditing = editing?.row === r && editing?.col === c;
         // Live draft from the formula bar mirrored into the cell
         // during type-to-edit. Only kicks in when the in-cell editor
         // (`isEditing`) isn't already running the show — the in-cell
         // editor owns the cell's contents while it's open.
-        const isLiveDrafting = !isEditing && !!liveEditDraft && liveEditDraft.row === r && liveEditDraft.col === c;
+        const isLiveDrafting =
+          !isEditing && !!liveEditDraft && liveEditDraft.row === r && liveEditDraft.col === c;
         out.push(
           <div
             key={`c-${r}-${c}`}
@@ -582,7 +662,8 @@ export function Grid(props: GridProps): ReactNode {
               // click-to-insert-ref handler never sees `formulaEditing`.
               e.preventDefault();
               draggingRef.current = true;
-              onSelect({ row: r, col: c }, { extend: e.shiftKey });
+              const additive = (e.metaKey || e.ctrlKey) && !e.shiftKey;
+              onSelect({ row: r, col: c }, { extend: e.shiftKey, additive });
             }}
             onMouseEnter={(e) => {
               if (!draggingRef.current) return;
@@ -615,8 +696,8 @@ export function Grid(props: GridProps): ReactNode {
             }}
             style={{
               position: "absolute",
-              top: HEADER_ROW_HEIGHT + rowYs[r]!,
-              left: HEADER_COL_WIDTH + colXs[c]!,
+              top: topFor(r),
+              left: leftFor(c),
               width: colXs[c + widthCells]! - colXs[c]!,
               height: rowYs[r + heightCells]! - rowYs[r]!,
               boxSizing: "border-box",
@@ -641,14 +722,39 @@ export function Grid(props: GridProps): ReactNode {
               textOverflow: "ellipsis",
               cursor: "cell",
               userSelect: "none",
-              zIndex: anchorCell ? 1 : 0,
+              // Frozen cells sit above scrolled cells so their opaque
+              // background hides the scrolled rows/cols underneath. The
+              // anchor cell stays one tier above its row's z-index so
+              // the white anchor pip beats the violet selection wash.
+              zIndex: cellFrozen ? (anchorCell ? 3 : 2) : anchorCell ? 1 : 0,
               ...cellStyle.css,
+              // C10 — conditional-format overlay. Layers on top of
+              // the base cellStyle.css so a CF rule that paints
+              // `fill` or `fontColor` wins over the cell's stored
+              // style, but unrelated style fields (numFmt, borders,
+              // alignment, font family/size) survive. Selection
+              // background still wins below for non-anchor cells.
+              ...(cfOverlay?.fill ? { background: `#${cfOverlay.fill}` } : {}),
+              ...(cfOverlay?.fontColor ? { color: `#${cfOverlay.fontColor}` } : {}),
+              ...(cfOverlay?.bold ? { fontWeight: 700 } : {}),
+              ...(cfOverlay?.italic ? { fontStyle: "italic" as const } : {}),
               // Selection background wins over a per-cell fill so the
               // user can still see what's highlighted, except for the
               // anchor where Excel keeps the cell's real fill.
               ...(inSel && !anchorCell ? { background: "var(--ai-violet-light)" } : {}),
             }}
           >
+            {cfOverlay?.barColor && cfOverlay.barFraction !== undefined && !isEditing ? (
+              <div
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: `linear-gradient(to right, #${cfOverlay.barColor}33 0%, #${cfOverlay.barColor}33 ${cfOverlay.barFraction * 100}%, transparent ${cfOverlay.barFraction * 100}%)`,
+                  pointerEvents: "none",
+                }}
+              />
+            ) : null}
             {isEditing ? (
               <input
                 autoFocus
@@ -695,8 +801,52 @@ export function Grid(props: GridProps): ReactNode {
                 />
               </span>
             ) : (
-              <span>{display}</span>
+              <span
+                style={{ display: "inline-block", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {display}
+              </span>
             )}
+            {/* C11 — In-cell list dropdown arrow. Only painted when
+                the cell carries a typed `list` data-validation rule
+                AND the cell is currently the anchor (Excel parity:
+                only the active cell in a validated range shows the
+                arrow). */}
+            {dvIndex && dvIndex.has(k) && anchorCell && !isEditing ? (
+              <button
+                type="button"
+                data-testid={`dv-open-${colToLetter(c)}${r + 1}`}
+                aria-label="Open data-validation list"
+                title="Open list"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDvPicker({ row: r, col: c });
+                }}
+                style={{
+                  position: "absolute",
+                  right: -1,
+                  top: 0,
+                  bottom: 0,
+                  width: 18,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "var(--surface)",
+                  border: "1px solid var(--divider)",
+                  borderRadius: 2,
+                  cursor: "pointer",
+                  fontSize: 9,
+                  color: "var(--foreground)",
+                  zIndex: 4,
+                }}
+              >
+                ▾
+              </button>
+            ) : null}
           </div>
         );
       }
@@ -708,16 +858,20 @@ export function Grid(props: GridProps): ReactNode {
     mergeIndex,
     colXs,
     rowYs,
-    startRow,
-    endRow,
-    startCol,
-    endCol,
+    rowsToRender,
+    colsToRender,
+    freezeRows,
+    freezeCols,
+    topFor,
+    leftFor,
     selection,
     editing,
     onSelect,
     onCommitEdit,
     onContextMenu,
     liveEditDraft,
+    cfOverlays,
+    dvIndex,
   ]);
 
   // Coloured borders for refs referenced by the formula currently
@@ -778,8 +932,8 @@ export function Grid(props: GridProps): ReactNode {
             left,
             width,
             height,
-            border: "1.5px solid #f59e0b",
-            background: "rgba(250, 204, 21, 0.18)",
+            border: "1.5px solid var(--warning)",
+            background: "color-mix(in srgb, var(--warning) 18%, transparent)",
             boxSizing: "border-box",
             pointerEvents: "none",
             zIndex: 3,
@@ -796,7 +950,7 @@ export function Grid(props: GridProps): ReactNode {
             left: left + width - 7,
             width: 0,
             height: 0,
-            borderTop: "7px solid #f59e0b",
+            borderTop: "7px solid var(--warning)",
             borderLeft: "7px solid transparent",
             pointerEvents: "none",
             zIndex: 3,
@@ -872,6 +1026,127 @@ export function Grid(props: GridProps): ReactNode {
         />
       );
     }
+  }
+
+  // C14 — Excel Tables: outer border + header band + zebra row banding
+  // overlay. Sits beneath the selection marquee but above cells so the
+  // table style is visible without disturbing per-cell formatting.
+  const tableOverlays: ReactNode[] = [];
+  if (sheet.tables.length > 0) {
+    for (const table of sheet.tables) {
+      const parsed = parseTableA1(table.range);
+      if (!parsed) continue;
+      const tr0 = parsed.r1;
+      const tr1 = parsed.r2;
+      const tc0 = parsed.c1;
+      const tc1 = parsed.c2;
+      if (tr1 >= rowYs.length - 1 || tc1 >= colXs.length - 1) continue;
+      const top = HEADER_ROW_HEIGHT + rowYs[tr0]!;
+      const left = HEADER_COL_WIDTH + colXs[tc0]!;
+      const width = colXs[tc1 + 1]! - colXs[tc0]!;
+      const height = rowYs[tr1 + 1]! - rowYs[tr0]!;
+      tableOverlays.push(
+        <div
+          key={`table-outline-${table.tableId}`}
+          data-testid={`grid-table-outline-${table.tableId}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            top,
+            left,
+            width,
+            height,
+            border: "1px solid var(--ai-violet)",
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 1,
+          }}
+        />
+      );
+      if (table.headerRowCount > 0) {
+        const headerEndRow = Math.min(tr1, tr0 + table.headerRowCount - 1);
+        const headerHeight = rowYs[headerEndRow + 1]! - rowYs[tr0]!;
+        tableOverlays.push(
+          <div
+            key={`table-header-${table.tableId}`}
+            data-testid={`grid-table-header-${table.tableId}`}
+            aria-hidden
+            style={{
+              position: "absolute",
+              top,
+              left,
+              width,
+              height: headerHeight,
+              background: "var(--ai-violet-light)",
+              borderBottom: "1px solid var(--ai-violet)",
+              boxSizing: "border-box",
+              pointerEvents: "none",
+              zIndex: 1,
+              opacity: 0.6,
+              mixBlendMode: "multiply",
+            }}
+          />
+        );
+      }
+      // Zebra body banding — paint every other body row with a faint
+      // tint. Excel's default Table style does the same.
+      const bodyStart = tr0 + table.headerRowCount;
+      for (let r = bodyStart; r <= tr1; r++) {
+        if ((r - bodyStart) % 2 === 0) continue;
+        if (sheet.hiddenRows.has(r)) continue;
+        const rowTop = HEADER_ROW_HEIGHT + rowYs[r]!;
+        const rowHeight = rowYs[r + 1]! - rowYs[r]!;
+        tableOverlays.push(
+          <div
+            key={`table-band-${table.tableId}-${r}`}
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: rowTop,
+              left,
+              width,
+              height: rowHeight,
+              background: "var(--muted)",
+              opacity: 0.35,
+              pointerEvents: "none",
+              zIndex: 1,
+              mixBlendMode: "multiply",
+            }}
+          />
+        );
+      }
+    }
+  }
+
+  // C13 — Extra disjoint areas (Ctrl-click). Same look as the active
+  // marquee minus the fill handle; a slightly thinner border keeps the
+  // active area visually dominant so the user knows where the next
+  // commit / paste / fill will land.
+  const extraAreaOverlays: ReactNode[] = [];
+  for (let i = 0; i < extras.length; i++) {
+    const a = extras[i]!;
+    const n = normalizeSelection(a);
+    extraAreaOverlays.push(
+      <div
+        key={`extra-area-${i}`}
+        data-testid={`grid-extra-area-${i}`}
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: HEADER_ROW_HEIGHT + rowYs[n.r0]!,
+          left: HEADER_COL_WIDTH + colXs[n.c0]!,
+          width: colXs[n.c1 + 1]! - colXs[n.c0]!,
+          height: rowYs[n.r1 + 1]! - rowYs[n.r0]!,
+          border: "1.5px solid var(--ai-violet)",
+          boxSizing: "border-box",
+          pointerEvents: "none",
+          zIndex: 4,
+          background: "var(--ai-violet-light)",
+          mixBlendMode: "multiply",
+          opacity: 0.85,
+        }}
+      />
+    );
   }
 
   // Bounding-box marquee — positioned over the union of the selection.
@@ -957,13 +1232,16 @@ export function Grid(props: GridProps): ReactNode {
     }
   }
 
-  // Column header band — tracks the viewport's top edge.
+  // Column header band — tracks the viewport's top edge. Frozen
+  // columns also pin horizontally so their header letter stays in
+  // sync with the pinned cells underneath.
   const colHeaders: ReactNode[] = [];
   const af = sheet.autoFilter;
-  for (let c = startCol; c <= endCol; c++) {
+  for (const c of colsToRender) {
     const n = selection ? normalizeSelection(selection) : null;
     const isActive = n ? c >= n.c0 && c <= n.c1 : false;
-    const colWidth = colWidths[c]!;
+    const colWidth = dims.colWidth(c);
+    const cFrozen = c < freezeCols;
     const filterColId = af && c >= af.range.c1 && c <= af.range.c2 ? c - af.range.c1 : null;
     const filterActive = filterColId !== null && af!.columns.has(filterColId);
     colHeaders.push(
@@ -990,7 +1268,7 @@ export function Grid(props: GridProps): ReactNode {
         style={{
           position: "absolute",
           top: scroll.top,
-          left: HEADER_COL_WIDTH + colXs[c]!,
+          left: HEADER_COL_WIDTH + colXs[c]! + (cFrozen ? scroll.left : 0),
           width: colWidth,
           height: HEADER_ROW_HEIGHT,
           boxSizing: "border-box",
@@ -1005,7 +1283,7 @@ export function Grid(props: GridProps): ReactNode {
           fontWeight: 500,
           userSelect: "none",
           cursor: onSelectAxis ? "pointer" : "default",
-          zIndex: 2,
+          zIndex: cFrozen ? 4 : 2,
         }}
       >
         {colToLetter(c)}
@@ -1076,13 +1354,16 @@ export function Grid(props: GridProps): ReactNode {
     );
   }
 
-  // Row header band — tracks the viewport's left edge.
+  // Row header band — tracks the viewport's left edge. Frozen rows
+  // also pin vertically so their numeric label stays aligned with the
+  // pinned cells alongside.
   const rowHeaders: ReactNode[] = [];
-  for (let r = startRow; r <= endRow; r++) {
+  for (const r of rowsToRender) {
     if (sheet.hiddenRows.has(r)) continue;
     const n = selection ? normalizeSelection(selection) : null;
     const isActive = n ? r >= n.r0 && r <= n.r1 : false;
-    const rowHeight = rowHeights[r]!;
+    const rowHeight = dims.rowHeight(r);
+    const rFrozen = r < freezeRows;
     rowHeaders.push(
       <div
         key={`rh-${r}`}
@@ -1102,7 +1383,7 @@ export function Grid(props: GridProps): ReactNode {
         }}
         style={{
           position: "absolute",
-          top: HEADER_ROW_HEIGHT + rowYs[r]!,
+          top: HEADER_ROW_HEIGHT + rowYs[r]! + (rFrozen ? scroll.top : 0),
           left: scroll.left,
           width: HEADER_COL_WIDTH,
           height: rowHeight,
@@ -1118,7 +1399,7 @@ export function Grid(props: GridProps): ReactNode {
           fontWeight: 500,
           userSelect: "none",
           cursor: onSelectAxis ? "pointer" : "default",
-          zIndex: 2,
+          zIndex: rFrozen ? 4 : 2,
         }}
       >
         {r + 1}
@@ -1185,6 +1466,31 @@ export function Grid(props: GridProps): ReactNode {
         {colHeaders}
         {rowHeaders}
         {cellList}
+        {sheet.charts.map((chart) => {
+          const a = chart.anchor;
+          const top = HEADER_ROW_HEIGHT + (rowYs[a.fromRow] ?? 0) + a.fromOffsetYPx;
+          const left = HEADER_COL_WIDTH + (colXs[a.fromCol] ?? 0) + a.fromOffsetXPx;
+          return (
+            <div
+              key={`chart-wrap-${chart.id}`}
+              style={{ position: "absolute", top, left, zIndex: 5 }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                onSelectChart?.(chart.id);
+              }}
+            >
+              <ChartOverlay
+                chart={chart}
+                sheet={sheet}
+                width={a.widthPx}
+                height={a.heightPx}
+                selected={selectedChartId === chart.id}
+                onSelect={() => onSelectChart?.(chart.id)}
+                onRequestRemove={onRemoveChart ? () => onRemoveChart(chart.id) : undefined}
+              />
+            </div>
+          );
+        })}
         {sheet.images.map((image) => (
           <div
             key={`image-wrap-${image.id}`}
@@ -1215,9 +1521,177 @@ export function Grid(props: GridProps): ReactNode {
         {flashOverlay}
         {antsOverlay}
         {fillPreviewOverlay}
+        {tableOverlays}
+        {extraAreaOverlays}
         {marquee}
         {fillHandle}
+        {hasFreeze && freezeRows > 0 ? (
+          <div
+            data-testid="freeze-divider-h"
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: scroll.top + HEADER_ROW_HEIGHT + freezeYPx - 1,
+              left: scroll.left,
+              width: viewport.width,
+              height: 2,
+              background: "var(--ai-violet)",
+              opacity: 0.6,
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          />
+        ) : null}
+        {hasFreeze && freezeCols > 0 ? (
+          <div
+            data-testid="freeze-divider-v"
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: scroll.top,
+              left: scroll.left + HEADER_COL_WIDTH + freezeXPx - 1,
+              width: 2,
+              height: viewport.height,
+              background: "var(--ai-violet)",
+              opacity: 0.6,
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          />
+        ) : null}
+        {dvPicker && dvIndex
+          ? (() => {
+              const opts = dvIndex.get(cellKey(dvPicker.row, dvPicker.col));
+              if (!opts) return null;
+              return (
+                <DvListPicker
+                  options={opts}
+                  top={topFor(dvPicker.row) + (rowYs[dvPicker.row + 1]! - rowYs[dvPicker.row]!)}
+                  left={leftFor(dvPicker.col)}
+                  width={Math.max(120, colXs[dvPicker.col + 1]! - colXs[dvPicker.col]!)}
+                  onPick={(value) => {
+                    onCommitEdit({ row: dvPicker.row, col: dvPicker.col }, value);
+                    setDvPicker(null);
+                  }}
+                  onClose={() => setDvPicker(null)}
+                />
+              );
+            })()
+          : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Tiny A1-range parser for the Tables overlay. We deliberately avoid
+ * depending on the heavier `parseRange` from `@officeai/xlsx` here so
+ * the Grid stays free of cross-package side-effects on every render;
+ * the regex covers the only shape we ever store on `TableDef.range`
+ * (`A1:Z99`-style, 0-based output).
+ */
+function parseTableA1(range: string): { r1: number; c1: number; r2: number; c2: number } | null {
+  const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
+  if (!m) return null;
+  const c1 = letterToColIndex(m[1]!);
+  const r1 = Number.parseInt(m[2]!, 10) - 1;
+  const c2 = letterToColIndex(m[3]!);
+  const r2 = Number.parseInt(m[4]!, 10) - 1;
+  if (![r1, c1, r2, c2].every(Number.isFinite)) return null;
+  return {
+    r1: Math.min(r1, r2),
+    c1: Math.min(c1, c2),
+    r2: Math.max(r1, r2),
+    c2: Math.max(c1, c2),
+  };
+}
+
+function letterToColIndex(letter: string): number {
+  let n = 0;
+  for (const ch of letter) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+interface DvListPickerProps {
+  readonly options: ReadonlyArray<string>;
+  readonly top: number;
+  readonly left: number;
+  readonly width: number;
+  readonly onPick: (value: string) => void;
+  readonly onClose: () => void;
+}
+
+function DvListPicker(props: DvListPickerProps): ReactNode {
+  const { options, top, left, width, onPick, onClose } = props;
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest("[data-dv-picker]")) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      data-dv-picker
+      data-testid="dv-list-picker"
+      role="listbox"
+      aria-label="Data validation list"
+      style={{
+        position: "absolute",
+        top,
+        left,
+        width,
+        maxHeight: 220,
+        overflowY: "auto",
+        background: "var(--background)",
+        border: "1px solid var(--divider)",
+        borderRadius: 4,
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+        zIndex: 20,
+      }}
+    >
+      {options.length === 0 ? (
+        <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--secondary)" }}>(no options)</div>
+      ) : (
+        options.map((opt, i) => (
+          <button
+            key={`${opt}-${i}`}
+            type="button"
+            role="option"
+            data-testid={`dv-option-${i}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onPick(opt)}
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "left",
+              padding: "4px 8px",
+              fontSize: 12,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              color: "var(--foreground)",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--hover)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            {opt}
+          </button>
+        ))
+      )}
     </div>
   );
 }

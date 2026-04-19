@@ -22,6 +22,11 @@ function makeSheet(name: string): Sheet {
     rowHeights: new Map(),
     hiddenRows: new Set(),
     images: [],
+    conditionalFormats: [],
+    opaqueConditionalFormats: [],
+    dataValidations: [],
+    tables: [],
+    charts: [],
   };
 }
 

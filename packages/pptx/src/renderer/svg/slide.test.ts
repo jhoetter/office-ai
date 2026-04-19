@@ -182,7 +182,8 @@ describe("slideToSvgString", () => {
   });
 
   it("wraps long text inside a narrow text shape (no overflow)", () => {
-    const longText = "This is a very long sentence that should wrap automatically across multiple lines inside a narrow text box.";
+    const longText =
+      "This is a very long sentence that should wrap automatically across multiple lines inside a narrow text box.";
     const shape: TextShape = {
       id: "node-1",
       kind: "text",

@@ -81,10 +81,7 @@ export function createDocxFormatProvider(deps: DocxProviderDeps): TextFormatProv
  * without going through `provider.getActive()` — the render path
  * already has `view` and `snapshot` in scope.
  */
-export function computeDocxActive(
-  view: EditorView | null,
-  snapshot: DocxSnapshot | null
-): ActiveTextFormat {
+export function computeDocxActive(view: EditorView | null, snapshot: DocxSnapshot | null): ActiveTextFormat {
   return readActive(view, snapshot);
 }
 
@@ -101,27 +98,9 @@ function readActive(view: EditorView | null, snapshot: DocxSnapshot | null): Act
     snapshot,
     (rPr) => rPr.fontSize
   );
-  const fontFamily = activeRunAttr<string>(
-    state,
-    "font_family",
-    "family",
-    snapshot,
-    (rPr) => rPr.fontFamily
-  );
-  const colorRaw = activeRunAttr<string>(
-    state,
-    "color",
-    "rgb",
-    snapshot,
-    (rPr) => rPr.color
-  );
-  const highlightRaw = activeRunAttr<string>(
-    state,
-    "highlight",
-    "name",
-    snapshot,
-    (rPr) => rPr.highlight
-  );
+  const fontFamily = activeRunAttr<string>(state, "font_family", "family", snapshot, (rPr) => rPr.fontFamily);
+  const colorRaw = activeRunAttr<string>(state, "color", "rgb", snapshot, (rPr) => rPr.color);
+  const highlightRaw = activeRunAttr<string>(state, "highlight", "name", snapshot, (rPr) => rPr.highlight);
 
   return {
     bold: marks.has("bold"),

@@ -1,17 +1,8 @@
 import { ooxml } from "@officeai/core";
-import {
-  EXTENSION_BY_CONTENT_TYPE,
-  pxToEmu,
-  type ImageBlob,
-  type SheetImage,
-} from "../model/index.js";
-import {
-  DRAWING_REL_TYPE,
-  IMAGE_REL_TYPE,
-} from "../parser/drawings.js";
+import { pxToEmu, type ImageBlob, type SheetImage } from "../model/index.js";
+import { DRAWING_REL_TYPE, IMAGE_REL_TYPE } from "../parser/drawings.js";
 
-export const DRAWING_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.drawing+xml";
+export const DRAWING_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawing+xml";
 
 const SPREADSHEET_DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
 const DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -143,7 +134,7 @@ export function mintDrawingPartPath(container: ooxml.OoxmlContainer): string {
  * `rid` is `null` any pre-existing `<drawing>` is removed.
  */
 export function injectDrawingRef(xml: string, rid: string | null): string {
-  let next = xml.replace(/<drawing\b[^/>]*\/>/g, "");
+  const next = xml.replace(/<drawing\b[^/>]*\/>/g, "");
   if (!rid) return next;
   const block = `<drawing r:id="${escapeXmlAttr(rid)}"/>`;
   const closeIdx = next.lastIndexOf("</worksheet>");

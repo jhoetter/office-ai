@@ -169,12 +169,20 @@ function readActive(
   // rather than the placeholder "Font" / "Size" — matches PowerPoint
   // and makes the toolbar feel "live" the moment a shape is selected,
   // even before the user enters edit mode.
-  const fontFamily = collapseWithDefault(props.map((p) => p.fontFamily), DEFAULT_FONT_FAMILY);
+  const fontFamily = collapseWithDefault(
+    props.map((p) => p.fontFamily),
+    DEFAULT_FONT_FAMILY
+  );
   const fontSizePt = collapseWithDefault(
-    props.map((p) => (p.fontSizeHundredths !== undefined ? hundredthsOfPtToPt(p.fontSizeHundredths) : undefined)),
+    props.map((p) =>
+      p.fontSizeHundredths !== undefined ? hundredthsOfPtToPt(p.fontSizeHundredths) : undefined
+    ),
     DEFAULT_FONT_SIZE_PT
   );
-  const color = collapseWithDefault(props.map((p) => normalizeColor(p.color)), DEFAULT_COLOR);
+  const color = collapseWithDefault(
+    props.map((p) => normalizeColor(p.color)),
+    DEFAULT_COLOR
+  );
   const highlight = collapse(props.map((p) => normalizeColor(p.highlight)));
 
   return { bold, italic, underline, strike, fontFamily, fontSizePt, color, highlight };
@@ -190,10 +198,7 @@ const DEFAULT_COLOR = "000000";
  * the PowerPoint default so the toolbar always reflects something —
  * while still surfacing MIXED when a real conflict exists.
  */
-function collapseWithDefault<T>(
-  values: ReadonlyArray<T | undefined>,
-  defaultValue: T
-): MaybeMixed<T> {
+function collapseWithDefault<T>(values: ReadonlyArray<T | undefined>, defaultValue: T): MaybeMixed<T> {
   return collapse(values.map((v) => (v === undefined ? defaultValue : v)));
 }
 
@@ -271,12 +276,7 @@ async function dispatchPatch(deps: PptxProviderDeps, patch: TextFormat): Promise
     return;
   }
 
-  const active = readActive(
-    agent,
-    deps.slideIndexRef.current,
-    sel,
-    deps.selectedShapeIdRef.current
-  );
+  const active = readActive(agent, deps.slideIndexRef.current, sel, deps.selectedShapeIdRef.current);
   const fmt = canonicalToPptx(patch, active);
   if (Object.keys(fmt).length === 0) return;
 

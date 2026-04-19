@@ -31,6 +31,9 @@ const COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006
 const COMMENTS_EXTENDED_REL_TYPE = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
 const COMMENTS_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
 const COMMENTS_EXTENDED_CONTENT_TYPE = "application/vnd.ms-word.commentsExtended+xml";
+const NUMBERING_PART = "word/numbering.xml";
+const NUMBERING_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+const NUMBERING_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 
 const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml";
@@ -115,12 +118,15 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
 
   // Numbering definitions (`word/numbering.xml`). Skipped unless
   // `dirty.numbering` is set, so the part round-trips byte-identical
-  // when no command has touched its definitions. P1.4 / W10 only
-  // emits this when a future workstream mutates the typed
-  // `NumberingDefinitions`; today's `set-paragraph-list` /
-  // `remove-paragraph-list` only touch `<w:numPr>` pointers in
-  // `word/document.xml` and never set this flag.
+  // when no command has touched its definitions. B7 wires this to
+  // `docx:set-paragraph-list` so the first list applied to a doc
+  // without `word/numbering.xml` materialises the part, registers a
+  // relationship + Content_Types override, and emits the typed
+  // `<w:abstractNum>` / `<w:num>` carrier from the snapshot.
   try {
+    if (snapshot.dirty.numbering && snapshot.root.numbering) {
+      ensureNumberingPart(container);
+    }
     serializeNumberingPart(container, snapshot);
   } catch (err) {
     if (err instanceof DocxSerializeError) throw err;
@@ -853,6 +859,37 @@ function removeCommentsExtendedPart(container: ooxml.OoxmlContainer): void {
   const ct = ooxml.ContentTypes.load(container);
   ct.removeOverride("/word/commentsExtended.xml");
   ct.writeBack(container);
+}
+
+/**
+ * B7 — register `word/numbering.xml` with the package when the typed
+ * `NumberingDefinitions` carrier becomes dirty for the first time.
+ *
+ * The serializer for `word/numbering.xml` writes the bytes; this
+ * helper makes sure the surrounding plumbing exists so Word actually
+ * picks the part up:
+ *
+ *   1. The `word/_rels/document.xml.rels` graph carries a relationship
+ *      of type `…/relationships/numbering` pointing at the part.
+ *   2. `[Content_Types].xml` declares an `<Override>` mapping the
+ *      part path to the canonical numbering content-type.
+ *
+ * Idempotent on every call: existing relationships / overrides are
+ * left alone, so re-saving a doc that already had `word/numbering.xml`
+ * stays byte-identical for the surrounding parts.
+ */
+function ensureNumberingPart(container: ooxml.OoxmlContainer): void {
+  const rels = ooxml.RelationshipGraph.loadFor(container, MAIN_PART);
+  if (rels.byType(NUMBERING_REL_TYPE).length === 0) {
+    rels.add({ type: NUMBERING_REL_TYPE, target: "numbering.xml" });
+    rels.writeBack(container);
+  }
+  const ct = ooxml.ContentTypes.load(container);
+  if (!ct.hasOverride("/word/numbering.xml")) {
+    ct.addOverride("/word/numbering.xml", NUMBERING_CONTENT_TYPE);
+    ct.writeBack(container);
+  }
+  void NUMBERING_PART;
 }
 
 /* ── small builders ──────────────────────────────────────────────────────── */

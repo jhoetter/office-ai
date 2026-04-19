@@ -1,7 +1,10 @@
 import type { CommandHandler } from "@officeai/core";
 import type { DocxSnapshot } from "../model/types.js";
+import { acceptAllChangesHandler } from "./accept-all-changes.js";
 import { acceptChangeHandler } from "./accept-change.js";
 import { addCommentHandler } from "./add-comment.js";
+import { applyListFormatHandler } from "./apply-list-format.js";
+import { rejectAllChangesHandler } from "./reject-all-changes.js";
 import { deleteCommentHandler } from "./delete-comment.js";
 import { deleteRangeHandler } from "./delete-range.js";
 import { deleteRangeTrackedHandler } from "./delete-range-tracked.js";
@@ -30,6 +33,9 @@ import { setParagraphIndentHandler } from "./set-paragraph-indent.js";
 import { setParagraphListHandler } from "./set-paragraph-list.js";
 import { setParagraphSpacingHandler } from "./set-paragraph-spacing.js";
 import { setParagraphStyleHandler } from "./set-paragraph-style.js";
+import { deleteImageHandler } from "./delete-image.js";
+import { setImagePropertiesHandler } from "./set-image-properties.js";
+import { setPageSetupHandler } from "./set-page-setup.js";
 import { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
 
 export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot>> = [
@@ -46,6 +52,8 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setFooterTextHandler as CommandHandler<unknown, DocxSnapshot>,
   acceptChangeHandler as CommandHandler<unknown, DocxSnapshot>,
   rejectChangeHandler as CommandHandler<unknown, DocxSnapshot>,
+  acceptAllChangesHandler as CommandHandler<unknown, DocxSnapshot>,
+  rejectAllChangesHandler as CommandHandler<unknown, DocxSnapshot>,
   insertTableHandler as CommandHandler<unknown, DocxSnapshot>,
   setCellContentHandler as CommandHandler<unknown, DocxSnapshot>,
   insertRowHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -53,6 +61,7 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   insertImageHandler as CommandHandler<unknown, DocxSnapshot>,
   setParagraphListHandler as CommandHandler<unknown, DocxSnapshot>,
   removeParagraphListHandler as CommandHandler<unknown, DocxSnapshot>,
+  applyListFormatHandler as CommandHandler<unknown, DocxSnapshot>,
   insertHyperlinkHandler as CommandHandler<unknown, DocxSnapshot>,
   removeHyperlinkHandler as CommandHandler<unknown, DocxSnapshot>,
   setParagraphAlignmentHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -60,6 +69,9 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setParagraphSpacingHandler as CommandHandler<unknown, DocxSnapshot>,
   insertPageNumberHandler as CommandHandler<unknown, DocxSnapshot>,
   setSectionDifferentFirstHandler as CommandHandler<unknown, DocxSnapshot>,
+  setPageSetupHandler as CommandHandler<unknown, DocxSnapshot>,
+  setImagePropertiesHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteImageHandler as CommandHandler<unknown, DocxSnapshot>,
   insertSectionBreakHandler as CommandHandler<unknown, DocxSnapshot>,
   insertPageBreakHandler as CommandHandler<unknown, DocxSnapshot>,
   insertTextTrackedHandler as CommandHandler<unknown, DocxSnapshot>,

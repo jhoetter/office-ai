@@ -1,7 +1,7 @@
 import { createFormulaEngine, type EngineHost, type FormulaEngine } from "./recalc.js";
 import { createRegistry, type FunctionRegistry } from "./function-registry.js";
 import { registerAllFunctions } from "./functions/index.js";
-import { type CellRef, type RangeRef } from "./references.js";
+import { parseA1, parseA1Range, type CellRef, type RangeRef } from "./references.js";
 import { Blank, bool, err, num, str, type Range2D, type Value } from "./values.js";
 import { ErrorKinds, type CellErrorKind } from "./errors.js";
 import { cellKey } from "../model/refs.js";
@@ -57,9 +57,15 @@ export function bindEngineToWorkbook(workbook: XlsxWorkbook): {
 export class WorkbookHost implements EngineHost {
   engine: FormulaEngine | null = null;
   private sheets = new Map<string, Sheet>();
+  private definedNames: ReadonlyMap<string, RangeRef | CellRef>;
 
   constructor(workbook: XlsxWorkbook) {
     for (const s of workbook.sheets) this.sheets.set(s.name, s);
+    this.definedNames = buildDefinedNameIndex(workbook);
+  }
+
+  resolveName(name: string): RangeRef | CellRef | undefined {
+    return this.definedNames.get(name) ?? this.definedNames.get(name.toUpperCase());
   }
 
   readCell(ref: CellRef): Value {
@@ -121,6 +127,45 @@ export class WorkbookHost implements EngineHost {
     }
     return failures;
   }
+}
+
+/**
+ * C12 — Resolve workbook-scoped (and sheet-scoped) defined names to the
+ * engine's reference shape so the parser can substitute them at parse
+ * time. Sheet-scoped names use the same key as workbook names —
+ * cross-sheet shadowing is not yet modelled because the engine does
+ * not (yet) carry an active-sheet axis at parse time.
+ */
+function buildDefinedNameIndex(workbook: XlsxWorkbook): ReadonlyMap<string, RangeRef | CellRef> {
+  const out = new Map<string, RangeRef | CellRef>();
+  const fallbackSheet = workbook.sheets[0]?.name ?? "Sheet1";
+  for (const dn of workbook.definedNames) {
+    const ref = parseRefersTo(dn.refersTo, dn.scope ?? fallbackSheet);
+    if (!ref) continue;
+    out.set(dn.name, ref);
+    out.set(dn.name.toUpperCase(), ref);
+  }
+  return out;
+}
+
+function parseRefersTo(refersTo: string, fallbackSheet: string): RangeRef | CellRef | undefined {
+  const trimmed = refersTo.trim().replace(/^=/, "");
+  if (!trimmed) return undefined;
+
+  // Sheet-qualified reference, possibly with quoted sheet name.
+  // Examples: Sheet1!$A$1:$B$2, 'My Sheet'!$A$1.
+  const m = /^(?:'((?:[^']|'')+)'|([A-Za-z_][\w. ]*))!(.+)$/.exec(trimmed);
+  let sheet = fallbackSheet;
+  let body = trimmed;
+  if (m) {
+    sheet = (m[1] ?? m[2] ?? fallbackSheet).replace(/''/g, "'");
+    body = m[3]!;
+  }
+
+  if (body.includes(":")) {
+    return parseA1Range(body, sheet) ?? undefined;
+  }
+  return parseA1(body, sheet) ?? undefined;
 }
 
 /** Convert the model's `CellValue` union to an engine `Value`. */

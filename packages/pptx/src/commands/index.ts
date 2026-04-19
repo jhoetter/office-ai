@@ -7,9 +7,13 @@ import { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 import { deleteShapeHandler } from "./delete-shape.js";
 import { deleteSlideHandler } from "./delete-slide.js";
 import { setShapeFillHandler } from "./set-shape-fill.js";
+import { reorderShapeHandler } from "./reorder-shape.js";
+import { duplicateShapeHandler } from "./duplicate-shape.js";
+import { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 import { duplicateSlideHandler } from "./duplicate-slide.js";
 import { formatTextHandler } from "./format-text.js";
 import { insertImageHandler } from "./insert-image.js";
+import { replacePictureMediaHandler } from "./replace-picture-media.js";
 import { moveSlideHandler } from "./move-slide.js";
 import { setPositionHandler } from "./set-position.js";
 import { setSizeHandler } from "./set-size.js";
@@ -51,9 +55,13 @@ export { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 export { deleteShapeHandler } from "./delete-shape.js";
 export { deleteSlideHandler } from "./delete-slide.js";
 export { setShapeFillHandler } from "./set-shape-fill.js";
+export { reorderShapeHandler } from "./reorder-shape.js";
+export { duplicateShapeHandler } from "./duplicate-shape.js";
+export { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 export { duplicateSlideHandler } from "./duplicate-slide.js";
 export { formatTextHandler } from "./format-text.js";
 export { insertImageHandler } from "./insert-image.js";
+export { replacePictureMediaHandler } from "./replace-picture-media.js";
 export { moveSlideHandler } from "./move-slide.js";
 export { setPositionHandler } from "./set-position.js";
 export { setSizeHandler } from "./set-size.js";
@@ -97,10 +105,15 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setSizeHandler,
   formatTextHandler,
   insertImageHandler,
+  replacePictureMediaHandler,
   addTextBoxHandler,
   addShapeHandler,
   deleteShapeHandler,
   setShapeFillHandler,
+  reorderShapeHandler,
+  duplicateShapeHandler,
+  groupShapesHandler,
+  ungroupShapeHandler,
   alignShapesHandler,
   distributeShapesHandler,
   tableSetCellTextHandler,

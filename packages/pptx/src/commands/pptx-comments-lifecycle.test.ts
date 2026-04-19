@@ -44,10 +44,7 @@ describe("pptx comments lifecycle", () => {
       source: "human",
     });
     expect(m1.status).toBe("approved");
-    const parentId = agent
-      .getSnapshot()
-      .root.commentsByPart.values()
-      .next().value!.comments[0]!.id;
+    const parentId = agent.getSnapshot().root.commentsByPart.values().next().value!.comments[0]!.id;
 
     const m2 = await agent.applyCommand({
       type: "pptx:reply-comment",
@@ -79,10 +76,7 @@ describe("pptx comments lifecycle", () => {
       payload: { slideIndex: 0, author: "Alice", text: "Top" },
       source: "human",
     });
-    const parentId = agent
-      .getSnapshot()
-      .root.commentsByPart.values()
-      .next().value!.comments[0]!.id;
+    const parentId = agent.getSnapshot().root.commentsByPart.values().next().value!.comments[0]!.id;
     await agent.applyCommand({
       type: "pptx:reply-comment",
       payload: { slideIndex: 0, parentId, author: "Bob", text: "Reply" },
@@ -105,10 +99,7 @@ describe("pptx comments lifecycle", () => {
       payload: { slideIndex: 0, author: "Alice", text: "Round-trip me" },
       source: "human",
     });
-    const id = agent
-      .getSnapshot()
-      .root.commentsByPart.values()
-      .next().value!.comments[0]!.id;
+    const id = agent.getSnapshot().root.commentsByPart.values().next().value!.comments[0]!.id;
     await agent.applyCommand({
       type: "pptx:resolve-comment",
       payload: { slideIndex: 0, commentId: id, resolved: true },
@@ -121,10 +112,7 @@ describe("pptx comments lifecycle", () => {
     expect([...c.parts.keys()].some((p) => p.startsWith("ppt/comments/comment"))).toBe(true);
 
     const reparsed = await PptxAgent.fromBuffer(out);
-    const part = reparsed
-      .getSnapshot()
-      .root.commentsByPart.values()
-      .next().value!;
+    const part = reparsed.getSnapshot().root.commentsByPart.values().next().value!;
     expect(part.comments).toHaveLength(1);
     expect(part.comments[0]!.text).toBe("Round-trip me");
     expect(part.comments[0]!.resolved).toBe(true);

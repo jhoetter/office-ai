@@ -54,9 +54,7 @@ test.describe("visual regression: real-world fixtures", () => {
       // The toolbar exposes the docx file input via a hidden <input
       // type="file" />. Resolve it by the accept attribute so we don't
       // collide with the image-file input that lives in the same form.
-      const fileInput = page
-        .locator('input[type="file"][accept*="wordprocessingml"]')
-        .first();
+      const fileInput = page.locator('input[type="file"][accept*="wordprocessingml"]').first();
       await fileInput.setInputFiles(resolve(FIXTURE_ROOT, name));
 
       // Wait for the editor to re-mount with the new doc: the toolbar's

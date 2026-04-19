@@ -56,7 +56,10 @@ export const textToColumnsHandler: CommandHandler<TextToColumnsPayload, XlsxSnap
         splitRows.push([]);
         continue;
       }
-      const text = typeof raw === "string" ? raw : String(typeof raw === "object" && raw && "kind" in raw ? raw.code : raw);
+      const text =
+        typeof raw === "string"
+          ? raw
+          : String(typeof raw === "object" && raw && "kind" in raw ? raw.code : raw);
       const pieces = splitText(text, payload.delimiter, payload.treatConsecutiveAsOne === true);
       splitRows.push(pieces);
       if (pieces.length > maxPieces) maxPieces = pieces.length;

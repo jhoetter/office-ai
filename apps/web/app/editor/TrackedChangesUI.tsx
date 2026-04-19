@@ -26,10 +26,10 @@ import type { DocxSnapshot } from "@officeai/docx";
  *    scroll container so absolute positioning is anchored correctly
  *    and balloons pan with the document on scroll.
  *
- * The balloon copy mirrors Word in German ("hat gelöscht …" /
- * "hat eingefügt …") so the UI matches the screenshot the design
- * brief is anchored to. The substantive content (author, preview
- * text) flows out of the snapshot via `collectRevisionsWithPreview`.
+ * Balloon copy is in English ("Deleted: …" / "Inserted: …") so the
+ * UI ships in the product's primary locale. The substantive content
+ * (author, preview text) flows out of the snapshot via
+ * `collectRevisionsWithPreview`.
  */
 
 export function TrackedChangesHover(props: {
@@ -261,9 +261,7 @@ export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNod
       // line-sized fallback rect to anchor the change bar / balloon.
       const lineHost =
         rect.width === 0 && rect.height === 0
-          ? (span.closest<HTMLElement>("p, h1, h2, h3, h4, h5, h6, li") ??
-            span.parentElement ??
-            span)
+          ? (span.closest<HTMLElement>("p, h1, h2, h3, h4, h5, h6, li") ?? span.parentElement ?? span)
           : span;
       const anchorRect = lineHost === span ? rect : lineHost.getBoundingClientRect();
       // If even the parent has no rect (detached), there's nothing
@@ -362,10 +360,8 @@ export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNod
         >
           <div className="text-foreground font-medium">{l.author || "Unknown"}</div>
           <div className="text-secondary">
-            {l.revisionType === "del" ? "hat gelöscht: " : "hat eingefügt: "}
-            <span className="text-foreground font-medium">
-              {snippet(l.previewText, 80) || "(empty)"}
-            </span>
+            {l.revisionType === "del" ? "Deleted: " : "Inserted: "}
+            <span className="text-foreground font-medium">{snippet(l.previewText, 80) || "(empty)"}</span>
           </div>
           <div className="flex items-center gap-1 pt-0.5">
             <button

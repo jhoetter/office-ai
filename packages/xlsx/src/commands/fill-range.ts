@@ -83,9 +83,7 @@ export const fillRangeHandler: CommandHandler<FillRangePayload, XlsxSnapshot> = 
           rowsAsc.push(r);
           sourceCells.push(cells.get(cellKey(r, col)));
         }
-        const samples = isDown
-          ? cellsToSamples(sourceCells)
-          : cellsToSamples([...sourceCells].reverse());
+        const samples = isDown ? cellsToSamples(sourceCells) : cellsToSamples([...sourceCells].reverse());
         runLane({
           sheet,
           cells,
@@ -112,9 +110,7 @@ export const fillRangeHandler: CommandHandler<FillRangePayload, XlsxSnapshot> = 
           colsAsc.push(c);
           sourceCells.push(cells.get(cellKey(row, c)));
         }
-        const samples = isRight
-          ? cellsToSamples(sourceCells)
-          : cellsToSamples([...sourceCells].reverse());
+        const samples = isRight ? cellsToSamples(sourceCells) : cellsToSamples([...sourceCells].reverse());
         runLane({
           sheet,
           cells,
@@ -213,14 +209,7 @@ function runLane(ctx: LaneCtx): void {
       const src = ctx.sourceCells[srcIdx]!;
       const sr = ctx.axis === "row" ? ctx.sourceRowsOrCols[srcIdx]! : row;
       const sc = ctx.axis === "col" ? ctx.sourceRowsOrCols[srcIdx]! : col;
-      formulaText = shiftFormula(
-        src.formula!.text,
-        ctx.sheet.name,
-        sr,
-        sc,
-        row,
-        col
-      );
+      formulaText = shiftFormula(src.formula!.text, ctx.sheet.name, sr, sc, row, col);
       ctx.formulaTargets.push({ row, col, text: formulaText });
     } else {
       value = generator.next(offset);

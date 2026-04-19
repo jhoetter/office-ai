@@ -1,10 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type { PptxPresentation, PptxSnapshot, Slide, SlideLayout } from "../model/types.js";
-import {
-  applyAddedLayout,
-  clonePlaceholdersIntoSlide,
-  resolveLayoutForKind,
-} from "./layout-helpers.js";
+import { applyAddedLayout, clonePlaceholdersIntoSlide, resolveLayoutForKind } from "./layout-helpers.js";
 import { buildDiff, evolveSnapshot, makeError, maxCNvPrId } from "./helpers.js";
 import { resolveTarget } from "../parser/parse.js";
 import type { AddSlidePayload } from "./payloads.js";
@@ -80,8 +76,7 @@ export const addSlideHandler: CommandHandler<AddSlidePayload, PptxSnapshot> = {
     // by kind without explicitly opting out — kind-pick is the new path
     // that's expected to give the user a populated slide.
     const shouldClone =
-      payload.clonePlaceholders === true ||
-      (payload.clonePlaceholders === undefined && !!payload.layoutKind);
+      payload.clonePlaceholders === true || (payload.clonePlaceholders === undefined && !!payload.layoutKind);
     const slide: Slide =
       layout && shouldClone
         ? clonePlaceholdersIntoSlide(baseSlide, layout, ctx, maxCNvPrId(baseSlide.shapes))

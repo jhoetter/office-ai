@@ -6,7 +6,9 @@ import type {
   AutoFilter,
   Cell,
   CustomFilterOp,
+  DataValidation,
   FilterColumn,
+  FreezePanes,
   Sheet,
   XlsxSnapshot,
   XlsxWorkbook,
@@ -105,12 +107,7 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   }
 
   if (dirty.contentTypes) {
-    rewriteContentTypes(
-      snapshot.root,
-      container,
-      dirty.removedSheetParts,
-      dirty.removedMediaParts
-    );
+    rewriteContentTypes(snapshot.root, container, dirty.removedSheetParts, dirty.removedMediaParts);
   }
 
   if (dirty.rels) {
@@ -200,6 +197,9 @@ async function rewriteDirtySheets(
     xml = injectStyleIds(xml, sheet.cells);
     xml = injectHiddenRows(xml, sheet.hiddenRows);
     xml = injectAutoFilter(xml, sheet.autoFilter);
+    xml = injectFreezePanes(xml, sheet.freeze);
+    xml = injectConditionalFormats(xml, sheet.opaqueConditionalFormats);
+    xml = injectDataValidations(xml, sheet.dataValidations, sheet.opaqueDataValidations);
     if (drawingRidByPath.has(path)) {
       xml = injectDrawingRef(xml, drawingRidByPath.get(path) ?? null);
     } else if (sheet.drawingPartPath) {
@@ -279,10 +279,7 @@ function rewriteDirtyMedia(
   }
 }
 
-function dropRemovedMediaParts(
-  container: ooxml.OoxmlContainer,
-  paths: ReadonlySet<string>
-): void {
+function dropRemovedMediaParts(container: ooxml.OoxmlContainer, paths: ReadonlySet<string>): void {
   for (const path of paths) {
     if (container.has(path)) container.removePart(path);
   }
@@ -327,7 +324,7 @@ function injectHiddenRows(xml: string, hiddenRows: ReadonlySet<number>): string 
  * `<sheetData>` / `<mergeCells>`).
  */
 function injectAutoFilter(xml: string, autoFilter: AutoFilter | undefined): string {
-  let next = xml.replace(/<autoFilter\b[^>]*(?:\/>|>[\s\S]*?<\/autoFilter>)/g, "");
+  const next = xml.replace(/<autoFilter\b[^>]*(?:\/>|>[\s\S]*?<\/autoFilter>)/g, "");
   if (!autoFilter) return next;
 
   const ref = `${colToA1(autoFilter.range.c1)}${autoFilter.range.r1 + 1}:${colToA1(autoFilter.range.c2)}${autoFilter.range.r2 + 1}`;
@@ -350,12 +347,150 @@ function injectAutoFilter(xml: string, autoFilter: AutoFilter | undefined): stri
   return next.slice(0, closeIdx) + block + next.slice(closeIdx);
 }
 
+/**
+ * Strip any pre-existing `<sheetViews>` block, then re-emit one that
+ * carries our `<pane state="frozen"/>` (when the sheet has a freeze)
+ * or no `<pane>` at all (when it doesn't).
+ *
+ * We rebuild the `<sheetViews>` because SheetJS may emit one with a
+ * stale `<pane>` element from the original file, and surgically
+ * patching the existing block (preserving its other attrs) gets
+ * gnarly fast — `<sheetView>` carries optional `tabSelected`,
+ * `zoomScale`, `view`, and a `<selection>` child that we'd otherwise
+ * have to round-trip individually. The simpler "drop and re-emit"
+ * approach is acceptable because users overwhelmingly stick to
+ * default view settings; freeze panes is the only one we surface
+ * via the toolbar.
+ *
+ * Excel's `topLeftCell` is the cell that sits in the top-left of the
+ * scrolling pane (i.e. one row below `ySplit` and one column right of
+ * `xSplit`). We compute it deterministically rather than preserve
+ * whatever Excel last wrote, so the output is stable.
+ */
+/**
+ * C10 — Re-inject opaque `<conditionalFormatting>` blocks captured
+ * by the parser. The parser stores them verbatim per-sheet so we
+ * can preserve every CF rule (data bars, icon sets, color scales,
+ * formula rules, etc.) on dirty round-trip without modelling them
+ * fully. Typed authoring lives in `Sheet.conditionalFormats` and
+ * is not yet emitted (deferred to a future pass).
+ */
+function injectConditionalFormats(xml: string, opaqueBlocks: ReadonlyArray<string>): string {
+  // First, drop any pre-existing CF blocks so we don't double-emit
+  // when SheetJS already echoed them through.
+  const stripped = xml.replace(
+    /<conditionalFormatting\b[^>]*?(?:\/>|>[\s\S]*?<\/conditionalFormatting>)/g,
+    ""
+  );
+  if (opaqueBlocks.length === 0) return stripped;
+  const closeIdx = stripped.lastIndexOf("</worksheet>");
+  const block = opaqueBlocks.join("");
+  if (closeIdx === -1) return stripped + block;
+  return stripped.slice(0, closeIdx) + block + stripped.slice(closeIdx);
+}
+
+/**
+ * C11 — Re-emit `<dataValidations>` for dirty sheets.
+ *
+ * Strategy mirrors the conditional-format path:
+ *   1. Drop any pre-existing `<dataValidations>` block from the
+ *      SheetJS output (it ignores them, but we want a clean slate).
+ *   2. If the user has typed `list` rules OR the parser captured
+ *      non-list rules opaquely, render a fresh `<dataValidations>`
+ *      containing both the typed list entries and the opaque
+ *      `<dataValidation>` children verbatim.
+ *
+ * Excel mandates the `<dataValidations>` block sit between
+ * `<mergeCells>` (or `<phoneticPr>`) and `<hyperlinks>`. The lazy
+ * placement we use — right before `</worksheet>` — is also accepted
+ * by Excel and matches what `injectConditionalFormats` does.
+ */
+function injectDataValidations(
+  xml: string,
+  typed: ReadonlyArray<DataValidation>,
+  opaque: string | undefined
+): string {
+  const stripped = xml.replace(/<dataValidations\b[^>]*>[\s\S]*?<\/dataValidations>/g, "");
+  const typedList = typed.filter((dv) => dv.kind === "list");
+  if (typedList.length === 0 && !opaque) return stripped;
+
+  const typedXml = typedList.map(renderListValidation).join("");
+  // The opaque block is already a complete `<dataValidations>…</dataValidations>`
+  // wrapper. Pull just its inner children so we can re-wrap with a
+  // single block that holds both typed + opaque rules.
+  const opaqueInner = opaque
+    ? opaque.replace(/^<dataValidations\b[^>]*>/, "").replace(/<\/dataValidations>$/, "")
+    : "";
+  const total = typedList.length + (opaqueInner.match(/<dataValidation\b/g)?.length ?? 0);
+  const block = `<dataValidations count="${total}">${typedXml}${opaqueInner}</dataValidations>`;
+
+  const closeIdx = stripped.lastIndexOf("</worksheet>");
+  if (closeIdx === -1) return stripped + block;
+  return stripped.slice(0, closeIdx) + block + stripped.slice(closeIdx);
+}
+
+function renderListValidation(dv: DataValidation): string {
+  const sqref = escapeXmlAttr(dv.range);
+  const allowBlank = dv.allowBlank ? ' allowBlank="1"' : "";
+  const showDropDown = dv.showDropDown ? "" : ' showDropDown="1"';
+  const errorStyle = dv.stopOnInvalid ? "" : ' errorStyle="warning"';
+  const formula1 = dv.formula
+    ? `<formula1>${escapeXmlText(dv.source)}</formula1>`
+    : `<formula1>"${escapeXmlText(dv.source)}"</formula1>`;
+  return (
+    `<dataValidation type="list"${allowBlank}${showDropDown}${errorStyle} sqref="${sqref}">` +
+    formula1 +
+    `</dataValidation>`
+  );
+}
+
+function injectFreezePanes(xml: string, freeze: FreezePanes | undefined): string {
+  const next = xml.replace(/<sheetViews\b[^>]*>[\s\S]*?<\/sheetViews>/g, "");
+  const viewsBlock = renderSheetViews(freeze);
+  if (!viewsBlock) return next;
+
+  // Excel orders `<sheetViews>` immediately after `<dimension>` (or
+  // first thing in `<worksheet>` if `<dimension>` isn't present).
+  const dimMatch = /<dimension\b[^/>]*\/?>(?:<\/dimension>)?/.exec(next);
+  if (dimMatch) {
+    const insertAt = dimMatch.index + dimMatch[0].length;
+    return next.slice(0, insertAt) + viewsBlock + next.slice(insertAt);
+  }
+  const wsMatch = /<worksheet\b[^>]*>/.exec(next);
+  if (wsMatch) {
+    const insertAt = wsMatch.index + wsMatch[0].length;
+    return next.slice(0, insertAt) + viewsBlock + next.slice(insertAt);
+  }
+  return next + viewsBlock;
+}
+
+function renderSheetViews(freeze: FreezePanes | undefined): string {
+  if (!freeze || (freeze.rows <= 0 && freeze.cols <= 0)) {
+    // Nothing to add. Excel happily reads a worksheet without a
+    // `<sheetViews>` block (it falls back to defaults).
+    return "";
+  }
+  const xSplit = Math.max(0, Math.floor(freeze.cols));
+  const ySplit = Math.max(0, Math.floor(freeze.rows));
+  const topLeftRow = ySplit + 1;
+  const topLeftCol = colToA1(xSplit);
+  const topLeft = `${topLeftCol}${topLeftRow}`;
+  const activePane = xSplit > 0 && ySplit > 0 ? "bottomRight" : xSplit > 0 ? "topRight" : "bottomLeft";
+  const xAttr = xSplit > 0 ? ` xSplit="${xSplit}"` : "";
+  const yAttr = ySplit > 0 ? ` ySplit="${ySplit}"` : "";
+  return (
+    `<sheetViews>` +
+    `<sheetView tabSelected="1" workbookViewId="0">` +
+    `<pane${xAttr}${yAttr} topLeftCell="${topLeft}" activePane="${activePane}" state="frozen"/>` +
+    `</sheetView>` +
+    `</sheetViews>`
+  );
+}
+
 function serializeFilterColumn(colId: number, fc: FilterColumn): string {
   switch (fc.kind) {
     case "values": {
-      const filters = [...fc.values]
-        .map((v) => `<filter val="${escapeXmlAttr(v)}"/>`)
-        .join("");
+      const filters = [...fc.values].map((v) => `<filter val="${escapeXmlAttr(v)}"/>`).join("");
       const blankAttr = fc.blank ? ' blank="1"' : "";
       return `<filterColumn colId="${colId}"><filters${blankAttr}>${filters}</filters></filterColumn>`;
     }
@@ -368,9 +503,7 @@ function serializeFilterColumn(colId: number, fc: FilterColumn): string {
     case "top10": {
       const topAttr = fc.top ? "" : ' top="0"';
       const pctAttr = fc.percent ? ' percent="1"' : "";
-      const filterValAttr = Number.isFinite(fc.filterVal)
-        ? ` filterVal="${fc.filterVal}"`
-        : "";
+      const filterValAttr = Number.isFinite(fc.filterVal) ? ` filterVal="${fc.filterVal}"` : "";
       return `<filterColumn colId="${colId}"><top10${topAttr}${pctAttr} val="${fc.n}"${filterValAttr}/></filterColumn>`;
     }
     case "dynamic":
@@ -743,8 +876,54 @@ function rewriteWorkbookSheets(workbook: XlsxWorkbook, container: ooxml.OoxmlCon
   if (!match) {
     throw new XlsxSerializeError("workbook-failed", "Could not locate <sheets> block in xl/workbook.xml");
   }
-  const next = xml.slice(0, match.index) + newSheetsBlock + xml.slice(match.index + match[0].length);
+  let next = xml.slice(0, match.index) + newSheetsBlock + xml.slice(match.index + match[0].length);
+
+  // C12 — Re-emit the `<definedNames>` block from the typed
+  // `workbook.definedNames` array. We always emit it on workbook
+  // dirty (even when empty) so that removing the last name in the
+  // session also drops the block from the OOXML.
+  next = injectDefinedNames(next, workbook);
+
   container.writeText(WORKBOOK_PART, next);
+}
+
+function injectDefinedNames(xml: string, workbook: XlsxWorkbook): string {
+  // Build the new block (or empty string when there are no names).
+  let block = "";
+  if (workbook.definedNames.length > 0) {
+    const nameByIndex = new Map<string, number>();
+    workbook.sheets.forEach((s, i) => nameByIndex.set(s.name, i));
+    const entries: string[] = [];
+    for (const dn of workbook.definedNames) {
+      const attrs: string[] = [`name="${escapeXmlAttr(dn.name)}"`];
+      if (dn.scope) {
+        const idx = nameByIndex.get(dn.scope);
+        if (idx !== undefined) attrs.push(`localSheetId="${idx}"`);
+      }
+      if (dn.hidden) attrs.push(`hidden="1"`);
+      if (dn.comment) attrs.push(`comment="${escapeXmlAttr(dn.comment)}"`);
+      entries.push(`<definedName ${attrs.join(" ")}>${escapeXmlText(dn.refersTo)}</definedName>`);
+    }
+    block = `<definedNames>${entries.join("")}</definedNames>`;
+  }
+
+  const dnRe = /<definedNames\b[^>]*?(?:\/>|>[\s\S]*?<\/definedNames>)/;
+  const m = dnRe.exec(xml);
+  if (m) {
+    return xml.slice(0, m.index) + block + xml.slice(m.index + m[0].length);
+  }
+  if (!block) return xml;
+  // Excel's canonical position is between </sheets> and <calcPr> (or
+  // before </workbook> when neither exists). Splice immediately after
+  // the closing </sheets>.
+  const sheetsCloseRe = /<\/sheets>/;
+  const sm = sheetsCloseRe.exec(xml);
+  if (sm) {
+    const idx = sm.index + sm[0].length;
+    return xml.slice(0, idx) + block + xml.slice(idx);
+  }
+  // Fallback — shove it right before </workbook>.
+  return xml.replace(/<\/workbook>/, `${block}</workbook>`);
 }
 
 /**
@@ -771,4 +950,12 @@ function normalizeRelTarget(target: string): string {
 
 function escapeXmlAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * Element-text escape. Quotes/apostrophes don't need encoding inside
+ * text nodes per the XML spec; only `&`, `<`, and `>` do.
+ */
+function escapeXmlText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

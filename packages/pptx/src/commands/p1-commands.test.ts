@@ -117,9 +117,7 @@ describe("P1: format-text", () => {
     // Round-trip through the parser to confirm we can read what we wrote.
     const reparsed = await PptxAgent.fromBuffer(out);
     const reShapes = reparsed.getSnapshot().root.slides[0].shapes;
-    const reTs = reShapes.find(
-      (s): s is TextShape => s.kind === "text" && s.txBody.paragraphs.length > 0
-    );
+    const reTs = reShapes.find((s): s is TextShape => s.kind === "text" && s.txBody.paragraphs.length > 0);
     const reHighlights = (reTs?.txBody.paragraphs[0].runs ?? []).map((r) => r.properties.highlight);
     expect(reHighlights).toContain("FFFF00");
     void parsePptx;

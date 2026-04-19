@@ -32,6 +32,8 @@ export type {
   SetConnectorStylePayload,
   SetPositionPayload,
   SetShapeFillPayload,
+  ReorderShapePayload,
+  ReorderShapeMode,
   SetSizePayload,
   SetSlideLayoutPayload,
   SetSlideNotesPayload,

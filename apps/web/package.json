@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/check-editor-shell.mjs",
+    "check:shell": "node scripts/check-editor-shell.mjs",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium"

@@ -54,8 +54,20 @@ export function computeSnap(
   const xCands = collectXCandidates(others, slideSize);
   const yCands = collectYCandidates(others, slideSize);
 
-  const xSnap = pickBestSnap(movingBox.x, movingBox.x + movingBox.cx / 2, movingBox.x + movingBox.cx, xCands, thresholdEmu);
-  const ySnap = pickBestSnap(movingBox.y, movingBox.y + movingBox.cy / 2, movingBox.y + movingBox.cy, yCands, thresholdEmu);
+  const xSnap = pickBestSnap(
+    movingBox.x,
+    movingBox.x + movingBox.cx / 2,
+    movingBox.x + movingBox.cx,
+    xCands,
+    thresholdEmu
+  );
+  const ySnap = pickBestSnap(
+    movingBox.y,
+    movingBox.y + movingBox.cy / 2,
+    movingBox.y + movingBox.cy,
+    yCands,
+    thresholdEmu
+  );
 
   const snapDx = xSnap?.delta ?? 0;
   const snapDy = ySnap?.delta ?? 0;
@@ -170,11 +182,7 @@ function pickBestSnap(
     for (const t of tries) {
       const abs = Math.abs(t.delta);
       if (abs > thresholdEmu) continue;
-      if (
-        best === null ||
-        abs < best.abs ||
-        (abs === best.abs && t.centerWeight > best.centerWeight)
-      ) {
+      if (best === null || abs < best.abs || (abs === best.abs && t.centerWeight > best.centerWeight)) {
         best = { delta: t.delta, abs, centerWeight: t.centerWeight };
       }
     }
@@ -204,12 +212,7 @@ function nearlyEqual(a: number, b: number): boolean {
   return Math.abs(a - b) < 1; // sub-EMU tolerance is enough; avoids float noise
 }
 
-function makeVerticalGuide(
-  c: SnapCandidate,
-  movingBox: BoundingBox,
-  dx: number,
-  dy: number
-): SnapGuide {
+function makeVerticalGuide(c: SnapCandidate, movingBox: BoundingBox, dx: number, dy: number): SnapGuide {
   const movedBox = {
     x: movingBox.x + dx,
     y: movingBox.y + dy,
@@ -232,12 +235,7 @@ function makeVerticalGuide(
   return { axis: "vertical", value: c.value, spanStart: top, spanEnd: bottom, kind: c.kind };
 }
 
-function makeHorizontalGuide(
-  c: SnapCandidate,
-  movingBox: BoundingBox,
-  dx: number,
-  dy: number
-): SnapGuide {
+function makeHorizontalGuide(c: SnapCandidate, movingBox: BoundingBox, dx: number, dy: number): SnapGuide {
   const movedBox = {
     x: movingBox.x + dx,
     y: movingBox.y + dy,

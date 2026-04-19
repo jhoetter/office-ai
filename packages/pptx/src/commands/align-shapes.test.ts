@@ -132,6 +132,69 @@ describe("pptx:align-shapes", () => {
     });
     expect(m.status).toBe("rejected");
   });
+
+  it("relativeTo='slide' centres a single shape on the slide bounds", async () => {
+    const agent = await loadAgent("01-blank.pptx");
+    const slideSize = agent.getSnapshot().root.slideSize;
+    const cx = 1_000_000;
+    const cy = 500_000;
+    const ids = await seedRects(agent, [{ x: 0, y: 0, cx, cy }]);
+    const m = await agent.applyCommand({
+      type: "pptx:align-shapes",
+      payload: {
+        slideIndex: 0,
+        shapeIds: ids,
+        mode: "center-h",
+        relativeTo: "slide",
+      },
+      source: "human",
+    });
+    expect(m.status).toBe("approved");
+    const box = boxOf(agent, ids[0]);
+    expect(box.x).toBe(Math.round(slideSize.cxEmu / 2 - cx / 2));
+    expect(box.y).toBe(0);
+  });
+
+  it("relativeTo='slide' bottom-aligns a single shape to the slide's bottom edge", async () => {
+    const agent = await loadAgent("01-blank.pptx");
+    const slideSize = agent.getSnapshot().root.slideSize;
+    const cy = 500_000;
+    const ids = await seedRects(agent, [{ x: 1_000_000, y: 0, cx: 1_000_000, cy }]);
+    await agent.applyCommand({
+      type: "pptx:align-shapes",
+      payload: {
+        slideIndex: 0,
+        shapeIds: ids,
+        mode: "bottom",
+        relativeTo: "slide",
+      },
+      source: "human",
+    });
+    expect(boxOf(agent, ids[0]).y).toBe(slideSize.cyEmu - cy);
+  });
+
+  it("relativeTo='slide' aligns multiple shapes to the same slide edge", async () => {
+    const agent = await loadAgent("01-blank.pptx");
+    const slideSize = agent.getSnapshot().root.slideSize;
+    const ids = await seedRects(agent, [
+      { x: 1_000_000, y: 500_000, cx: 1_000_000, cy: 500_000 },
+      { x: 3_000_000, y: 1_500_000, cx: 2_000_000, cy: 500_000 },
+    ]);
+    await agent.applyCommand({
+      type: "pptx:align-shapes",
+      payload: {
+        slideIndex: 0,
+        shapeIds: ids,
+        mode: "right",
+        relativeTo: "slide",
+      },
+      source: "human",
+    });
+    const a = boxOf(agent, ids[0]);
+    const b = boxOf(agent, ids[1]);
+    expect(a.x + a.cx).toBe(slideSize.cxEmu);
+    expect(b.x + b.cx).toBe(slideSize.cxEmu);
+  });
 });
 
 describe("pptx:distribute-shapes", () => {

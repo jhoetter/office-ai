@@ -85,11 +85,7 @@ export function wordShortcutsKeymapPlugin(agent: DocxAgent): Plugin {
 }
 
 /** Exposed for unit testing — pure function over (view, event, agent). */
-export function dispatchShortcut(
-  view: EditorView,
-  event: KeyboardEvent,
-  agent: DocxAgent
-): boolean {
+export function dispatchShortcut(view: EditorView, event: KeyboardEvent, agent: DocxAgent): boolean {
   const isMod = event.metaKey || event.ctrlKey;
   if (!isMod) return false;
 
@@ -187,11 +183,7 @@ export function dispatchShortcut(
 
 type ToggleableMark = "bold" | "italic" | "underline" | "strike";
 
-function toggleMark(
-  view: EditorView,
-  agent: DocxAgent,
-  mark: ToggleableMark
-): boolean {
+function toggleMark(view: EditorView, agent: DocxAgent, mark: ToggleableMark): boolean {
   if (view.state.selection.empty) return false;
   const range = pmSelectionToRange(view.state);
   // Best-effort "toggle": probe the run at the selection start; if the
@@ -254,11 +246,7 @@ function adjustIndent(view: EditorView, agent: DocxAgent, deltaTwips: number): b
   return true;
 }
 
-function toggleList(
-  view: EditorView,
-  agent: DocxAgent,
-  kind: "bullet" | "ordered"
-): boolean {
+function toggleList(view: EditorView, agent: DocxAgent, kind: "bullet" | "ordered"): boolean {
   const paragraphId = currentParagraphId(view.state);
   if (!paragraphId) return false;
   const snap = agent.getSnapshot();
@@ -313,9 +301,7 @@ function requestHyperlink(view: EditorView): boolean {
     range: { start: range.start.offset, end: range.end.offset },
     selectionText,
   };
-  view.dom.dispatchEvent(
-    new CustomEvent(SHORTCUT_INSERT_HYPERLINK_EVENT, { detail, bubbles: true })
-  );
+  view.dom.dispatchEvent(new CustomEvent(SHORTCUT_INSERT_HYPERLINK_EVENT, { detail, bubbles: true }));
   return true;
 }
 
@@ -326,9 +312,7 @@ function requestComment(view: EditorView): boolean {
 }
 
 function requestToggleFormattingMarks(view: EditorView): boolean {
-  view.dom.dispatchEvent(
-    new CustomEvent(SHORTCUT_TOGGLE_FORMATTING_MARKS_EVENT, { bubbles: true })
-  );
+  view.dom.dispatchEvent(new CustomEvent(SHORTCUT_TOGGLE_FORMATTING_MARKS_EVENT, { bubbles: true }));
   return true;
 }
 

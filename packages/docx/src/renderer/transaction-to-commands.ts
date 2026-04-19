@@ -165,8 +165,7 @@ function handleReplaceStep(
     }
     if (startPos.paragraph !== endPos.paragraph) {
       out.unsupported.push({
-        reason:
-          "tracked deletes across paragraph boundaries are not yet supported in Suggesting mode",
+        reason: "tracked deletes across paragraph boundaries are not yet supported in Suggesting mode",
         step,
       });
       return false;

@@ -29,13 +29,7 @@
 Defined in `@officeai/text-formatting`:
 
 ```typescript
-export type UnderlineStyle =
-  | "single"
-  | "double"
-  | "thick"
-  | "dotted"
-  | "dashed"
-  | "wavy";
+export type UnderlineStyle = "single" | "double" | "thick" | "dotted" | "dashed" | "wavy";
 
 export interface TextFormat {
   bold?: boolean;
@@ -93,11 +87,11 @@ export interface TextFormatProvider {
 
 ## Unit conversions
 
-| Format | Native unit | Conversion |
-|---|---|---|
-| DOCX | half-points (`<w:sz w:val="22"/>` = 11 pt) | `pt = halfPoints / 2` |
-| XLSX | points (`<sz val="11"/>`) | identity |
-| PPTX | hundredths of a point (`<a:rPr sz="1100"/>` = 11 pt) | `pt = hundredths / 100` |
+| Format | Native unit                                          | Conversion              |
+| ------ | ---------------------------------------------------- | ----------------------- |
+| DOCX   | half-points (`<w:sz w:val="22"/>` = 11 pt)           | `pt = halfPoints / 2`   |
+| XLSX   | points (`<sz val="11"/>`)                            | identity                |
+| PPTX   | hundredths of a point (`<a:rPr sz="1100"/>` = 11 pt) | `pt = hundredths / 100` |
 
 Helpers are exported as `ptToHalfPoints`, `halfPointsToPt`,
 `ptToHundredthsOfPt`, `hundredthsOfPtToPt`. Rounding uses
@@ -105,23 +99,23 @@ Helpers are exported as `ptToHalfPoints`, `halfPointsToPt`,
 
 ## Color normalisation
 
-| Input | Output |
-|---|---|
-| `"#FF8800"` | `"ff8800"` |
-| `"FF8800"` | `"ff8800"` |
+| Input                    | Output                     |
+| ------------------------ | -------------------------- |
+| `"#FF8800"`              | `"ff8800"`                 |
+| `"FF8800"`               | `"ff8800"`                 |
 | `"FFFF8800"` (alpha+rgb) | `"ff8800"` (alpha dropped) |
-| `"f80"` (CSS short) | `"ff8800"` |
-| `""` / nullish | `undefined` |
+| `"f80"` (CSS short)      | `"ff8800"`                 |
+| `""` / nullish           | `undefined`                |
 
 `renderColor(rrggbb): "#rrggbb"` is the inverse for inline styles.
 
 ## Highlight semantics per format
 
-| Format | Capability | Wire mapping |
-|---|---|---|
-| DOCX | `native` | `highlight: "ffff00"` → nearest match in `HIGHLIGHT_PALETTE` → `w:highlight w:val="yellow"` |
-| XLSX | `fill-fallback` | `highlight: "ffff00"` → `xlsx:set-cell-format` with `fill: { color: "ffff00", pattern: "solid" }` |
-| PPTX | `native` | `highlight: "ffff00"` → `<a:highlight><a:srgbClr val="FFFF00"/></a:highlight>` |
+| Format | Capability      | Wire mapping                                                                                      |
+| ------ | --------------- | ------------------------------------------------------------------------------------------------- |
+| DOCX   | `native`        | `highlight: "ffff00"` → nearest match in `HIGHLIGHT_PALETTE` → `w:highlight w:val="yellow"`       |
+| XLSX   | `fill-fallback` | `highlight: "ffff00"` → `xlsx:set-cell-format` with `fill: { color: "ffff00", pattern: "solid" }` |
+| PPTX   | `native`        | `highlight: "ffff00"` → `<a:highlight><a:srgbClr val="FFFF00"/></a:highlight>`                    |
 
 When `capabilities.highlight === "none"` the picker is hidden. The
 shared `HighlightPicker` accepts an arbitrary RRGGBB plus a "clear"

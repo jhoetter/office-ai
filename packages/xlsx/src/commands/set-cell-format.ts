@@ -13,6 +13,7 @@ import type {
   StyleColor,
   StyleFill,
   StyleFont,
+  StyleProtection,
   StyleTable,
 } from "../model/style-table.js";
 import type { Cell, Sheet, XlsxSnapshot } from "../model/types.js";
@@ -184,6 +185,7 @@ function applyPatch(table: StyleTable, current: EffectiveStyle, patch: CellForma
   const fill = mergeFill(current.fill, patch.fill);
   const border = mergeBorder(current.border, patch.border);
   const alignment = mergeAlignment(current.alignment, patch.alignment);
+  const protection = mergeProtection(current.protection, patch.protection);
 
   const effective: EffectiveStyle = {
     numFmtId,
@@ -191,7 +193,7 @@ function applyPatch(table: StyleTable, current: EffectiveStyle, patch: CellForma
     fill,
     border,
     ...(alignment ? { alignment } : {}),
-    ...(current.protection ? { protection: current.protection } : {}),
+    ...(protection ? { protection } : {}),
   };
   return addedNumFmtId !== undefined
     ? { table: nextTable, effective, addedNumFmtId }
@@ -331,6 +333,18 @@ function mergeAlignment(
   if (patch.vertical !== undefined) next.vertical = mapVerticalAgentToOoxml(patch.vertical);
   if (patch.wrapText !== undefined) next.wrapText = patch.wrapText;
   if (patch.indent !== undefined) next.indent = patch.indent;
+  return next;
+}
+
+function mergeProtection(
+  current: StyleProtection | undefined,
+  patch: CellFormatPatch["protection"]
+): StyleProtection | undefined {
+  if (!patch) return current;
+  const next: { locked?: boolean; hidden?: boolean } = { ...(current ?? {}) };
+  if (patch.locked !== undefined) next.locked = patch.locked;
+  if (patch.hidden !== undefined) next.hidden = patch.hidden;
+  if (next.locked === undefined && next.hidden === undefined) return undefined;
   return next;
 }
 

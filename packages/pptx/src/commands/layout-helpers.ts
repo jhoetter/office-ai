@@ -19,7 +19,6 @@ import type {
   LayoutKind,
   OpaqueXml,
   PlaceholderSpec,
-  PptxPresentation,
   PptxSnapshot,
   RelationshipsSnap,
   Slide,
@@ -31,11 +30,9 @@ import { BUILTIN_LAYOUTS } from "../layouts/builtin.js";
 import { parseSlideLayoutFromXml } from "../parser/parse.js";
 import type { LayoutKindPayload } from "./payloads.js";
 
-const LAYOUT_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml";
+const LAYOUT_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml";
 
-const REL_TYPE_LAYOUT =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
+const REL_TYPE_LAYOUT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 const REL_TYPE_SLIDE_LAYOUT_FROM_MASTER =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 const REL_TYPE_SLIDE_MASTER =
@@ -65,20 +62,14 @@ export interface AddedLayout {
  * built-in layout part the caller can attach. Returns the resolved layout
  * + (when synthesised) all the side-effects needed to install it.
  */
-export function resolveLayoutForKind(
-  snapshot: PptxSnapshot,
-  kind: LayoutKindPayload
-): LayoutResolution {
+export function resolveLayoutForKind(snapshot: PptxSnapshot, kind: LayoutKindPayload): LayoutResolution {
   for (const l of snapshot.root.layouts.values()) {
     if (l.kind === (kind as LayoutKind)) return { layout: l };
   }
   return synthesiseBuiltinLayout(snapshot, kind);
 }
 
-function synthesiseBuiltinLayout(
-  snapshot: PptxSnapshot,
-  kind: LayoutKindPayload
-): LayoutResolution {
+function synthesiseBuiltinLayout(snapshot: PptxSnapshot, kind: LayoutKindPayload): LayoutResolution {
   const tmpl = BUILTIN_LAYOUTS[kind];
   // Mint a fresh layout part path that doesn't collide with existing ones.
   let n = 1;
@@ -178,17 +169,11 @@ export function clonePlaceholdersIntoSlide(
 
   // Anything else on the slide (non-placeholder shapes — pictures users
   // dropped in, connectors, etc.) is preserved verbatim.
-  const nonPlaceholders = slide.shapes.filter(
-    (s) => s.kind !== "text" || !s.placeholder
-  );
+  const nonPlaceholders = slide.shapes.filter((s) => s.kind !== "text" || !s.placeholder);
   return { ...slide, shapes: [...cloned, ...nonPlaceholders] };
 }
 
-function buildPlaceholderShape(
-  ph: PlaceholderSpec,
-  ctx: HandlerContext,
-  cNvPrId: number
-): TextShape {
+function buildPlaceholderShape(ph: PlaceholderSpec, ctx: HandlerContext, cNvPrId: number): TextShape {
   const para: TextParagraph = {
     id: ctx.mintNodeId(),
     properties: {},
@@ -352,9 +337,7 @@ export function setSlideLayoutRel(
   if (layoutEntry) {
     relationships.set(relsPath, {
       relsPath,
-      entries: existing.entries.map((e) =>
-        e === layoutEntry ? { ...e, target } : e
-      ),
+      entries: existing.entries.map((e) => (e === layoutEntry ? { ...e, target } : e)),
     });
   } else {
     const relId = nextRelId(existing.entries.map((e) => e.id));

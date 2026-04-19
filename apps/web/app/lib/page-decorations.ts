@@ -36,9 +36,12 @@ export const TWIPS_PER_CSS_PX = 15;
  *
  * Header/footer zones surface the resolved
  * {@link HeaderFooterPart} text for the section that owns each
- * page. Double-clicking a zone fires a CustomEvent
- * (`pm-page-zone-edit`) on the editor host so the React shell can
- * pop a popover bound to `docx:set-header-text` / `set-footer-text`.
+ * page. The zones are rendered with `contenteditable=true` so the
+ * user clicks straight into them — Word-style "in-place" header /
+ * footer authoring. On blur (or Enter) the zone fires a
+ * `pm-page-zone-commit` CustomEvent on the editor host, which the
+ * React shell routes to `docx:set-header-text` /
+ * `docx:set-footer-text`.
  *
  * Pure read-only inside PM: never dispatches transactions, never
  * mutates the snapshot, and the OOXML round-trip byte-equality is
@@ -51,8 +54,8 @@ export interface PageDecorationsState {
   readonly decorations: DecorationSet;
 }
 
-/** CustomEvent payload dispatched on double-click of a page header / footer zone. */
-export interface PageZoneEditDetail {
+/** CustomEvent payload dispatched when a header/footer zone commits an edit. */
+export interface PageZoneCommitDetail {
   readonly slot: "header" | "footer";
   readonly partPath: string | null;
   readonly target: "default" | "first" | "even" | null;
@@ -60,7 +63,7 @@ export interface PageZoneEditDetail {
   readonly text: string;
 }
 
-export const PAGE_ZONE_EDIT_EVENT = "pm-page-zone-edit";
+export const PAGE_ZONE_COMMIT_EVENT = "pm-page-zone-commit";
 
 export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsState> {
   // Per-block measured heights, in twips, indexed by `body` block index.
@@ -388,10 +391,12 @@ function renderPageEdge(
 
   const gap = document.createElement("div");
   gap.className = "pm-page-gap";
-  const label = document.createElement("span");
-  label.className = "pm-page-gap-label";
-  label.textContent = `Page ${next.pageNumber}`;
-  gap.appendChild(label);
+  // Word does not paint a "Page N" banner inside the gap between
+  // sheets — the active page is surfaced in the status bar instead
+  // (see PageStatusBar in DocxEditor.tsx). The gap stays as a pure
+  // visual break so the user reads two stacked sheets, but the
+  // chrome stays out of the way.
+  gap.setAttribute("data-page-number", String(next.pageNumber));
   edge.appendChild(gap);
 
   edge.appendChild(renderHeaderZone(next, nextHeader));
@@ -430,6 +435,10 @@ function renderZone(
 ): HTMLElement {
   const zone = document.createElement("div");
   zone.className = `pm-page-zone pm-page-zone-${slot}`;
+  // The wrapper stays read-only (PM widget contract) but the inner
+  // content opts back in to contenteditable when there's an actual
+  // header/footer part to write into. Documents without parts get
+  // an inert hint until B7 (auto-mint numbering & header parts) lands.
   zone.setAttribute("contenteditable", "false");
   zone.setAttribute("data-page-zone", slot);
   zone.setAttribute("data-page-number", String(chunk.pageNumber));
@@ -438,37 +447,96 @@ function renderZone(
     zone.setAttribute("data-part-path", part.partPath);
     zone.setAttribute("data-part-target", part.target);
   }
-  zone.title = `Double-click to edit ${slot}`;
 
   const text = part ? extractZoneText(part) : "";
   const inner = document.createElement("div");
   inner.className = "pm-page-zone-content";
+  inner.setAttribute("data-page-zone-content", slot);
+
+  if (!part) {
+    // Word's empty header/footer is invisible until the user hovers
+    // or double-clicks into the zone — there's no permanent banner.
+    // We mirror that: the placeholder text is exposed via a data
+    // attribute and only painted by CSS on hover so the page surface
+    // stays uncluttered when no part exists.
+    inner.classList.add("pm-page-zone-empty", "pm-page-zone-no-part");
+    inner.dataset.emptyText = `No ${slot} for this section`;
+    zone.title = `Documents without a ${slot} part are read-only here.`;
+    zone.appendChild(inner);
+    return zone;
+  }
+
+  // Word's in-place authoring: the inner content is contenteditable.
+  // PM keeps the outer widget read-only and skips selection mapping
+  // for descendants of `contenteditable=false`, but keystrokes inside
+  // `contenteditable=true` islands still work in every browser we
+  // support. We stop key/wheel propagation so PM's keymap doesn't
+  // interpret typing here as a doc edit.
+  inner.setAttribute("contenteditable", "true");
+  inner.spellcheck = true;
+  inner.dataset.original = text;
   if (text.length === 0) {
     inner.classList.add("pm-page-zone-empty");
-    inner.textContent = part ? `Click to add ${slot} text` : `Double-click to add a ${slot}`;
+    inner.dataset.placeholder = `Click to add ${slot} text`;
   } else {
     inner.textContent = text;
   }
-  zone.appendChild(inner);
+  zone.title = `Click to edit ${slot}`;
 
-  zone.addEventListener("dblclick", (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const detail: PageZoneEditDetail = {
+  const commit = (rawText: string): void => {
+    const next = rawText
+      .replace(/\s+\n/g, "\n")
+      .replace(/\u00a0/g, " ")
+      .trimEnd();
+    if (next === inner.dataset.original) return;
+    inner.dataset.original = next;
+    const detail: PageZoneCommitDetail = {
       slot,
-      partPath: part?.partPath ?? null,
-      target: part?.target ?? null,
+      partPath: part.partPath,
+      target: part.target,
       pageNumber: chunk.pageNumber,
-      text,
+      text: next,
     };
     zone.dispatchEvent(
-      new CustomEvent<PageZoneEditDetail>(PAGE_ZONE_EDIT_EVENT, {
+      new CustomEvent<PageZoneCommitDetail>(PAGE_ZONE_COMMIT_EVENT, {
         detail,
         bubbles: true,
       })
     );
+  };
+
+  inner.addEventListener("focus", () => {
+    inner.classList.remove("pm-page-zone-empty");
+  });
+  inner.addEventListener("blur", () => {
+    const value = inner.textContent ?? "";
+    if (value.length === 0) {
+      inner.classList.add("pm-page-zone-empty");
+    }
+    commit(value);
+  });
+  inner.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      inner.blur();
+      return;
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      inner.textContent = inner.dataset.original ?? "";
+      inner.blur();
+      return;
+    }
+    // Stop PM's keymap from interpreting our typing as a doc edit.
+    ev.stopPropagation();
+  });
+  inner.addEventListener("input", (ev) => {
+    ev.stopPropagation();
   });
 
+  zone.appendChild(inner);
   return zone;
 }
 

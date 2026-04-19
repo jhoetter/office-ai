@@ -30,12 +30,7 @@ export interface PopoverProps {
  * pickers. Closes on outside click or Escape. No portal — the panel
  * is positioned absolute relative to the wrapper div.
  */
-export function Popover({
-  trigger,
-  children,
-  panelClassName,
-  align = "start",
-}: PopoverProps): ReactNode {
+export function Popover({ trigger, children, panelClassName, align = "start" }: PopoverProps): ReactNode {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
@@ -56,11 +51,13 @@ export function Popover({
     };
   }, [open]);
 
-  if (!isValidElement<{
-    "aria-expanded"?: boolean;
-    "aria-haspopup"?: string;
-    onClick?: (e: React.MouseEvent) => void;
-  }>(trigger)) {
+  if (
+    !isValidElement<{
+      "aria-expanded"?: boolean;
+      "aria-haspopup"?: string;
+      onClick?: (e: React.MouseEvent) => void;
+    }>(trigger)
+  ) {
     throw new Error("Popover requires a valid React element as trigger.");
   }
 

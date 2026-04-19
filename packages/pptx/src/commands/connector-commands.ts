@@ -170,8 +170,7 @@ export const setConnectorStyleHandler: CommandHandler<SetConnectorStylePayload, 
       widthEmu: DEFAULT_STROKE_WIDTH_EMU,
     };
     const stroke: ConnectorStroke = {
-      color:
-        payload.strokeColor !== undefined ? normaliseHex(payload.strokeColor) : prevStroke.color,
+      color: payload.strokeColor !== undefined ? normaliseHex(payload.strokeColor) : prevStroke.color,
       widthEmu: payload.strokeWidthEmu ?? prevStroke.widthEmu,
     };
     if (stroke.widthEmu < 0) {

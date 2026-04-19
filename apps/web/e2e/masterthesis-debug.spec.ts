@@ -13,18 +13,13 @@ import { gotoEditor } from "./_helpers";
  *   pnpm --filter @officeai/web exec playwright test masterthesis-debug
  */
 
-const FIXTURE = resolve(
-  __dirname,
-  "../../../Masterthesis_Rohfassung_Verification_Asymmetry Kopie.docx"
-);
+const FIXTURE = resolve(__dirname, "../../../Masterthesis_Rohfassung_Verification_Asymmetry Kopie.docx");
 
 test.describe("masterthesis fixture", () => {
   test("opens, paginates, and screenshots the first pages", async ({ page }) => {
     test.setTimeout(120_000);
     await gotoEditor(page);
-    const fileInput = page
-      .locator('input[type="file"][accept*="wordprocessingml"]')
-      .first();
+    const fileInput = page.locator('input[type="file"][accept*="wordprocessingml"]').first();
     await fileInput.setInputFiles(FIXTURE);
 
     await expect(page.locator(".ProseMirror")).toBeVisible({ timeout: 30_000 });
@@ -69,9 +64,7 @@ test.describe("masterthesis fixture", () => {
     // so we can see whether the declared width is being honoured. Logged
     // to stdout and written to disk for offline inspection.
     const tableMetrics = await page.evaluate(() => {
-      const tables = Array.from(
-        document.querySelectorAll<HTMLTableElement>(".ProseMirror .pm-table")
-      );
+      const tables = Array.from(document.querySelectorAll<HTMLTableElement>(".ProseMirror .pm-table"));
       const sample = (n: Node | null): string =>
         (n?.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 60);
       return tables.map((t, i) => {

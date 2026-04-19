@@ -91,7 +91,12 @@ interface ColumnSummary {
   readonly fillColors: ReadonlyArray<string>;
 }
 
-function summarizeColumn(sheet: Sheet, styles: StyleTable, autoFilter: AutoFilter, colId: number): ColumnSummary {
+function summarizeColumn(
+  sheet: Sheet,
+  styles: StyleTable,
+  autoFilter: AutoFilter,
+  colId: number
+): ColumnSummary {
   const counts = new Map<string, number>();
   const colors = new Set<string>();
   let hasBlanks = false;
@@ -282,7 +287,12 @@ export function FilterDropdown(props: FilterDropdownProps): ReactNode {
 
       <div style={{ display: "flex", borderBottom: "1px solid var(--divider)" }}>
         <ModeTab id="values" current={mode} onClick={setMode} label="Values" />
-        <ModeTab id={detectedConditionMode} current={mode} onClick={setMode} label={modeLabel(detectedConditionMode)} />
+        <ModeTab
+          id={detectedConditionMode}
+          current={mode}
+          onClick={setMode}
+          label={modeLabel(detectedConditionMode)}
+        />
         {summary.fillColors.length > 0 ? (
           <ModeTab id="color" current={mode} onClick={setMode} label="Color" />
         ) : null}
@@ -351,13 +361,16 @@ export function FilterDropdown(props: FilterDropdownProps): ReactNode {
         {mode === "color" ? <ColorPanel colors={summary.fillColors} onApply={applyColor} /> : null}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, padding: 8, borderTop: "1px solid var(--divider)" }}>
-        <button
-          type="button"
-          onClick={onClose}
-          data-testid="filter-cancel"
-          style={btnStyle("secondary")}
-        >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 6,
+          padding: 8,
+          borderTop: "1px solid var(--divider)",
+        }}
+      >
+        <button type="button" onClick={onClose} data-testid="filter-cancel" style={btnStyle("secondary")}>
           Cancel
         </button>
         <button
@@ -596,7 +609,14 @@ function OpRow(props: {
         value={props.op}
         onChange={(e) => props.onOpChange(e.target.value as CustomFilterOp["operator"])}
         data-testid={`${props.testIdPrefix}-op`}
-        style={{ flex: 1, height: 26, fontSize: 11, background: "var(--background)", color: "var(--foreground)", border: "1px solid var(--divider)" }}
+        style={{
+          flex: 1,
+          height: 26,
+          fontSize: 11,
+          background: "var(--background)",
+          color: "var(--foreground)",
+          border: "1px solid var(--divider)",
+        }}
       >
         {props.allowEmpty ? <option value="">—</option> : null}
         {props.ops.map((o) => (
@@ -635,13 +655,27 @@ function Top10Panel(props: {
   onApply: () => void;
 }): ReactNode {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--divider)" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        marginTop: 6,
+        paddingTop: 6,
+        borderTop: "1px solid var(--divider)",
+      }}
+    >
       <div style={{ fontWeight: 500, padding: "0 4px" }}>Top 10</div>
       <div style={{ display: "flex", gap: 4, alignItems: "center", padding: "0 4px" }}>
         <select
           value={props.topMode}
           onChange={(e) => props.setTopMode(e.target.value as "top" | "bottom")}
-          style={{ height: 24, background: "var(--background)", color: "var(--foreground)", border: "1px solid var(--divider)" }}
+          style={{
+            height: 24,
+            background: "var(--background)",
+            color: "var(--foreground)",
+            border: "1px solid var(--divider)",
+          }}
           data-testid="filter-top-mode"
         >
           <option value="top">Top</option>
@@ -666,7 +700,12 @@ function Top10Panel(props: {
         <select
           value={props.topPercent ? "percent" : "items"}
           onChange={(e) => props.setTopPercent(e.target.value === "percent")}
-          style={{ height: 24, background: "var(--background)", color: "var(--foreground)", border: "1px solid var(--divider)" }}
+          style={{
+            height: 24,
+            background: "var(--background)",
+            color: "var(--foreground)",
+            border: "1px solid var(--divider)",
+          }}
           data-testid="filter-top-unit"
         >
           <option value="items">Items</option>
@@ -733,8 +772,8 @@ function btnStyle(variant: "primary" | "secondary"): React.CSSProperties {
       fontWeight: 500,
       borderRadius: 3,
       border: 0,
-      background: "var(--ai-violet, #2563eb)",
-      color: "#fff",
+      background: "var(--ai-violet)",
+      color: "var(--on-accent)",
       cursor: "pointer",
     };
   }

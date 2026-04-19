@@ -33,10 +33,8 @@ import type {
 const COMMENT_AUTHORS_PART = "ppt/commentAuthors.xml";
 const COMMENT_AUTHORS_REL_TYPE =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
-const COMMENTS_REL_TYPE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-const COMMENTS_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.comments+xml";
+const COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const COMMENTS_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.comments+xml";
 const COMMENT_AUTHORS_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.commentAuthors+xml";
 
@@ -76,19 +74,19 @@ export const replyCommentHandler: CommandHandler<ReplyCommentPayload, PptxSnapsh
     const parent = part?.comments.find((c) => c.id === payload.parentId);
     if (!parent) throw makeError("unknown-target", `Unknown parent comment ${payload.parentId}`);
     if (parent.parentId) {
-      throw makeError("invalid-payload", "Cannot reply to a reply — replies must target a top-level comment.");
+      throw makeError(
+        "invalid-payload",
+        "Cannot reply to a reply — replies must target a top-level comment."
+      );
     }
     // Replies adopt the parent's pin so they cluster correctly.
-    return commitNewComment(
-      ctx,
-      {
-        author: payload.author,
-        text: payload.text,
-        xEmu: parent.xEmu,
-        yEmu: parent.yEmu,
-        parentId: parent.id,
-      }
-    );
+    return commitNewComment(ctx, {
+      author: payload.author,
+      text: payload.text,
+      xEmu: parent.xEmu,
+      yEmu: parent.yEmu,
+      parentId: parent.id,
+    });
   },
 };
 
@@ -151,9 +149,7 @@ export const editCommentHandler: CommandHandler<EditCommentPayload, PptxSnapshot
     if (!part) throw makeError("unknown-target", "Slide has no comments part");
     const updated: PptxCommentsPart = {
       ...part,
-      comments: part.comments.map((c) =>
-        c.id === payload.commentId ? { ...c, text: payload.text } : c
-      ),
+      comments: part.comments.map((c) => (c.id === payload.commentId ? { ...c, text: payload.text } : c)),
     };
     return commitCommentsPartUpdate(ctx, updated, {
       kind: "node-updated",
@@ -225,7 +221,7 @@ function commitNewComment(ctx: CommentMutation, input: NewCommentInput) {
 
   // Wire rels / content-types if this is the first comment on the slide
   // and/or the first comment in the deck (authors part).
-  let relationships = new Map(snapshot.relationships);
+  const relationships = new Map(snapshot.relationships);
   let contentTypes = snapshot.contentTypes;
   let dirtyContentTypes = false;
   const dirtyRels: string[] = [];
@@ -263,9 +259,7 @@ function commitNewComment(ctx: CommentMutation, input: NewCommentInput) {
       relationships.set(presRelsPath, { relsPath: presRelsPath, entries });
       dirtyRels.push(presRelsPath);
     }
-    if (
-      !snapshot.contentTypes.overrides.some((o) => o.partName === `/${COMMENT_AUTHORS_PART}`)
-    ) {
+    if (!snapshot.contentTypes.overrides.some((o) => o.partName === `/${COMMENT_AUTHORS_PART}`)) {
       contentTypes = appendOverride(contentTypes, COMMENT_AUTHORS_PART, COMMENT_AUTHORS_CONTENT_TYPE);
       dirtyContentTypes = true;
     }
@@ -274,9 +268,7 @@ function commitNewComment(ctx: CommentMutation, input: NewCommentInput) {
   const commentsByPart = new Map(snapshot.root.commentsByPart);
   commentsByPart.set(commentsPath, updatedCommentsPart);
 
-  const slides = snapshot.root.slides.map((s, i) =>
-    i === slideIndex ? updatedSlide : s
-  );
+  const slides = snapshot.root.slides.map((s, i) => (i === slideIndex ? updatedSlide : s));
   const root: PptxPresentation = {
     ...snapshot.root,
     slides,
@@ -313,7 +305,7 @@ function commitCommentsPartUpdate(
   updatedPart: PptxCommentsPart,
   change: import("@officeai/core").DiffChange
 ) {
-  const { snapshot, slideIndex } = ctx;
+  const { snapshot } = ctx;
   const commentsByPart = new Map(snapshot.root.commentsByPart);
   commentsByPart.set(updatedPart.partPath, updatedPart);
   const root: PptxPresentation = { ...snapshot.root, commentsByPart };
@@ -331,10 +323,7 @@ interface UpsertResult {
   readonly addedAuthorPart: boolean;
 }
 
-function upsertAuthor(
-  current: PptxCommentAuthorsPart | null,
-  authorName: string
-): UpsertResult {
+function upsertAuthor(current: PptxCommentAuthorsPart | null, authorName: string): UpsertResult {
   if (!current) {
     const author: PptxCommentAuthor = { id: 0, name: authorName, lastIdx: 0 };
     return {
@@ -353,8 +342,7 @@ function upsertAuthor(
       addedAuthorPart: false,
     };
   }
-  const nextId =
-    current.authors.reduce((m, a) => (a.id >= m ? a.id + 1 : m), 0) || 0;
+  const nextId = current.authors.reduce((m, a) => (a.id >= m ? a.id + 1 : m), 0) || 0;
   const newAuthor: PptxCommentAuthor = { id: nextId, name: authorName, lastIdx: 0 };
   return {
     authors: [...current.authors, newAuthor],
@@ -395,11 +383,7 @@ function relativeFrom(relsPath: string, targetPath: string): string {
   const target = targetPath.split("/");
   const owner = ownerDir.split("/").filter((s) => s.length > 0);
   let i = 0;
-  while (
-    i < owner.length &&
-    i < target.length - 1 &&
-    owner[i] === target[i]
-  ) {
+  while (i < owner.length && i < target.length - 1 && owner[i] === target[i]) {
     i++;
   }
   const ups = owner.length - i;
@@ -407,11 +391,7 @@ function relativeFrom(relsPath: string, targetPath: string): string {
   return [...Array(ups).fill(".."), ...downs].join("/");
 }
 
-function appendOverride(
-  ct: ContentTypesSnap,
-  partName: string,
-  contentType: string
-): ContentTypesSnap {
+function appendOverride(ct: ContentTypesSnap, partName: string, contentType: string): ContentTypesSnap {
   return {
     ...ct,
     overrides: [...ct.overrides, { partName: `/${partName}`, contentType }],

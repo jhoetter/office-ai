@@ -175,9 +175,12 @@ describe("CommandBus", () => {
         await bus.dispatch({ type: "toy:inc", payload: { by: v }, source: "human" });
       }
       expect(bus.getApproved().root.value).toBe(10);
-      bus.undo(); bus.undo(); bus.undo();
+      bus.undo();
+      bus.undo();
+      bus.undo();
       expect(bus.getApproved().root.value).toBe(1);
-      bus.redo(); bus.redo();
+      bus.redo();
+      bus.redo();
       expect(bus.getApproved().root.value).toBe(6);
     });
   });

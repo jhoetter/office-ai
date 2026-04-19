@@ -11,17 +11,21 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   ChevronDown,
+  ChevronsDown,
+  ChevronsUp,
   Circle,
   Copy,
   CornerDownRight,
   Diamond,
-  Download,
-  FileUp,
+  Group,
   Image as ImageIcon,
-  Keyboard,
+  Layers,
   MessageSquarePlus,
   Minus,
+  MoveDown,
   MoveRight,
+  MoveUp,
+  Play,
   Plus,
   Shapes,
   Spline,
@@ -29,12 +33,13 @@ import {
   Trash2,
   Triangle,
   Type,
+  Ungroup,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import type { AlignMode, LayoutKindPayload, ShapePreset } from "@officeai/pptx";
+import type { AlignMode, LayoutKindPayload, ReorderShapeMode, ShapePreset } from "@officeai/pptx";
 import { LayoutTemplate } from "lucide-react";
 
 export interface PptxToolbarProps {
@@ -46,8 +51,6 @@ export interface PptxToolbarProps {
   readonly currentFill: string | null;
   readonly textFormatProvider: TextFormatProvider;
   readonly textFormatActive: ActiveTextFormat;
-  readonly onOpenFile: () => void;
-  readonly onExport: () => void;
   readonly onAddSlide: () => void;
   readonly onAddSlideWithLayout: (kind: LayoutKindPayload) => void;
   readonly onSetSlideLayout: (kind: LayoutKindPayload) => void;
@@ -57,9 +60,24 @@ export interface PptxToolbarProps {
   readonly onAddShape: (preset: ShapePreset) => void;
   readonly onAddConnector: (connectorType: "straight" | "elbow" | "curved") => void;
   readonly onInsertImage: (file: File) => void;
+  /**
+   * D9 — replace the picture's bitmap behind the currently-selected
+   * `Picture` shape. Only enabled when `selectedIsPicture` is true.
+   * The shell file picker reuses the same MIME allowlist as
+   * `onInsertImage` so users can't introduce types the model wouldn't
+   * round-trip cleanly.
+   */
+  readonly onReplacePicture: (file: File) => void;
+  readonly selectedIsPicture: boolean;
   readonly onDeleteShape: () => void;
-  readonly onAlign: (mode: AlignMode) => void;
+  readonly onAlign: (mode: AlignMode, relativeTo: "selection" | "slide") => void;
   readonly onDistribute: (axis: "horizontal" | "vertical") => void;
+  readonly onReorder: (mode: ReorderShapeMode) => void;
+  readonly onGroup: () => void;
+  readonly onUngroup: () => void;
+  readonly onDuplicateShape: () => void;
+  readonly canGroup: boolean;
+  readonly canUngroup: boolean;
   readonly onChangeFill: (hex: string | null) => void;
   /**
    * Open the comments composer. The editor decides where the new pin
@@ -72,8 +90,14 @@ export interface PptxToolbarProps {
   readonly maxZoom: number;
   readonly onZoomChange: (zoom: number) => void;
   readonly onZoomReset: () => void;
-  /** Open the keyboard-shortcuts help dialog. */
-  readonly onOpenShortcuts: () => void;
+  /**
+   * D10 — kick off Present mode. The button is rightmost in the
+   * toolbar (next to Zoom) so users can scan the toolbar left-to-
+   * right edit-then-present, mirroring the PowerPoint ribbon's
+   * Slide Show tab placement.
+   */
+  readonly onPresent: () => void;
+  readonly canPresent: boolean;
 }
 
 interface ShapeOption {
@@ -106,20 +130,14 @@ export function PptxToolbar(props: PptxToolbarProps) {
     onZoomChange,
     onZoomReset,
   } = props;
-  const canAlign = !disabled && selectionCount >= 2;
+  const [alignRelativeTo, setAlignRelativeTo] = React.useState<"selection" | "slide">("selection");
+  const minAlignSelection = alignRelativeTo === "slide" ? 1 : 2;
+  const canAlign = !disabled && selectionCount >= minAlignSelection;
   const canDistribute = !disabled && selectionCount >= 3;
   const zoomPct = Math.round(zoom * 100);
   const imageInputRef = React.useRef<HTMLInputElement | null>(null);
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-divider pb-2">
-      <ToolbarButton onClick={props.onOpenFile} icon={<FileUp size={14} />} label="Open" />
-      <ToolbarButton
-        onClick={props.onExport}
-        icon={<Download size={14} />}
-        label="Export"
-        disabled={disabled}
-      />
-      <Sep />
+    <div className="flex flex-wrap items-center gap-1 px-3 py-1.5">
       <ToolbarButton
         onClick={props.onAddSlide}
         icon={<Plus size={14} />}
@@ -170,6 +188,7 @@ export function PptxToolbar(props: PptxToolbarProps) {
           e.target.value = "";
         }}
       />
+      {props.selectedIsPicture ? <PictureReplaceButton onReplace={props.onReplacePicture} /> : null}
       <ToolbarButton
         onClick={props.onDeleteShape}
         icon={<Trash2 size={14} />}
@@ -178,41 +197,42 @@ export function PptxToolbar(props: PptxToolbarProps) {
       />
       <Sep />
       <IconButton
-        onClick={() => props.onAlign("left")}
+        onClick={() => props.onAlign("left", alignRelativeTo)}
         icon={<AlignStartVertical size={14} />}
-        label="Align left"
+        label={`Align left (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
         disabled={!canAlign}
       />
       <IconButton
-        onClick={() => props.onAlign("center-h")}
+        onClick={() => props.onAlign("center-h", alignRelativeTo)}
         icon={<AlignCenterVertical size={14} />}
-        label="Align center"
+        label={`Align center (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
         disabled={!canAlign}
       />
       <IconButton
-        onClick={() => props.onAlign("right")}
+        onClick={() => props.onAlign("right", alignRelativeTo)}
         icon={<AlignEndVertical size={14} />}
-        label="Align right"
+        label={`Align right (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
         disabled={!canAlign}
       />
       <IconButton
-        onClick={() => props.onAlign("top")}
+        onClick={() => props.onAlign("top", alignRelativeTo)}
         icon={<AlignStartHorizontal size={14} />}
-        label="Align top"
+        label={`Align top (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
         disabled={!canAlign}
       />
       <IconButton
-        onClick={() => props.onAlign("middle-v")}
+        onClick={() => props.onAlign("middle-v", alignRelativeTo)}
         icon={<AlignCenterHorizontal size={14} />}
-        label="Align middle"
+        label={`Align middle (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
         disabled={!canAlign}
       />
       <IconButton
-        onClick={() => props.onAlign("bottom")}
+        onClick={() => props.onAlign("bottom", alignRelativeTo)}
         icon={<AlignEndHorizontal size={14} />}
-        label="Align bottom"
+        label={`Align bottom (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
         disabled={!canAlign}
       />
+      <AlignTargetToggle value={alignRelativeTo} onChange={setAlignRelativeTo} disabled={disabled} />
       <IconButton
         onClick={() => props.onDistribute("horizontal")}
         icon={<AlignHorizontalDistributeCenter size={14} />}
@@ -224,6 +244,16 @@ export function PptxToolbar(props: PptxToolbarProps) {
         icon={<AlignVerticalDistributeCenter size={14} />}
         label="Distribute vertically"
         disabled={!canDistribute}
+      />
+      <ArrangeMenu
+        disabled={disabled || !hasSelection}
+        onReorder={props.onReorder}
+        onGroup={props.onGroup}
+        onUngroup={props.onUngroup}
+        onDuplicateShape={props.onDuplicateShape}
+        canGroup={props.canGroup}
+        canUngroup={props.canUngroup}
+        canDuplicate={hasSelection}
       />
       <Sep />
       {/*
@@ -259,6 +289,17 @@ export function PptxToolbar(props: PptxToolbarProps) {
       />
       <Sep />
       <div className="ml-auto flex items-center gap-2 text-xs text-secondary">
+        <button
+          type="button"
+          onClick={props.onPresent}
+          disabled={!props.canPresent}
+          title="Start presentation (F5)"
+          data-testid="pptx-present"
+          className="inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Play size={14} />
+          <span className="hidden sm:inline">Present</span>
+        </button>
         <ToolbarButton
           onClick={() => onZoomChange(Math.max(minZoom, zoom - 0.1))}
           icon={<ZoomOut size={14} />}
@@ -293,12 +334,6 @@ export function PptxToolbar(props: PptxToolbarProps) {
         >
           {zoomPct}%
         </button>
-        <ToolbarButton
-          onClick={props.onOpenShortcuts}
-          icon={<Keyboard size={14} />}
-          label="Keyboard shortcuts (⌘/)"
-          testId="pptx-shortcuts"
-        />
       </div>
     </div>
   );
@@ -622,6 +657,214 @@ function ColorWell({ label, value, disabled, showClear, onChange, onClear }: Col
         </button>
       ) : null}
     </span>
+  );
+}
+
+interface ArrangeMenuProps {
+  readonly disabled: boolean;
+  readonly onReorder: (mode: ReorderShapeMode) => void;
+  readonly onGroup: () => void;
+  readonly onUngroup: () => void;
+  readonly onDuplicateShape: () => void;
+  readonly canGroup: boolean;
+  readonly canUngroup: boolean;
+  readonly canDuplicate: boolean;
+}
+
+interface ArrangeOption {
+  readonly mode: ReorderShapeMode;
+  readonly label: string;
+  readonly icon: React.ReactNode;
+}
+
+const ARRANGE_OPTIONS: ReadonlyArray<ArrangeOption> = [
+  { mode: "to-front", label: "Bring to front", icon: <ChevronsUp size={14} /> },
+  { mode: "forward", label: "Bring forward", icon: <MoveUp size={14} /> },
+  { mode: "backward", label: "Send backward", icon: <MoveDown size={14} /> },
+  { mode: "to-back", label: "Send to back", icon: <ChevronsDown size={14} /> },
+];
+
+function ArrangeMenu({
+  disabled,
+  onReorder,
+  onGroup,
+  onUngroup,
+  onDuplicateShape,
+  canGroup,
+  canUngroup,
+  canDuplicate,
+}: ArrangeMenuProps) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title="Arrange"
+        data-testid="pptx-arrange-menu-trigger"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Layers size={14} />
+        <span className="hidden sm:inline">Arrange</span>
+        <ChevronDown size={12} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          data-testid="pptx-arrange-menu"
+          className="absolute left-0 top-full z-30 mt-1 grid w-48 grid-cols-1 gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-lg"
+        >
+          {ARRANGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.mode}
+              type="button"
+              role="menuitem"
+              data-testid={`pptx-arrange-${opt.mode}`}
+              onClick={() => {
+                setOpen(false);
+                onReorder(opt.mode);
+              }}
+              className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
+            >
+              {opt.icon}
+              <span>{opt.label}</span>
+            </button>
+          ))}
+          <div className="my-0.5 h-px bg-divider" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="pptx-arrange-group"
+            disabled={!canGroup}
+            onClick={() => {
+              setOpen(false);
+              onGroup();
+            }}
+            className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Group size={14} />
+            <span>Group</span>
+            <span className="ml-auto text-[10px] text-muted">⇧⌘G</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="pptx-arrange-ungroup"
+            disabled={!canUngroup}
+            onClick={() => {
+              setOpen(false);
+              onUngroup();
+            }}
+            className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Ungroup size={14} />
+            <span>Ungroup</span>
+            <span className="ml-auto text-[10px] text-muted">⌥⇧⌘G</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="pptx-arrange-duplicate"
+            disabled={!canDuplicate}
+            onClick={() => {
+              setOpen(false);
+              onDuplicateShape();
+            }}
+            className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Copy size={14} />
+            <span>Duplicate</span>
+            <span className="ml-auto text-[10px] text-muted">⌘D</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface AlignTargetToggleProps {
+  readonly value: "selection" | "slide";
+  readonly onChange: (value: "selection" | "slide") => void;
+  readonly disabled: boolean;
+}
+
+/**
+ * Tiny toggle pill (Selected ↔ Slide) controlling the reference frame
+ * for the six align icons. Mirrors PowerPoint's "Align to Slide" /
+ * "Align Selected Objects" choices in the Arrange menu.
+ */
+function AlignTargetToggle({ value, onChange, disabled }: AlignTargetToggleProps) {
+  const next = value === "selection" ? "slide" : "selection";
+  const label = value === "slide" ? "To slide" : "To selection";
+  const title =
+    value === "slide"
+      ? "Aligning to slide bounds. Click to switch to align selected objects."
+      : "Aligning to selection. Click to switch to align to slide.";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onChange(next)}
+      title={title}
+      aria-pressed={value === "slide"}
+      data-testid="pptx-align-target-toggle"
+      data-align-relative-to={value}
+      className="ml-0.5 inline-flex items-center gap-1 rounded border border-divider px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {label}
+    </button>
+  );
+}
+
+interface PictureReplaceButtonProps {
+  readonly onReplace: (file: File) => void;
+}
+
+/**
+ * D9 — contextual "Replace image…" button shown next to the generic
+ * Image insert button when a `Picture` shape is selected. Pops the
+ * native file picker and forwards the chosen file to the editor,
+ * which dispatches `pptx:replace-picture-media`. The button stays
+ * hidden when nothing or a non-picture shape is selected to avoid
+ * cluttering the toolbar.
+ */
+function PictureReplaceButton({ onReplace }: PictureReplaceButtonProps): React.ReactElement {
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        title="Replace image"
+        data-testid="pptx-replace-image"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover"
+      >
+        <ImageIcon size={14} />
+        <span className="hidden sm:inline">Replace</span>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onReplace(f);
+          e.target.value = "";
+        }}
+      />
+    </>
   );
 }
 

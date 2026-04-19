@@ -105,17 +105,11 @@ function connectorToSvg(shape: ConnectorShape, ctx: SvgRenderCtx): string {
   let pathSvg: string;
   switch (shape.connectorType) {
     case "elbow": {
-      // 3-segment elbow: horizontal then vertical (or vice versa) with a
-      // shared midpoint. We pick the axis based on the dominant
-      // displacement so the elbow sits closer to PowerPoint's default
-      // `bentConnector3` shape (which always has 1 bend).
-      const dx = ep.x - sp.x;
-      const dy = ep.y - sp.y;
-      const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
-      const midX = horizontalFirst ? sp.x + dx / 2 : sp.x;
-      const midY = horizontalFirst ? sp.y : sp.y + dy / 2;
-      const knee = horizontalFirst ? `${u(midX)},${u(sp.y)} ${u(midX)},${u(ep.y)}` : `${u(sp.x)},${u(midY)} ${u(ep.x)},${u(midY)}`;
-      pathSvg = `<polyline points="${u(sp.x)},${u(sp.y)} ${knee} ${u(ep.x)},${u(ep.y)}"${strokeAttrs}${headAttr}${tailAttr}/>`;
+      const startSide = shape.start.kind === "anchored" ? shape.start.side : null;
+      const endSide = shape.end.kind === "anchored" ? shape.end.side : null;
+      const points = routeElbow(sp, ep, startSide, endSide);
+      const pts = points.map((p) => `${u(p.x)},${u(p.y)}`).join(" ");
+      pathSvg = `<polyline points="${pts}"${strokeAttrs}${headAttr}${tailAttr}/>`;
       break;
     }
     case "curved": {
@@ -131,6 +125,96 @@ function connectorToSvg(shape: ConnectorShape, ctx: SvgRenderCtx): string {
       break;
   }
   return `${groupOpen("connector", shape.id)}${pathSvg}${groupClose()}`;
+}
+
+/**
+ * Compute the polyline points for a `connectorType: "elbow"` connector.
+ *
+ * When a side is known (the endpoint is anchored to a shape), the path
+ * exits perpendicular to that side via a short "lead" segment, then
+ * meets the other endpoint with at most one Manhattan bend. This
+ * matches PowerPoint's `bentConnector` routing where lines visibly
+ * leave the shape at the anchor's normal direction instead of cutting
+ * across the bounding box. When neither side is known we fall back to
+ * the previous axis-dominant midpoint pivot so free connectors still
+ * look reasonable.
+ */
+function routeElbow(
+  sp: { readonly x: number; readonly y: number },
+  ep: { readonly x: number; readonly y: number },
+  startSide: "n" | "s" | "e" | "w" | "center" | null,
+  endSide: "n" | "s" | "e" | "w" | "center" | null
+): ReadonlyArray<{ readonly x: number; readonly y: number }> {
+  const dx = ep.x - sp.x;
+  const dy = ep.y - sp.y;
+  // Lead distance for the perpendicular exit segment. Capped at half
+  // the displacement on the same axis so a tiny gap doesn't produce a
+  // segment longer than the connector itself.
+  const LEAD_EMU = 228_600; // ≈ 0.25 inch — visually close to PowerPoint's default
+  const leadX = Math.min(LEAD_EMU, Math.max(0, Math.abs(dx) / 2));
+  const leadY = Math.min(LEAD_EMU, Math.max(0, Math.abs(dy) / 2));
+
+  // Map side → outward unit vector. `center` and `null` collapse to
+  // (0, 0) so the lead segment becomes degenerate, which is what we
+  // want for endpoints without a meaningful normal.
+  const sV = sideVector(startSide);
+  const eV = sideVector(endSide);
+
+  // No information either side → fall back to the legacy single-bend
+  // routing so we don't regress visually for free connectors.
+  if (sV.x === 0 && sV.y === 0 && eV.x === 0 && eV.y === 0) {
+    const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
+    const midX = horizontalFirst ? sp.x + dx / 2 : sp.x;
+    const midY = horizontalFirst ? sp.y : sp.y + dy / 2;
+    if (horizontalFirst) {
+      return [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep];
+    }
+    return [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
+  }
+
+  const p1 = { x: sp.x + sV.x * leadX, y: sp.y + sV.y * leadY };
+  const p2 = { x: ep.x + eV.x * leadX, y: ep.y + eV.y * leadY };
+
+  // Sides are horizontal-vs-vertical: the elbow needs an L-shaped
+  // bridge between the two perpendicular leads. We choose which axis
+  // to bend on so neither lead doubles back on itself.
+  const sIsHoriz = sV.x !== 0;
+  const eIsHoriz = eV.x !== 0;
+
+  if (sIsHoriz && eIsHoriz) {
+    // Both leads go horizontally — bridge with a vertical segment in
+    // the middle so we get a Z-shape (5 points).
+    const midX = (p1.x + p2.x) / 2;
+    return [sp, p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2, ep];
+  }
+  if (!sIsHoriz && !eIsHoriz) {
+    // Both leads go vertically — bridge horizontally.
+    const midY = (p1.y + p2.y) / 2;
+    return [sp, p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2, ep];
+  }
+  // Mixed orientations — the corner of the L falls at the intersection
+  // of the two perpendicular axes (4 points total).
+  const corner = sIsHoriz ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
+  return [sp, p1, corner, p2, ep];
+}
+
+function sideVector(side: "n" | "s" | "e" | "w" | "center" | null): {
+  readonly x: number;
+  readonly y: number;
+} {
+  switch (side) {
+    case "n":
+      return { x: 0, y: -1 };
+    case "s":
+      return { x: 0, y: 1 };
+    case "e":
+      return { x: 1, y: 0 };
+    case "w":
+      return { x: -1, y: 0 };
+    case "center":
+    case null:
+      return { x: 0, y: 0 };
+  }
 }
 
 function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
@@ -200,8 +284,7 @@ function renderWrappedTextHtml(
   // PowerPoint's `<a:bodyPr>` is "square" → wrap.
   const wrapMode = readBodyWrap(shape.txBody.bodyPrRaw);
 
-  const justifyContent =
-    anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
+  const justifyContent = anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
 
   const paragraphs = shape.txBody.paragraphs.map((p) => paragraphToHtml(p, theme)).join("");
 

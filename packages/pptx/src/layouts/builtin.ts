@@ -28,9 +28,7 @@ const NS_ATTRS =
   'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
 
 function layoutXml(typeAttr: string, name: string, placeholders: ReadonlyArray<PlaceholderEntry>): string {
-  const phXml = placeholders
-    .map((p, i) => placeholderShapeXml(p, i + 2))
-    .join("");
+  const phXml = placeholders.map((p, i) => placeholderShapeXml(p, i + 2)).join("");
   const preserveAttr = typeAttr === "title" ? ' preserve="1"' : "";
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
@@ -71,8 +69,7 @@ interface PlaceholderEntry {
 }
 
 function placeholderShapeXml(p: PlaceholderEntry, cNvPrId: number): string {
-  const phAttrs =
-    `type="${p.type}" idx="${p.idx}"` + (p.sz ? ` sz="${p.sz}"` : "");
+  const phAttrs = `type="${p.type}" idx="${p.idx}"` + (p.sz ? ` sz="${p.sz}"` : "");
   const anchorAttr = p.anchorCenter ? ` anchor="ctr"` : "";
   return (
     `<p:sp>` +
@@ -97,11 +94,7 @@ function placeholderShapeXml(p: PlaceholderEntry, cNvPrId: number): string {
 }
 
 function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // Standard 16:9 slide footprint in EMU.

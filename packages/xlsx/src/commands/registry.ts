@@ -13,6 +13,15 @@ import { deleteColumnHandler } from "./delete-column.js";
 import { deleteRowHandler } from "./delete-row.js";
 import { deleteSheetHandler } from "./delete-sheet.js";
 import { fillRangeHandler } from "./fill-range.js";
+import { freezePanesHandler, unfreezePanesHandler } from "./freeze-panes.js";
+import { addTableHandler } from "./add-table.js";
+import { removeTableHandler } from "./remove-table.js";
+import {
+  addChartHandler,
+  moveChartHandler,
+  removeChartHandler,
+  resizeChartHandler,
+} from "./chart-commands.js";
 import {
   addImageHandler,
   moveImageHandler,
@@ -22,8 +31,25 @@ import {
 import { insertColumnHandler } from "./insert-column.js";
 import { insertRowHandler } from "./insert-row.js";
 import { mergeCellsHandler } from "./merge-cells.js";
+import { moveSheetHandler } from "./move-sheet.js";
 import { pasteRangeHandler } from "./paste-range.js";
 import { renameSheetHandler } from "./rename-sheet.js";
+import { setSheetStateHandler } from "./set-sheet-state.js";
+import {
+  addConditionalFormatHandler,
+  removeConditionalFormatHandler,
+  clearConditionalFormatsHandler,
+} from "./conditional-format.js";
+import {
+  addDataValidationHandler,
+  removeDataValidationHandler,
+  clearDataValidationsHandler,
+} from "./data-validation.js";
+import {
+  addDefinedNameHandler,
+  removeDefinedNameHandler,
+  updateDefinedNameHandler,
+} from "./defined-names.js";
 import { setAutoFilterHandler } from "./set-auto-filter.js";
 import { setCellFormatHandler } from "./set-cell-format.js";
 import { setCellFormulaHandler } from "./set-cell-formula.js";
@@ -68,6 +94,14 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   unmergeCellsHandler as CommandHandler<unknown, XlsxSnapshot>,
   addSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   renameSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
+  moveSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setSheetStateHandler as CommandHandler<unknown, XlsxSnapshot>,
+  addConditionalFormatHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeConditionalFormatHandler as CommandHandler<unknown, XlsxSnapshot>,
+  clearConditionalFormatsHandler as CommandHandler<unknown, XlsxSnapshot>,
+  addDataValidationHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeDataValidationHandler as CommandHandler<unknown, XlsxSnapshot>,
+  clearDataValidationsHandler as CommandHandler<unknown, XlsxSnapshot>,
   addCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
   replyCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
   resolveCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
@@ -87,6 +121,17 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   moveImageHandler as CommandHandler<unknown, XlsxSnapshot>,
   resizeImageHandler as CommandHandler<unknown, XlsxSnapshot>,
   removeImageHandler as CommandHandler<unknown, XlsxSnapshot>,
+  freezePanesHandler as CommandHandler<unknown, XlsxSnapshot>,
+  unfreezePanesHandler as CommandHandler<unknown, XlsxSnapshot>,
+  addDefinedNameHandler as CommandHandler<unknown, XlsxSnapshot>,
+  updateDefinedNameHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeDefinedNameHandler as CommandHandler<unknown, XlsxSnapshot>,
+  addTableHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeTableHandler as CommandHandler<unknown, XlsxSnapshot>,
+  addChartHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeChartHandler as CommandHandler<unknown, XlsxSnapshot>,
+  moveChartHandler as CommandHandler<unknown, XlsxSnapshot>,
+  resizeChartHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

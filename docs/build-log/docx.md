@@ -4,14 +4,14 @@
 
 ## Decisions
 
-| Date (UTC) | Decision                                                                 | Rationale                                                                                                                                 |
-| ---------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-17 | Use `fast-xml-parser` with `preserveOrder: true` over a custom XML model | Round-trips losslessly for OOXML; smaller surface than building our own.                                                                  |
-| 2026-04-17 | Tables stored as opaque-XML `Table.raw` for now (P1 mutation)            | Cell merging is genuinely tricky; preserving roundtrip integrity matters more than editing this session.                                  |
-| 2026-04-17 | Hyperlink modeled as a typed wrapper over runs (not a mark)              | Matches OOXML structure (`w:hyperlink` is a block element nesting runs); avoids mark-coalescing ambiguity.                                |
-| 2026-04-17 | Comments staging tri-state lives in core, not docx                       | Same logic will serve XLSX/PPTX.                                                                                                          |
-| 2026-04-17 | The serializer trusts dirty flags rather than diffing snapshots          | Cheap, predictable, and matches our command-bus discipline.                                                                               |
-| 2026-04-17 | Touched parts may differ from input in attribute order / quote style     | Word and LibreOffice both accept either; we assert structural equivalence on touched parts and bytewise equality only on untouched parts. |
+| Date (UTC) | Decision                                                                                                        | Rationale                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-17 | Use `fast-xml-parser` with `preserveOrder: true` over a custom XML model                                        | Round-trips losslessly for OOXML; smaller surface than building our own.                                                                                                                                                                                                                                                                              |
+| 2026-04-17 | Tables stored as opaque-XML `Table.raw` for now (P1 mutation)                                                   | Cell merging is genuinely tricky; preserving roundtrip integrity matters more than editing this session.                                                                                                                                                                                                                                              |
+| 2026-04-17 | Hyperlink modeled as a typed wrapper over runs (not a mark)                                                     | Matches OOXML structure (`w:hyperlink` is a block element nesting runs); avoids mark-coalescing ambiguity.                                                                                                                                                                                                                                            |
+| 2026-04-17 | Comments staging tri-state lives in core, not docx                                                              | Same logic will serve XLSX/PPTX.                                                                                                                                                                                                                                                                                                                      |
+| 2026-04-17 | The serializer trusts dirty flags rather than diffing snapshots                                                 | Cheap, predictable, and matches our command-bus discipline.                                                                                                                                                                                                                                                                                           |
+| 2026-04-17 | Touched parts may differ from input in attribute order / quote style                                            | Word and LibreOffice both accept either; we assert structural equivalence on touched parts and bytewise equality only on untouched parts.                                                                                                                                                                                                             |
 | 2026-04-19 | DOCX toolbar consumes the shared `@officeai/text-formatting` `TextFormatBar` via a `docxFormatProvider` adapter | Replaces the bespoke Bold/Italic/Underline/Color buttons with the cross-product bar. Provider reads ProseMirror's active marks for `getActive` and dispatches `docx:format-range` patches for `apply`. `capabilities.highlight = "native"` (mapped to `<w:highlight>`) and `underlineVariants = true` so the picker exposes single/double/dotted/etc. |
 
 ## Deviations from spec
@@ -2238,13 +2238,13 @@ same data-testid hooks); the underlying UI now lives in
 What landed:
 
 - New `apps/web/app/editor/docxCommentsProvider.ts` adapts `DocxAgent`
-  + `docx:add-comment` / `docx:reply-comment` / `docx:resolve-comment`
-  / `docx:delete-comment` to the canonical `CommentsProvider`
-  contract from `@officeai/comments`. The adapter normalises
-  `DocxComment` (rich `Block[]` body) into a plain-text `CommentBody`
-  while stashing the original on `nativeRef`, and lifts the live PM
-  `DocxSelection` off the `docx-range` anchor's opaque `range` field
-  so adds still land at the user's selection.
+  - `docx:add-comment` / `docx:reply-comment` / `docx:resolve-comment`
+    / `docx:delete-comment` to the canonical `CommentsProvider`
+    contract from `@officeai/comments`. The adapter normalises
+    `DocxComment` (rich `Block[]` body) into a plain-text `CommentBody`
+    while stashing the original on `nativeRef`, and lifts the live PM
+    `DocxSelection` off the `docx-range` anchor's opaque `range` field
+    so adds still land at the user's selection.
 - `apps/web/app/editor/CommentsSidebar.tsx` is now a 30-line wrapper
   around the `CommentsSidebar` primitive in `@officeai/ui`. The old
   Word-specific implementation (thread cards, reply input) was

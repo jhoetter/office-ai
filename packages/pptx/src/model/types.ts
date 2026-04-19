@@ -420,14 +420,7 @@ export interface EntranceAnimation {
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-export type Shape =
-  | TextShape
-  | Picture
-  | TableShape
-  | ChartShape
-  | GroupShape
-  | ConnectorShape
-  | OpaqueShape;
+export type Shape = TextShape | Picture | TableShape | ChartShape | GroupShape | ConnectorShape | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 

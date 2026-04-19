@@ -78,4 +78,78 @@ describe("serializeXlsx — dirty-flag guard", () => {
     const reSheet = reparsed.root.sheets[0];
     expect(reSheet.cells.get("0:25")?.value).toBe(12345);
   });
+
+  it("round-trips a frozen-pane configuration written via the model", async () => {
+    const buf = await loadFixture("01-single-sheet-numbers.xlsx");
+    const snap = await parseXlsx(buf);
+    const sheet = snap.root.sheets[0];
+    const sheets = snap.root.sheets.slice();
+    sheets[0] = { ...sheet, freeze: { rows: 1, cols: 2 } };
+    const tampered = {
+      ...snap,
+      root: { ...snap.root, sheets },
+      dirty: { ...snap.dirty, sheets: new Set([sheet.partPath]) },
+    };
+    const out = await serializeXlsx(tampered);
+    const reparsed = await parseXlsx(new Uint8Array(out));
+    expect(reparsed.root.sheets[0].freeze).toEqual({ rows: 1, cols: 2 });
+  });
+
+  it("round-trips a typed list data-validation through serialize → parse", async () => {
+    const buf = await loadFixture("01-single-sheet-numbers.xlsx");
+    const snap = await parseXlsx(buf);
+    const sheet = snap.root.sheets[0];
+    const sheets = snap.root.sheets.slice();
+    sheets[0] = {
+      ...sheet,
+      dataValidations: [
+        {
+          kind: "list",
+          id: "dv-test",
+          range: "B2:B10",
+          source: "Yes,No,Maybe",
+          formula: false,
+          showDropDown: true,
+          stopOnInvalid: true,
+          allowBlank: true,
+        },
+      ],
+    };
+    const tampered = {
+      ...snap,
+      root: { ...snap.root, sheets },
+      dirty: { ...snap.dirty, sheets: new Set([sheet.partPath]) },
+    };
+    const out = await serializeXlsx(tampered);
+    const reparsed = await parseXlsx(new Uint8Array(out));
+    const dv = reparsed.root.sheets[0].dataValidations;
+    expect(dv).toHaveLength(1);
+    expect(dv[0]!.kind).toBe("list");
+    expect(dv[0]!.range).toBe("B2:B10");
+    if (dv[0]!.kind === "list") {
+      expect(dv[0]!.source).toBe("Yes,No,Maybe");
+      expect(dv[0]!.formula).toBe(false);
+    }
+  });
+
+  it("re-emits opaque <conditionalFormatting> blocks verbatim on dirty sheets", async () => {
+    const buf = await loadFixture("01-single-sheet-numbers.xlsx");
+    const snap = await parseXlsx(buf);
+    const sheet = snap.root.sheets[0];
+    const opaque =
+      '<conditionalFormatting sqref="A1:A10"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>5</formula></cfRule></conditionalFormatting>';
+    const sheets = snap.root.sheets.slice();
+    sheets[0] = { ...sheet, opaqueConditionalFormats: [opaque] };
+    const tampered = {
+      ...snap,
+      root: { ...snap.root, sheets },
+      dirty: { ...snap.dirty, sheets: new Set([sheet.partPath]) },
+    };
+    const out = await serializeXlsx(tampered);
+    const reparsed = await parseXlsx(new Uint8Array(out));
+    const blocks = reparsed.root.sheets[0].opaqueConditionalFormats;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toContain('sqref="A1:A10"');
+    expect(blocks[0]).toContain("greaterThan");
+  });
 });

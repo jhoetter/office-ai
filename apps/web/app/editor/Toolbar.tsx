@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Download,
-  FileUp,
   Image as ImageIcon,
   MessageSquarePlus,
   AlignLeft,
@@ -19,13 +17,14 @@ import {
   PenLine,
   Eye,
   Pilcrow,
-  Keyboard,
+  Check,
+  X,
+  ScrollText,
+  SeparatorHorizontal,
 } from "lucide-react";
-import { Button, TextFormatBar, cn } from "@officeai/ui";
-import type {
-  ActiveTextFormat,
-  TextFormatProvider,
-} from "@officeai/text-formatting";
+import { TextFormatBar, cn } from "@officeai/ui";
+import { InsertTableMenu } from "./InsertTableMenu";
+import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -75,9 +74,8 @@ export interface ToolbarProps {
   activeIndentLeft: number | null;
   /** Style picker contents derived from the loaded document. */
   styleOptions: ReadonlyArray<ToolbarStyleOption>;
-  onOpenFile: () => void;
   onInsertImage: () => void;
-  onExport: () => void;
+  onInsertTable: (rows: number, cols: number) => void;
   onSetParagraphStyle: (style: string) => void;
   onSetAlignment: (alignment: AlignmentValue) => void;
   onAdjustIndent: (deltaTwips: number) => void;
@@ -95,6 +93,13 @@ export interface ToolbarProps {
   }) => void;
   onToggleList: (kind: "bullet" | "ordered") => void;
   onAddComment: () => void;
+  /**
+   * B11 — Section break menu. The four OOXML section types map to
+   * Word's Insert › Breaks submenu: Next page, Continuous, Even
+   * page, Odd page. The toolbar dispatches this with `paragraphIndex`
+   * resolved at the editor layer.
+   */
+  onInsertSectionBreak: (type: "nextPage" | "continuous" | "evenPage" | "oddPage") => void;
   /**
    * Surface "not yet supported" toasts for buttons whose backing command
    * does not yet exist.
@@ -115,8 +120,13 @@ export interface ToolbarProps {
   /** Word's pilcrow toggle — show/hide nonprinting characters. */
   formattingMarksOn: boolean;
   onToggleFormattingMarks: () => void;
-  /** Open the keyboard-shortcuts help dialog. */
-  onOpenShortcuts: () => void;
+  /**
+   * B8 — Review tab. Number of unresolved tracked-change wrappers in
+   * the document; when 0 the menu disables its Accept/Reject items.
+   */
+  trackedChangesCount: number;
+  onAcceptAllChanges: () => void;
+  onRejectAllChanges: () => void;
 }
 
 export type EditModeValue = "edit" | "suggest" | "view";
@@ -140,18 +150,6 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       aria-label="Document toolbar"
       className="editor-toolbar flex flex-wrap items-center gap-1 border-b border-divider pb-3"
     >
-      {/* File group */}
-      <button
-        type="button"
-        onClick={props.onOpenFile}
-        className="inline-flex items-center gap-1.5 rounded-md border border-divider bg-surface px-2.5 py-1 text-xs text-foreground hover:bg-hover"
-      >
-        <FileUp size={14} />
-        Open .docx
-      </button>
-
-      <Divider />
-
       {/* Paragraph style — derived from snapshot.root.body. */}
       <ParagraphStylePicker
         value={props.activeStyle}
@@ -248,6 +246,12 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         <ImageIcon size={14} />
       </ToolbarBtn>
 
+      {/* Insert table — Word-style grid picker. */}
+      <InsertTableMenu disabled={!props.agentReady} onInsert={props.onInsertTable} />
+
+      {/* Section break — Word-style submenu (B11). */}
+      <SectionBreakMenu disabled={!props.agentReady} onInsert={props.onInsertSectionBreak} />
+
       {/* Comment */}
       <ToolbarBtn label="Add comment" onClick={props.onAddComment}>
         <MessageSquarePlus size={14} />
@@ -260,21 +264,12 @@ export function Toolbar(props: ToolbarProps): ReactNode {
             {props.docInfo.commentThreads} comment{props.docInfo.commentThreads === 1 ? "" : "s"}
           </span>
         )}
+        <ReviewMenu
+          count={props.trackedChangesCount}
+          onAcceptAll={props.onAcceptAllChanges}
+          onRejectAll={props.onRejectAllChanges}
+        />
         <EditModePicker value={props.editMode} onChange={props.onSetEditMode} />
-        <button
-          type="button"
-          aria-label="Keyboard shortcuts"
-          title="Keyboard shortcuts (⌘/)"
-          onClick={props.onOpenShortcuts}
-          data-shortcuts-help
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-divider bg-surface text-secondary transition-colors hover:bg-hover hover:text-default"
-        >
-          <Keyboard size={14} />
-        </button>
-        <Button variant="accent" size="sm" onClick={props.onExport}>
-          <Download size={14} />
-          Export
-        </Button>
       </div>
     </div>
   );
@@ -292,10 +287,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
  * (no confirm step) — the user can always revert by re-opening the
  * picker.
  */
-function EditModePicker(props: {
-  value: EditModeValue;
-  onChange: (v: EditModeValue) => void;
-}): ReactNode {
+function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeValue) => void }): ReactNode {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -368,6 +360,232 @@ function EditModePicker(props: {
   );
 }
 
+/**
+ * B11 — Section break menu. Mirrors Word's Insert › Breaks submenu
+ * with the four legal OOXML section types. The shortcut for the
+ * common "Next page" entry (Mod+Shift+Enter) is surfaced inline so
+ * keyboard-first users can discover it.
+ */
+function SectionBreakMenu(props: {
+  disabled: boolean;
+  onInsert: (type: "nextPage" | "continuous" | "evenPage" | "oddPage") => void;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const choose = (type: "nextPage" | "continuous" | "evenPage" | "oddPage") => {
+    props.onInsert(type);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        title="Insert section break"
+        aria-label="Insert section break"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={props.disabled}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-7 items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-foreground transition-colors hover:bg-hover",
+          props.disabled && "cursor-not-allowed opacity-50 hover:bg-transparent"
+        )}
+        data-testid="section-break-menu-button"
+      >
+        <SeparatorHorizontal size={14} />
+        <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 z-30 mt-1 w-64 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
+        >
+          <SectionBreakMenuItem
+            label="Next page"
+            description="Start the next section on a new page."
+            shortcut="Mod+Shift+Enter"
+            onClick={() => choose("nextPage")}
+            testId="section-break-next-page"
+          />
+          <SectionBreakMenuItem
+            label="Continuous"
+            description="Begin a new section without a page break."
+            onClick={() => choose("continuous")}
+            testId="section-break-continuous"
+          />
+          <SectionBreakMenuItem
+            label="Even page"
+            description="Start the next section on the next even-numbered page."
+            onClick={() => choose("evenPage")}
+            testId="section-break-even"
+          />
+          <SectionBreakMenuItem
+            label="Odd page"
+            description="Start the next section on the next odd-numbered page."
+            onClick={() => choose("oddPage")}
+            testId="section-break-odd"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectionBreakMenuItem(props: {
+  label: string;
+  description: string;
+  shortcut?: string;
+  onClick: () => void;
+  testId: string;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={props.onClick}
+      data-testid={props.testId}
+      className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-hover"
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground">{props.label}</span>
+        <span className="block text-[11px] text-secondary">{props.description}</span>
+      </span>
+      {props.shortcut ? (
+        <kbd className="ml-2 shrink-0 rounded bg-hover px-1 py-0.5 font-mono text-[10px] text-secondary">
+          {props.shortcut}
+        </kbd>
+      ) : null}
+    </button>
+  );
+}
+
+/**
+ * B8 — Review menu.
+ *
+ * Word's "Review" tab condensed into a single menu next to the edit
+ * mode picker so it stays visible at every viewport width. Carries
+ * a small badge with the live count of unresolved revisions; the
+ * Accept-all / Reject-all entries are disabled when the count is
+ * zero so the menu becomes a stable affordance instead of jumping
+ * in and out of the layout.
+ */
+function ReviewMenu(props: { count: number; onAcceptAll: () => void; onRejectAll: () => void }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const empty = props.count === 0;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        title="Review tracked changes"
+        aria-label="Review tracked changes"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md border border-divider bg-surface px-2 py-1 text-xs font-medium text-foreground transition-colors hover:bg-hover"
+        )}
+        data-testid="review-menu-button"
+      >
+        <ScrollText size={12} />
+        Review
+        {!empty && (
+          <span
+            className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+            aria-label={`${props.count} unresolved tracked change${props.count === 1 ? "" : "s"}`}
+          >
+            {props.count}
+          </span>
+        )}
+        <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-30 mt-1 w-64 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
+        >
+          <ReviewMenuItem
+            disabled={empty}
+            icon={<Check size={12} className="text-[var(--success)]" />}
+            label="Accept all changes"
+            description="Fold every insertion into the document and remove every deletion."
+            onClick={() => {
+              if (empty) return;
+              props.onAcceptAll();
+              setOpen(false);
+            }}
+            testId="review-accept-all"
+          />
+          <ReviewMenuItem
+            disabled={empty}
+            icon={<X size={12} className="text-[var(--error)]" />}
+            label="Reject all changes"
+            description="Drop every insertion and restore every deletion to the original text."
+            onClick={() => {
+              if (empty) return;
+              props.onRejectAll();
+              setOpen(false);
+            }}
+            testId="review-reject-all"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewMenuItem(props: {
+  disabled: boolean;
+  icon: ReactNode;
+  label: string;
+  description: string;
+  onClick: () => void;
+  testId: string;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      data-testid={props.testId}
+      className={cn(
+        "flex w-full items-start gap-2 rounded px-2 py-1.5 text-left",
+        props.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-hover"
+      )}
+    >
+      <span className="mt-0.5 shrink-0">{props.icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground">{props.label}</span>
+        <span className="block text-[11px] text-secondary">{props.description}</span>
+      </span>
+    </button>
+  );
+}
+
 const EDIT_MODE_META: Record<
   EditModeValue,
   {
@@ -387,8 +605,7 @@ const EDIT_MODE_META: Record<
   },
   suggest: {
     label: "Suggesting",
-    description:
-      "Every insert and delete is recorded as a tracked change you can accept or reject later.",
+    description: "Every insert and delete is recorded as a tracked change you can accept or reject later.",
     Icon: PenLine,
     pillClass:
       "border-[var(--ai-violet)] bg-[var(--ai-violet-light)] text-[var(--ai-violet)] hover:brightness-95",

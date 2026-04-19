@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  COLOR_PALETTE,
-  HIGHLIGHT_PALETTE,
-  highlightByDocxName,
-  nearestHighlight,
-} from "./presets";
+import { COLOR_PALETTE, HIGHLIGHT_PALETTE, highlightByDocxName, nearestHighlight } from "./presets";
 
 describe("presets", () => {
   it("color palette swatches are normalised lowercase RRGGBB", () => {

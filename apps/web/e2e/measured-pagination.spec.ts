@@ -46,10 +46,13 @@ test.describe("editor: measured pagination", () => {
     const edges = surface.locator(".pm-page-edge");
     await expect.poll(async () => edges.count(), { timeout: 5_000 }).toBeGreaterThan(0);
 
-    // Sanity: every page-edge separator carries a "Page N" label so
-    // the user sees what's happening visually.
-    const firstEdgeLabel = edges.first().locator(".pm-page-gap-label");
-    await expect(firstEdgeLabel).toContainText(/Page \d+/);
+    // Sanity: every page-edge separator carries a `data-page-number`
+    // attribute on its inner gap so the visual break is discoverable
+    // by tests + assistive tech. The user-facing page number lives in
+    // the status bar, not in a banner inside the gap (Word does not
+    // paint a "Page N" pill between sheets either).
+    const firstEdgeGap = edges.first().locator(".pm-page-gap");
+    await expect(firstEdgeGap).toHaveAttribute("data-page-number", /\d+/);
   });
 
   test("editor card width matches US-Letter (12240 twips ≈ 816 CSS px)", async ({ page }) => {

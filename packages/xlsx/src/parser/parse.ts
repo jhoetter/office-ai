@@ -10,9 +10,11 @@ import {
   type CellValue,
   type Comment,
   type CustomFilterOp,
+  type DataValidation,
   type DynamicFilterType,
   type FilterColumn,
   type Formula,
+  type FreezePanes,
   type MergedCell,
   type OpaquePart,
   type Sheet,
@@ -20,6 +22,7 @@ import {
   type XlsxWorkbook,
 } from "../model/types.js";
 import type { ImageBlob } from "../model/index.js";
+import type { NodeId } from "@officeai/core";
 import { parseCommentsPart } from "./comments.js";
 import { resolveDrawings } from "./drawings.js";
 import { XlsxParseError } from "./errors.js";
@@ -90,7 +93,12 @@ export async function parseXlsx(
 
   const mintNodeId: IdMinter = opts.idMinter ?? defaultIdMinter;
 
-  const { workbookRootAttrs, date1904, sheetEntries } = parseWorkbookXml(container);
+  const {
+    workbookRootAttrs,
+    date1904,
+    sheetEntries,
+    definedNames: rawDefinedNames,
+  } = parseWorkbookXml(container);
 
   let sheetjsBook: XLSX.WorkBook;
   try {
@@ -157,6 +165,25 @@ export async function parseXlsx(
     ? parseStylesXml(container.readText("xl/styles.xml"))
     : defaultStyleTable();
 
+  // C12 — Resolve OOXML `localSheetId` indices (0-based) into sheet
+  // names so commands can reason about scope without re-walking the
+  // sheet array. Out-of-range indices fall back to workbook scope.
+  const definedNames = rawDefinedNames.map((n) => {
+    const scope =
+      n.localSheetId !== undefined && n.localSheetId >= 0 && n.localSheetId < sheets.length
+        ? sheets[n.localSheetId]!.name
+        : undefined;
+    const out: import("../model/types.js").DefinedName = {
+      id: `dn-${n.name}-${scope ?? "wb"}`,
+      name: n.name,
+      refersTo: n.refersTo,
+      ...(scope ? { scope } : {}),
+      ...(n.comment ? { comment: n.comment } : {}),
+      ...(n.hidden ? { hidden: true } : {}),
+    };
+    return out;
+  });
+
   const workbook: XlsxWorkbook = {
     id: mintNodeId(),
     sheets,
@@ -167,6 +194,7 @@ export async function parseXlsx(
     styles,
     sheetjs: sheetjsBook,
     images,
+    definedNames,
   };
 
   return {
@@ -186,10 +214,19 @@ interface RawSheetEntry {
   readonly state: "visible" | "hidden" | "veryHidden";
 }
 
+interface RawDefinedName {
+  readonly name: string;
+  readonly refersTo: string;
+  readonly localSheetId?: number;
+  readonly comment?: string;
+  readonly hidden?: boolean;
+}
+
 function parseWorkbookXml(container: ooxml.OoxmlContainer): {
   workbookRootAttrs: Record<string, string>;
   date1904: boolean;
   sheetEntries: RawSheetEntry[];
+  definedNames: RawDefinedName[];
 } {
   const xml = container.readText(WORKBOOK_PART);
   let tree: unknown;
@@ -248,7 +285,32 @@ function parseWorkbookXml(container: ooxml.OoxmlContainer): {
     }
   }
 
-  return { workbookRootAttrs, date1904, sheetEntries };
+  const definedNamesEl = ooxml.findChild(root.children, "definedNames");
+  const definedNames: RawDefinedName[] = [];
+  if (definedNamesEl) {
+    for (const child of ooxml.filterChildren(definedNamesEl.children, "definedName")) {
+      const name = child.attrs.name;
+      if (!name) continue;
+      // refersTo lives in the element text. Strip leading `=` per
+      // OOXML convention; Excel writes both with and without it.
+      const text = ooxml.getTextContent(child.entry).trim();
+      const refersTo = text.startsWith("=") ? text.slice(1) : text;
+      const lsRaw = child.attrs.localSheetId;
+      const ls = lsRaw !== undefined ? Number.parseInt(lsRaw, 10) : Number.NaN;
+      const hidden = child.attrs.hidden === "1" || child.attrs.hidden === "true";
+      const comment = child.attrs.comment;
+      const entry: RawDefinedName = {
+        name,
+        refersTo,
+        ...(Number.isFinite(ls) ? { localSheetId: ls } : {}),
+        ...(comment ? { comment } : {}),
+        ...(hidden ? { hidden: true } : {}),
+      };
+      definedNames.push(entry);
+    }
+  }
+
+  return { workbookRootAttrs, date1904, sheetEntries, definedNames };
 }
 
 function resolveSheet(
@@ -282,8 +344,7 @@ function resolveSheet(
   const kind: Sheet["kind"] = rel.type === DOC_REL_TYPES.worksheet ? "worksheet" : "non-worksheet";
 
   const ws = sheetjsBook.Sheets[entry.name];
-  const sheetXml =
-    kind === "worksheet" && container.has(partPath) ? container.readText(partPath) : undefined;
+  const sheetXml = kind === "worksheet" && container.has(partPath) ? container.readText(partPath) : undefined;
   const styleIdByRef = sheetXml ? extractStyleIdsFromXml(sheetXml) : undefined;
   const { cells, merges } =
     kind === "worksheet" && ws ? extractCellsAndMerges(ws, styleIdByRef) : EMPTY_CELL_DATA;
@@ -294,6 +355,12 @@ function resolveSheet(
     ? extractAutoFilterAndHiddenRows(sheetXml)
     : { autoFilter: undefined, hiddenRows: new Set<number>() };
 
+  const freeze = sheetXml ? extractFreezePanes(sheetXml) : undefined;
+  const opaqueConditionalFormats = sheetXml ? extractConditionalFormatBlocks(sheetXml) : [];
+  const dvParse = sheetXml
+    ? extractDataValidations(sheetXml)
+    : { typed: [] as ReadonlyArray<DataValidation>, opaque: undefined };
+
   const drawings =
     kind === "worksheet"
       ? resolveDrawings(container, partPath, mintNodeId, images)
@@ -301,6 +368,13 @@ function resolveSheet(
   for (const blob of drawings.mediaBlobs) {
     if (!images.has(blob.partPath)) images.set(blob.partPath, blob);
   }
+
+  // C14 — Hydrate Excel Tables (`<tableParts>` referencing
+  // `xl/tables/tableN.xml`). Tables we successfully parse get their
+  // part path recorded so the serializer can mark it as modeled
+  // (and skip the byte-clean opaqueParts copy).
+  const tables =
+    kind === "worksheet" && sheetXml ? resolveTables(container, partPath, sheetXml, mintNodeId) : [];
 
   return {
     id: mintNodeId(),
@@ -319,12 +393,260 @@ function resolveSheet(
     rowHeights: new Map(),
     hiddenRows,
     images: drawings.images,
+    conditionalFormats: [],
+    opaqueConditionalFormats,
+    dataValidations: dvParse.typed,
+    ...(dvParse.opaque ? { opaqueDataValidations: dvParse.opaque } : {}),
     ...("drawingPartPath" in drawings && drawings.drawingPartPath
       ? { drawingPartPath: drawings.drawingPartPath }
       : {}),
     ...(autoFilter ? { autoFilter } : {}),
+    ...(freeze ? { freeze } : {}),
     ...(commentsPartPath ? { commentsPartPath } : {}),
+    tables,
+    charts: [],
   };
+}
+
+/**
+ * C14 — Resolve `<tableParts>` from the sheet XML into typed
+ * {@link TableDef} records. We:
+ *
+ * 1. Walk `<tableParts><tablePart r:id="…"/>` to enumerate the rels.
+ * 2. Look up each rel in the sheet's rels part to find the table
+ *    part path (`xl/tables/tableN.xml`).
+ * 3. Parse the table XML for `id`, `name`, `displayName`, `ref`,
+ *    `headerRowCount`, `totalsRowCount`, `<tableColumns>`,
+ *    `<tableStyleInfo>`, and `<autoFilter>`.
+ * 4. Keep the original XML so we can re-emit verbatim when the table
+ *    isn't dirty.
+ *
+ * Anything that fails to parse is silently skipped — the underlying
+ * part still lands in `opaqueParts` via the catch-all in `parseXlsx`,
+ * so the file round-trips correctly even if we couldn't hydrate it.
+ */
+function resolveTables(
+  container: ooxml.OoxmlContainer,
+  sheetPartPath: string,
+  sheetXml: string,
+  mintNodeId: () => NodeId
+): ReadonlyArray<import("../model/types.js").TableDef> {
+  const tablePartRe = /<tablePart\s+[^>]*?r:id="([^"]+)"[^>]*\/?>/g;
+  const relIds: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = tablePartRe.exec(sheetXml)) !== null) {
+    relIds.push(m[1]!);
+  }
+  if (relIds.length === 0) return [];
+
+  const sheetRels = ooxml.RelationshipGraph.loadFor(container, sheetPartPath);
+
+  const out: import("../model/types.js").TableDef[] = [];
+  for (const relId of relIds) {
+    const rel = sheetRels.byId(relId);
+    if (!rel) continue;
+    const partPath = resolveRelativePath(sheetPartPath, rel.target);
+    if (!container.has(partPath)) continue;
+    const xml = container.readText(partPath);
+    const def = parseTableXml(xml, partPath, relId, mintNodeId);
+    if (def) out.push(def);
+  }
+  return out;
+}
+
+/**
+ * Resolve `target` (a path inside the package, possibly relative
+ * with `../`) against the directory of `basePath`. Mirrors the
+ * `xml:base` resolution Excel uses for rels targets.
+ */
+function resolveRelativePath(basePath: string, target: string): string {
+  if (target.startsWith("/")) return target.slice(1);
+  const baseDir = basePath.includes("/") ? basePath.slice(0, basePath.lastIndexOf("/")) : "";
+  const segments = baseDir.split("/").filter(Boolean);
+  for (const part of target.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      segments.pop();
+    } else {
+      segments.push(part);
+    }
+  }
+  return segments.join("/");
+}
+
+function parseTableXml(
+  xml: string,
+  partPath: string,
+  relId: string,
+  mintNodeId: () => NodeId
+): import("../model/types.js").TableDef | undefined {
+  const tableMatch = /<table\b([^>]*)>/.exec(xml);
+  if (!tableMatch) return undefined;
+  const attrs = parseAttrs(tableMatch[1]!);
+  const tableId = attrs.id;
+  const name = attrs.name;
+  const displayName = attrs.displayName ?? name;
+  const range = attrs.ref;
+  if (!tableId || !name || !range) return undefined;
+
+  const headerRowCount = attrs.headerRowCount !== undefined ? Number.parseInt(attrs.headerRowCount, 10) : 1;
+  const totalsRowCount = attrs.totalsRowCount !== undefined ? Number.parseInt(attrs.totalsRowCount, 10) : 0;
+
+  const columnNames: string[] = [];
+  const colRe = /<tableColumn\b([^>]*?)\/?>/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = colRe.exec(xml)) !== null) {
+    const ca = parseAttrs(cm[1]!);
+    if (ca.name) columnNames.push(decodeXmlAttr(ca.name));
+  }
+
+  const styleMatch = /<tableStyleInfo\b[^>]*\/?>/.exec(xml);
+  const autoFilterMatch = /<autoFilter\s+[^>]*?ref="([^"]+)"/.exec(xml);
+
+  return {
+    id: mintNodeId(),
+    tableId,
+    name,
+    displayName,
+    range,
+    headerRowCount: Number.isFinite(headerRowCount) ? headerRowCount : 1,
+    totalsRowCount: Number.isFinite(totalsRowCount) ? totalsRowCount : 0,
+    columnNames,
+    ...(styleMatch ? { styleInfoXml: styleMatch[0]! } : {}),
+    ...(autoFilterMatch ? { autoFilterRange: autoFilterMatch[1]! } : {}),
+    opaqueXml: xml,
+    partPath,
+    relId,
+  };
+}
+
+function parseAttrs(input: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /([A-Za-z_:][\w:.-]*)="([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    out[m[1]!] = m[2]!;
+  }
+  return out;
+}
+
+function decodeXmlAttr(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Parse `<sheetView><pane xSplit="N" ySplit="M" state="frozen"/></sheetView>`
+ * into a {@link FreezePanes} record. We only honour `state="frozen"`
+ * (and the implicit "frozen" when no `state` is present yet a split
+ * is); split-bar (`state="split"`) and `frozenSplit` are preserved as
+ * opaque XML — the parser returns `undefined` so the serializer leaves
+ * the original `<sheetView>` block untouched.
+ *
+ * Excel emits `xSplit` (cols) and `ySplit` (rows). Either may be
+ * absent (= 0). When both are 0 there's no freeze.
+ */
+/**
+ * Capture every `<conditionalFormatting …>…</conditionalFormatting>`
+ * block from the worksheet XML, verbatim. We treat them as opaque
+ * strings so the serializer can re-inject them on dirty round-trip
+ * without needing to model every cfRule shape (data bars, icon
+ * sets, color scales, formula rules, etc.). Typed CF authoring
+ * lives alongside this in {@link Sheet.conditionalFormats} (C10).
+ */
+export function extractConditionalFormatBlocks(xml: string): ReadonlyArray<string> {
+  const out: string[] = [];
+  const re = /<conditionalFormatting\b[^>]*?(?:\/>|>[\s\S]*?<\/conditionalFormatting>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    out.push(m[0]);
+  }
+  return out;
+}
+
+/**
+ * C11 — Pull `<dataValidations>` content out of a worksheet part.
+ *
+ * Returns:
+ *   - `typed`  — list-kind validations parsed into model rules
+ *   - `opaque` — the raw `<dataValidations>…</dataValidations>` block
+ *                with **typed** `list` rules stripped, so the
+ *                serializer can re-emit non-list rules verbatim
+ *                next to a freshly-emitted typed block. `undefined`
+ *                when nothing remains after stripping.
+ *
+ * SheetJS itself doesn't surface dataValidations, so we lift them
+ * straight from the XML. The regex tolerates self-closing entries
+ * (most files) and full element form (rare authoring tools).
+ */
+export function extractDataValidations(xml: string): {
+  typed: ReadonlyArray<DataValidation>;
+  opaque: string | undefined;
+} {
+  const blockRe = /<dataValidations\b([^>]*)>([\s\S]*?)<\/dataValidations>/;
+  const block = blockRe.exec(xml);
+  if (!block) return { typed: [], opaque: undefined };
+  const inner = block[2] ?? "";
+  const ruleRe = /<dataValidation\b([^>]*?)(?:\/>|>([\s\S]*?)<\/dataValidation>)/g;
+  const typed: DataValidation[] = [];
+  const remaining: string[] = [];
+  let nextId = 1;
+  let m: RegExpExecArray | null;
+  while ((m = ruleRe.exec(inner)) !== null) {
+    const attrs = m[1] ?? "";
+    const body = m[2] ?? "";
+    const typeMatch = /\btype=("|')([^"']+)\1/.exec(attrs);
+    const sqrefMatch = /\bsqref=("|')([^"']+)\1/.exec(attrs);
+    if (typeMatch && typeMatch[2] === "list" && sqrefMatch) {
+      // <formula1> body holds the source. Quoted-literal lists look
+      // like `"Yes,No"`; references look like `Sheet1!$A$1:$A$5`.
+      const f1 = /<formula1>([\s\S]*?)<\/formula1>/.exec(body);
+      const raw = f1?.[1]?.trim() ?? "";
+      const isQuoted = raw.startsWith('"') && raw.endsWith('"');
+      const source = isQuoted ? raw.slice(1, -1) : raw;
+      const showDropDown = !/\bshowDropDown=("|')1\1/.test(attrs);
+      const stopOnInvalid = !/\berrorStyle=("|')(warning|information)\1/.test(attrs);
+      const allowBlank = /\ballowBlank=("|')1\1/.test(attrs);
+      typed.push({
+        kind: "list",
+        id: `dv-import-${nextId++}`,
+        range: sqrefMatch[2]!,
+        source,
+        formula: !isQuoted,
+        showDropDown,
+        stopOnInvalid,
+        allowBlank,
+      });
+    } else {
+      remaining.push(m[0]);
+    }
+  }
+  if (remaining.length === 0) return { typed, opaque: undefined };
+  // Re-wrap the remaining (non-list) rules in a fresh
+  // <dataValidations> element so the serializer can drop it back in
+  // verbatim. We don't try to preserve the original count attribute
+  // because Excel ignores it on read.
+  const opaque = `<dataValidations>${remaining.join("")}</dataValidations>`;
+  return { typed, opaque };
+}
+
+export function extractFreezePanes(xml: string): FreezePanes | undefined {
+  const m = /<pane\b([^/>]*)\/?>/.exec(xml);
+  if (!m) return undefined;
+  const attrs = m[1] ?? "";
+  const stateMatch = /\bstate=("|')([^"']+)\1/.exec(attrs);
+  if (stateMatch && stateMatch[2] !== "frozen") return undefined;
+  const xMatch = /\bxSplit=("|')([^"']+)\1/.exec(attrs);
+  const yMatch = /\bySplit=("|')([^"']+)\1/.exec(attrs);
+  const cols = xMatch ? Math.max(0, Math.floor(Number(xMatch[2]))) : 0;
+  const rows = yMatch ? Math.max(0, Math.floor(Number(yMatch[2]))) : 0;
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return undefined;
+  if (cols === 0 && rows === 0) return undefined;
+  return { rows, cols };
 }
 
 function resolveComments(

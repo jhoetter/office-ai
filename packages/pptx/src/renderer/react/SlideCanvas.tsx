@@ -5,7 +5,7 @@ import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
 import { computeSnap, type SnapGuide } from "../layout/snap.js";
-import { snapToAnchor, type ShapeAnchor } from "../layout/anchors.js";
+import { anchorsFor, snapToAnchor, type AnchorSide, type ShapeAnchor } from "../layout/anchors.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
@@ -138,6 +138,33 @@ interface MarqueeState {
   readonly startEmuY: number;
 }
 
+/**
+ * Live state while the user is drawing a brand-new connector by
+ * dragging from one of a shape's port dots. The source endpoint is
+ * always anchored (you can only start a connector by clicking a port);
+ * the destination endpoint becomes anchored if the pointer ends near
+ * another shape's port, otherwise it lands as a free EMU coordinate.
+ *
+ * Scoped purely to the canvas — committed to the agent on pointerup
+ * via `pptx:add-connector`, then reset.
+ */
+interface ConnectorDraft {
+  readonly source: {
+    readonly shapeId: string;
+    readonly cNvPrId: number;
+    readonly side: "n" | "s" | "e" | "w" | "center";
+    readonly x: number;
+    readonly y: number;
+  };
+  /** Live cursor position in slide EMU coordinates. */
+  readonly currentX: number;
+  readonly currentY: number;
+  readonly emuPerPx: number;
+  /** Anchor we'd snap the destination endpoint onto if released now. */
+  readonly snapped: ShapeAnchor | null;
+  readonly nearby: ReadonlyArray<ShapeAnchor>;
+}
+
 export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null {
   const snap = useAgentSnapshot(props.agent);
   const slide: Slide | undefined = snap.root.slides[props.slideIndex];
@@ -147,6 +174,8 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const [preview, setPreview] = React.useState<DragPreview | null>(null);
   const [marquee, setMarquee] = React.useState<MarqueeState | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [hoveredShapeId, setHoveredShapeId] = React.useState<string | null>(null);
+  const [connectorDraft, setConnectorDraft] = React.useState<ConnectorDraft | null>(null);
   const [selectedIds, setSelectedIdsState] = React.useState<ReadonlyArray<string>>([]);
   const onSelectionChange = props.onSelectionChange;
   const setSelectedIds = React.useCallback(
@@ -239,12 +268,44 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (!slide || !containerRef.current) return;
       if (e.button !== 0) return;
       const target = e.target as Element | null;
+      const portEl = target?.closest("[data-port]") as HTMLElement | null;
       const handleEl = target?.closest("[data-handle]") as HTMLElement | null;
       const shapeEl = target?.closest("[data-shape-id]") as SVGGElement | null;
-      const shapeId = handleEl?.dataset.shapeId ?? shapeEl?.dataset.shapeId ?? null;
+      const shapeId =
+        portEl?.dataset.portShapeId ?? handleEl?.dataset.shapeId ?? shapeEl?.dataset.shapeId ?? null;
       const rect = containerRef.current.getBoundingClientRect();
       const emuPerPx = slideSize.cxEmu / rect.width;
       const shiftHeld = e.shiftKey || e.metaKey || e.ctrlKey;
+
+      // Port click: start a brand-new connector. This takes precedence
+      // over the regular select/move/resize gesture so a hovered shape
+      // surface stays draggable everywhere except the four port dots.
+      if (portEl && shapeId) {
+        const side = portEl.dataset.port as "n" | "s" | "e" | "w" | "center" | undefined;
+        const sourceShape = findShape(slide.shapes, shapeId);
+        if (side && sourceShape) {
+          const box = shapeBoundingBox(sourceShape);
+          const cNvPrId = sourceShape.cNvPrId;
+          if (box && cNvPrId > 0) {
+            const ap = anchorPointFor(box, side);
+            const cursorEmuX = (e.clientX - rect.left) * emuPerPx;
+            const cursorEmuY = (e.clientY - rect.top) * emuPerPx;
+            setHoveredShapeId(null);
+            setConnectorDraft({
+              source: { shapeId, cNvPrId, side, x: ap.x, y: ap.y },
+              currentX: cursorEmuX,
+              currentY: cursorEmuY,
+              emuPerPx,
+              snapped: null,
+              nearby: [],
+            });
+            containerRef.current.setPointerCapture?.(e.pointerId);
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+        }
+      }
 
       if (!shapeId) {
         // Empty-area click: clear selection (unless shift) and start a
@@ -279,12 +340,13 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       }
       setSelectedIds(nextSelection);
 
-      // Resize handles only ever apply to the primary shape; group
-      // resize is not supported in this iteration. Move handles drag
-      // every shape in the (post-shift) selection together.
+      // Resize handles drag the primary shape on single-select, and
+      // proportionally scale every selected shape relative to the union
+      // bounding box on multi-select. Move handles drag every shape in
+      // the (post-shift) selection together.
       const handle = handleEl?.dataset.handle as ResizeHandle | "move" | undefined;
       const isResize = !!handle && handle !== "move";
-      const dragIds = isResize ? [shapeId] : nextSelection;
+      const dragIds = isResize ? (nextSelection.length > 1 ? nextSelection : [shapeId]) : nextSelection;
       const targets: { id: string; origin: BoundingBox }[] = [];
       for (const id of dragIds) {
         const sh = findShape(slide.shapes, id);
@@ -330,6 +392,22 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
 
   const onPointerMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (connectorDraft) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect || !slide) return;
+        const cursorEmuX = (e.clientX - rect.left) * connectorDraft.emuPerPx;
+        const cursorEmuY = (e.clientY - rect.top) * connectorDraft.emuPerPx;
+        const others = collectOtherBoxes(slide.shapes, new Set([connectorDraft.source.shapeId]));
+        const snap = snapToAnchor({ x: cursorEmuX, y: cursorEmuY }, others, ANCHOR_THRESHOLD_EMU);
+        setConnectorDraft({
+          ...connectorDraft,
+          currentX: cursorEmuX,
+          currentY: cursorEmuY,
+          snapped: snap.anchor,
+          nearby: snap.nearby,
+        });
+        return;
+      }
       if (drag) {
         const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
         const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
@@ -341,13 +419,71 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         setMarquee({ ...marquee, currentX: e.clientX, currentY: e.clientY });
         return;
       }
+      // Idle hover: surface port dots over the shape currently under
+      // the pointer so the user discovers connector creation. Skip
+      // connectors themselves (they don't carry attachment ports) and
+      // groups (their children carry the ports).
+      const target = e.target as Element | null;
+      const shapeEl = target?.closest("[data-shape-id]") as SVGGElement | null;
+      const id = shapeEl?.dataset.shapeId ?? null;
+      if (id === hoveredShapeId) return;
+      if (!id) {
+        setHoveredShapeId(null);
+        return;
+      }
+      const sh = slide ? findShape(slide.shapes, id) : null;
+      if (!sh || sh.kind === "connector" || sh.kind === "group" || sh.cNvPrId <= 0) {
+        setHoveredShapeId(null);
+        return;
+      }
+      setHoveredShapeId(id);
     },
-    [drag, marquee, slide, slideSize]
+    [connectorDraft, drag, marquee, slide, slideSize, hoveredShapeId]
   );
 
   const onPointerUp = React.useCallback(
     async (e: React.PointerEvent<HTMLDivElement>) => {
       containerRef.current?.releasePointerCapture?.(e.pointerId);
+      if (connectorDraft && slide) {
+        const draft = connectorDraft;
+        setConnectorDraft(null);
+        const startEndDistEmu = Math.hypot(draft.currentX - draft.source.x, draft.currentY - draft.source.y);
+        // Tiny drags (< ~6 px) are treated as accidental clicks and
+        // discarded so the user doesn't end up with a pile of zero-
+        // length connectors when they merely tap a port.
+        if (startEndDistEmu < 6 * draft.emuPerPx) {
+          return;
+        }
+        try {
+          const targetCNvPrId =
+            draft.snapped !== null ? findCNvPrIdByShapeId(slide.shapes, draft.snapped.shapeId) : null;
+          const endPayload =
+            draft.snapped !== null && targetCNvPrId !== null
+              ? {
+                  kind: "anchored" as const,
+                  targetCNvPrId,
+                  side: draft.snapped.side,
+                }
+              : { kind: "free" as const, xEmu: draft.currentX, yEmu: draft.currentY };
+          await props.agent.applyCommand({
+            type: "pptx:add-connector",
+            source: "human",
+            payload: {
+              slideIndex: props.slideIndex,
+              connectorType: "elbow",
+              start: {
+                kind: "anchored",
+                targetCNvPrId: draft.source.cNvPrId,
+                side: draft.source.side,
+              },
+              end: endPayload,
+            },
+          });
+        } catch (err) {
+          props.onError?.(err as Error);
+        }
+        return;
+      }
       if (marquee && slide) {
         const rect = containerRef.current?.getBoundingClientRect();
         if (rect) {
@@ -416,12 +552,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             mode !== "move" && typeof mode === "object" && "resize" in mode
               ? (mode as { resize: ResizeHandle }).resize
               : null;
-          if (
-            draggedShape?.kind === "connector" &&
-            resizeHandle &&
-            isCornerHandle(resizeHandle) &&
-            slide
-          ) {
+          if (draggedShape?.kind === "connector" && resizeHandle && isCornerHandle(resizeHandle) && slide) {
             const which = endpointForHandleSide(resizeHandle);
             const snappedAnchor = final.anchorSnap;
             const targetCNvPrId = snappedAnchor
@@ -487,7 +618,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         props.onError?.(err as Error);
       }
     },
-    [drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
+    [connectorDraft, drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
   );
 
   const onTextSelectionChange = props.onTextSelectionChange;
@@ -501,16 +632,30 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   );
 
   const finishEditing = React.useCallback(
-    async (shape: TextShape, newText: string) => {
+    async (
+      shape: TextShape,
+      payloadParagraphs: ReadonlyArray<{
+        readonly runs: ReadonlyArray<{
+          readonly text: string;
+          readonly isLineBreak?: boolean;
+          readonly inheritFromRun?: number;
+        }>;
+      }>,
+      plain: string
+    ) => {
       setEditingId(null);
       onTextSelectionChange?.(null);
       const original = textShapePlain(shape);
-      if (original === newText) return;
+      if (original === plain) return;
       try {
         await props.agent.applyCommand({
           type: "pptx:set-text",
           source: "human",
-          payload: { slideIndex: props.slideIndex, shapeId: shape.id, text: newText },
+          payload: {
+            slideIndex: props.slideIndex,
+            shapeId: shape.id,
+            paragraphs: payloadParagraphs,
+          },
         });
       } catch (err) {
         props.onError?.(err as Error);
@@ -579,11 +724,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         />
       ) : null}
       {props.commentedShapeIds && props.commentedShapeIds.length > 0 ? (
-        <CommentMarkerOverlay
-          slide={slide}
-          slideSize={slideSize}
-          shapeIds={props.commentedShapeIds}
-        />
+        <CommentMarkerOverlay slide={slide} slideSize={slideSize} shapeIds={props.commentedShapeIds} />
       ) : null}
       {props.commentFlashTarget ? (
         <CommentFlashOverlay
@@ -604,11 +745,27 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       {marquee && containerRef.current ? (
         <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
       ) : null}
+      {/* Port-hover layer — surfaced when the user is idling over a
+          non-connector shape, so the four cardinal anchor dots become
+          drag-from sources for new connectors. Suppressed during any
+          active drag/marquee/draft to keep the canvas calm. */}
+      {!drag && !marquee && !connectorDraft && hoveredShapeId
+        ? renderPortHoverOverlay(slide, slideSize, hoveredShapeId)
+        : null}
+      {connectorDraft ? <ConnectorDraftOverlay slideSize={slideSize} draft={connectorDraft} /> : null}
       {editingId
         ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing, onTextSelectionChange)
         : null}
     </div>
   );
+}
+
+function renderPortHoverOverlay(slide: Slide, slideSize: SlideSize, shapeId: string): React.ReactNode {
+  const sh = findShape(slide.shapes, shapeId);
+  if (!sh) return null;
+  const box = shapeBoundingBox(sh);
+  if (!box) return null;
+  return <PortHoverOverlay slideSize={slideSize} shapeId={shapeId} box={box} />;
 }
 
 function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
@@ -734,6 +891,23 @@ interface SnapContext {
   readonly anchorThresholdEmu: number;
 }
 
+/**
+ * Snap radius (in EMU) for the destination endpoint of a draft
+ * connector. The user is hand-targeting a port dot, so we use a more
+ * forgiving threshold than the regular drag-snap — roughly twice the
+ * visual port radius. The constant is `emuPerPx`-independent: 100 000
+ * EMU ≈ 10.5 px @ 96 DPI, which feels right at every zoom level when
+ * you remember `currentX/Y` are already in slide coordinates.
+ */
+const ANCHOR_THRESHOLD_EMU = 100_000;
+
+/** Slide-coordinate location of a side anchor on a bounding box. */
+function anchorPointFor(box: BoundingBox, side: AnchorSide): { x: number; y: number } {
+  const all = anchorsFor("", box);
+  for (const a of all) if (a.side === side) return { x: a.x, y: a.y };
+  return { x: box.x + box.cx / 2, y: box.y + box.cy / 2 };
+}
+
 function makeSnapContext(
   drag: DragState,
   slide: Slide | undefined,
@@ -812,9 +986,57 @@ function computePreview(
       anchorSnap: null,
     };
   }
+  const h = drag.mode.resize;
+
+  // Multi-shape group resize: scale every selected shape relative to
+  // the union bounding box. Each shape's box gets its position offset
+  // and dimensions multiplied by the union's resize factor, matching
+  // PowerPoint / Figma group resize semantics. Anchor-snap and per-shape
+  // line behaviour are intentionally skipped here — they would require
+  // per-shape policy decisions that don't translate cleanly to a group.
+  if (drag.targets.length > 1) {
+    const union = unionOf(drag.targets.map((t) => t.origin));
+    let nxU = union.x;
+    let nyU = union.y;
+    let nwU = union.cx;
+    let nhU = union.cy;
+    if (h.includes("e")) nwU = Math.max(MIN, union.cx + dxEmu);
+    if (h.includes("s")) nhU = Math.max(MIN, union.cy + dyEmu);
+    if (h.includes("w")) {
+      const newCx = Math.max(MIN, union.cx - dxEmu);
+      nxU = union.x + (union.cx - newCx);
+      nwU = newCx;
+    }
+    if (h.includes("n")) {
+      const newCy = Math.max(MIN, union.cy - dyEmu);
+      nyU = union.y + (union.cy - newCy);
+      nhU = newCy;
+    }
+    const sx = union.cx === 0 ? 1 : nwU / union.cx;
+    const sy = union.cy === 0 ? 1 : nhU / union.cy;
+    for (const t of drag.targets) {
+      const o = t.origin;
+      boxes.set(t.id, {
+        x: nxU + Math.round((o.x - union.x) * sx),
+        y: nyU + Math.round((o.y - union.y) * sy),
+        cx: Math.max(0, Math.round(o.cx * sx)),
+        cy: Math.max(0, Math.round(o.cy * sy)),
+      });
+    }
+    return {
+      boxes,
+      dx: nxU - union.x,
+      dy: nyU - union.y,
+      dw: nwU - union.cx,
+      dh: nhU - union.cy,
+      guides: [],
+      anchorCandidates: [],
+      anchorSnap: null,
+    };
+  }
+
   const t = drag.targets[0];
   const o = t.origin;
-  const h = drag.mode.resize;
   // Lines have a single useful dimension (cx OR cy); the standard MIN
   // would force a minimum cy on a horizontal line, which would visually
   // "thicken" it. Use 0 as the floor for lines and let the user drag
@@ -870,10 +1092,7 @@ function computePreview(
   };
 }
 
-function endpointForHandle(
-  h: ResizeHandle,
-  box: BoundingBox
-): { x: number; y: number } {
+function endpointForHandle(h: ResizeHandle, box: BoundingBox): { x: number; y: number } {
   switch (h) {
     case "nw":
       return { x: box.x, y: box.y };
@@ -891,12 +1110,7 @@ function endpointForHandle(
   }
 }
 
-function applyAnchorDelta(
-  h: ResizeHandle,
-  box: BoundingBox,
-  dx: number,
-  dy: number
-): BoundingBox {
+function applyAnchorDelta(h: ResizeHandle, box: BoundingBox, dx: number, dy: number): BoundingBox {
   // Translating a corner means changing both that corner's coordinate
   // AND the bounding box dimension on that axis (the opposite corner
   // stays anchored).
@@ -980,12 +1194,7 @@ interface DragGhostLayerProps {
  * at the new width. `shapeToSvg` is just string concat, so the cost
  * is negligible compared to the visual quality win.
  */
-function DragGhostLayer({
-  slideSize,
-  ghosts,
-  preview,
-  ctx,
-}: DragGhostLayerProps): React.ReactElement {
+function DragGhostLayer({ slideSize, ghosts, preview, ctx }: DragGhostLayerProps): React.ReactElement {
   const inner = ghosts
     .map((g) => {
       const box = preview.boxes.get(g.id);
@@ -1089,39 +1298,34 @@ function SelectionOverlaySvg({
   const handleSize = 12;
   const handleHitSize = 24;
 
-  const handles: { readonly h: ResizeHandle; readonly hx: number; readonly hy: number }[] = [];
-  if (!isMulti) {
-    const x = px(primary.box.x);
-    const y = px(primary.box.y);
-    const cx = px(primary.box.cx);
-    const cy = px(primary.box.cy);
-    handles.push(
-      { h: "nw", hx: x, hy: y },
-      { h: "n", hx: x + cx / 2, hy: y },
-      { h: "ne", hx: x + cx, hy: y },
-      { h: "e", hx: x + cx, hy: y + cy / 2 },
-      { h: "se", hx: x + cx, hy: y + cy },
-      { h: "s", hx: x + cx / 2, hy: y + cy },
-      { h: "sw", hx: x, hy: y + cy },
-      { h: "w", hx: x, hy: y + cy / 2 }
-    );
-  }
-
-  const unionBox = entries.reduce<BoundingBox>(
-    (acc, e, i) => {
-      if (i === 0) return e.box;
-      const x = Math.min(acc.x, e.box.x);
-      const y = Math.min(acc.y, e.box.y);
-      const right = Math.max(acc.x + acc.cx, e.box.x + e.box.cx);
-      const bottom = Math.max(acc.y + acc.cy, e.box.y + e.box.cy);
-      return { x, y, cx: right - x, cy: bottom - y };
-    },
-    entries[0].box
-  );
+  const unionBox = entries.reduce<BoundingBox>((acc, e, i) => {
+    if (i === 0) return e.box;
+    const x = Math.min(acc.x, e.box.x);
+    const y = Math.min(acc.y, e.box.y);
+    const right = Math.max(acc.x + acc.cx, e.box.x + e.box.cx);
+    const bottom = Math.max(acc.y + acc.cy, e.box.y + e.box.cy);
+    return { x, y, cx: right - x, cy: bottom - y };
+  }, entries[0].box);
   const ux = px(unionBox.x);
   const uy = px(unionBox.y);
   const ucx = px(unionBox.cx);
   const ucy = px(unionBox.cy);
+
+  // Resize handles wrap the union box, so single-shape and multi-shape
+  // selections share the same control affordances. The handle's
+  // data-shape-id targets the primary so single-shape gestures keep
+  // their existing per-shape command path; multi-shape gestures recruit
+  // every selected shape via dragIds in onPointerDown.
+  const handles: { readonly h: ResizeHandle; readonly hx: number; readonly hy: number }[] = [
+    { h: "nw", hx: ux, hy: uy },
+    { h: "n", hx: ux + ucx / 2, hy: uy },
+    { h: "ne", hx: ux + ucx, hy: uy },
+    { h: "e", hx: ux + ucx, hy: uy + ucy / 2 },
+    { h: "se", hx: ux + ucx, hy: uy + ucy },
+    { h: "s", hx: ux + ucx / 2, hy: uy + ucy },
+    { h: "sw", hx: ux, hy: uy + ucy },
+    { h: "w", hx: ux, hy: uy + ucy / 2 },
+  ];
 
   return (
     <svg
@@ -1187,8 +1391,10 @@ function SelectionOverlaySvg({
           style={{ cursor: "move" }}
         />
       ))}
-      {/* Resize handles (single-select only). During a resize gesture we
-          keep them rendered so the user sees the corner they're pulling.
+      {/* Resize handles. On multi-select they wrap the union box and
+          scale every selected shape proportionally; on single-select
+          they wrap the shape itself. During a resize gesture we keep
+          them rendered so the user sees the corner they're pulling.
           We render two rects per handle: an invisible larger hit-zone
           on top so pointer capture is forgiving, and the visible
           purple-bordered square underneath. */}
@@ -1325,6 +1531,187 @@ function AnchorOverlay({ slideSize, candidates, snapped }: AnchorOverlayProps): 
       })}
     </svg>
   );
+}
+
+interface PortHoverOverlayProps {
+  readonly slideSize: SlideSize;
+  readonly shapeId: string;
+  readonly box: BoundingBox;
+}
+
+/**
+ * Renders the four cardinal port dots over a hovered shape so the
+ * user can drag-from one of them to start a brand-new connector. The
+ * dots live in their own `pointerEvents: "all"` SVG layer and carry
+ * `data-port`/`data-port-shape-id` attributes; the canvas pointerdown
+ * handler picks them up before falling through to the regular
+ * select/move gesture. The centre is intentionally NOT exposed as a
+ * port — clicking the middle of a shape should select it, not start
+ * a connector.
+ */
+function PortHoverOverlay({ slideSize, shapeId, box }: PortHoverOverlayProps): React.ReactElement {
+  const sides: AnchorSide[] = ["n", "s", "e", "w"];
+  const anchors = anchorsFor(shapeId, box).filter((a) => sides.includes(a.side));
+  const r = 65_000; // ≈ 6.8 px @ 96 DPI; visible but unobtrusive
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+    >
+      {anchors.map((a) => (
+        <g key={a.side}>
+          <circle
+            cx={px(a.x)}
+            cy={px(a.y)}
+            r={px(r * 1.6)}
+            fill="rgba(14,165,233,0.15)"
+            stroke="none"
+            data-port={a.side}
+            data-port-shape-id={shapeId}
+            style={{ pointerEvents: "all", cursor: "crosshair" }}
+          />
+          <circle
+            cx={px(a.x)}
+            cy={px(a.y)}
+            r={px(r)}
+            fill="white"
+            stroke="#0ea5e9"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+interface ConnectorDraftOverlayProps {
+  readonly slideSize: SlideSize;
+  readonly draft: ConnectorDraft;
+}
+
+/**
+ * Live preview of a connector being drawn from a port. Renders a
+ * dashed orthogonal polyline from the source anchor to the current
+ * pointer position. When a candidate destination anchor is in range
+ * we paint it as a solid sky-blue dot to confirm the snap target so
+ * the user knows the destination will be anchored (not free).
+ */
+function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps): React.ReactElement {
+  const sx = draft.source.x;
+  const sy = draft.source.y;
+  const ex = draft.snapped ? draft.snapped.x : draft.currentX;
+  const ey = draft.snapped ? draft.snapped.y : draft.currentY;
+  const startSide = draft.source.side;
+  const endSide = draft.snapped?.side ?? null;
+  const points = routeElbowPoints({ x: sx, y: sy }, { x: ex, y: ey }, startSide, endSide);
+  const pts = points.map((p) => `${px(p.x)},${px(p.y)}`).join(" ");
+  const r = 80_000;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke="#0ea5e9"
+        strokeWidth={2}
+        strokeDasharray="6 4"
+        vectorEffect="non-scaling-stroke"
+      />
+      <circle
+        cx={px(sx)}
+        cy={px(sy)}
+        r={px(r)}
+        fill="#0ea5e9"
+        stroke="white"
+        strokeWidth={1.5}
+        vectorEffect="non-scaling-stroke"
+      />
+      {draft.nearby.map((a, i) => {
+        const isSnap =
+          draft.snapped !== null && a.shapeId === draft.snapped.shapeId && a.side === draft.snapped.side;
+        return (
+          <circle
+            key={`${a.shapeId}-${a.side}-${i}`}
+            cx={px(a.x)}
+            cy={px(a.y)}
+            r={px(r)}
+            fill={isSnap ? "#0ea5e9" : "white"}
+            stroke="#0ea5e9"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+/**
+ * Local mirror of `routeElbow` from `renderer/svg/shapes.ts` so the
+ * draft preview matches the committed connector's path exactly. We
+ * avoid importing the SVG-string version because that one returns
+ * pre-stringified markup; here we just need the raw points.
+ */
+function routeElbowPoints(
+  sp: { x: number; y: number },
+  ep: { x: number; y: number },
+  startSide: AnchorSide | null,
+  endSide: AnchorSide | null
+): ReadonlyArray<{ x: number; y: number }> {
+  const dx = ep.x - sp.x;
+  const dy = ep.y - sp.y;
+  const LEAD = 228_600;
+  const leadX = Math.min(LEAD, Math.max(0, Math.abs(dx) / 2));
+  const leadY = Math.min(LEAD, Math.max(0, Math.abs(dy) / 2));
+  const sV = sideUnit(startSide);
+  const eV = sideUnit(endSide);
+  if (sV.x === 0 && sV.y === 0 && eV.x === 0 && eV.y === 0) {
+    const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
+    const midX = horizontalFirst ? sp.x + dx / 2 : sp.x;
+    const midY = horizontalFirst ? sp.y : sp.y + dy / 2;
+    return horizontalFirst
+      ? [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep]
+      : [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
+  }
+  const p1 = { x: sp.x + sV.x * leadX, y: sp.y + sV.y * leadY };
+  const p2 = { x: ep.x + eV.x * leadX, y: ep.y + eV.y * leadY };
+  const sIsHoriz = sV.x !== 0;
+  const eIsHoriz = eV.x !== 0;
+  if (sIsHoriz && eIsHoriz) {
+    const midX = (p1.x + p2.x) / 2;
+    return [sp, p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2, ep];
+  }
+  if (!sIsHoriz && !eIsHoriz) {
+    const midY = (p1.y + p2.y) / 2;
+    return [sp, p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2, ep];
+  }
+  const corner = sIsHoriz ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
+  return [sp, p1, corner, p2, ep];
+}
+
+function sideUnit(side: AnchorSide | null): { x: number; y: number } {
+  switch (side) {
+    case "n":
+      return { x: 0, y: -1 };
+    case "s":
+      return { x: 0, y: 1 };
+    case "e":
+      return { x: 1, y: 0 };
+    case "w":
+      return { x: -1, y: 0 };
+    case "center":
+    case null:
+      return { x: 0, y: 0 };
+  }
 }
 
 interface MarqueeOverlayProps {
@@ -1549,20 +1936,8 @@ function CommentFlashOverlay({
         vectorEffect="non-scaling-stroke"
         pointerEvents="none"
       >
-        <animate
-          attributeName="fill-opacity"
-          from="0.55"
-          to="0"
-          dur="1.4s"
-          fill="freeze"
-        />
-        <animate
-          attributeName="stroke-opacity"
-          from="1"
-          to="0"
-          dur="1.4s"
-          fill="freeze"
-        />
+        <animate attributeName="fill-opacity" from="0.55" to="0" dur="1.4s" fill="freeze" />
+        <animate attributeName="stroke-opacity" from="1" to="0" dur="1.4s" fill="freeze" />
       </rect>
     </svg>
   );
@@ -1573,7 +1948,17 @@ function renderEditingOverlay(
   shapeId: string,
   slideSize: SlideSize,
   dpi: number,
-  onCommit: (shape: TextShape, text: string) => void,
+  onCommit: (
+    shape: TextShape,
+    paragraphs: ReadonlyArray<{
+      readonly runs: ReadonlyArray<{
+        readonly text: string;
+        readonly isLineBreak?: boolean;
+        readonly inheritFromRun?: number;
+      }>;
+    }>,
+    plain: string
+  ) => void,
   onTextSelectionChange: ((sel: PptxTextSelection | null) => void) | undefined
 ): React.ReactElement | null {
   const shape = findShape(slide.shapes, shapeId);
@@ -1587,7 +1972,7 @@ function renderEditingOverlay(
       box={box}
       slideSize={slideSize}
       dpi={dpi}
-      onCommit={(t) => onCommit(shape as TextShape, t)}
+      onCommit={(paragraphs, plain) => onCommit(shape as TextShape, paragraphs, plain)}
       onSelectionChange={onTextSelectionChange}
     />
   );
@@ -1598,7 +1983,16 @@ interface TextEditOverlayProps {
   readonly box: BoundingBox;
   readonly slideSize: SlideSize;
   readonly dpi: number;
-  readonly onCommit: (text: string) => void;
+  readonly onCommit: (
+    paragraphs: ReadonlyArray<{
+      readonly runs: ReadonlyArray<{
+        readonly text: string;
+        readonly isLineBreak?: boolean;
+        readonly inheritFromRun?: number;
+      }>;
+    }>,
+    plain: string
+  ) => void;
   readonly onSelectionChange?: (sel: PptxTextSelection | null) => void;
 }
 
@@ -1723,8 +2117,7 @@ function TextEditOverlay({
   // typeface (Calibri) — only finally to "sans-serif" if a browser
   // doesn't have Calibri installed.
   const baseFontFamily = estimateFontFamilyFromShape(shape);
-  const justifyContent =
-    anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
+  const justifyContent = anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
   const padTop = (insetsEmu.t / EMU_PER_PX_AT_96DPI) * scale;
   const padRight = (insetsEmu.r / EMU_PER_PX_AT_96DPI) * scale;
   const padBottom = (insetsEmu.b / EMU_PER_PX_AT_96DPI) * scale;
@@ -1773,7 +2166,10 @@ function TextEditOverlay({
         // clicked a button that opted in via data-pptx-keep-edit.
         const next = e.relatedTarget as HTMLElement | null;
         if (next?.closest?.("[data-pptx-keep-edit]")) return;
-        onCommit(ref.current?.innerText ?? "");
+        const node = ref.current;
+        const paragraphs = node ? extractParagraphsFromOverlay(node) : [];
+        const plain = node?.innerText ?? "";
+        onCommit(paragraphs, plain);
         onSelectionChange?.(null);
       }}
       onKeyDown={(e) => {
@@ -1796,9 +2192,80 @@ function TextEditOverlay({
   );
 }
 
-function paragraphStyle(
-  p: TextShape["txBody"]["paragraphs"][number]
-): React.CSSProperties {
+/**
+ * Walk the contenteditable DOM and produce a structured paragraph
+ * patch list that mirrors the original `<div data-paragraph>` /
+ * `<span data-run>` markup. Each text slice carries an
+ * `inheritFromRun` index so the `pptx:set-text` handler can copy the
+ * original run's full property bag (incl. opaque XML) and avoid
+ * collapsing bold/italic/colour spans down to a single run.
+ *
+ * Runs the user typed *outside* any existing span (e.g. fresh text
+ * appended after a styled span) report `inheritFromRun: undefined`
+ * and the handler falls back to the paragraph's first run's
+ * properties — matches PowerPoint's "new text inherits from the
+ * insertion point's run" behaviour.
+ */
+function extractParagraphsFromOverlay(root: HTMLElement): ReadonlyArray<{
+  readonly runs: ReadonlyArray<{
+    readonly text: string;
+    readonly isLineBreak?: boolean;
+    readonly inheritFromRun?: number;
+  }>;
+}> {
+  const out: Array<{
+    runs: Array<{ text: string; isLineBreak?: boolean; inheritFromRun?: number }>;
+  }> = [];
+  const paragraphNodes = Array.from(root.querySelectorAll<HTMLElement>("[data-paragraph]"));
+  // If the user wiped everything (browsers can leave a bare <br> or
+  // empty editable), fall back to a single empty paragraph so we at
+  // least clear the shape rather than throwing.
+  if (paragraphNodes.length === 0) {
+    return [{ runs: [{ text: root.innerText.split("\n")[0] ?? "" }] }];
+  }
+  for (const pNode of paragraphNodes) {
+    const runs: Array<{ text: string; isLineBreak?: boolean; inheritFromRun?: number }> = [];
+    const walker = document.createTreeWalker(pNode, NodeFilter.SHOW_ALL);
+    let cur: Node | null = walker.nextNode();
+    while (cur) {
+      if (cur.nodeType === Node.TEXT_NODE) {
+        const text = (cur.nodeValue ?? "").replace(/\u00a0/g, " ");
+        if (text.length > 0) {
+          const span = (cur.parentElement?.closest("[data-run]") as HTMLElement | null) ?? null;
+          const idxAttr = span?.getAttribute("data-run");
+          const inheritFromRun =
+            idxAttr !== null && idxAttr !== undefined ? Number.parseInt(idxAttr, 10) : undefined;
+          runs.push({
+            text,
+            ...(inheritFromRun !== undefined && Number.isFinite(inheritFromRun) ? { inheritFromRun } : {}),
+          });
+        }
+      } else if (cur.nodeType === Node.ELEMENT_NODE) {
+        const el = cur as HTMLElement;
+        if (el.tagName === "BR" && !el.hasAttribute("data-paragraph-eol")) {
+          // Soft line break inside a paragraph (Shift+Enter) — modeled
+          // as an explicit isLineBreak run so the serializer can emit
+          // <a:br/> and round-trip cleanly.
+          const span = el.closest("[data-run]") as HTMLElement | null;
+          const idxAttr = span?.getAttribute("data-run");
+          const inheritFromRun =
+            idxAttr !== null && idxAttr !== undefined ? Number.parseInt(idxAttr, 10) : undefined;
+          runs.push({
+            text: "",
+            isLineBreak: true,
+            ...(inheritFromRun !== undefined && Number.isFinite(inheritFromRun) ? { inheritFromRun } : {}),
+          });
+        }
+      }
+      cur = walker.nextNode();
+    }
+    if (runs.length === 0) runs.push({ text: "" });
+    out.push({ runs });
+  }
+  return out;
+}
+
+function paragraphStyle(p: TextShape["txBody"]["paragraphs"][number]): React.CSSProperties {
   const align =
     p.properties.alignment === "center"
       ? "center"
@@ -1862,9 +2329,7 @@ function readBodyAnchorFromShape(shape: TextShape): "t" | "ctr" | "b" {
   return "t";
 }
 
-function readBodyInsetsFromShape(
-  shape: TextShape
-): { l: number; r: number; t: number; b: number } {
+function readBodyInsetsFromShape(shape: TextShape): { l: number; r: number; t: number; b: number } {
   const bodyPr = shape.txBody.bodyPrRaw;
   const get = (key: string, dflt: number): number => {
     const raw = bodyPr?.attrs?.[key] ?? bodyPr?.rawAttrs?.[`@_${key}`];
@@ -1962,4 +2427,3 @@ function textShapePlain(shape: TextShape): string {
     .map((p) => p.runs.map((r) => (r.isLineBreak ? "\n" : r.text)).join(""))
     .join("\n");
 }
-

@@ -1,19 +1,8 @@
 "use client";
 
 import { type ReactNode } from "react";
-import {
-  Bold,
-  Italic,
-  Underline,
-  Strikethrough,
-  Palette,
-  Highlighter,
-} from "lucide-react";
-import {
-  isOnTruthy,
-  type ActiveTextFormat,
-  type TextFormatProvider,
-} from "@officeai/text-formatting";
+import { Bold, Italic, Underline, Strikethrough, Palette, Highlighter } from "lucide-react";
+import { isOnTruthy, type ActiveTextFormat, type TextFormatProvider } from "@officeai/text-formatting";
 import { ColorPicker } from "./color-picker";
 import { FontFamilyPicker } from "./font-family-picker";
 import { FontSizePicker } from "./font-size-picker";
@@ -47,8 +36,7 @@ export function TextFormatBar({
   testIdPrefix,
 }: TextFormatBarProps): ReactNode {
   const caps = provider.capabilities;
-  const tid = (suffix: string) =>
-    testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
+  const tid = (suffix: string) => (testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined);
 
   const isDisabled = disabled || !provider.hasSelection();
 

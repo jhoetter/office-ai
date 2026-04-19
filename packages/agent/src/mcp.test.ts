@@ -823,9 +823,7 @@ describe("OfficeAI MCP server — xlsx tools", () => {
     );
     expect((before.cells as Array<{ value: unknown }>)[0].value).toBe(42);
 
-    const undone = structured(
-      await client.callTool({ name: "xlsx_undo", arguments: { handle } })
-    );
+    const undone = structured(await client.callTool({ name: "xlsx_undo", arguments: { handle } }));
     expect(undone.did_undo).toBe(true);
     expect(undone.can_redo).toBe(true);
     const after = structured(
@@ -837,9 +835,7 @@ describe("OfficeAI MCP server — xlsx tools", () => {
     // Cell is now empty; the projection drops the cell entirely.
     expect((after.cells as Array<unknown>).length).toBe(0);
 
-    const redone = structured(
-      await client.callTool({ name: "xlsx_redo", arguments: { handle } })
-    );
+    const redone = structured(await client.callTool({ name: "xlsx_redo", arguments: { handle } }));
     expect(redone.did_redo).toBe(true);
     const restored = structured(
       await client.callTool({
@@ -851,9 +847,7 @@ describe("OfficeAI MCP server — xlsx tools", () => {
 
     // Empty undo / redo are no-ops, not errors.
     await client.callTool({ name: "xlsx_redo", arguments: { handle } });
-    const noopRedo = structured(
-      await client.callTool({ name: "xlsx_redo", arguments: { handle } })
-    );
+    const noopRedo = structured(await client.callTool({ name: "xlsx_redo", arguments: { handle } }));
     expect(noopRedo.did_redo).toBe(false);
   });
 

@@ -42,19 +42,19 @@ Regenerate with:
 pnpm fixtures-real     # or: make fixtures-real
 ```
 
-| File                             | Size  | What it exercises                                                                |
-| -------------------------------- | ----- | -------------------------------------------------------------------------------- |
-| `01-styled-letter.docx`          | ≤10KB | Headings + body + bullets + bold/italic runs.                                    |
-| `02-report-headers-footers.docx` | ≤12KB | Multi-page report with `header1.xml` + `footer1.xml` + `PageBreak`.              |
-| `03-numbered-list.docx`          | ≤10KB | Two-level numbered list driven by `word/numbering.xml` (`w:numPr`).              |
-| `04-table-grid.docx`             | ≤10KB | 4-row × 3-column table with a styled header row.                                 |
-| `05-inline-image.docx`           | ≤10KB | Inline drawing — embeds `word/media/*.png` and an image relationship.            |
-| `06-comments-and-changes.docx`   | ≤10KB | `word/comments.xml` thread + `w:ins` + `w:del` tracked-change wrappers.          |
-| `07-toc-sdt.docx`                | ≤50KB | A real Word-emitted TOC SDT with `w:docPartObj` + leader-tab paragraph entries.  |
-| `08-shaded-callout-table.docx`   | ≤10KB | 1×1 table with `w:shd` cell shading + bold colored run (DSR-style callout).      |
-| `09-multi-column-section.docx`   | ≤10KB | Section with `<w:cols w:num="2"/>` for two-column body layout.                   |
-| `10-landscape-section.docx`      | ≤10KB | Mixed portrait + landscape sections via per-section `pgSz`.                      |
-| `11-textbox.docx`                | ≤10KB | Hand-rolled `mc:AlternateContent` + `wps:txbx` floating textbox with fill.       |
+| File                             | Size  | What it exercises                                                               |
+| -------------------------------- | ----- | ------------------------------------------------------------------------------- |
+| `01-styled-letter.docx`          | ≤10KB | Headings + body + bullets + bold/italic runs.                                   |
+| `02-report-headers-footers.docx` | ≤12KB | Multi-page report with `header1.xml` + `footer1.xml` + `PageBreak`.             |
+| `03-numbered-list.docx`          | ≤10KB | Two-level numbered list driven by `word/numbering.xml` (`w:numPr`).             |
+| `04-table-grid.docx`             | ≤10KB | 4-row × 3-column table with a styled header row.                                |
+| `05-inline-image.docx`           | ≤10KB | Inline drawing — embeds `word/media/*.png` and an image relationship.           |
+| `06-comments-and-changes.docx`   | ≤10KB | `word/comments.xml` thread + `w:ins` + `w:del` tracked-change wrappers.         |
+| `07-toc-sdt.docx`                | ≤50KB | A real Word-emitted TOC SDT with `w:docPartObj` + leader-tab paragraph entries. |
+| `08-shaded-callout-table.docx`   | ≤10KB | 1×1 table with `w:shd` cell shading + bold colored run (DSR-style callout).     |
+| `09-multi-column-section.docx`   | ≤10KB | Section with `<w:cols w:num="2"/>` for two-column body layout.                  |
+| `10-landscape-section.docx`      | ≤10KB | Mixed portrait + landscape sections via per-section `pgSz`.                     |
+| `11-textbox.docx`                | ≤10KB | Hand-rolled `mc:AlternateContent` + `wps:txbx` floating textbox with fill.      |
 
 Each fixture stays under the 50 KB budget enforced at generation time.
 

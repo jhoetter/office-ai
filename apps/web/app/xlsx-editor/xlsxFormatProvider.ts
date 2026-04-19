@@ -15,11 +15,7 @@ import {
   type TextFormat,
   type TextFormatProvider,
 } from "@officeai/text-formatting";
-import {
-  formatSelection,
-  normalizeSelection,
-  type Selection,
-} from "./selection";
+import { formatSelection, normalizeSelection, type Selection } from "./selection";
 
 /**
  * XLSX adapter for the shared TextFormatBar.
@@ -111,11 +107,7 @@ function readActive(
   return { bold, italic, underline, strike, fontFamily, fontSizePt, color, highlight };
 }
 
-function collectEffective(
-  sheet: Sheet,
-  styles: StyleTable,
-  selection: Selection
-): EffectiveStyle[] {
+function collectEffective(sheet: Sheet, styles: StyleTable, selection: Selection): EffectiveStyle[] {
   const n = normalizeSelection(selection);
   const out: EffectiveStyle[] = [];
   for (let r = n.r0; r <= n.r1; r++) {
@@ -167,7 +159,8 @@ async function dispatchPatch(deps: XlsxProviderDeps, patch: TextFormat): Promise
 }
 
 function canonicalToCellFormat(patch: TextFormat): CellFormatPatch {
-  const out: { font?: NonNullable<CellFormatPatch["font"]>; fill?: NonNullable<CellFormatPatch["fill"]> } = {};
+  const out: { font?: NonNullable<CellFormatPatch["font"]>; fill?: NonNullable<CellFormatPatch["fill"]> } =
+    {};
   const font: Record<string, unknown> = {};
   if (patch.bold !== undefined) font.bold = patch.bold;
   if (patch.italic !== undefined) font.italic = patch.italic;

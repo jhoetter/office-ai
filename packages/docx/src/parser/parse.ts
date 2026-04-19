@@ -240,11 +240,7 @@ function parseBody(bodyEntry: Record<string, unknown>, mintNodeId: IdMinter): Bl
  * it's a sequence of regular body blocks the page chunker can flow
  * across pages.
  */
-function appendOpaqueOrLifted(
-  entry: Record<string, unknown>,
-  mintNodeId: IdMinter,
-  out: BlockNode[]
-): void {
+function appendOpaqueOrLifted(entry: Record<string, unknown>, mintNodeId: IdMinter, out: BlockNode[]): void {
   const lifted = liftOpaqueBlock(entry, mintNodeId);
   if (lifted) {
     for (const block of lifted) out.push(block);
@@ -268,10 +264,7 @@ function nextWrapperId(): string {
  * Returns a flat list `[ wrapper-begin, ...inner blocks, wrapper-end ]`
  * when the lift succeeds.
  */
-function liftOpaqueBlock(
-  entry: Record<string, unknown>,
-  mintNodeId: IdMinter
-): BlockNode[] | null {
+function liftOpaqueBlock(entry: Record<string, unknown>, mintNodeId: IdMinter): BlockNode[] | null {
   const slot = blockContentSlot(entry);
   if (slot === null || slot.length === 0) return null;
   // Only lift when the slot contains at least one typed body block.

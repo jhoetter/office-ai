@@ -71,21 +71,15 @@ function buildDecorations(state: EditorState): DecorationSet {
       // node boundary). `nodeSize - 1` lands on the position right
       // after the last inline child, which is where Word draws ¶.
       const end = pos + node.nodeSize - 1;
-      decos.push(
-        Decoration.widget(end, () => makePilcrow(), { side: 1, key: `pilcrow-${pos}` })
-      );
+      decos.push(Decoration.widget(end, () => makePilcrow(), { side: 1, key: `pilcrow-${pos}` }));
       return true;
     }
     if (node.type.name === "tab") {
-      decos.push(
-        Decoration.widget(pos, () => makeTabArrow(), { side: -1, key: `tab-${pos}` })
-      );
+      decos.push(Decoration.widget(pos, () => makeTabArrow(), { side: -1, key: `tab-${pos}` }));
       return false;
     }
     if (node.type.name === "hard_break") {
-      decos.push(
-        Decoration.widget(pos, () => makeBreakArrow(), { side: -1, key: `br-${pos}` })
-      );
+      decos.push(Decoration.widget(pos, () => makeBreakArrow(), { side: -1, key: `br-${pos}` }));
       return false;
     }
     if (node.isText) {
@@ -99,9 +93,7 @@ function buildDecorations(state: EditorState): DecorationSet {
         if (text[i] === " ") {
           let j = i + 1;
           while (j < text.length && text[j] === " ") j++;
-          decos.push(
-            Decoration.inline(pos + i, pos + j, { class: "fmt-mark-space" })
-          );
+          decos.push(Decoration.inline(pos + i, pos + j, { class: "fmt-mark-space" }));
           i = j;
         } else {
           i++;

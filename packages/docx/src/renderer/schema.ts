@@ -794,10 +794,7 @@ function renderTableDom(data: RenderableTable): unknown {
   const rowCount = data.rows.length;
   for (let r = 0; r < rowCount; r++) {
     const row = data.rows[r];
-    const tr: unknown[] = [
-      "tr",
-      { class: row.header ? "pm-table-row pm-table-header-row" : "pm-table-row" },
-    ];
+    const tr: unknown[] = ["tr", { class: row.header ? "pm-table-row pm-table-header-row" : "pm-table-row" }];
     const visibleCells = row.cells.filter((c) => c.vMerge !== "continue");
     let visibleIndex = 0;
     for (let c = 0; c < row.cells.length; c++) {

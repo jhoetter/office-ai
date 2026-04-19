@@ -2,6 +2,16 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { SheetImage } from "@officeai/xlsx";
+import type { AxisLookup } from "./gridDimensions";
+
+/**
+ * Axis source consumed by the overlay. Either a real
+ * `ReadonlyArray<number>` (legacy callers) or the lazy
+ * {@link AxisLookup} proxy returned by {@link colXsView} /
+ * {@link rowYsView}. Both expose `arr[i]` indexing and `arr.length`,
+ * which is all the geometry helpers in this module need.
+ */
+type AxisLike = ReadonlyArray<number> | AxisLookup;
 
 /**
  * Result of mapping a body-coordinate pixel back onto the cell grid.
@@ -20,8 +30,8 @@ export interface AnchorFromPx {
  */
 export function anchorToBodyPx(
   image: SheetImage,
-  colXs: ReadonlyArray<number>,
-  rowYs: ReadonlyArray<number>
+  colXs: AxisLike,
+  rowYs: AxisLike
 ): { x: number; y: number } {
   const c = clamp(image.anchor.fromCol, 0, colXs.length - 2);
   const r = clamp(image.anchor.fromRow, 0, rowYs.length - 2);
@@ -36,12 +46,7 @@ export function anchorToBodyPx(
  * onto a `(fromRow, fromCol, offsetXPx, offsetYPx)` anchor by finding
  * the cell whose left/top edge sits at-or-before the pixel.
  */
-export function bodyPxToAnchor(
-  xPx: number,
-  yPx: number,
-  colXs: ReadonlyArray<number>,
-  rowYs: ReadonlyArray<number>
-): AnchorFromPx {
+export function bodyPxToAnchor(xPx: number, yPx: number, colXs: AxisLike, rowYs: AxisLike): AnchorFromPx {
   const x = Math.max(0, xPx);
   const y = Math.max(0, yPx);
   const fromCol = floorIndex(colXs, x);
@@ -62,7 +67,7 @@ function clamp(v: number, lo: number, hi: number): number {
  * Largest index `i` such that `arr[i] <= target`. `arr` is the
  * monotonically-increasing prefix-sum (`colXs` / `rowYs`).
  */
-function floorIndex(arr: ReadonlyArray<number>, target: number): number {
+function floorIndex(arr: AxisLike, target: number): number {
   let lo = 0;
   let hi = arr.length - 1;
   while (lo < hi) {
@@ -104,8 +109,8 @@ const RESIZE_CURSORS: Record<ResizeHandle, string> = {
 export interface ImageOverlayProps {
   readonly image: SheetImage;
   readonly headerOffset: { x: number; y: number };
-  readonly colXs: ReadonlyArray<number>;
-  readonly rowYs: ReadonlyArray<number>;
+  readonly colXs: AxisLike;
+  readonly rowYs: AxisLike;
   readonly src: string | undefined;
   readonly selected: boolean;
   readonly onSelect: () => void;
@@ -200,10 +205,7 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
         if (widthPx !== image.anchor.widthPx || heightPx !== image.anchor.heightPx) {
           onResizeCommit({ widthPx, heightPx });
         }
-        if (
-          dragMode.handle.includes("w") ||
-          dragMode.handle.includes("n")
-        ) {
+        if (dragMode.handle.includes("w") || dragMode.handle.includes("n")) {
           // Resize from a top/left handle also moves the anchor.
           const anchor = bodyPxToAnchor(final.bodyX, final.bodyY, colXs, rowYs);
           if (

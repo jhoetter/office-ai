@@ -2,16 +2,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  parseExternalClipboard,
-  parseFingerprintHtml,
-  parseHtmlTable,
-} from "./external.js";
+import { parseExternalClipboard, parseFingerprintHtml, parseHtmlTable } from "./external.js";
 import type { XlsxClipboardSnapshot } from "./snapshot.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const fixture = (name: string): string =>
-  readFileSync(join(here, "__fixtures__", name), "utf8");
+const fixture = (name: string): string => readFileSync(join(here, "__fixtures__", name), "utf8");
 
 describe("parseHtmlTable — Excel desktop fixture", () => {
   const snap = parseHtmlTable(fixture("excel-desktop.html"))!;
@@ -86,9 +81,7 @@ describe("parseHtmlTable — defensive handling", () => {
   });
 
   it("renders <br> as a real newline inside a cell", () => {
-    const snap = parseHtmlTable(
-      `<table><tr><td>line1<br>line2</td></tr></table>`
-    )!;
+    const snap = parseHtmlTable(`<table><tr><td>line1<br>line2</td></tr></table>`)!;
     expect(snap.cells[0]?.[0]?.value).toBe("line1\nline2");
   });
 

@@ -148,9 +148,8 @@ export function usePptxShortcuts(deps: PptxShortcutDeps): void {
 
 function isContentEditableTarget(target: Node | null): boolean {
   if (!target) return false;
-  let el: HTMLElement | null = target.nodeType === Node.ELEMENT_NODE
-    ? (target as HTMLElement)
-    : (target.parentElement ?? null);
+  let el: HTMLElement | null =
+    target.nodeType === Node.ELEMENT_NODE ? (target as HTMLElement) : (target.parentElement ?? null);
   while (el) {
     if (el.isContentEditable) return true;
     el = el.parentElement;

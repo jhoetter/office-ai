@@ -2,7 +2,12 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Check, CornerDownRight, MessageCircle, Trash2 } from "lucide-react";
-import { groupThreads, type CommentBody, type CommentsProvider, type CommentThread } from "@officeai/comments";
+import {
+  groupThreads,
+  type CommentBody,
+  type CommentsProvider,
+  type CommentThread,
+} from "@officeai/comments";
 import { cn } from "../lib/cn";
 import { Button } from "./button";
 
@@ -66,9 +71,7 @@ export function CommentsSidebar(props: CommentsSidebarProps): ReactNode {
         </span>
       </div>
       {threads.length === 0 ? (
-        <p className="text-xs text-secondary">
-          {props.emptyHint ?? "No comments yet."}
-        </p>
+        <p className="text-xs text-secondary">{props.emptyHint ?? "No comments yet."}</p>
       ) : (
         <ul className="flex flex-col gap-2 overflow-y-auto pr-1">
           {threads.map((thread) => (

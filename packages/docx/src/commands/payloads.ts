@@ -33,6 +33,12 @@ export const DOCX_COMMAND_TYPES = [
   "docx:insert-page-break",
   "docx:insert-text-tracked",
   "docx:delete-range-tracked",
+  "docx:set-page-setup",
+  "docx:set-image-properties",
+  "docx:delete-image",
+  "docx:apply-list-format",
+  "docx:accept-all-changes",
+  "docx:reject-all-changes",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -158,6 +164,12 @@ export interface RejectChangePayload {
   revisionId: string;
 }
 
+/** B8 — Accept every tracked change in the document. No payload fields. */
+export type AcceptAllChangesPayload = Record<string, never>;
+
+/** B8 — Reject every tracked change in the document. No payload fields. */
+export type RejectAllChangesPayload = Record<string, never>;
+
 export interface SetHeaderTextPayload {
   /**
    * Stable id of the header part to mutate. Equals the OOXML part path,
@@ -175,6 +187,24 @@ export interface SetFooterTextPayload {
   partId: string;
   paragraphIndex: number;
   text: string;
+}
+
+/**
+ * B7 — high-level "Bullet list" / "Numbered list" toolbar command.
+ *
+ * Unlike {@link SetParagraphListPayload} (which requires the caller
+ * to know a concrete `numId` from `word/numbering.xml`), this command
+ * takes the user-facing intent (`"bullet"` vs `"decimal"`), looks for
+ * a compatible existing `<w:num>` instance and falls back to
+ * auto-minting a fresh `NumberingDefinitions` entry — including
+ * registering `word/numbering.xml` in the package's relationships
+ * graph and `[Content_Types].xml` overrides on save. This is what
+ * the Word-style toolbar buttons dispatch.
+ */
+export interface ApplyListFormatPayload {
+  paragraphId: NodeId;
+  format: "bullet" | "decimal";
+  ilvl?: number;
 }
 
 export interface SetParagraphListPayload {
@@ -307,4 +337,52 @@ export interface DeleteRangeTrackedPayload {
   author: string;
   date?: string;
   revisionId?: string;
+}
+
+/**
+ * B3 — Page Setup. Updates any subset of `pgSz` / `pgMar` on the
+ * section that owns `paragraphIndex`. Walks forward to the next
+ * `<w:sectPr>`; falls back to the trailing implicit section.
+ *
+ * Margins / sizes are in TWIPS. Pass only the fields you want to
+ * change; omitted fields preserve the current value.
+ */
+/**
+ * B6 — Update display dimensions / accessibility metadata for an
+ * inline image. Width/height are in CSS pixels (96 DPI). Pass a
+ * field as `undefined` to leave it untouched, or `null` to clear an
+ * optional value (e.g. `altText: null` removes the alt text).
+ */
+/**
+ * B6 — Remove an inline image leaf by id. The owning run + paragraph
+ * survive; only the image leaf is excised.
+ */
+export interface DeleteImagePayload {
+  imageId: string;
+}
+
+export interface SetImagePropertiesPayload {
+  imageId: string;
+  widthPx?: number | null;
+  heightPx?: number | null;
+  altText?: string | null;
+  name?: string;
+}
+
+export interface SetPageSetupPayload {
+  paragraphIndex: number;
+  pgSz?: {
+    w?: number;
+    h?: number;
+    orient?: "portrait" | "landscape";
+  };
+  pgMar?: {
+    top?: number;
+    right?: number;
+    bottom?: number;
+    left?: number;
+    header?: number;
+    footer?: number;
+    gutter?: number;
+  };
 }

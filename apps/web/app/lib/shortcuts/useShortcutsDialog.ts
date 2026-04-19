@@ -40,11 +40,11 @@ export function useShortcutsDialog(): UseShortcutsDialog {
       // already normalised to "/" on US/UK/DE layouts when Shift is
       // up, and we don't want to listen for the Shift variant.
       if (event.key !== "/" && event.key !== "?") return;
-      // Ignore when typing into a native prompt-like overlay (browsers
-      // sometimes route Mod+/ to inputs that have it intercepted).
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Mod+/ is intentionally global. The dialog itself does not
+      // consume the key and no per-product surface (formula bar,
+      // comment composer, ProseMirror) binds it, so allow it through
+      // for INPUT/TEXTAREA too — the user's muscle memory expects
+      // the help dialog to appear no matter where focus sits.
       event.preventDefault();
       setOpen((v) => !v);
     }

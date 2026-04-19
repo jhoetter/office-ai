@@ -22,9 +22,7 @@ describe("computeSnap", () => {
     // Moving cx=500k; ref cx=2_000_000 (different sizes) so centres
     // and right edges DON'T align → only the left-edge snap fires.
     const moving = { x: 1_000_010, y: 2_000_000, cx: 500_000, cy: 500_000 };
-    const others = [
-      { id: "ref", box: { x: 1_000_000, y: 4_000_000, cx: 2_000_000, cy: 500_000 } },
-    ];
+    const others = [{ id: "ref", box: { x: 1_000_000, y: 4_000_000, cx: 2_000_000, cy: 500_000 } }];
     const r = computeSnap(moving, others, SLIDE, T);
     expect(r.snapDx).toBe(-10);
     expect(r.snapDy).toBe(0);
@@ -46,9 +44,7 @@ describe("computeSnap", () => {
     // Moving box (cx = 1.0M, x ≈ 0): its centre is at ~0.5M (matches ref centre)
     // and its right edge is at ~1.0M (matches ref right). Both within threshold.
     const moving = { x: 5, y: 2_000_000, cx: 1_000_000, cy: 500_000 };
-    const others = [
-      { id: "ref", box: { x: 0, y: 4_000_000, cx: 1_000_000, cy: 500_000 } },
-    ];
+    const others = [{ id: "ref", box: { x: 0, y: 4_000_000, cx: 1_000_000, cy: 500_000 } }];
     const r = computeSnap(moving, others, SLIDE, T);
     expect(r.snapDx).toBe(-5);
     // The chosen guide should reference the centre value (500_000), not the edge.
@@ -57,9 +53,7 @@ describe("computeSnap", () => {
 
   it("snaps both axes independently when both are eligible", () => {
     const moving = { x: 1_000_020, y: 2_000_015, cx: 500_000, cy: 500_000 };
-    const others = [
-      { id: "ref", box: { x: 1_000_000, y: 2_000_000, cx: 500_000, cy: 500_000 } },
-    ];
+    const others = [{ id: "ref", box: { x: 1_000_000, y: 2_000_000, cx: 500_000, cy: 500_000 } }];
     const r = computeSnap(moving, others, SLIDE, T);
     expect(r.snapDx).toBe(-20);
     expect(r.snapDy).toBe(-15);

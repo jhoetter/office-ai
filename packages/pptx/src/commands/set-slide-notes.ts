@@ -18,7 +18,6 @@ import type {
   OpaqueXml,
   PptxPresentation,
   PptxSnapshot,
-  RelationshipsSnap,
   Slide,
   TextBody,
   TextParagraph,
@@ -27,14 +26,11 @@ import type {
 import { buildDiff, evolveSnapshot, findSlide, makeError } from "./helpers.js";
 import type { SetSlideNotesPayload } from "./payloads.js";
 
-const REL_TYPE_NOTES_SLIDE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const REL_TYPE_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 const REL_TYPE_NOTES_MASTER =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
-const REL_TYPE_SLIDE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
-const NOTES_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
+const REL_TYPE_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+const NOTES_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
 
 export const setSlideNotesHandler: CommandHandler<SetSlideNotesPayload, PptxSnapshot> = {
   type: "pptx:set-slide-notes",
@@ -48,8 +44,8 @@ export const setSlideNotesHandler: CommandHandler<SetSlideNotesPayload, PptxSnap
 
     const existingPath = slide.notesSlidePartPath;
     let notesPath: string;
-    let notesSlides = new Map(snapshot.root.notesSlides);
-    let relationships = new Map(snapshot.relationships);
+    const notesSlides = new Map(snapshot.root.notesSlides);
+    const relationships = new Map(snapshot.relationships);
     let contentTypes: ContentTypesSnap = snapshot.contentTypes;
     const dirtyRels: string[] = [];
     let dirtyContentTypes = false;
@@ -169,10 +165,7 @@ export const setSlideNotesHandler: CommandHandler<SetSlideNotesPayload, PptxSnap
 function textToBody(text: string, mintNodeId: () => string): TextBody {
   const lines = text.length === 0 ? [""] : text.split(/\r?\n/);
   const paragraphs: TextParagraph[] = lines.map((line) => {
-    const runs: TextRun[] =
-      line.length > 0
-        ? [{ id: mintNodeId(), properties: {}, text: line }]
-        : [];
+    const runs: TextRun[] = line.length > 0 ? [{ id: mintNodeId(), properties: {}, text: line }] : [];
     return { id: mintNodeId(), properties: {}, runs };
   });
   return { paragraphs };
@@ -262,11 +255,7 @@ function buildNotesRaw(body: TextBody): OpaqueXml {
       {
         "p:cSld": [
           {
-            "p:spTree": [
-              defaultNvGrpSpPr(),
-              defaultGrpSpPr(),
-              bodyPlaceholderEntry(body),
-            ],
+            "p:spTree": [defaultNvGrpSpPr(), defaultGrpSpPr(), bodyPlaceholderEntry(body)],
           },
         ],
       },
@@ -300,9 +289,7 @@ function bodyPlaceholderEntry(body: TextBody): Record<string, unknown> {
           { "p:cNvPr": [], ":@": { "@_id": "2", "@_name": "Notes Placeholder" } },
           { "p:cNvSpPr": [{ "a:spLocks": [], ":@": { "@_noGrp": "1" } }] },
           {
-            "p:nvPr": [
-              { "p:ph": [], ":@": { "@_type": "body", "@_idx": "1" } },
-            ],
+            "p:nvPr": [{ "p:ph": [], ":@": { "@_type": "body", "@_idx": "1" } }],
           },
         ],
       },

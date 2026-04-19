@@ -76,7 +76,8 @@ const REL_TYPE_SLIDE_LAYOUT =
 const REL_TYPE_THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 const REL_TYPE_NOTES_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 const REL_TYPE_COMMENTS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-const REL_TYPE_COMMENT_AUTHORS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
+const REL_TYPE_COMMENT_AUTHORS =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
 const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const REL_TYPE_CHART = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 
@@ -1563,7 +1564,10 @@ function defaultLayoutName(placeholders: ReadonlyArray<PlaceholderSpec>): string
  * (titleSlide). Unknowns surface as `unknown` so the picker can still
  * round-trip them.
  */
-function classifyLayoutKind(raw: OpaqueXml, placeholders: ReadonlyArray<PlaceholderSpec>): import("../model/types.js").LayoutKind {
+function classifyLayoutKind(
+  raw: OpaqueXml,
+  placeholders: ReadonlyArray<PlaceholderSpec>
+): import("../model/types.js").LayoutKind {
   const t = raw.attrs.type ?? raw.rawAttrs["@_type"];
   switch (t) {
     case "title":
@@ -1606,7 +1610,11 @@ function classifyLayoutKind(raw: OpaqueXml, placeholders: ReadonlyArray<Placehol
  * placeholder, header/footer placeholders, formatting) lives verbatim
  * in `raw` for byte-faithful round-trip when nothing has changed.
  */
-function parseNotesSlide(container: ooxml.OoxmlContainer, partPath: string, mintNodeId: IdMinter): NotesSlide {
+function parseNotesSlide(
+  container: ooxml.OoxmlContainer,
+  partPath: string,
+  mintNodeId: IdMinter
+): NotesSlide {
   const opaque = opaquePartFor(container, partPath, "p:notes");
   const body = extractNotesBody(opaque.raw, mintNodeId) ?? { paragraphs: [] };
   return { partPath, body, raw: opaque.raw };
@@ -1735,10 +1743,7 @@ function parseCommentsPart(
  * minted by this author) and `clrIdx` (palette slot). We round-trip
  * everything but only `name` and `id` matter to the UI.
  */
-function parseCommentAuthorsPart(
-  container: ooxml.OoxmlContainer,
-  partPath: string
-): PptxCommentAuthorsPart {
+function parseCommentAuthorsPart(container: ooxml.OoxmlContainer, partPath: string): PptxCommentAuthorsPart {
   let tree: unknown;
   try {
     tree = ooxml.parseXml(container.readText(partPath));

@@ -13,13 +13,7 @@ import {
   resolveLayoutForKind,
   setSlideLayoutRel,
 } from "./layout-helpers.js";
-import {
-  buildDiff,
-  evolveSnapshot,
-  findSlide,
-  makeError,
-  maxCNvPrId,
-} from "./helpers.js";
+import { buildDiff, evolveSnapshot, findSlide, makeError, maxCNvPrId } from "./helpers.js";
 import type { SetSlideLayoutPayload } from "./payloads.js";
 
 export const setSlideLayoutHandler: CommandHandler<SetSlideLayoutPayload, PptxSnapshot> = {
@@ -61,9 +55,7 @@ export const setSlideLayoutHandler: CommandHandler<SetSlideLayoutPayload, PptxSn
 
     // Slide → layout rel (re-pointed if it changed).
     const { relationships: relsAfterSlide, relsPath: slideRelsPath } = setSlideLayoutRel(
-      added
-        ? { ...snapshot, relationships: added.relationships }
-        : snapshot,
+      added ? { ...snapshot, relationships: added.relationships } : snapshot,
       slide,
       layoutPartPath
     );
@@ -74,9 +66,7 @@ export const setSlideLayoutHandler: CommandHandler<SetSlideLayoutPayload, PptxSn
       slides: snapshot.root.slides.map((s, i) => (i === sIdx ? updatedSlide : s)),
     };
 
-    const dirtyRels = added
-      ? [...added.dirtyRels, slideRelsPath]
-      : [slideRelsPath];
+    const dirtyRels = added ? [...added.dirtyRels, slideRelsPath] : [slideRelsPath];
 
     const next = evolveSnapshot(
       snapshot,

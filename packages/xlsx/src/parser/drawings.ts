@@ -12,14 +12,12 @@ import { resolveTargetPath } from "./parse.js";
 /**
  * Relationship type for sheet → drawing parts.
  */
-export const DRAWING_REL_TYPE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
+export const DRAWING_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
 
 /**
  * Relationship type for drawing → media (raster image).
  */
-export const IMAGE_REL_TYPE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+export const IMAGE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
 /**
  * Result of resolving a sheet's `xdr:wsDr` payload.
@@ -86,7 +84,7 @@ export function resolveDrawings(
     const el = ooxml.asElement(child);
     if (!el) continue;
 
-    let editAs: SheetImage["anchor"]["editAs"] = "oneCell";
+    let editAs: SheetImage["anchor"]["editAs"];
     if (el.tag === "xdr:twoCellAnchor") {
       editAs = (el.attrs.editAs as SheetImage["anchor"]["editAs"]) ?? "twoCell";
     } else if (el.tag === "xdr:oneCellAnchor") {

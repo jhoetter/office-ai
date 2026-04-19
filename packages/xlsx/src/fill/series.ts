@@ -39,23 +39,10 @@ export interface SeriesGenerator {
    * The handler will pass `(srcRow, srcCol, dstRow, dstCol)` so the
    * detector can re-anchor refs.
    */
-  shiftFormula?(
-    i: number,
-    ctx: { readonly dRow: number; readonly dCol: number }
-  ): string | null;
+  shiftFormula?(i: number, ctx: { readonly dRow: number; readonly dCol: number }): string | null;
 }
 
 export type SeriesDetector = (samples: ReadonlyArray<SeriesSample>) => SeriesGenerator | null;
-
-/** Round-trip safe equality for cell values (used by the repeat detector). */
-function valuesEqual(a: CellValue, b: CellValue): boolean {
-  if (a === b) return true;
-  if (a === null || b === null) return false;
-  if (typeof a === "object" && typeof b === "object" && "kind" in a && "kind" in b) {
-    return a.kind === b.kind && a.code === b.code;
-  }
-  return false;
-}
 
 /**
  * Numeric arithmetic progression. Works for a single sample (step 1)
@@ -112,15 +99,7 @@ export const repeatDetector: SeriesDetector = (samples) => {
 
 /* ── Weekday + Month cycles ─────────────────────────────────────────────── */
 
-const WEEKDAYS_LONG = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-  "Sunday",
-] as const;
+const WEEKDAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 const WEEKDAYS_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 const MONTHS_LONG = [
   "January",
@@ -202,7 +181,7 @@ function detectCycle(
   return {
     id,
     next(i: number): CellValue {
-      const idx = ((last + step * i) % cycle.length + cycle.length) % cycle.length;
+      const idx = (((last + step * i) % cycle.length) + cycle.length) % cycle.length;
       return recase(cycle[idx]!, casing);
     },
   };
@@ -360,9 +339,5 @@ export function pickSeries(samples: ReadonlyArray<SeriesSample>): SeriesGenerato
  * fill direction.
  */
 export function cellsToSamples(cells: ReadonlyArray<Cell | undefined>): SeriesSample[] {
-  return cells.map((c) =>
-    c
-      ? { value: c.value, formula: c.formula }
-      : { value: null }
-  );
+  return cells.map((c) => (c ? { value: c.value, formula: c.formula } : { value: null }));
 }

@@ -24,16 +24,27 @@ import type { AlignShapesPayload, DistributeShapesPayload } from "./payloads.js"
 export const alignShapesHandler: CommandHandler<AlignShapesPayload, PptxSnapshot> = {
   type: "pptx:align-shapes",
   apply(snapshot, payload) {
-    if (!payload.shapeIds || payload.shapeIds.length < 2) {
-      throw makeError("invalid-payload", "align-shapes requires at least 2 shape ids");
+    const relativeTo = payload.relativeTo ?? "selection";
+    if (!payload.shapeIds || payload.shapeIds.length < 1) {
+      throw makeError("invalid-payload", "align-shapes requires at least 1 shape id");
+    }
+    if (relativeTo === "selection" && payload.shapeIds.length < 2) {
+      throw makeError(
+        "invalid-payload",
+        "align-shapes with relativeTo=selection requires at least 2 shape ids"
+      );
     }
     const { slide, index: sIdx } = findSlide(snapshot, payload.slideIndex);
     const targets = collectAlignTargets(slide, payload.shapeIds);
-    if (targets.length < 2) {
+    if (relativeTo === "selection" && targets.length < 2) {
       throw makeError("invalid-payload", "align-shapes needs at least 2 alignable shapes");
     }
-    const union = unionBox(targets.map((t) => t.box));
-    const updates = targets.map((t) => alignBox(t.box, union, payload.mode));
+    if (targets.length < 1) {
+      throw makeError("invalid-payload", "align-shapes needs at least 1 alignable shape");
+    }
+    const reference: BoundingBox =
+      relativeTo === "slide" ? slideBox(snapshot) : unionBox(targets.map((t) => t.box));
+    const updates = targets.map((t) => alignBox(t.box, reference, payload.mode));
 
     let root = snapshot.root;
     for (let i = 0; i < targets.length; i++) {
@@ -55,7 +66,7 @@ export const alignShapesHandler: CommandHandler<AlignShapesPayload, PptxSnapshot
         nodeId: targets[0].shape.id,
         path: ["slides", sIdx, "shapes"],
         field: "alignment",
-        summary: `align ${targets.length} shapes ${payload.mode}`,
+        summary: `align ${targets.length} shape(s) ${payload.mode} to ${relativeTo}`,
       }),
     };
   },
@@ -136,6 +147,11 @@ function collectAlignTargets(slide: Slide, ids: ReadonlyArray<NodeId>): AlignTar
     out.push({ shape: found.shape, path: found.path, box });
   }
   return out;
+}
+
+function slideBox(snapshot: PptxSnapshot): BoundingBox {
+  const sz = snapshot.root.slideSize;
+  return { x: 0, y: 0, cx: sz.cxEmu, cy: sz.cyEmu };
 }
 
 function unionBox(boxes: ReadonlyArray<BoundingBox>): BoundingBox {

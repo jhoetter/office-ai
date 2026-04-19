@@ -168,8 +168,25 @@ export default [
   ...archConfigs,
 
   // Test files: relax a few rules.
+  //
+  // ESLint flat config does not merge `plugins` across config objects
+  // automatically — every block that references a plugin's rules
+  // must declare the plugin itself. Without this the
+  // `@officeai/integration-tests#lint` step bails with
+  // "could not find plugin '@typescript-eslint'" because the rule
+  // override is the only block that matches the `tests/**` glob.
   {
     files: ["**/*.test.{ts,tsx}", "**/test-utils/**", "tests/**"],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: "latest",
+        sourceType: "module",
+      },
+    },
+    plugins: {
+      "@typescript-eslint": tsPlugin,
+    },
     rules: {
       "@typescript-eslint/no-unused-vars": "warn",
     },

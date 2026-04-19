@@ -52,6 +52,26 @@ export interface ShortcutCatalog {
   readonly entries: ReadonlyArray<ShortcutEntry>;
 }
 
+// ─── Common (cross-product) ──────────────────────────────────────────
+// Shortcuts wired by `EditorShell` itself — same in all three
+// products. Surface them in every dialog so the user only has to
+// learn them once. The shell registers Cmd+K (palette), Cmd+F /
+// Cmd+Alt+F (find/replace), Cmd+Alt+M (comments toggle); each
+// product wires Open/Save/Export/Undo/Redo/Shortcuts via its own
+// keymap or the top-bar buttons.
+export const COMMON_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
+  { keys: ["Mod", "O"], label: "Open file", category: "File" },
+  { keys: ["Mod", "S"], label: "Save", category: "File" },
+  { keys: ["Mod", "Shift", "S"], label: "Export…", category: "File" },
+  { keys: ["Mod", "K"], label: "Command palette", category: "Find & navigate" },
+  { keys: ["Mod", "F"], label: "Find", category: "Find & navigate" },
+  { keys: ["Mod", "Alt", "F"], label: "Find and replace", category: "Find & navigate" },
+  { keys: ["Mod", "Alt", "M"], label: "Toggle comments side panel", category: "Collaboration" },
+  { keys: ["Mod", "Z"], label: "Undo", category: "History" },
+  { keys: ["Mod", "Shift", "Z"], label: "Redo", category: "History" },
+  { keys: ["Mod", "/"], label: "Show keyboard shortcuts", category: "Help" },
+];
+
 // ─── DOCX ────────────────────────────────────────────────────────────
 // Reflects `wordShortcutsKeymapPlugin` + `pageKeymapPlugin` + PM
 // `baseKeymap`. Keep entries in this order; the dialog groups by
@@ -88,6 +108,11 @@ export const DOCX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   // Document structure
   { keys: ["Mod", "Enter"], label: "Insert page break", category: "Document" },
   { keys: ["Mod", "Shift", "Enter"], label: "Insert section break (next page)", category: "Document" },
+
+  // Navigate (B10)
+  { keys: ["Mod", "G"], label: "Go to page…", category: "Navigate" },
+  { keys: ["PageDown"], label: "Next page", category: "Navigate" },
+  { keys: ["PageUp"], label: "Previous page", category: "Navigate" },
 
   // Collaboration
   { keys: ["Mod", "K"], label: "Insert hyperlink", category: "Collaboration" },
@@ -130,11 +155,20 @@ export const XLSX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   { keys: ["Esc"], label: "Cancel selection / dismiss clipboard", category: "Editing" },
   { keys: ["Backspace"], label: "Clear selection", category: "Editing" },
   { keys: ["Delete"], label: "Clear selection / delete row or column", category: "Editing" },
+  { keys: ["Mod", "Shift", "V"], label: "Paste Special…", category: "Editing" },
 
   // Inline marks
   { keys: ["Mod", "B"], label: "Bold", category: "Inline marks" },
   { keys: ["Mod", "I"], label: "Italic", category: "Inline marks" },
   { keys: ["Mod", "U"], label: "Underline", category: "Inline marks" },
+
+  // Format
+  { keys: ["Mod", "1"], label: "Format cells…", category: "Format" },
+  { keys: ["Mod", "Shift", "C"], label: "Format Painter (copy formatting)", category: "Format" },
+
+  // Names
+  { keys: ["F3"], label: "Open Name Manager", category: "Data" },
+  { keys: ["Mod", "T"], label: "Format as Table", category: "Data" },
 
   // Number formats
   { keys: ["Mod", "Shift", "1"], label: "Number format (#,##0.00)", category: "Number format" },
@@ -152,12 +186,17 @@ export const XLSX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
 ];
 
 // ─── PPTX ────────────────────────────────────────────────────────────
-// Reflects `usePptxShortcuts`. `Mod+D` (duplicate shape) has no
-// matching command yet, so it stays `planned`.
+// Reflects `usePptxShortcuts` and the Cmd+D / Tab / Cmd+Shift+G /
+// Cmd+Shift+Alt+G chords wired in `PptxEditor.tsx` (D3).
 export const PPTX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   // Selection
   { keys: ["Backspace"], label: "Delete selected shape(s)", category: "Selection" },
   { keys: ["Delete"], label: "Delete selected shape(s)", category: "Selection" },
+  { keys: ["Tab"], label: "Cycle selection through shapes", category: "Selection" },
+  { keys: ["Shift", "Tab"], label: "Cycle selection through shapes (reverse)", category: "Selection" },
+  { keys: ["Mod", "D"], label: "Duplicate selected shape(s)", category: "Selection" },
+  { keys: ["Mod", "Shift", "G"], label: "Group selected shapes", category: "Selection" },
+  { keys: ["Mod", "Shift", "Alt", "G"], label: "Ungroup", category: "Selection" },
 
   // Move
   { keys: ["ArrowUp"], label: "Nudge shape up (1px)", category: "Move" },
@@ -179,30 +218,54 @@ export const PPTX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   { keys: ["Mod", "Shift", "D"], label: "Duplicate current slide", category: "Slide" },
   { keys: ["PageUp"], label: "Previous slide", category: "Slide" },
   { keys: ["PageDown"], label: "Next slide", category: "Slide" },
-  { keys: ["Mod", "D"], label: "Duplicate selected shape", category: "Selection", status: "planned" },
+
+  // Slide show
+  { keys: ["F5"], label: "Start presentation from beginning", category: "Slide show" },
+  { keys: ["Shift", "F5"], label: "Start presentation from current slide", category: "Slide show" },
+  { keys: ["S"], label: "Toggle speaker view (in present mode)", category: "Slide show" },
+  { keys: ["F"], label: "Toggle fullscreen (in present mode)", category: "Slide show" },
+  { keys: ["Esc"], label: "Exit presentation", category: "Slide show" },
 
   // History
   { keys: ["Mod", "Z"], label: "Undo", category: "History" },
   { keys: ["Mod", "Shift", "Z"], label: "Redo", category: "History" },
+  { keys: ["Mod", "Y"], label: "Redo (alt)", category: "History" },
 
   // Help
   { keys: ["Mod", "/"], label: "Show keyboard shortcuts", category: "Help" },
 ];
 
+/**
+ * Merge the shared Common section in front of the per-product
+ * entries, then de-duplicate by `[keys, label]` so a product can
+ * still override (e.g. DOCX's Mod+K is "Insert hyperlink", not the
+ * shared palette — keep the product entry).
+ */
+function withCommon(entries: ReadonlyArray<ShortcutEntry>): ReadonlyArray<ShortcutEntry> {
+  const productKeys = new Set(entries.map((e) => `${e.keys.join("+")}::${e.label}`));
+  const productCombos = new Set(entries.map((e) => e.keys.join("+")));
+  // Prefer the product entry if the same chord is bound (e.g. DOCX
+  // Mod+K → hyperlink). Otherwise surface the common entry.
+  const filtered = COMMON_SHORTCUTS.filter(
+    (c) => !productKeys.has(`${c.keys.join("+")}::${c.label}`) && !productCombos.has(c.keys.join("+"))
+  );
+  return [...filtered, ...entries];
+}
+
 export const SHORTCUT_CATALOGS: Readonly<Record<ShortcutProduct, ShortcutCatalog>> = {
   docx: {
     product: "docx",
     title: "DOCX editor",
-    entries: DOCX_SHORTCUTS,
+    entries: withCommon(DOCX_SHORTCUTS),
   },
   xlsx: {
     product: "xlsx",
     title: "XLSX editor",
-    entries: XLSX_SHORTCUTS,
+    entries: withCommon(XLSX_SHORTCUTS),
   },
   pptx: {
     product: "pptx",
     title: "PPTX editor",
-    entries: PPTX_SHORTCUTS,
+    entries: withCommon(PPTX_SHORTCUTS),
   },
 };

@@ -40,11 +40,7 @@ export function HighlightPicker({
   disabled,
 }: HighlightPickerProps): ReactNode {
   const stripeColor =
-    value === MIXED
-      ? "var(--divider)"
-      : typeof value === "string"
-      ? renderColor(value)
-      : undefined;
+    value === MIXED ? "var(--divider)" : typeof value === "string" ? renderColor(value) : undefined;
 
   return (
     <Popover

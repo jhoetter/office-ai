@@ -125,11 +125,10 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
       if (container.has(part.partPath)) container.writeText(part.partPath, xml);
       else container.addPart(part.partPath, new TextEncoder().encode(xml));
     } catch (err) {
-      throw new PptxSerializeError(
-        "comment-authors-failed",
-        `Failed to serialize ${part.partPath}`,
-        { partPath: part.partPath, cause: err }
-      );
+      throw new PptxSerializeError("comment-authors-failed", `Failed to serialize ${part.partPath}`, {
+        partPath: part.partPath,
+        cause: err,
+      });
     }
   }
 
@@ -325,10 +324,7 @@ function timingFromAnimations(animations: ReadonlyArray<EntranceAnimation>): Rec
   return makeEntry("p:timing", [makeEntry("p:tnLst", [tmRoot])]);
 }
 
-function shapeToEntry(
-  shape: Shape,
-  shapesByCNvPrId: ReadonlyMap<number, Shape>
-): Record<string, unknown> {
+function shapeToEntry(shape: Shape, shapesByCNvPrId: ReadonlyMap<number, Shape>): Record<string, unknown> {
   switch (shape.kind) {
     case "text":
       return textShapeToEntry(shape);
@@ -597,10 +593,7 @@ function isTag(node: unknown, tag: string): boolean {
   return ooxml.getTag(node as Record<string, unknown>) === tag;
 }
 
-function rebuildCNvCxnSpPr(
-  shape: ConnectorShape,
-  captured: OpaqueXml | undefined
-): Record<string, unknown> {
+function rebuildCNvCxnSpPr(shape: ConnectorShape, captured: OpaqueXml | undefined): Record<string, unknown> {
   const children: unknown[] = [];
   if (shape.start.kind === "anchored") {
     children.push(buildCxnEndpointEntry("a:stCxn", shape.start));
@@ -791,9 +784,7 @@ function serializeCommentsXml(part: import("../model/types.js").PptxCommentsPart
   return ooxml.serializeXml([root]);
 }
 
-function serializeCommentAuthorsXml(
-  part: import("../model/types.js").PptxCommentAuthorsPart
-): string {
+function serializeCommentAuthorsXml(part: import("../model/types.js").PptxCommentAuthorsPart): string {
   const authors: unknown[] = part.authors.map((a) => {
     const attrs: Record<string, string> = {
       "@_id": String(a.id),

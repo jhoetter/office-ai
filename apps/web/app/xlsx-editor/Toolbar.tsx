@@ -11,11 +11,17 @@ import {
   Undo2,
   Redo2,
   TableProperties,
-  Keyboard,
   MessageSquarePlus,
   Filter,
   Image as ImageIcon,
+  Snowflake,
+  ChevronDown,
+  Square,
+  SquareDashed,
+  Grid3x3,
+  Paintbrush,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
@@ -67,8 +73,6 @@ export interface ToolbarProps {
   readonly onTextToColumns: () => void;
   /** Disabled when no single-column selection is available. */
   readonly canTextToColumns: boolean;
-  /** Open the keyboard-shortcuts help dialog. */
-  readonly onOpenShortcuts: () => void;
   /**
    * Focus the comments composer for the active cell. Disabled when
    * there is no selection (the composer needs an A1 anchor).
@@ -89,7 +93,59 @@ export interface ToolbarProps {
    * active sheet via `xlsx:add-image`.
    */
   readonly onInsertImage: () => void;
+  /**
+   * Apply a freeze configuration to the active sheet. `rows` ≥ 0,
+   * `cols` ≥ 0, and `(0, 0)` clears any existing freeze. The toolbar
+   * surfaces the four standard Excel presets (top row, first column,
+   * panes-at-selection, unfreeze) plus the current state, so the user
+   * can tell at a glance whether the sheet is frozen and where.
+   */
+  readonly onFreeze: (rows: number, cols: number) => void;
+  /** Currently active freeze, if any. */
+  readonly freeze: { rows: number; cols: number } | undefined;
+  /**
+   * Anchor row/col for "Freeze panes at selection". When the user
+   * dispatches this action, the freeze split lands above + left of
+   * this position (matching Excel's behaviour). Pass `null` when
+   * there's no selection so the menu entry is disabled.
+   */
+  readonly freezeAnchor: { row: number; col: number } | null;
+  /**
+   * C6 — Borders splitter. Dispatched preset is applied to the active
+   * selection. The parent computes per-cell sub-range dispatches when
+   * needed (outside / inside borders).
+   */
+  readonly onApplyBorderPreset: (preset: BorderPreset) => void;
+  /**
+   * C6 — "More borders…" entry opens the Format Cells dialog on the
+   * Border tab so the user can pick a thick line, a colour, etc.
+   */
+  readonly onOpenMoreBorders: () => void;
+  /**
+   * C8 — Format Painter. Single-click activates one-shot mode;
+   * double-click pins (sticky) until the user clicks again or hits
+   * Esc. The button reflects the active state via aria-pressed.
+   */
+  readonly onActivateFormatPainter: (sticky: boolean) => void;
+  readonly formatPainterActive: boolean;
 }
+
+/**
+ * C6 — Border presets surfaced in the toolbar splitter. Mirrors
+ * Excel's "Home > Borders" dropdown. The icon-side of the splitter
+ * re-applies the last used preset; the chevron opens the menu.
+ */
+export type BorderPreset =
+  | "all"
+  | "outside"
+  | "thick-outside"
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "top-bottom"
+  | "top-thick-bottom"
+  | "none";
 
 /**
  * Excel-style formatting toolbar.
@@ -125,12 +181,23 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     onRedo,
     onTextToColumns,
     canTextToColumns,
-    onOpenShortcuts,
     onAddComment,
     onToggleFilter,
     filterActive,
     onInsertImage,
+    onFreeze,
+    freeze,
+    freezeAnchor,
+    onApplyBorderPreset,
+    onOpenMoreBorders,
+    onActivateFormatPainter,
+    formatPainterActive,
   } = props;
+
+  // C6 — Last-used border preset, so the icon-side click re-applies
+  // it (Excel parity). Defaults to "all" since that's what the icon
+  // visually depicts at first launch.
+  const [lastBorder, setLastBorder] = useState<BorderPreset>("all");
 
   const effective: EffectiveStyle = useMemo(
     () => flattenCellXf(styles, anchorStyleId),
@@ -181,6 +248,24 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onClick={onRedo}
       />
 
+      <button
+        type="button"
+        data-testid="action-format-painter"
+        title="Format Painter (double-click for sticky)"
+        aria-label="Format Painter"
+        aria-pressed={formatPainterActive}
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onActivateFormatPainter(false)}
+        onDoubleClick={() => onActivateFormatPainter(true)}
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-40",
+          formatPainterActive && "bg-accent-soft text-accent"
+        )}
+      >
+        <Paintbrush size={14} />
+      </button>
+
       <Divider />
 
       <TextFormatBar
@@ -215,6 +300,18 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         active={effective.alignment?.horizontal === "right"}
         disabled={disabled}
         onClick={() => onAlign("right")}
+      />
+
+      <Divider />
+
+      <BordersMenu
+        disabled={disabled}
+        last={lastBorder}
+        onApply={(preset) => {
+          if (preset !== "none") setLastBorder(preset);
+          onApplyBorderPreset(preset);
+        }}
+        onOpenMore={onOpenMoreBorders}
       />
 
       <Divider />
@@ -271,6 +368,8 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         onClick={onInsertImage}
       />
 
+      <FreezeMenu disabled={disabled} freeze={freeze} anchor={freezeAnchor} onFreeze={onFreeze} />
+
       <Divider />
 
       <select
@@ -294,16 +393,6 @@ export function Toolbar(props: ToolbarProps): ReactNode {
           </option>
         ))}
       </select>
-
-      <div className="ml-auto flex items-center">
-        <ActionBtn
-          icon={<Keyboard size={14} />}
-          label="Keyboard shortcuts (⌘/)"
-          testId="action-shortcuts"
-          disabled={false}
-          onClick={onOpenShortcuts}
-        />
-      </div>
     </div>
   );
 }
@@ -372,6 +461,365 @@ function ActionBtn(props: ActionBtnProps): ReactNode {
       )}
     >
       {icon}
+    </button>
+  );
+}
+
+interface FreezeMenuProps {
+  readonly disabled: boolean;
+  readonly freeze: { rows: number; cols: number } | undefined;
+  readonly anchor: { row: number; col: number } | null;
+  readonly onFreeze: (rows: number, cols: number) => void;
+}
+
+/**
+ * C3 — Freeze panes splitter button. Mirrors Excel's "View > Freeze
+ * Panes" dropdown:
+ *   - Freeze top row             → rows=1, cols=0
+ *   - Freeze first column        → rows=0, cols=1
+ *   - Freeze panes (at selection) → rows=anchor.row, cols=anchor.col
+ *   - Unfreeze panes             → rows=0, cols=0 (only when frozen)
+ *
+ * The button's pressed state mirrors whether the active sheet has any
+ * freeze configured — important for users who jump between sheets and
+ * want a glanceable indicator of "is this one frozen?".
+ */
+function FreezeMenu(props: FreezeMenuProps): ReactNode {
+  const { disabled, freeze, anchor, onFreeze } = props;
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDocClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const isFrozen = !!freeze && (freeze.rows > 0 || freeze.cols > 0);
+  // "Freeze panes at selection" only makes sense when the anchor is
+  // away from row 0 / column 0 — otherwise it's identical to one of
+  // the simpler presets and Excel hides it.
+  const canFreezeAtSelection = !!anchor && (anchor.row > 0 || anchor.col > 0);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        data-testid="action-freeze-toggle"
+        title="Freeze panes"
+        aria-label="Freeze panes"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-7 items-center gap-0.5 rounded px-1 text-foreground hover:bg-hover disabled:opacity-50",
+          isFrozen && "bg-[var(--ai-violet-light)] text-[var(--ai-violet)]"
+        )}
+      >
+        <Snowflake size={14} />
+        <ChevronDown size={10} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          data-testid="freeze-menu"
+          className="absolute left-0 top-8 z-30 min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+        >
+          <FreezeMenuItem
+            label="Freeze top row"
+            shortcut=""
+            checked={isFrozen && freeze!.rows === 1 && freeze!.cols === 0}
+            onClick={() => {
+              setOpen(false);
+              onFreeze(1, 0);
+            }}
+          />
+          <FreezeMenuItem
+            label="Freeze first column"
+            shortcut=""
+            checked={isFrozen && freeze!.rows === 0 && freeze!.cols === 1}
+            onClick={() => {
+              setOpen(false);
+              onFreeze(0, 1);
+            }}
+          />
+          <FreezeMenuItem
+            label="Freeze panes at selection"
+            shortcut={canFreezeAtSelection ? `${anchor!.row}r×${anchor!.col}c` : ""}
+            disabled={!canFreezeAtSelection}
+            checked={!!anchor && isFrozen && freeze!.rows === anchor.row && freeze!.cols === anchor.col}
+            onClick={() => {
+              if (!anchor) return;
+              setOpen(false);
+              onFreeze(anchor.row, anchor.col);
+            }}
+          />
+          <div className="my-1 h-px bg-divider" />
+          <FreezeMenuItem
+            label="Unfreeze panes"
+            shortcut=""
+            disabled={!isFrozen}
+            onClick={() => {
+              setOpen(false);
+              onFreeze(0, 0);
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface FreezeMenuItemProps {
+  readonly label: string;
+  readonly shortcut: string;
+  readonly checked?: boolean;
+  readonly disabled?: boolean;
+  readonly onClick: () => void;
+}
+
+function FreezeMenuItem(props: FreezeMenuItemProps): ReactNode {
+  const { label, shortcut, checked, disabled, onClick } = props;
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover disabled:opacity-40",
+        checked && "bg-[var(--ai-violet-light)]"
+      )}
+    >
+      <span>{label}</span>
+      {shortcut ? <span className="text-tertiary tabular-nums">{shortcut}</span> : null}
+    </button>
+  );
+}
+
+interface BordersMenuProps {
+  readonly disabled: boolean;
+  /** Last-used preset (used as the splitter's primary action). */
+  readonly last: BorderPreset;
+  readonly onApply: (preset: BorderPreset) => void;
+  readonly onOpenMore: () => void;
+}
+
+/**
+ * C6 — Borders splitter button.
+ *
+ * The icon side re-applies the last preset (Excel parity); the
+ * chevron side opens a menu of presets that mirror Excel's "Home >
+ * Borders" dropdown:
+ *
+ *   - All borders
+ *   - Outside borders
+ *   - Thick outside borders
+ *   - Top / Bottom / Left / Right border
+ *   - Top and bottom border
+ *   - Top and thick bottom border
+ *   - No border
+ *   - More borders…  → opens Format Cells dialog on the Border tab
+ *
+ * The icon swaps to a faint outline when the last preset is "none"
+ * so the user can tell at a glance that re-clicking will *clear*
+ * borders rather than draw them.
+ */
+function BordersMenu(props: BordersMenuProps): ReactNode {
+  const { disabled, last, onApply, onOpenMore } = props;
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDocClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const Icon = last === "none" ? SquareDashed : last === "all" ? Grid3x3 : Square;
+
+  return (
+    <div ref={ref} className="relative inline-flex items-center">
+      <button
+        type="button"
+        data-testid="format-borders-apply"
+        title={`Apply ${BORDER_PRESET_LABEL[last]}`}
+        aria-label={`Apply ${BORDER_PRESET_LABEL[last]}`}
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onApply(last)}
+        className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <Icon size={14} />
+      </button>
+      <button
+        type="button"
+        data-testid="format-borders-toggle"
+        title="More borders"
+        aria-label="More borders"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 w-4 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <ChevronDown size={10} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          data-testid="borders-menu"
+          className="absolute left-0 top-8 z-30 min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+        >
+          <BordersMenuItem
+            preset="all"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <BordersMenuItem
+            preset="outside"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <BordersMenuItem
+            preset="thick-outside"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <div className="my-1 h-px bg-divider" />
+          <BordersMenuItem
+            preset="top"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <BordersMenuItem
+            preset="bottom"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <BordersMenuItem
+            preset="left"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <BordersMenuItem
+            preset="right"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <div className="my-1 h-px bg-divider" />
+          <BordersMenuItem
+            preset="top-bottom"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <BordersMenuItem
+            preset="top-thick-bottom"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <div className="my-1 h-px bg-divider" />
+          <BordersMenuItem
+            preset="none"
+            onPick={(p) => {
+              setOpen(false);
+              onApply(p);
+            }}
+          />
+          <div className="my-1 h-px bg-divider" />
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="borders-menu-more"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setOpen(false);
+              onOpenMore();
+            }}
+            className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover"
+          >
+            <span>More borders…</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const BORDER_PRESET_LABEL: Readonly<Record<BorderPreset, string>> = {
+  all: "All borders",
+  outside: "Outside borders",
+  "thick-outside": "Thick outside borders",
+  top: "Top border",
+  bottom: "Bottom border",
+  left: "Left border",
+  right: "Right border",
+  "top-bottom": "Top and bottom border",
+  "top-thick-bottom": "Top and thick bottom border",
+  none: "No border",
+};
+
+interface BordersMenuItemProps {
+  readonly preset: BorderPreset;
+  readonly onPick: (preset: BorderPreset) => void;
+}
+
+function BordersMenuItem(props: BordersMenuItemProps): ReactNode {
+  const { preset, onPick } = props;
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      data-testid={`borders-menu-${preset}`}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => onPick(preset)}
+      className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover"
+    >
+      <span>{BORDER_PRESET_LABEL[preset]}</span>
     </button>
   );
 }

@@ -1,24 +1,47 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, ReactNode } from "react";
-import { FolderOpen, Loader2, Download } from "lucide-react";
-import { Button, CommentComposer, CommentsSidebar, TextFormatBar, cn } from "@officeai/ui";
+import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
+import { CommentComposer, CommentsSidebar, cn } from "@officeai/ui";
 import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
+import {
+  EditorShell,
+  EmptyState,
+  createToastId,
+  type FindAdapter,
+  type FindMatch,
+  type FindOptions,
+  type PaletteCommand,
+  type ProductAdapter,
+  type SaveState,
+  type ToastItem,
+} from "@/lib/shell";
+import {
+  PRODUCT_FILE_TYPES,
+  downloadBlob,
+  openFile as openFileViaService,
+  saveFile as saveFileViaService,
+} from "@/lib/files/file-service";
 import {
   XlsxAgent,
   assignRefColors,
   cellKey,
+  colToLetter,
+  evaluateConditionalFormats,
   flattenCellXf,
   formatA1,
   formatRange,
   parseA1,
+  parseRange,
   tokenizeForDisplay,
   type CellFormatPatch,
   type CellValue,
   type DisplayToken,
+  type SetCellFormatPayload,
   type Sheet,
   type StyleTable,
+  type XlsxClipboardSnapshot,
   type XlsxSnapshot,
 } from "@officeai/xlsx";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
@@ -32,17 +55,33 @@ import {
   type RefRect,
 } from "./Grid";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { computeUsedRange } from "./gridDimensions";
 import { FormulaHighlight } from "./FormulaHighlight";
 import {
+  allAreas,
+  areasContainCell,
+  forEachUnionSparseCell,
+  formatAreas,
   formatSelection,
   isSingle,
+  normalizeSelection,
   selectionToRange,
   singleSelection,
+  unionSpanUpperBound,
   type CellPos,
   type Selection,
 } from "./selection";
 import { FormulaSuggest, applySuggestion, getSuggestions } from "./FormulaSuggest";
-import { Toolbar } from "./Toolbar";
+import { Toolbar, type BorderPreset } from "./Toolbar";
+import { SheetTabBar } from "./SheetTabBar";
+import { FormatCellsDialog, type TabId as FormatTabId } from "./FormatCellsDialog";
+import { PasteSpecialDialog, type PasteSpecialOptions } from "./PasteSpecialDialog";
+import { ConditionalFormatDialog } from "./ConditionalFormatDialog";
+import { DataValidationDialog } from "./DataValidationDialog";
+import { NameBox } from "./NameBox";
+import { NameManagerDialog } from "./NameManagerDialog";
+import { InsertChartDialog } from "./InsertChartDialog";
+import type { ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { TextToColumnsPopover } from "./TextToColumnsPopover";
@@ -56,15 +95,7 @@ import {
   readFromSystemClipboard,
 } from "./clipboard";
 
-interface ToastMessage {
-  id: number;
-  kind: "info" | "warn" | "error";
-  text: string;
-}
-
 const SAMPLE_NAME = "sample.xlsx";
-
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
  * True when an event target is a form control / editable surface that
@@ -97,7 +128,10 @@ function defaultInsertAnchor(selection: Selection | null): { fromRow: number; fr
   return { fromRow: selection.anchor.row, fromCol: selection.anchor.col };
 }
 
-async function measureImage(buf: ArrayBuffer, contentType: string): Promise<{ width: number; height: number }> {
+async function measureImage(
+  buf: ArrayBuffer,
+  contentType: string
+): Promise<{ width: number; height: number }> {
   const blob = new Blob([buf], { type: contentType });
   const url = URL.createObjectURL(blob);
   try {
@@ -142,19 +176,26 @@ export function XlsxEditor(): ReactNode {
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
   const [activeSheetName, setActiveSheetName] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(singleSelection({ row: 0, col: 0 }));
+  // C13 — Disjoint extra areas accumulated by Ctrl/Cmd-click. The
+  // active area still lives in `selection`; everything here is just
+  // additional marquee + cells that participate in clear-contents,
+  // formatting commands, and the status-bar aggregates.
+  const [extraAreas, setExtraAreas] = useState<ReadonlyArray<Selection>>([]);
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [selectedChartId, setSelectedChartId] = useState<string | null>(null);
+  const [insertChartOpen, setInsertChartOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [toasts, setToasts] = useState<ReadonlyArray<ToastItem>>([]);
   const [formulaDraft, setFormulaDraft] = useState("");
   const [formulaFocused, setFormulaFocused] = useState(false);
   const formulaInputRef = useRef<HTMLInputElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Dedicated hidden <input type=file> for the toolbar's "Insert image"
   // affordance — kept separate from the workbook open input so the
   // accept= filter doesn't bleed across the two flows.
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [filename, setFilename] = useState<string>(SAMPLE_NAME);
-  const [dragOver, setDragOver] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const fileHandleRef = useRef<FileSystemFileHandle | undefined>(undefined);
   const [ctxMenu, setCtxMenu] = useState<{
     target: GridContextTarget;
     x: number;
@@ -169,11 +210,12 @@ export function XlsxEditor(): ReactNode {
   );
   const shortcutsDialog = useShortcutsDialog();
 
-  const toastIdRef = useRef(0);
-  const pushToast = useCallback((kind: ToastMessage["kind"], text: string) => {
-    const id = ++toastIdRef.current;
+  const pushToast = useCallback((kind: ToastItem["kind"], text: string) => {
+    const id = createToastId("xlsx");
     setToasts((prev) => [...prev, { id, kind, text }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
+  }, []);
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   // Refs that mirror the latest selection / sheet / styles so the
@@ -183,25 +225,36 @@ export function XlsxEditor(): ReactNode {
   const selectionRef = useRef<Selection | null>(selection);
   const activeSheetRef = useRef<Sheet | null>(null);
   const stylesRef = useRef<StyleTable | null>(null);
+  const snapshotRef = useRef<XlsxSnapshot | null>(null);
 
   // Holds the unsubscribe handle for the active agent's `subscribe()`
   // callback so we can swap agents (Open file) without leaking listeners.
   const offRef = useRef<(() => void) | null>(null);
 
   const mountAgent = useCallback(
-    (a: XlsxAgent, name: string) => {
+    (a: XlsxAgent, name: string, handle?: FileSystemFileHandle) => {
       offRef.current?.();
       agentRef.current = a;
       setAgent(a);
       setFilename(name);
+      fileHandleRef.current = handle;
+      setSaveState("saved");
       const snap = a.getSnapshot();
       setSnapshot(snap);
       setActiveSheetName(snap.root.sheets[0]?.name ?? null);
       setSelection(singleSelection({ row: 0, col: 0 }));
+      setExtraAreas([]);
       setPendingCount(a.getPendingMutations().length);
+      let first = true;
       offRef.current = a.subscribe((s) => {
         setSnapshot(s);
         setPendingCount(a.getPendingMutations().length);
+        // Skip the synchronous initial snapshot most agents emit.
+        if (first) {
+          first = false;
+          return;
+        }
+        setSaveState("modified");
       });
     },
     [setAgent, setSnapshot, setActiveSheetName, setSelection, setPendingCount]
@@ -230,7 +283,7 @@ export function XlsxEditor(): ReactNode {
   }, [pushToast, mountAgent]);
 
   const openFile = useCallback(
-    async (file: File) => {
+    async (file: File, handle?: FileSystemFileHandle) => {
       const lower = file.name.toLowerCase();
       if (!lower.endsWith(".xlsx")) {
         pushToast("error", `Unsupported file: ${file.name} (only .xlsx)`);
@@ -239,8 +292,8 @@ export function XlsxEditor(): ReactNode {
       try {
         const buf = await file.arrayBuffer();
         const a = await XlsxAgent.fromBuffer(buf);
-        mountAgent(a, file.name);
-        pushToast("info", `Opened ${file.name}`);
+        mountAgent(a, file.name, handle);
+        pushToast("success", `Opened ${file.name}`);
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
@@ -248,28 +301,23 @@ export function XlsxEditor(): ReactNode {
     [mountAgent, pushToast]
   );
 
-  const onPickFile = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
-  const onFileInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) void openFile(file);
-      e.target.value = "";
-    },
-    [openFile]
-  );
-
-  const onDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    if (Array.from(e.dataTransfer.items).some((it) => it.kind === "file")) {
-      e.preventDefault();
-      setDragOver(true);
+  const onPickFile = useCallback(async () => {
+    try {
+      const opened = await openFileViaService({
+        description: PRODUCT_FILE_TYPES.xlsx.description,
+        mimeToExt: PRODUCT_FILE_TYPES.xlsx.mimeToExt,
+        accept: PRODUCT_FILE_TYPES.xlsx.accept,
+      });
+      if (!opened) return;
+      const file = new File([opened.bytes as BlobPart], opened.name, {
+        type: PRODUCT_FILE_TYPES.xlsx.primaryMime,
+      });
+      await openFile(file, opened.handle);
+    } catch (err) {
+      pushToast("error", err instanceof Error ? err.message : String(err));
     }
-  }, []);
-  const onDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
-    if (e.currentTarget === e.target) setDragOver(false);
-  }, []);
+  }, [openFile, pushToast]);
+
   const dispatchAddImage = useCallback(
     async (
       file: Blob,
@@ -310,12 +358,8 @@ export function XlsxEditor(): ReactNode {
     [pushToast]
   );
 
-  const onDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      setDragOver(false);
-      const file = e.dataTransfer.files?.[0];
-      if (!file) return;
+  const onShellFileDrop = useCallback(
+    (file: File) => {
       if (isSupportedImageFile(file)) {
         void dispatchAddImage(file, defaultInsertAnchor(selectionRef.current));
         return;
@@ -354,6 +398,7 @@ export function XlsxEditor(): ReactNode {
   }, [activeSheet]);
   useEffect(() => {
     stylesRef.current = snapshot?.root.styles ?? null;
+    snapshotRef.current = snapshot ?? null;
   }, [snapshot]);
 
   const selectedCell = useMemo(() => {
@@ -363,7 +408,11 @@ export function XlsxEditor(): ReactNode {
     return activeSheet.cells.get(cellKey(selection.anchor.row, selection.anchor.col)) ?? null;
   }, [activeSheet, selection]);
 
-  const selectedRef = selection ? formatSelection(selection) : "";
+  const selectedRef = selection
+    ? extraAreas.length > 0
+      ? formatAreas(selection, extraAreas)
+      : formatSelection(selection)
+    : "";
 
   // Derived display for the formula bar when the user is NOT actively
   // editing it. While the input has focus we surface `formulaDraft`
@@ -501,11 +550,13 @@ export function XlsxEditor(): ReactNode {
     [formulaDraft]
   );
 
-  // Total grid bounds — must stay in sync with `Grid.tsx`. These
-  // bound arrow / Home / Ctrl+End navigation; the underlying model
-  // accepts arbitrary indices, but rendering only goes this far.
-  const GRID_ROWS = 1000;
-  const GRID_COLS = 26;
+  // C1 — Real Excel bounds, kept in lockstep with `Grid.tsx`. The
+  // virtualised renderer never instantiates a per-cell array of this
+  // size; selection rectangles are stored as `(row, col)` pairs, not
+  // expanded into per-cell sets, so a "select entire column"
+  // operation costs O(1) regardless of `GRID_ROWS`.
+  const GRID_ROWS = 1_048_576;
+  const GRID_COLS = 16_384;
 
   const handleAxisSelect = useCallback((axis: "row" | "col", index: number, opts?: { extend?: boolean }) => {
     // Row click → select the entire row (col 0 .. GRID_COLS-1).
@@ -543,7 +594,7 @@ export function XlsxEditor(): ReactNode {
   }, [selection]);
 
   const handleGridSelect = useCallback(
-    (pos: CellPos, opts?: { extend?: boolean }) => {
+    (pos: CellPos, opts?: { extend?: boolean; additive?: boolean }) => {
       // Click-to-insert-ref: while the formula bar is in point mode,
       // a plain click inserts the cell ref at the caret; a drag /
       // Shift-click extends the previously inserted ref into a range.
@@ -569,11 +620,38 @@ export function XlsxEditor(): ReactNode {
         return;
       }
 
+      // C13 — Ctrl/Cmd-click without Shift starts a new disjoint
+      // area. We push the previous active selection into `extraAreas`
+      // (Excel does not dedup or test for overlap; matching the
+      // behaviour keeps the model simple and round-trippable to a
+      // sequential clear / format dispatch).
+      if (opts?.additive) {
+        setSelection((prev) => {
+          if (prev) {
+            setExtraAreas((es) => [...es, prev]);
+          }
+          return singleSelection(pos);
+        });
+        setSelectedImageId(null);
+        surfaceRef.current?.focus({ preventScroll: true });
+        return;
+      }
+
       // Normal (non-formula) selection behaviour.
       if (opts?.extend) {
         setSelection((prev) => (prev ? { anchor: prev.anchor, focus: pos } : singleSelection(pos)));
       } else {
         setSelection(singleSelection(pos));
+        // Plain (non-additive) click clears any extra areas — Excel
+        // parity. Shift-extend keeps them around.
+        setExtraAreas([]);
+        // C8 — Arm Format Painter drop on this fresh mousedown. The
+        // eventual global mouseup picks up `selectionRef` (which by
+        // then includes any drag-extend) and applies the captured
+        // formats over it.
+        if (formatPainterRef.current) {
+          formatPainterPendingRef.current = true;
+        }
       }
       setSelectedImageId(null);
       // Pull keyboard focus back to the surface so the next printable
@@ -590,8 +668,6 @@ export function XlsxEditor(): ReactNode {
   // single-cell anchor. F2 enters with the existing value; Backspace /
   // Delete clears the cell.
   const surfaceRef = useRef<HTMLDivElement | null>(null);
-  const commentsAsideRef = useRef<HTMLElement | null>(null);
-  const [commentsForceOpen, setCommentsForceOpen] = useState(false);
   // Bumped each time the comments sidebar requests "scroll to this
   // cell". The Grid effect keys off `nonce` so clicking the same
   // comment twice still re-scrolls and re-flashes.
@@ -601,17 +677,15 @@ export function XlsxEditor(): ReactNode {
     nonce: number;
   } | null>(null);
   const focusCommentComposer = useCallback(() => {
-    setCommentsForceOpen(true);
     requestAnimationFrame(() => {
-      const root = commentsAsideRef.current;
-      if (!root) return;
-      const textarea = root.querySelector<HTMLTextAreaElement>(
-        '[data-testid="comment-composer"] textarea'
-      );
-      if (textarea) {
-        textarea.focus();
-        root.scrollIntoView({ block: "nearest" });
-      }
+      const tab = document.querySelector<HTMLButtonElement>('[data-testid="rail-tab-comments"]');
+      tab?.click();
+      requestAnimationFrame(() => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+          'aside [data-testid="comment-composer"] textarea'
+        );
+        textarea?.focus();
+      });
     });
   }, []);
   // Locate the cell carrying `commentId` on the active sheet, move
@@ -634,7 +708,6 @@ export function XlsxEditor(): ReactNode {
         return;
       }
       setSelection(singleSelection(addr));
-      setCommentsForceOpen(true);
       setCommentScrollTarget((prev) => ({
         row: addr.row,
         col: addr.col,
@@ -647,6 +720,10 @@ export function XlsxEditor(): ReactNode {
   // optional Shift-extend. Pure helper — no side effects beyond
   // calling setSelection.
   const moveSelection = useCallback((dRow: number, dCol: number, opts: { extend: boolean }) => {
+    // C13 — Keyboard navigation collapses any Ctrl-click extras back
+    // to a single active area, mirroring Excel's behaviour where
+    // arrow / Tab / Enter abandons the disjoint selection.
+    setExtraAreas([]);
     setSelection((prev) => {
       const base: CellPos = prev?.focus ?? { row: 0, col: 0 };
       const next: CellPos = {
@@ -661,38 +738,60 @@ export function XlsxEditor(): ReactNode {
   // Cmd/Ctrl+arrow Excel-style "jump to data edge". When stationed
   // on a non-empty cell, jump to the last non-empty cell in the run;
   // when stationed on an empty cell, jump to the next non-empty one.
-  // Falls back to the grid edge when no transition is found.
+  // Falls back to the *used range* edge (not the worksheet edge) so
+  // a stray Cmd+Down on an empty column doesn't try to walk
+  // 1,048,576 rows linearly. C1 introduced the real Excel bounds and
+  // this guard keeps the operation O(used-range height/width).
   const jumpToDataEdge = useCallback(
     (dRow: number, dCol: number, opts: { extend: boolean }) => {
       if (!activeSheet) return;
       setSelection((prev) => {
         const base: CellPos = prev?.focus ?? { row: 0, col: 0 };
+        const used = computeUsedRange(activeSheet.cells);
         const isFilled = (r: number, c: number): boolean => {
           if (r < 0 || c < 0 || r >= GRID_ROWS || c >= GRID_COLS) return false;
           const cell = activeSheet.cells.get(cellKey(r, c));
           return !!cell && cell.value !== null && cell.value !== undefined;
         };
+        // Far edge for the search: the used-range bound in the
+        // direction we're moving, falling back to the caret position
+        // (we won't move further than there is data).
+        const maxR = used ? used.r2 : base.row;
+        const maxC = used ? used.c2 : base.col;
         const startFilled = isFilled(base.row, base.col);
         let r = base.row;
         let c = base.col;
+        const inSearchBounds = (nr: number, nc: number): boolean => {
+          if (nr < 0 || nc < 0 || nr >= GRID_ROWS || nc >= GRID_COLS) return false;
+          if (dRow > 0 && nr > maxR) return false;
+          if (dRow < 0 && nr < 0) return false;
+          if (dCol > 0 && nc > maxC) return false;
+          if (dCol < 0 && nc < 0) return false;
+          return true;
+        };
         const step = (): boolean => {
           const nr = r + dRow;
           const nc = c + dCol;
-          if (nr < 0 || nc < 0 || nr >= GRID_ROWS || nc >= GRID_COLS) return false;
+          if (!inSearchBounds(nr, nc)) return false;
           r = nr;
           c = nc;
           return true;
         };
         if (startFilled) {
-          // Walk while the *next* cell is also filled; stop just
-          // before a transition into emptiness.
           while (isFilled(r + dRow, c + dCol)) {
             if (!step()) break;
           }
         } else {
-          // Walk until we hit the next filled cell or the edge.
           while (step()) {
             if (isFilled(r, c)) break;
+          }
+          // No data ahead → snap to the worksheet edge (Excel
+          // parity). Cheap because it's a single index assignment.
+          if (!isFilled(r, c)) {
+            if (dRow > 0) r = GRID_ROWS - 1;
+            else if (dRow < 0) r = 0;
+            if (dCol > 0) c = GRID_COLS - 1;
+            else if (dCol < 0) c = 0;
           }
         }
         const next: CellPos = { row: r, col: c };
@@ -750,7 +849,10 @@ export function XlsxEditor(): ReactNode {
    * shortcut handlers that don't sit inside a paste event.
    */
   const pasteAtSelection = useCallback(
-    async (direct?: { html?: string | null; text?: string | null }): Promise<boolean> => {
+    async (
+      direct?: { html?: string | null; text?: string | null },
+      opts?: { mode?: "all" | "values" | "formulas" | "formats"; transpose?: boolean }
+    ): Promise<boolean> => {
       const a = agentRef.current;
       if (!a || !activeSheet || !selection) return false;
       const target = formatA1(selection.anchor);
@@ -762,7 +864,13 @@ export function XlsxEditor(): ReactNode {
       try {
         await a.applyCommand({
           type: "xlsx:paste-range",
-          payload: { sheet: activeSheet.name, target, source: snap },
+          payload: {
+            sheet: activeSheet.name,
+            target,
+            source: snap,
+            mode: opts?.mode ?? "all",
+            transpose: opts?.transpose ?? false,
+          },
           source: "human",
         });
       } catch (err) {
@@ -798,10 +906,14 @@ export function XlsxEditor(): ReactNode {
       setMarchingAnts(null);
 
       // Move the selection to cover the pasted block so subsequent
-      // Cmd+V / arrow keys feel "Excel-y".
+      // Cmd+V / arrow keys feel "Excel-y". When transposing, the
+      // pasted block is rotated — height becomes width and vice versa.
+      const transposed = !!opts?.transpose;
+      const pastedH = transposed ? snap.width : snap.height;
+      const pastedW = transposed ? snap.height : snap.width;
       const end: CellPos = {
-        row: selection.anchor.row + Math.max(0, snap.height - 1),
-        col: selection.anchor.col + Math.max(0, snap.width - 1),
+        row: selection.anchor.row + Math.max(0, pastedH - 1),
+        col: selection.anchor.col + Math.max(0, pastedW - 1),
       };
       setSelection({ anchor: selection.anchor, focus: end });
       return true;
@@ -883,9 +995,7 @@ export function XlsxEditor(): ReactNode {
       // paste flow. We pick the FIRST image item (the rest are usually
       // alternative encodings of the same image: png + jpg fallbacks).
       const items = Array.from(e.clipboardData.items ?? []);
-      const imgItem = items.find(
-        (it) => it.kind === "file" && SUPPORTED_IMAGE_MIME.has(it.type)
-      );
+      const imgItem = items.find((it) => it.kind === "file" && SUPPORTED_IMAGE_MIME.has(it.type));
       if (imgItem) {
         const file = imgItem.getAsFile();
         if (file) {
@@ -947,18 +1057,14 @@ export function XlsxEditor(): ReactNode {
       }
 
       if (e.key === "End" && (e.metaKey || e.ctrlKey)) {
-        // Ctrl+End → bottom-right of the *used* range (proxy: max
-        // row/col across non-empty cells; falls back to A1).
+        // Ctrl+End → bottom-right corner of the used range. C1
+        // unified the bounds calc in `computeUsedRange` so the
+        // navigation, viewport-fit and (later) print-area logic all
+        // agree on what "used" means.
         e.preventDefault();
         if (!activeSheet) return;
-        let maxRow = 0;
-        let maxCol = 0;
-        for (const cell of activeSheet.cells.values()) {
-          if (cell.value === null || cell.value === undefined) continue;
-          if (cell.row > maxRow) maxRow = cell.row;
-          if (cell.col > maxCol) maxCol = cell.col;
-        }
-        const focus: CellPos = { row: maxRow, col: maxCol };
+        const used = computeUsedRange(activeSheet.cells);
+        const focus: CellPos = used ? { row: used.r2, col: used.c2 } : { row: 0, col: 0 };
         setSelection((prev) =>
           e.shiftKey && prev ? { anchor: prev.anchor, focus } : singleSelection(focus)
         );
@@ -974,6 +1080,26 @@ export function XlsxEditor(): ReactNode {
       if (e.key === "Enter") {
         e.preventDefault();
         moveSelection(e.shiftKey ? -1 : 1, 0, { extend: false });
+        return;
+      }
+
+      if (e.key === "F3") {
+        e.preventDefault();
+        setNameManagerOpen(true);
+        return;
+      }
+
+      // C14 — Excel-parity "Format as Table" shortcut (Mod+T).
+      // Promotes the current selection (or single anchor's
+      // contiguous block, in a future pass) to an Excel Table.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "t" || e.key === "T")) {
+        if (!activeSheet || !selection) return;
+        e.preventDefault();
+        const range = formatSelection(selection);
+        dispatchOrToast("xlsx:add-table", {
+          sheet: activeSheet.name,
+          range,
+        });
         return;
       }
 
@@ -1030,6 +1156,38 @@ export function XlsxEditor(): ReactNode {
         return;
       }
 
+      // C7 — Excel-parity Paste Special shortcut (Cmd+Shift+V).
+      // Native paste (Cmd+V) is captured via `onSurfacePaste`;
+      // Cmd+Shift+V deliberately bypasses the native event so we can
+      // open a dialog and let the user choose what to paste before
+      // we read the clipboard.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        setPasteSpecialOpen(true);
+        return;
+      }
+
+      // C8 — Format Painter shortcut (Mod+Shift+C). Captures the
+      // current selection's formats and arms the painter; the next
+      // mousedown-drag-up on the grid drops the formats over the
+      // destination range. Esc cancels.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === "c" || e.key === "C")) {
+        e.preventDefault();
+        activateFormatPainterRef.current(false);
+        return;
+      }
+
+      // C5 — Excel-parity Format Cells shortcut (Mod+1). Opens the
+      // dialog on the Number tab. We intentionally guard on the
+      // *physical* "1" key (`Digit1`) and require no Shift / Alt
+      // modifiers so Mod+Shift+1 still maps to the number-format
+      // shortcut below without conflict.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.code === "Digit1" || e.key === "1")) {
+        e.preventDefault();
+        setFormatCellsTab("number");
+        return;
+      }
+
       // Inline marks: Cmd/Ctrl + B / I / U toggle the mark over the
       // current selection. The active anchor's effective style drives
       // the toggle direction so a second press flips back, matching
@@ -1056,20 +1214,9 @@ export function XlsxEditor(): ReactNode {
           const currentlyOn = Boolean(
             (eff?.font as { bold?: boolean; italic?: boolean; underline?: unknown } | undefined)?.[markKey]
           );
-          const range = formatSelection(selection);
-          void a
-            .applyCommand({
-              type: "xlsx:set-cell-format",
-              payload: {
-                sheet: activeSheet.name,
-                range,
-                format: { font: { [markKey]: !currentlyOn } } as never,
-              },
-              source: "human",
-            })
-            .catch((err: unknown) =>
-              pushToast("error", err instanceof Error ? err.message : String(err))
-            );
+          // C13 — Use the central `onApplyFormat` so the toggle fans
+          // out across every area in the multi-area selection.
+          onApplyFormat({ font: { [markKey]: !currentlyOn } } as never);
           return;
         }
       }
@@ -1092,18 +1239,9 @@ export function XlsxEditor(): ReactNode {
                 : null;
         if (numberFormat) {
           e.preventDefault();
-          const a = agentRef.current;
-          if (!a) return;
-          const range = formatSelection(selection);
-          void a
-            .applyCommand({
-              type: "xlsx:set-cell-format",
-              payload: { sheet: activeSheet.name, range, format: { numberFormat } },
-              source: "human",
-            })
-            .catch((err: unknown) =>
-              pushToast("error", err instanceof Error ? err.message : String(err))
-            );
+          // C13 — Same fan-out treatment as the Bold/Italic shortcut
+          // so number-format chords land on every disjoint area.
+          onApplyFormat({ numberFormat });
           return;
         }
       }
@@ -1122,9 +1260,7 @@ export function XlsxEditor(): ReactNode {
               payload: { sheet: activeSheet.name, imageId: removedId },
               source: "human",
             })
-            .catch((err: unknown) =>
-              pushToast("error", err instanceof Error ? err.message : String(err))
-            );
+            .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
           return;
         }
         if (!selection) return;
@@ -1161,27 +1297,25 @@ export function XlsxEditor(): ReactNode {
           return;
         }
 
-        // Range-aware clear: dispatch one set-cell-value over each
-        // cell in the normalized selection. Simple loop is fine for
-        // the in-app sizes we expect; a true range-clear command is a
-        // future optimisation.
-        for (let r = range.start.row; r <= range.end.row; r++) {
-          for (let c = range.start.col; c <= range.end.col; c++) {
-            void a
-              .applyCommand({
-                type: "xlsx:set-cell-value",
-                payload: {
-                  sheet: activeSheet.name,
-                  ref: formatA1({ row: r, col: c }),
-                  value: null,
-                },
-                source: "human",
-              })
-              .catch((err: unknown) => {
-                pushToast("error", err instanceof Error ? err.message : String(err));
-              });
-          }
-        }
+        // Range-aware clear: only the *populated* cells in the
+        // union need a clear command — empty cells are already
+        // empty. Walking the sparse `cells` map keeps "Delete on
+        // entire column" from issuing a million no-op commands.
+        forEachUnionSparseCell(activeSheet.cells.values(), allAreas(selection, extraAreas), (cell) => {
+          void a
+            .applyCommand({
+              type: "xlsx:set-cell-value",
+              payload: {
+                sheet: activeSheet.name,
+                ref: formatA1({ row: cell.row, col: cell.col }),
+                value: null,
+              },
+              source: "human",
+            })
+            .catch((err: unknown) => {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            });
+        });
         return;
       }
 
@@ -1301,9 +1435,7 @@ export function XlsxEditor(): ReactNode {
           },
           source: "human",
         })
-        .catch((err: unknown) =>
-          pushToast("error", err instanceof Error ? err.message : String(err))
-        );
+        .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
     },
     [activeSheet, pushToast]
   );
@@ -1324,9 +1456,7 @@ export function XlsxEditor(): ReactNode {
           },
           source: "human",
         })
-        .catch((err: unknown) =>
-          pushToast("error", err instanceof Error ? err.message : String(err))
-        );
+        .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
     },
     [activeSheet, pushToast]
   );
@@ -1343,9 +1473,7 @@ export function XlsxEditor(): ReactNode {
           payload: { sheet: activeSheet.name, imageId },
           source: "human",
         })
-        .catch((err: unknown) =>
-          pushToast("error", err instanceof Error ? err.message : String(err))
-        );
+        .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
     },
     [activeSheet, pushToast]
   );
@@ -1353,16 +1481,31 @@ export function XlsxEditor(): ReactNode {
   const onSave = useCallback(async () => {
     const a = agentRef.current;
     if (!a) return;
+    setSaveState("saving");
     try {
       const buf = await a.exportFile();
-      const blob = new Blob([buf], { type: XLSX_MIME });
-      const url = URL.createObjectURL(blob);
-      const a2 = document.createElement("a");
-      a2.href = url;
-      a2.download = filename;
-      a2.click();
-      URL.revokeObjectURL(url);
-      pushToast("info", `Exported ${filename}`);
+      const wroteInPlace = await saveFileViaService(
+        new Uint8Array(buf),
+        filename,
+        PRODUCT_FILE_TYPES.xlsx.primaryMime,
+        fileHandleRef.current
+      );
+      setSaveState("saved");
+      pushToast("success", wroteInPlace ? `Saved ${filename}` : `Downloaded ${filename}`);
+    } catch (err) {
+      setSaveState("error");
+      pushToast("error", err instanceof Error ? err.message : String(err));
+    }
+  }, [filename, pushToast]);
+
+  const onExport = useCallback(async () => {
+    const a = agentRef.current;
+    if (!a) return;
+    try {
+      const buf = await a.exportFile();
+      const blob = new Blob([buf as BlobPart], { type: PRODUCT_FILE_TYPES.xlsx.primaryMime });
+      downloadBlob(blob, filename);
+      pushToast("success", `Exported ${filename}`);
     } catch (err) {
       pushToast("error", err instanceof Error ? err.message : String(err));
     }
@@ -1413,22 +1556,24 @@ export function XlsxEditor(): ReactNode {
     (patch: CellFormatPatch) => {
       const a = agentRef.current;
       if (!a || !activeSheet || !selection) return;
-      const range = formatSelection(selection);
-      void a
-        .applyCommand({
-          type: "xlsx:set-cell-format",
-          payload: {
-            sheet: activeSheet.name,
-            range,
-            format: patch,
-          },
-          source: "human",
-        })
-        .catch((err: unknown) => {
-          pushToast("error", err instanceof Error ? err.message : String(err));
-        });
+      // C13 — Fan out across every area in the multi-area selection
+      // so Bold / Fill / Number-format / Borders all "just work" on
+      // disjoint Ctrl-click rectangles.
+      const areas = allAreas(selection, extraAreas);
+      const cmds = areas.map((area) => ({
+        type: "xlsx:set-cell-format" as const,
+        payload: {
+          sheet: activeSheet.name,
+          range: formatSelection(area),
+          format: patch,
+        },
+        source: "human" as const,
+      }));
+      void a.applyCommands(cmds).catch((err: unknown) => {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      });
     },
-    [activeSheet, selection, pushToast]
+    [activeSheet, selection, extraAreas, pushToast]
   );
 
   const dispatchOrToast = useCallback(
@@ -1447,7 +1592,29 @@ export function XlsxEditor(): ReactNode {
         | "xlsx:set-auto-filter"
         | "xlsx:set-filter-column"
         | "xlsx:clear-filter-column"
-        | "xlsx:sort-range",
+        | "xlsx:sort-range"
+        | "xlsx:freeze-panes"
+        | "xlsx:unfreeze-panes"
+        | "xlsx:add-sheet"
+        | "xlsx:rename-sheet"
+        | "xlsx:delete-sheet"
+        | "xlsx:move-sheet"
+        | "xlsx:set-sheet-state"
+        | "xlsx:add-conditional-format"
+        | "xlsx:remove-conditional-format"
+        | "xlsx:clear-conditional-formats"
+        | "xlsx:add-data-validation"
+        | "xlsx:remove-data-validation"
+        | "xlsx:clear-data-validations"
+        | "xlsx:add-defined-name"
+        | "xlsx:update-defined-name"
+        | "xlsx:remove-defined-name"
+        | "xlsx:add-table"
+        | "xlsx:remove-table"
+        | "xlsx:add-chart"
+        | "xlsx:remove-chart"
+        | "xlsx:move-chart"
+        | "xlsx:resize-chart",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -1533,11 +1700,7 @@ export function XlsxEditor(): ReactNode {
     if (typeof sample === "string" && sample.length > 0) return sniffDelimiter(sample);
     return ",";
   }, [activeSheet, selection]);
-  const canTextToColumns = !!(
-    activeSheet &&
-    selection &&
-    selection.anchor.col === selection.focus.col
-  );
+  const canTextToColumns = !!(activeSheet && selection && selection.anchor.col === selection.focus.col);
   const onTextToColumns = useCallback(() => {
     if (!canTextToColumns) return;
     setTtocOpen(true);
@@ -1565,6 +1728,50 @@ export function XlsxEditor(): ReactNode {
     anchor: DOMRect;
   } | null>(null);
 
+  // C5 — Format Cells dialog. `null` = closed; otherwise the value
+  // names the tab the dialog should open onto so different entry
+  // points (Mod+1 vs context-menu "Borders…" vs the toolbar borders
+  // splitter) can land the user where they expect.
+  const [formatCellsTab, setFormatCellsTab] = useState<FormatTabId | null>(null);
+
+  // C7 — Paste Special dialog. Opened on Cmd+Shift+V (Excel parity)
+  // and from the context menu / command palette. The dialog itself
+  // doesn't read the clipboard — confirm bounces back into
+  // `pasteAtSelection` with the chosen mode/transpose.
+  const [pasteSpecialOpen, setPasteSpecialOpen] = useState<boolean>(false);
+
+  // C10 — Conditional Formatting dialog. Lists existing typed rules
+  // for the active sheet plus a "New rule…" form. Opaque rules
+  // imported from the original file aren't surfaced here (they round-
+  // trip via `Sheet.opaqueConditionalFormats` and stay byte-equal).
+  const [conditionalFormatOpen, setConditionalFormatOpen] = useState<boolean>(false);
+
+  // C11 — Data Validation dialog. Same shape as the CF dialog above.
+  const [dataValidationOpen, setDataValidationOpen] = useState<boolean>(false);
+
+  // C8 — Format Painter state. `null` = inactive. When active we
+  // hold onto the source clipboard snapshot (formats only) so each
+  // subsequent target click/drag can reapply the captured formatting.
+  // `sticky=true` mirrors Excel's double-click-to-pin behaviour: the
+  // painter stays active across multiple paints until the user hits
+  // Esc or clicks the toolbar button again.
+  const [formatPainter, setFormatPainter] = useState<{
+    sheet: string;
+    snap: XlsxClipboardSnapshot;
+    sticky: boolean;
+  } | null>(null);
+  const formatPainterRef = useRef(formatPainter);
+  useEffect(() => {
+    formatPainterRef.current = formatPainter;
+  }, [formatPainter]);
+
+  // Late-bound entry point for the Format Painter activation. We
+  // need to reference the activation callback from `onSurfaceKeyDown`
+  // (declared earlier in the file) without creating a TDZ cycle, so
+  // we expose it via a ref that's updated after the callback is
+  // defined further below.
+  const activateFormatPainterRef = useRef<(sticky: boolean) => void>(() => {});
+
   // Auto-detect the used range on a sheet — the smallest A1 rectangle
   // covering every populated cell. Mirrors Excel's behaviour when the
   // user toggles AutoFilter from a single-cell selection.
@@ -1586,6 +1793,262 @@ export function XlsxEditor(): ReactNode {
       end: { row: maxR, col: maxC },
     });
   }, []);
+
+  const onFreeze = useCallback(
+    (rows: number, cols: number) => {
+      if (!activeSheet) return;
+      if (rows === 0 && cols === 0) {
+        dispatchOrToast("xlsx:unfreeze-panes", { sheet: activeSheet.name });
+        return;
+      }
+      dispatchOrToast("xlsx:freeze-panes", { sheet: activeSheet.name, rows, cols });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  /**
+   * C9 — Sheet management. Each callback dispatches a single
+   * command and lets the bus handle undo/redo + dirty tracking.
+   * Errors surface through the existing toast queue so the user
+   * always sees Excel's own validation messages (duplicate sheet
+   * name, last visible sheet, etc.).
+   */
+  const onAddSheet = useCallback(() => {
+    const a = agentRef.current;
+    if (!a) return;
+    const existing = new Set(snapshot?.root.sheets.map((s) => s.name.toLowerCase()) ?? []);
+    let i = snapshot?.root.sheets.length ?? 0;
+    let name = `Sheet${i + 1}`;
+    while (existing.has(name.toLowerCase())) {
+      i += 1;
+      name = `Sheet${i + 1}`;
+    }
+    void a
+      .applyCommand({ type: "xlsx:add-sheet", payload: { name }, source: "human" })
+      .then(() => setActiveSheetName(name))
+      .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
+  }, [snapshot, pushToast]);
+
+  const onRenameSheet = useCallback(
+    (currentName: string, nextName: string) => {
+      dispatchOrToast("xlsx:rename-sheet", { name: currentName, newName: nextName });
+      setActiveSheetName((prev) => (prev === currentName ? nextName : prev));
+    },
+    [dispatchOrToast]
+  );
+
+  const onDeleteSheet = useCallback(
+    (name: string) => {
+      const sheets = snapshot?.root.sheets ?? [];
+      const idx = sheets.findIndex((s) => s.name === name);
+      const fallback =
+        sheets.find((s) => s.name !== name && s.state === "visible")?.name ??
+        sheets.find((s) => s.name !== name)?.name ??
+        null;
+      dispatchOrToast("xlsx:delete-sheet", { name });
+      setActiveSheetName((prev) => (prev === name ? fallback : prev));
+      void idx;
+    },
+    [snapshot, dispatchOrToast]
+  );
+
+  const onMoveSheet = useCallback(
+    (name: string, to: number) => {
+      dispatchOrToast("xlsx:move-sheet", { name, to });
+    },
+    [dispatchOrToast]
+  );
+
+  const onSetSheetState = useCallback(
+    (name: string, state: "visible" | "hidden" | "veryHidden") => {
+      dispatchOrToast("xlsx:set-sheet-state", { name, state });
+      // If we just hid the active sheet, swing focus to the next
+      // visible sheet so the editor never bottoms out on a hidden
+      // surface.
+      if (state !== "visible") {
+        const sheets = snapshot?.root.sheets ?? [];
+        setActiveSheetName((prev) => {
+          if (prev !== name) return prev;
+          const next = sheets.find((s) => s.name !== name && s.state === "visible");
+          return next?.name ?? prev;
+        });
+      }
+    },
+    [dispatchOrToast, snapshot]
+  );
+
+  // C10 — Conditional Formatting commands. Each one routes through
+  // dispatchOrToast so undo/redo + dirty tracking + toast on error
+  // come for free.
+  const onAddConditionalFormat = useCallback(
+    (rule: ConditionalFormat) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:add-conditional-format", { sheet: activeSheet.name, rule });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  const onRemoveConditionalFormat = useCallback(
+    (id: string) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:remove-conditional-format", { sheet: activeSheet.name, id });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  const onClearConditionalFormats = useCallback(() => {
+    if (!activeSheet) return;
+    dispatchOrToast("xlsx:clear-conditional-formats", { sheet: activeSheet.name });
+  }, [activeSheet, dispatchOrToast]);
+
+  // C11 — Data Validation commands.
+  const onAddDataValidation = useCallback(
+    (rule: DataValidation) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:add-data-validation", { sheet: activeSheet.name, rule });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  const onRemoveDataValidation = useCallback(
+    (id: string) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:remove-data-validation", { sheet: activeSheet.name, id });
+    },
+    [activeSheet, dispatchOrToast]
+  );
+
+  const onClearDataValidations = useCallback(() => {
+    if (!activeSheet) return;
+    dispatchOrToast("xlsx:clear-data-validations", { sheet: activeSheet.name });
+  }, [activeSheet, dispatchOrToast]);
+
+  // C12 — Defined names (named ranges).
+  const definedNames = useMemo<ReadonlyArray<DefinedName>>(
+    () => snapshot?.root.definedNames ?? [],
+    [snapshot]
+  );
+  const [nameManagerOpen, setNameManagerOpen] = useState<boolean>(false);
+
+  /**
+   * Format the current selection as an absolute, sheet-qualified
+   * `Sheet1!$A$1:$C$5` reference. Used as the default `refersTo`
+   * value when minting a new defined name from the Name Box or the
+   * Name Manager dialog.
+   */
+  const selectionRefersTo = useMemo(() => {
+    if (!activeSheet || !selection) return "";
+    const r = selectionToRange(selection);
+    const a1 = (row: number, col: number) => `$${colToLetter(col)}$${row + 1}`;
+    const sheet = activeSheet.name.match(/^[A-Za-z_][\w. ]*$/)
+      ? activeSheet.name
+      : `'${activeSheet.name.replace(/'/g, "''")}'`;
+    if (r.start.row === r.end.row && r.start.col === r.end.col) {
+      return `${sheet}!${a1(r.start.row, r.start.col)}`;
+    }
+    return `${sheet}!${a1(r.start.row, r.start.col)}:${a1(r.end.row, r.end.col)}`;
+  }, [activeSheet, selection]);
+
+  const onAddDefinedName = useCallback(
+    (entry: { name: string; refersTo: string; scope?: string; comment?: string }) => {
+      dispatchOrToast("xlsx:add-defined-name", entry);
+    },
+    [dispatchOrToast]
+  );
+
+  const onUpdateDefinedName = useCallback(
+    (entry: { name: string; scope?: string; nextName?: string; refersTo?: string; comment?: string }) => {
+      dispatchOrToast("xlsx:update-defined-name", entry);
+    },
+    [dispatchOrToast]
+  );
+
+  const onRemoveDefinedName = useCallback(
+    (entry: { name: string; scope?: string }) => {
+      dispatchOrToast("xlsx:remove-defined-name", entry);
+    },
+    [dispatchOrToast]
+  );
+
+  /**
+   * Resolve a Name Box input to a navigable target: a defined name
+   * resolves to the range it points at; an A1 cell or range
+   * resolves to itself. Returns true when the input could be
+   * navigated, false otherwise (lets the caller treat the input as
+   * a "create-new" intent).
+   */
+  const onJumpFromNameBox = useCallback(
+    (input: string): boolean => {
+      const trimmed = input.trim();
+      if (!trimmed) return false;
+      // Sheet-qualified ref (`Sheet1!A1` or `'My Sheet'!A1:C5`).
+      const sheetQualified = /^(?:'((?:[^']|'')+)'|([A-Za-z_][\w. ]*))!(.+)$/.exec(trimmed);
+      let targetSheetName: string | undefined;
+      let body = trimmed;
+      if (sheetQualified) {
+        targetSheetName = (sheetQualified[1] ?? sheetQualified[2] ?? "").replace(/''/g, "'");
+        body = sheetQualified[3]!;
+      }
+      const cleaned = body.replace(/\$/g, "").toUpperCase();
+      const tryNavigateRef = (sheetName: string | undefined, ref: string): boolean => {
+        try {
+          if (ref.includes(":")) {
+            const range = parseRange(ref);
+            const sheetTarget =
+              sheetName && snapshot?.root.sheets.some((s) => s.name === sheetName)
+                ? sheetName
+                : activeSheetName;
+            if (sheetTarget && sheetTarget !== activeSheetName) setActiveSheetName(sheetTarget);
+            setSelection({
+              anchor: { row: range.start.row, col: range.start.col },
+              focus: { row: range.end.row, col: range.end.col },
+            });
+            return true;
+          }
+          const cell = parseA1(ref);
+          if (cell) {
+            const sheetTarget =
+              sheetName && snapshot?.root.sheets.some((s) => s.name === sheetName)
+                ? sheetName
+                : activeSheetName;
+            if (sheetTarget && sheetTarget !== activeSheetName) setActiveSheetName(sheetTarget);
+            setSelection(singleSelection({ row: cell.row, col: cell.col }));
+            return true;
+          }
+        } catch {
+          /* fall through */
+        }
+        return false;
+      };
+      // 1) Try a direct cell/range parse first.
+      if (tryNavigateRef(targetSheetName, cleaned)) return true;
+      // 2) Try a defined-name lookup (workbook + active sheet scope).
+      const dn = definedNames.find(
+        (d) => d.name === trimmed && (d.scope === undefined || d.scope === activeSheetName)
+      );
+      if (dn) {
+        const m = /^(?:'((?:[^']|'')+)'|([A-Za-z_][\w. ]*))!(.+)$/.exec(dn.refersTo.trim().replace(/^=/, ""));
+        const sheetName = m
+          ? (m[1] ?? m[2] ?? activeSheetName ?? "").replace(/''/g, "'")
+          : (activeSheetName ?? "");
+        const refBody = (m ? m[3]! : dn.refersTo.trim().replace(/^=/, "")).replace(/\$/g, "");
+        return tryNavigateRef(sheetName || undefined, refBody.toUpperCase());
+      }
+      return false;
+    },
+    [definedNames, activeSheetName, snapshot]
+  );
+
+  const onCreateNameFromBox = useCallback(
+    (name: string) => {
+      if (!selectionRefersTo) {
+        pushToast("warn", "Select a range first");
+        return;
+      }
+      onAddDefinedName({ name, refersTo: selectionRefersTo });
+    },
+    [selectionRefersTo, onAddDefinedName, pushToast]
+  );
 
   const onToggleFilter = useCallback(() => {
     if (!activeSheet) return;
@@ -1770,6 +2233,118 @@ export function XlsxEditor(): ReactNode {
     }
   }, [activeSheet, selection, pushToast]);
 
+  /**
+   * C6 — Borders splitter dispatcher.
+   *
+   * For uniform-side presets (all, top, bottom, left, right,
+   * top-bottom, top-thick-bottom, none) we dispatch a single
+   * `xlsx:set-cell-format` over the whole selection. For outside /
+   * thick-outside on a multi-cell selection we dispatch up to 4
+   * sub-range patches so the perimeter cells get the right sides.
+   *
+   * Notes:
+   *   - "none" clears all 4 sides via `style: "none"` (the patch
+   *     handler interprets that as a deletion).
+   *   - We always include `border` even for single-side presets so
+   *     the existing other sides stay intact.
+   */
+  const onApplyBorderPreset = useCallback(
+    (preset: BorderPreset) => {
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return;
+      const sheet = activeSheet.name;
+
+      const thin = (color?: string): { style: "thin"; color?: string } =>
+        color ? { style: "thin", color } : { style: "thin" };
+      const thick = (color?: string): { style: "medium"; color?: string } =>
+        color ? { style: "medium", color } : { style: "medium" };
+      const noneSide = { style: "none" as const };
+
+      // C13 — Build the full command list across every area and
+      // dispatch as one batch so undo / redo treats the multi-area
+      // border change as a single user gesture.
+      const allCmds: Array<{
+        type: "xlsx:set-cell-format";
+        payload: SetCellFormatPayload;
+        source: "human";
+      }> = [];
+
+      const buildForArea = (area: Selection): void => {
+        const n = normalizeSelection(area);
+        const wholeRange = formatSelection(area);
+        const push = (range: string, format: CellFormatPatch) =>
+          allCmds.push({
+            type: "xlsx:set-cell-format",
+            payload: { sheet, range, format },
+            source: "human",
+          });
+
+        switch (preset) {
+          case "all":
+            push(wholeRange, {
+              border: { top: thin(), right: thin(), bottom: thin(), left: thin() },
+            });
+            return;
+          case "none":
+            push(wholeRange, {
+              border: { top: noneSide, right: noneSide, bottom: noneSide, left: noneSide },
+            });
+            return;
+          case "top":
+            push(wholeRange, { border: { top: thin() } });
+            return;
+          case "bottom":
+            push(wholeRange, { border: { bottom: thin() } });
+            return;
+          case "left":
+            push(wholeRange, { border: { left: thin() } });
+            return;
+          case "right":
+            push(wholeRange, { border: { right: thin() } });
+            return;
+          case "top-bottom":
+            push(wholeRange, { border: { top: thin(), bottom: thin() } });
+            return;
+          case "top-thick-bottom":
+            push(wholeRange, { border: { top: thin(), bottom: thick() } });
+            return;
+          case "outside":
+          case "thick-outside": {
+            const side = preset === "thick-outside" ? thick : thin;
+            if (n.r0 === n.r1 && n.c0 === n.c1) {
+              push(wholeRange, {
+                border: { top: side(), right: side(), bottom: side(), left: side() },
+              });
+              return;
+            }
+            push(formatRange({ start: { row: n.r0, col: n.c0 }, end: { row: n.r0, col: n.c1 } }), {
+              border: { top: side() },
+            });
+            push(formatRange({ start: { row: n.r1, col: n.c0 }, end: { row: n.r1, col: n.c1 } }), {
+              border: { bottom: side() },
+            });
+            push(formatRange({ start: { row: n.r0, col: n.c0 }, end: { row: n.r1, col: n.c0 } }), {
+              border: { left: side() },
+            });
+            push(formatRange({ start: { row: n.r0, col: n.c1 }, end: { row: n.r1, col: n.c1 } }), {
+              border: { right: side() },
+            });
+            return;
+          }
+          default: {
+            const _exhaustive: never = preset;
+            void _exhaustive;
+          }
+        }
+      };
+
+      for (const area of allAreas(selection, extraAreas)) buildForArea(area);
+
+      void a.applyCommands(allCmds).catch((err: unknown) => pushToast("error", String(err)));
+    },
+    [activeSheet, selection, extraAreas, pushToast]
+  );
+
   const onClearFormats = useCallback(() => {
     if (!activeSheet || !selection) return;
     onApplyFormat({
@@ -1795,6 +2370,145 @@ export function XlsxEditor(): ReactNode {
   const onPasteMenu = useCallback(() => {
     void pasteAtSelection();
   }, [pasteAtSelection]);
+
+  // C7 — Confirm callback from the Paste Special dialog. The dialog
+  // owns no clipboard state; on confirm we close it and bounce back
+  // into `pasteAtSelection` with the chosen mode/transpose so the
+  // existing async clipboard read + permission dance stays in one
+  // place.
+  const onPasteSpecialConfirm = useCallback(
+    (opts: PasteSpecialOptions) => {
+      setPasteSpecialOpen(false);
+      void pasteAtSelection(undefined, opts);
+    },
+    [pasteAtSelection]
+  );
+
+  // C8 — Format Painter activate / cancel. Single click pins for one
+  // paint, double-click pins until cancelled. When activated without
+  // a selection we no-op + toast (same as Excel: nothing to copy
+  // from). Re-activating while already on toggles off so the
+  // toolbar button feels like a regular toggle.
+  const activateFormatPainter = useCallback(
+    (sticky: boolean) => {
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) {
+        pushToast("warn", "Select a cell first to copy its format.");
+        return;
+      }
+      // Toggle off if already active (matches the toolbar button's
+      // press/unpress affordance).
+      if (formatPainter) {
+        setFormatPainter(null);
+        return;
+      }
+      try {
+        const range = formatSelection(selection);
+        const snap = a.getClipboardSnapshot({ sheet: activeSheet.name, range });
+        setFormatPainter({ sheet: activeSheet.name, snap, sticky });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [activeSheet, selection, formatPainter, pushToast]
+  );
+
+  // Mirror the activate callback into the late-bound ref so the
+  // earlier `onSurfaceKeyDown` handler can dispatch it without
+  // creating a TDZ-illegal forward reference in its dependency
+  // array.
+  useEffect(() => {
+    activateFormatPainterRef.current = activateFormatPainter;
+  }, [activateFormatPainter]);
+
+  // C8 — Track whether the user is *currently* dragging out the
+  // destination range while Format Painter is armed. We set this
+  // when `handleGridSelect` is called with `extend=false` (a fresh
+  // mousedown on the grid) and clear it on the global `mouseup`,
+  // at which point we apply the captured format to whatever the
+  // selection ended up covering.
+  const formatPainterPendingRef = useRef<boolean>(false);
+
+  /**
+   * C8 — Apply the captured Format Painter source to the current
+   * selection. If the source is 1×1 we expand it across the
+   * destination grid so the single style fills the whole target
+   * range (Excel parity). For multi-cell sources we paste once at
+   * the destination's anchor with the source's natural HxW.
+   */
+  const applyFormatPainterAt = useCallback(
+    (target: Selection) => {
+      const a = agentRef.current;
+      const fp = formatPainterRef.current;
+      if (!a || !fp) return;
+      const sh = snapshotRef.current?.root.sheets.find((s) => s.name === fp.sheet);
+      if (!sh) return;
+      const n = normalizeSelection(target);
+      const targetH = n.r1 - n.r0 + 1;
+      const targetW = n.c1 - n.c0 + 1;
+
+      let source: XlsxClipboardSnapshot = fp.snap;
+      if (fp.snap.height === 1 && fp.snap.width === 1) {
+        const cell = fp.snap.cells[0]?.[0] ?? null;
+        const expanded: XlsxClipboardSnapshot = {
+          origin: fp.snap.origin,
+          width: targetW,
+          height: targetH,
+          cells: Array.from({ length: targetH }, () =>
+            Array.from({ length: targetW }, () => (cell ? { ...cell } : null))
+          ),
+          merges: [],
+        };
+        source = expanded;
+      }
+
+      void a
+        .applyCommand({
+          type: "xlsx:paste-range",
+          payload: {
+            sheet: fp.sheet,
+            target: formatA1({ row: n.r0, col: n.c0 }),
+            source,
+            mode: "formats",
+          },
+          source: "human",
+        })
+        .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
+
+      if (!fp.sticky) setFormatPainter(null);
+    },
+    [pushToast]
+  );
+
+  // C8 — Global mouseup listener that finishes a Format Painter
+  // drop. When the user mousedowns on the grid while painter is on
+  // we set `formatPainterPendingRef`; the eventual mouseup reads
+  // the latest selection from `selectionRef` and dispatches the
+  // formats paste. Esc cancels the painter without dropping.
+  useEffect(() => {
+    const onUp = () => {
+      if (!formatPainterPendingRef.current) return;
+      formatPainterPendingRef.current = false;
+      const sel = selectionRef.current;
+      if (sel) applyFormatPainterAt(sel);
+    };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, [applyFormatPainterAt]);
+
+  // Esc cancels Format Painter even outside the surface focus.
+  useEffect(() => {
+    if (!formatPainter) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFormatPainter(null);
+        formatPainterPendingRef.current = false;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [formatPainter]);
 
   const ctxMenuItems = useMemo<ReadonlyArray<ContextMenuItem>>(() => {
     if (!ctxMenu) return [];
@@ -1824,6 +2538,14 @@ export function XlsxEditor(): ReactNode {
         shortcut: "⌘V",
         disabled: !canCopyHere,
         onSelect: onPasteMenu,
+      },
+      {
+        kind: "action",
+        id: "paste-special",
+        label: "Paste Special…",
+        shortcut: "⇧⌘V",
+        disabled: !canCopyHere,
+        onSelect: () => setPasteSpecialOpen(true),
       },
       { kind: "divider", id: "div-clipboard" },
       {
@@ -1863,6 +2585,26 @@ export function XlsxEditor(): ReactNode {
         label: "Text to Columns…",
         disabled: !canTextToColumns,
         onSelect: onTextToColumns,
+      },
+      { kind: "divider", id: "div-format" },
+      {
+        kind: "action",
+        id: "format-cells",
+        label: "Format cells…",
+        shortcut: "⌘1",
+        onSelect: () => setFormatCellsTab("number"),
+      },
+      {
+        kind: "action",
+        id: "data-validation",
+        label: "Data validation…",
+        onSelect: () => setDataValidationOpen(true),
+      },
+      {
+        kind: "action",
+        id: "conditional-format",
+        label: "Conditional formatting…",
+        onSelect: () => setConditionalFormatOpen(true),
       },
     ];
     if (target.kind === "image") {
@@ -2003,7 +2745,9 @@ export function XlsxEditor(): ReactNode {
           kind: "action",
           id: "clear-filter-from-col",
           label: "Clear filter from column",
-          disabled: !activeSheet?.autoFilter || !activeSheet.autoFilter.columns.has(target.col - activeSheet.autoFilter.range.c1),
+          disabled:
+            !activeSheet?.autoFilter ||
+            !activeSheet.autoFilter.columns.has(target.col - activeSheet.autoFilter.range.c1),
           onSelect: () => {
             if (!activeSheet?.autoFilter) return;
             const colId = target.col - activeSheet.autoFilter.range.c1;
@@ -2076,430 +2820,1030 @@ export function XlsxEditor(): ReactNode {
     selection
   );
 
-  return (
-    <div
-      ref={surfaceRef}
-      tabIndex={0}
-      onKeyDown={onSurfaceKeyDown}
-      onCopy={onSurfaceCopy}
-      onCut={onSurfaceCut}
-      onPaste={onSurfacePaste}
-      data-testid="xlsx-surface"
-      data-whole-row={wholeRowSelection ? "1" : "0"}
-      data-whole-col={wholeColSelection ? "1" : "0"}
-      className={cn(
-        "xlsx-editor relative flex h-full min-h-0 flex-col gap-3 outline-none",
-        dragOver && "ring-2 ring-[var(--ai-violet)] ring-offset-2"
-      )}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".xlsx"
-        data-testid="open-xlsx-input"
-        className="sr-only"
-        onChange={onFileInputChange}
-      />
-      <input
-        ref={imageInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/gif"
-        data-testid="insert-image-input"
-        className="sr-only"
-        onChange={onImageInputChange}
-      />
-      <header className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-divider bg-surface px-3 py-2">
-        <div className="flex items-center gap-3">
-          <span data-testid="filename" className="text-sm font-medium text-foreground">
-            {filename}
-          </span>
-          <span
-            data-testid="revision-badge"
-            className="rounded-full border border-divider bg-background px-2 py-0.5 text-[10px] font-medium text-secondary"
-          >
-            rev {revision}
-          </span>
-          <span
-            data-testid="pending-badge"
-            className={cn(
-              "rounded-full px-2 py-0.5 text-[10px] font-medium",
-              pendingCount > 0
-                ? "bg-[var(--ai-violet-light)] text-[var(--ai-violet)]"
-                : "bg-background text-secondary"
-            )}
-          >
-            {pendingCount} pending
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onPickFile}
-            data-testid="open-xlsx"
-            title="Open .xlsx from disk"
-          >
-            <FolderOpen size={14} />
-            Open
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => void onSave()}
-            disabled={!agent}
-            data-testid="save-xlsx"
-          >
-            <Download size={14} />
-            Save
-          </Button>
-        </div>
-      </header>
-      {dragOver ? (
-        <div
-          aria-hidden
-          className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-[var(--ai-violet)]/10"
-        >
-          <div className="rounded-lg border border-[var(--ai-violet)] bg-surface px-4 py-2 text-sm text-foreground shadow-md">
-            Drop a .xlsx file to open
-          </div>
-        </div>
-      ) : null}
+  // C2 — Status-bar selection summary, Excel-parity: chips for Sum,
+  // Avg, Count (non-empty), Numerical Count, Min, Max. We *iterate
+  // the sparse `cells` map and filter to the selection rectangle*
+  // rather than walking every (r, c) in range — Ctrl+A on a 1M ×
+  // 16K sheet would otherwise OOM the main thread. The map is
+  // already keyed by the cells the user has touched.
+  // C10 — Pre-compute conditional-format overlays for the active
+  // sheet. Memoised on `activeSheet` so we recompute on cell edits
+  // (which produce a fresh sheet object) and on rule changes
+  // (which also re-emit the sheet via the bus).
+  const cfOverlays = useMemo(() => {
+    if (!activeSheet) return undefined;
+    if (activeSheet.conditionalFormats.length === 0) return undefined;
+    return evaluateConditionalFormats(activeSheet);
+  }, [activeSheet]);
 
-      {snapshot ? (
-        <Toolbar
-          disabled={!agent || !selection}
-          anchorStyleId={selectedCell?.styleId}
-          styles={snapshot.root.styles}
-          selection={selection}
-          onApply={onApplyFormat}
-          textFormatProvider={textFormatProvider}
-          textFormatActive={textFormatActive}
-          canMerge={canMerge}
-          canUnmerge={canUnmerge}
-          onMerge={onMerge}
-          onUnmerge={onUnmerge}
-          canUndo={agent?.canUndo() ?? false}
-          canRedo={agent?.canRedo() ?? false}
-          onUndo={() => {
-            const a = agentRef.current;
-            if (a && a.canUndo()) a.undo();
-          }}
-          onRedo={() => {
-            const a = agentRef.current;
-            if (a && a.canRedo()) a.redo();
-          }}
-          canTextToColumns={canTextToColumns}
-          onTextToColumns={onTextToColumns}
-          onOpenShortcuts={() => shortcutsDialog.setOpen(true)}
-          onAddComment={focusCommentComposer}
-          onToggleFilter={onToggleFilter}
-          filterActive={!!activeSheet?.autoFilter}
-          onInsertImage={onInsertImageClick}
-        />
-      ) : null}
+  // C11 — Per-cell data-validation index. Maps `r:c` → resolved
+  // dropdown options for cells covered by a typed `list` rule. We
+  // only resolve literal lists here; formula refs are surfaced as
+  // an empty option list with a placeholder hint so the user still
+  // sees the dropdown arrow.
+  const dvIndex = useMemo(() => {
+    if (!activeSheet || activeSheet.dataValidations.length === 0) return undefined;
+    const out = new Map<string, ReadonlyArray<string>>();
+    for (const dv of activeSheet.dataValidations) {
+      if (dv.kind !== "list") continue;
+      let range;
+      try {
+        range = parseRange(dv.range);
+      } catch {
+        continue;
+      }
+      const options: string[] = dv.formula
+        ? resolveFormulaListOptions(dv.source, activeSheet)
+        : dv.source
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+      for (let r = range.start.row; r <= range.end.row; r++) {
+        for (let c = range.start.col; c <= range.end.col; c++) {
+          out.set(cellKey(r, c), options);
+        }
+      }
+    }
+    return out;
+  }, [activeSheet]);
 
-      <TextToColumnsPopover
-        open={ttocOpen}
-        defaultDelimiter={ttocDefaultDelim}
-        onCancel={() => setTtocOpen(false)}
-        onConfirm={onTextToColumnsConfirm}
-      />
+  const selectionAggregates = useMemo(() => {
+    if (!activeSheet || !selection) return undefined;
+    const areas = allAreas(selection, extraAreas);
+    // Span = number of cells covered by the union (rectangle sum,
+    // not deduped — overlapping ranges are rare and a small over-
+    // estimate is harmless here). We compute this from rectangle
+    // math so a "select entire column" gesture stays O(1) instead of
+    // walking 1M coordinates.
+    const span = unionSpanUpperBound(areas);
+    if (span < 2) return undefined;
+    let sum = 0;
+    let count = 0;
+    let countNum = 0;
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    // Iterate the SPARSE cells map and filter to the union; this is
+    // O(numPopulatedCells) regardless of how large the selection
+    // rectangle is. The previous code paid O(spanOfRectangle) which
+    // froze the page on whole-column selections.
+    for (const cell of activeSheet.cells.values()) {
+      if (!areasContainCell(areas, cell.row, cell.col)) continue;
+      const v: CellValue = cell.value;
+      if (v === null || v === undefined) continue;
+      count += 1;
+      if (typeof v === "number" && Number.isFinite(v)) {
+        countNum += 1;
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    if (count === 0) return undefined;
+    const fmt = (n: number) => (Math.abs(n) >= 1e6 ? n.toExponential(2) : Number(n.toFixed(4)).toString());
+    const out: { readonly label: string; readonly value: string }[] = [];
+    if (countNum > 0) {
+      out.push({ label: "Sum", value: fmt(sum) });
+      out.push({ label: "Avg", value: fmt(sum / countNum) });
+      out.push({ label: "Min", value: fmt(min) });
+      out.push({ label: "Max", value: fmt(max) });
+    }
+    // "Count" mirrors Excel's "Count" (non-empty cells); when there
+    // are non-numeric values mixed in we expose the numeric count
+    // separately so the user can disambiguate.
+    out.push({ label: "Count", value: String(count) });
+    if (countNum > 0 && countNum !== count) {
+      out.push({ label: "Numerical Count", value: String(countNum) });
+    }
+    return out;
+  }, [activeSheet, selection, extraAreas]);
 
-      {activeSheet?.autoFilter && filterDropdown ? (
-        <FilterDropdown
-          open
-          sheet={activeSheet}
-          styles={snapshot!.root.styles}
-          autoFilter={activeSheet.autoFilter}
-          colId={filterDropdown.colId}
-          anchor={filterDropdown.anchor}
-          onClose={onCloseFilter}
-          onSort={onSortFromFilter}
-          onClear={onClearFilterColumn}
-          onApply={onApplyFilterColumn}
-        />
-      ) : null}
+  const selectionText = useMemo(() => {
+    if (!activeSheet) return "";
+    if (selectionAggregates && selectionAggregates.length > 0) return undefined;
+    const ref = selectedRef || "—";
+    return `${activeSheet.name}!${ref}`;
+  }, [activeSheet, selectionAggregates, selectedRef]);
 
-      <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
-        <span
-          data-testid="cell-ref"
-          className="inline-flex h-7 min-w-[60px] items-center justify-center rounded border border-divider bg-background px-2 text-xs font-mono text-foreground"
-        >
-          {selectedRef || "—"}
-        </span>
-        <span className="text-secondary text-xs font-mono">fx</span>
-        <div className="relative flex-1 font-mono text-xs">
-          <FormulaHighlight
-            value={formulaValue}
-            tokens={formulaTokens}
-            refColors={refColors}
-            scrollLeft={formulaScrollLeft}
+  // Open comment count for the right-rail badge.
+  const openCommentCount = useMemo(() => {
+    if (!activeSheet) return 0;
+    let n = 0;
+    for (const c of activeSheet.comments) {
+      if (c.parentId) continue;
+      if (c.resolved) continue;
+      n += 1;
+    }
+    return n;
+  }, [activeSheet]);
+
+  // C4 — Find/Replace adapter for XLSX. Excel-parity behaviour:
+  //   * One {@link FindMatch} per *occurrence* (not per cell), so
+  //     "Find Next" walks through every hit, including multiple
+  //     matches inside a single cell.
+  //   * Search runs against displayed text and (when the cell carries
+  //     a formula) the formula text prefixed with `=`. Replacements
+  //     write back through `xlsx:set-cell-value`, so a formula edit
+  //     keeps the formula and a literal edit re-parses through
+  //     `parseLiteral` (so "12,300" doesn't decay into a string).
+  //   * Walks cells in row-major order. With the C1 sparse model this
+  //     stays linear in the number of *populated* cells regardless of
+  //     the 16K × 1M virtual bounds.
+  //   * `gotoMatch` snaps the selection to the cell and fires the
+  //     existing scroll-into-view-with-flash plumbing the comments
+  //     rail uses, so the user always sees what was found.
+  const findAdapter = useMemo<FindAdapter | undefined>(() => {
+    if (!activeSheet) return undefined;
+    const sheet = activeSheet;
+    const buildRegex = (q: string, opts: FindOptions): RegExp | null => {
+      if (q.length === 0) return null;
+      try {
+        const flags = opts.caseSensitive ? "g" : "gi";
+        const body = opts.regex ? q : q.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+        const wrapped = opts.wholeWord ? `\\b${body}\\b` : body;
+        return new RegExp(wrapped, flags);
+      } catch {
+        return null;
+      }
+    };
+    const cellText = (cell: { formula?: { text: string }; value: unknown }): string => {
+      if (cell.formula) return `=${cell.formula.text}`;
+      if (cell.value === null || cell.value === undefined) return "";
+      return String(cell.value);
+    };
+    const cellsInOrder = (): Array<{ row: number; col: number; text: string }> => {
+      const arr: Array<{ row: number; col: number; text: string }> = [];
+      for (const cell of sheet.cells.values()) {
+        const t = cellText(cell);
+        if (t.length === 0) continue;
+        arr.push({ row: cell.row, col: cell.col, text: t });
+      }
+      arr.sort((a, b) => a.row - b.row || a.col - b.col);
+      return arr;
+    };
+    return {
+      findAll(query, opts) {
+        const re = buildRegex(query, opts);
+        if (!re) return [];
+        const results: FindMatch[] = [];
+        for (const c of cellsInOrder()) {
+          re.lastIndex = 0;
+          let m: RegExpExecArray | null;
+          while ((m = re.exec(c.text)) !== null) {
+            const ref = formatA1({ row: c.row, col: c.col });
+            results.push({
+              id: `${c.row}:${c.col}:${m.index}:${m[0].length}`,
+              preview: `${sheet.name}!${ref}  ${c.text}`,
+            });
+            if (m[0].length === 0) re.lastIndex += 1;
+          }
+        }
+        return results;
+      },
+      gotoMatch(match) {
+        const [r, c] = match.id.split(":").map(Number);
+        if (Number.isFinite(r) && Number.isFinite(c)) {
+          setSelection(singleSelection({ row: r, col: c }));
+          setCommentScrollTarget((prev) => ({
+            row: r,
+            col: c,
+            nonce: (prev?.nonce ?? 0) + 1,
+          }));
+        }
+      },
+      async replaceMatch(match, replacement) {
+        const a = agentRef.current;
+        if (!a) return;
+        const parts = match.id.split(":");
+        const r = Number(parts[0]);
+        const c = Number(parts[1]);
+        const idx = Number(parts[2] ?? "");
+        const len = Number(parts[3] ?? "");
+        if (!Number.isFinite(r) || !Number.isFinite(c) || !Number.isFinite(idx) || !Number.isFinite(len))
+          return;
+        const cell = sheet.cells.get(cellKey(r, c));
+        if (!cell) return;
+        const text = cellText(cell);
+        if (idx < 0 || idx + len > text.length) return;
+        const replaced = text.slice(0, idx) + replacement + text.slice(idx + len);
+        if (replaced === text) return;
+        await a.applyCommand({
+          type: "xlsx:set-cell-value",
+          payload: {
+            sheet: sheet.name,
+            ref: formatA1({ row: r, col: c }),
+            value: replaced.startsWith("=") ? replaced : parseLiteral(replaced),
+          },
+          source: "human",
+        });
+      },
+      async replaceAll(query, replacement, opts) {
+        const a = agentRef.current;
+        if (!a) return 0;
+        const re = buildRegex(query, opts);
+        if (!re) return 0;
+        let count = 0;
+        for (const cell of sheet.cells.values()) {
+          const text = cellText(cell);
+          if (text.length === 0) continue;
+          re.lastIndex = 0;
+          if (!re.test(text)) continue;
+          re.lastIndex = 0;
+          const replaced = text.replace(re, replacement);
+          if (replaced === text) continue;
+          await a.applyCommand({
+            type: "xlsx:set-cell-value",
+            payload: {
+              sheet: sheet.name,
+              ref: formatA1({ row: cell.row, col: cell.col }),
+              value: replaced.startsWith("=") ? replaced : parseLiteral(replaced),
+            },
+            source: "human",
+          });
+          // Each cell counts once even if it carried multiple matches —
+          // matches Excel's "N replacements made" status which counts
+          // *cells changed*, not individual occurrences.
+          count += 1;
+        }
+        return count;
+      },
+    };
+  }, [activeSheet]);
+
+  const renderCommentsPanel = useCallback((): ReactNode => {
+    if (!agent || !activeSheet) {
+      return <div className="p-4 text-sm text-secondary">No sheet selected.</div>;
+    }
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <CommentsSidebar
+            key={`xlsx-comments-${activeSheet.name}-${revision}`}
+            provider={createXlsxCommentsProvider({
+              agent,
+              sheetName: activeSheet.name,
+              onScrollTo: scrollToComment,
+            })}
+            author="You"
+            emptyHint="No comments on this sheet yet. Select a cell and press Add comment in the toolbar."
+            onScrollTo={scrollToComment}
           />
-          <input
-            ref={formulaInputRef}
-            data-testid="formula-input"
-            aria-label="Formula bar"
-            value={formulaValue}
-            onScroll={(e) => setFormulaScrollLeft(e.currentTarget.scrollLeft)}
-            onChange={(e) => {
-              // A user keystroke invalidates the click-to-insert pending
-              // span — anything they type from here adds to / replaces
-              // the formula instead of extending the picked ref.
-              pendingRefSpanRef.current = null;
-              pendingRefAnchorRef.current = null;
-              setFormulaDraft(e.target.value);
-              captureCaret();
-            }}
-            onSelect={captureCaret}
-            onClick={captureCaret}
-            onFocus={() => {
-              // Only seed the draft from the resolved cell value when the
-              // user is focusing the bar fresh (mouse click, Tab). When
-              // type-to-edit has already pre-filled `formulaDraft`, leave
-              // it alone — otherwise the just-typed character would be
-              // clobbered by the cell's prior value.
-              if (formulaDraft === "") setFormulaDraft(derivedFormulaDisplay);
-              setFormulaFocused(true);
-              requestAnimationFrame(captureCaret);
-            }}
-            onBlur={() => {
-              setFormulaFocused(false);
-              setFormulaDraft("");
-              pendingRefSpanRef.current = null;
-              pendingRefAnchorRef.current = null;
-            }}
-            onKeyDown={(e) => {
-              const hasSuggestions = suggestionMatches.length > 0;
-              if (hasSuggestions && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-                e.preventDefault();
-                setSuggestHighlight((prev) => {
-                  const dir = e.key === "ArrowDown" ? 1 : -1;
-                  const n = suggestionMatches.length;
-                  return (prev + dir + n) % n;
-                });
-                return;
-              }
-              if (hasSuggestions && (e.key === "Tab" || e.key === "Enter")) {
-                // Enter accepts a suggestion only while the popover is
-                // open; otherwise it submits the formula.
-                const pick = suggestionMatches[Math.min(suggestHighlight, suggestionMatches.length - 1)];
-                if (pick) {
-                  e.preventDefault();
-                  acceptSuggestion(pick);
-                  return;
-                }
-              }
-              if (e.key === "Enter") {
-                e.preventDefault();
-                onFormulaSubmit({ row: e.shiftKey ? -1 : 1, col: 0 });
-              } else if (e.key === "Tab") {
-                e.preventDefault();
-                onFormulaSubmit({ row: 0, col: e.shiftKey ? -1 : 1 });
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setFormulaFocused(false);
-                setFormulaDraft("");
-                pendingRefSpanRef.current = null;
-                pendingRefAnchorRef.current = null;
-                formulaInputRef.current?.blur();
-                surfaceRef.current?.focus();
-              } else {
-                captureCaret();
-              }
-            }}
-            placeholder={selection ? "Type a value or =formula" : "Select a cell to edit"}
-            disabled={!selection || !agent}
-            // When the formula starts with `=`, the FormulaHighlight
-            // overlay is responsible for the visible glyphs — make the
-            // input's own text transparent (but keep the caret visible
-            // via `caretColor`). Plain literals stay rendered by the
-            // input itself so we don't have to model number / string
-            // colours in the overlay too.
-            style={{
-              position: "relative",
-              zIndex: 1,
-              background: "transparent",
-              color: formulaValue.startsWith("=") ? "transparent" : undefined,
-              caretColor: "var(--foreground)",
-            }}
-            className="block w-full bg-transparent p-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
-          />
         </div>
-        <div className="absolute left-[68px] right-2 top-full z-40">
-          <FormulaSuggest
-            matches={suggestionMatches}
-            highlight={Math.min(suggestHighlight, Math.max(suggestionMatches.length - 1, 0))}
-            onPick={acceptSuggestion}
-            onHighlight={setSuggestHighlight}
-          />
-        </div>
-      </div>
-
-      <div className="relative flex flex-1 min-h-0">
-        <div className="relative flex-1 min-h-0">
-        {activeSheet && snapshot ? (
-          <Grid
-            sheet={activeSheet}
-            styles={snapshot.root.styles}
-            selection={selection}
-            onSelect={handleGridSelect}
-            onCommitEdit={onCommitGridEdit}
-            onResizeColumn={onResizeColumn}
-            onResizeRow={onResizeRow}
-            refRects={refRects}
-            commentMarkers={commentMarkers}
-            scrollTarget={commentScrollTarget}
-            onSelectAxis={handleAxisSelect}
-            onContextMenu={onContextMenuOpen}
-            marchingAnts={
-              marchingAnts && marchingAnts.sheet === activeSheet.name
-                ? {
-                    r1: marchingAnts.r1,
-                    c1: marchingAnts.c1,
-                    r2: marchingAnts.r2,
-                    c2: marchingAnts.c2,
-                    mode: marchingAnts.mode,
-                  }
-                : null
-            }
-            onFill={onFill}
-            onOpenFilter={onOpenFilter}
-            imageObjectUrls={imageObjectUrls}
-            selectedImageId={selectedImageId}
-            onSelectImage={(id) => {
-              setSelectedImageId(id);
-              if (id !== null) surfaceRef.current?.focus({ preventScroll: true });
-            }}
-            onMoveImage={onMoveImage}
-            onResizeImage={onResizeImage}
-            onImageContextMenu={(imageId, coords) => {
-              setSelectedImageId(imageId);
-              setCtxMenu({ target: { kind: "image", imageId }, x: coords.x, y: coords.y });
-            }}
-            liveEditDraft={
-              formulaFocused && selection && isSingle(selection)
-                ? {
-                    row: selection.anchor.row,
-                    col: selection.anchor.col,
-                    draft: formulaDraft,
-                  }
-                : null
-            }
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">
-            <Loader2 className="mr-2 animate-spin" size={14} />
-            Loading workbook…
-          </div>
-        )}
-        </div>
-        {agent && activeSheet && commentsForceOpen ? (
-          <aside
-            ref={commentsAsideRef}
-            data-testid="xlsx-comments-sidebar"
-            className="absolute right-0 top-0 bottom-0 z-30 flex w-[280px] flex-col gap-2 overflow-y-auto rounded-md border border-divider bg-surface p-2 shadow-lg"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-secondary">Comments</span>
-              <button
-                type="button"
-                onClick={() => setCommentsForceOpen(false)}
-                title="Hide comments"
-                aria-label="Hide comments"
-                className="rounded px-1 text-xs text-secondary hover:bg-hover"
-              >
-                ×
-              </button>
-            </div>
-            <CommentsSidebar
-              key={`xlsx-comments-${activeSheet.name}-${revision}`}
-              provider={createXlsxCommentsProvider({
-                agent,
-                sheetName: activeSheet.name,
-                onScrollTo: scrollToComment,
-              })}
-              author="You"
-              emptyHint="No comments on this sheet yet. Select a cell and press Add comment in the toolbar."
-              onScrollTo={scrollToComment}
+        {selection ? (
+          <div className="border-t border-divider p-2">
+            <CommentComposer
+              provider={createXlsxCommentsProvider({ agent, sheetName: activeSheet.name })}
+              anchor={{
+                kind: "xlsx-cell",
+                sheet: activeSheet.name,
+                ref: formatA1(selection.anchor),
+              }}
+              placeholder={`Comment on ${formatA1(selection.anchor)}…`}
             />
-            {selection ? (
-              <CommentComposer
-                provider={createXlsxCommentsProvider({ agent, sheetName: activeSheet.name })}
-                anchor={{
-                  kind: "xlsx-cell",
-                  sheet: activeSheet.name,
-                  ref: formatA1(selection.anchor),
-                }}
-                placeholder={`Comment on ${formatA1(selection.anchor)}…`}
-              />
-            ) : null}
-          </aside>
+          </div>
         ) : null}
       </div>
+    );
+  }, [activeSheet, agent, revision, scrollToComment, selection]);
 
-      <div
-        data-testid="sheet-tabs"
-        className="sheet-tabs flex items-center gap-1 overflow-x-auto rounded-md border border-divider bg-surface px-2 py-1"
-      >
-        {sheets.length === 0 ? (
-          <span className="text-xs text-secondary">No sheets</span>
-        ) : (
-          sheets.map((s) => {
-            const active = s.name === activeSheetName;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                data-testid={`sheet-tab-${s.name}`}
-                onClick={() => setActiveSheetName(s.name)}
-                className={cn(
-                  "shrink-0 rounded px-3 py-1 text-xs font-medium transition-colors",
-                  active
-                    ? "bg-background text-foreground shadow-sm border border-divider"
-                    : "text-secondary hover:text-foreground hover:bg-hover"
-                )}
-              >
-                {s.name}
-              </button>
-            );
-          })
-        )}
-      </div>
+  const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
+    return [
+      {
+        id: "xlsx.toggle-filter",
+        label: activeSheet?.autoFilter ? "Remove filter" : "Apply filter",
+        section: "Data",
+        run: () => onToggleFilter(),
+        enabled: Boolean(agent),
+      },
+      {
+        id: "xlsx.text-to-columns",
+        label: "Split text to columns",
+        section: "Data",
+        run: () => onTextToColumns(),
+        enabled: canTextToColumns,
+      },
+      {
+        id: "xlsx.format-cells",
+        label: "Format cells…",
+        section: "Format",
+        run: () => setFormatCellsTab("number"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.format-cells-alignment",
+        label: "Format cells: Alignment",
+        section: "Format",
+        run: () => setFormatCellsTab("alignment"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.format-cells-font",
+        label: "Format cells: Font",
+        section: "Format",
+        run: () => setFormatCellsTab("font"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.format-cells-border",
+        label: "Format cells: Border",
+        section: "Format",
+        run: () => setFormatCellsTab("border"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.format-cells-fill",
+        label: "Format cells: Fill",
+        section: "Format",
+        run: () => setFormatCellsTab("fill"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.format-cells-protection",
+        label: "Format cells: Protection",
+        section: "Format",
+        run: () => setFormatCellsTab("protection"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.borders-all",
+        label: "Borders: All",
+        section: "Format",
+        run: () => onApplyBorderPreset("all"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.borders-outside",
+        label: "Borders: Outside",
+        section: "Format",
+        run: () => onApplyBorderPreset("outside"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.borders-thick-outside",
+        label: "Borders: Thick outside",
+        section: "Format",
+        run: () => onApplyBorderPreset("thick-outside"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.borders-none",
+        label: "Borders: Clear",
+        section: "Format",
+        run: () => onApplyBorderPreset("none"),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.paste-special",
+        label: "Paste Special…",
+        section: "Edit",
+        run: () => setPasteSpecialOpen(true),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.format-painter",
+        label: formatPainter ? "Format Painter: cancel" : "Format Painter",
+        section: "Format",
+        run: () => activateFormatPainter(false),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.add-sheet",
+        label: "New sheet",
+        section: "Sheet",
+        run: () => onAddSheet(),
+        enabled: Boolean(agent),
+      },
+      {
+        id: "xlsx.rename-sheet",
+        label: "Rename sheet…",
+        section: "Sheet",
+        run: () => {
+          if (!activeSheet) return;
+          const next = window.prompt("New sheet name", activeSheet.name);
+          if (next && next.trim() && next.trim() !== activeSheet.name) {
+            onRenameSheet(activeSheet.name, next.trim());
+          }
+        },
+        enabled: Boolean(agent && activeSheet),
+      },
+      {
+        id: "xlsx.delete-sheet",
+        label: "Delete sheet",
+        section: "Sheet",
+        run: () => {
+          if (!activeSheet) return;
+          onDeleteSheet(activeSheet.name);
+        },
+        enabled: Boolean(agent && activeSheet && (snapshot?.root.sheets.length ?? 0) > 1),
+      },
+      {
+        id: "xlsx.hide-sheet",
+        label: "Hide sheet",
+        section: "Sheet",
+        run: () => {
+          if (!activeSheet) return;
+          onSetSheetState(activeSheet.name, "hidden");
+        },
+        enabled: Boolean(
+          agent && activeSheet && (snapshot?.root.sheets.filter((s) => s.state === "visible").length ?? 0) > 1
+        ),
+      },
+      {
+        id: "xlsx.conditional-format",
+        label: "Conditional Formatting…",
+        section: "Format",
+        run: () => setConditionalFormatOpen(true),
+        enabled: Boolean(agent && activeSheet),
+      },
+      {
+        id: "xlsx.conditional-format-clear",
+        label: "Clear conditional formatting from this sheet",
+        section: "Format",
+        run: () => onClearConditionalFormats(),
+        enabled: Boolean(agent && activeSheet && (activeSheet.conditionalFormats.length ?? 0) > 0),
+      },
+      {
+        id: "xlsx.data-validation",
+        label: "Data Validation…",
+        section: "Data",
+        run: () => setDataValidationOpen(true),
+        enabled: Boolean(agent && activeSheet),
+      },
+      {
+        id: "xlsx.data-validation-clear",
+        label: "Clear data validation from this sheet",
+        section: "Data",
+        run: () => onClearDataValidations(),
+        enabled: Boolean(
+          agent &&
+          activeSheet &&
+          ((activeSheet.dataValidations.length ?? 0) > 0 || activeSheet.opaqueDataValidations)
+        ),
+      },
+      {
+        id: "xlsx.name-manager",
+        label: "Name Manager…",
+        section: "Data",
+        shortcut: "F3",
+        run: () => setNameManagerOpen(true),
+        enabled: Boolean(agent),
+      },
+      {
+        id: "xlsx.define-name",
+        label: "Define name from selection…",
+        section: "Data",
+        run: () => setNameManagerOpen(true),
+        enabled: Boolean(agent && selection),
+      },
+      {
+        id: "xlsx.merge",
+        label: "Merge cells",
+        section: "Format",
+        run: () => onMerge(),
+        enabled: canMerge,
+      },
+      {
+        id: "xlsx.unmerge",
+        label: "Unmerge cells",
+        section: "Format",
+        run: () => onUnmerge(),
+        enabled: canUnmerge,
+      },
+      {
+        id: "xlsx.insert-image",
+        label: "Insert image",
+        section: "Insert",
+        run: () => onInsertImageClick(),
+      },
+      {
+        id: "xlsx.format-as-table",
+        label: "Format as Table…",
+        section: "Insert",
+        shortcut: "Mod+T",
+        run: () => {
+          if (!activeSheet || !selection) return;
+          dispatchOrToast("xlsx:add-table", {
+            sheet: activeSheet.name,
+            range: formatSelection(selection),
+          });
+        },
+        enabled: Boolean(activeSheet && selection),
+      },
+      {
+        id: "xlsx.insert-chart",
+        label: "Insert chart…",
+        section: "Insert",
+        run: () => setInsertChartOpen(true),
+        enabled: Boolean(activeSheet && selection),
+      },
+      {
+        id: "xlsx.add-comment",
+        label: "Add comment",
+        section: "Collaboration",
+        run: () => focusCommentComposer(),
+        enabled: Boolean(selection),
+      },
+    ];
+  }, [
+    activeSheet?.autoFilter,
+    agent,
+    canMerge,
+    canTextToColumns,
+    canUnmerge,
+    focusCommentComposer,
+    onApplyBorderPreset,
+    onInsertImageClick,
+    onMerge,
+    onTextToColumns,
+    onToggleFilter,
+    onUnmerge,
+    selection,
+    activateFormatPainter,
+    formatPainter,
+    onAddSheet,
+    onRenameSheet,
+    onDeleteSheet,
+    onSetSheetState,
+    snapshot,
+    activeSheet,
+    onClearConditionalFormats,
+    onClearDataValidations,
+    dispatchOrToast,
+  ]);
 
-      <ContextMenu
-        open={ctxMenu !== null}
-        x={ctxMenu?.x ?? 0}
-        y={ctxMenu?.y ?? 0}
-        items={ctxMenuItems}
-        onClose={closeCtxMenu}
-      />
+  const adapter = useMemo<ProductAdapter>(
+    () => ({
+      product: "xlsx",
+      filename,
+      saveState,
+      comments: { openCount: openCommentCount, resolvedCount: 0 },
+      selectionSummary:
+        selectionAggregates && selectionAggregates.length > 0
+          ? { aggregates: selectionAggregates }
+          : { text: selectionText ?? "" },
+      canOpen: true,
+      canSave: Boolean(agent),
+      canExport: Boolean(agent),
+      exportFormats: [
+        {
+          id: "xlsx",
+          label: "Excel workbook (.xlsx)",
+          extension: "xlsx",
+          mime: PRODUCT_FILE_TYPES.xlsx.primaryMime,
+        },
+      ],
+      onOpenFile: () => void onPickFile(),
+      onSave: () => onSave(),
+      onExport: () => onExport(),
+      canUndo: agent?.canUndo() ?? false,
+      canRedo: agent?.canRedo() ?? false,
+      onUndo: () => {
+        const a = agentRef.current;
+        if (a && a.canUndo()) a.undo();
+      },
+      onRedo: () => {
+        const a = agentRef.current;
+        if (a && a.canRedo()) a.redo();
+      },
+      onOpenShortcuts: () => shortcutsDialog.setOpen(true),
+      paletteCommands,
+      findAdapter,
+      renderCommentsPanel,
+      onAddComment: focusCommentComposer,
+    }),
+    [
+      agent,
+      filename,
+      findAdapter,
+      focusCommentComposer,
+      onExport,
+      onPickFile,
+      onSave,
+      openCommentCount,
+      paletteCommands,
+      renderCommentsPanel,
+      saveState,
+      selectionAggregates,
+      selectionText,
+      shortcutsDialog,
+    ]
+  );
 
-      <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
-        {toasts.map((t) => (
+  return (
+    <>
+      <EditorShell
+        adapter={adapter}
+        toolbar={
+          snapshot ? (
+            <Toolbar
+              disabled={!agent || !selection}
+              anchorStyleId={selectedCell?.styleId}
+              styles={snapshot.root.styles}
+              selection={selection}
+              onApply={onApplyFormat}
+              textFormatProvider={textFormatProvider}
+              textFormatActive={textFormatActive}
+              canMerge={canMerge}
+              canUnmerge={canUnmerge}
+              onMerge={onMerge}
+              onUnmerge={onUnmerge}
+              canUndo={agent?.canUndo() ?? false}
+              canRedo={agent?.canRedo() ?? false}
+              onUndo={() => {
+                const a = agentRef.current;
+                if (a && a.canUndo()) a.undo();
+              }}
+              onRedo={() => {
+                const a = agentRef.current;
+                if (a && a.canRedo()) a.redo();
+              }}
+              canTextToColumns={canTextToColumns}
+              onTextToColumns={onTextToColumns}
+              onAddComment={focusCommentComposer}
+              onToggleFilter={onToggleFilter}
+              filterActive={!!activeSheet?.autoFilter}
+              onInsertImage={onInsertImageClick}
+              onFreeze={onFreeze}
+              freeze={activeSheet?.freeze}
+              freezeAnchor={selection ? { row: selection.anchor.row, col: selection.anchor.col } : null}
+              onApplyBorderPreset={onApplyBorderPreset}
+              onOpenMoreBorders={() => setFormatCellsTab("border")}
+              onActivateFormatPainter={activateFormatPainter}
+              formatPainterActive={formatPainter !== null}
+            />
+          ) : null
+        }
+        statusBarLeft={
+          <span className="text-[11px] tabular-nums text-tertiary">
+            rev {revision} · {pendingCount} pending
+          </span>
+        }
+        body={
           <div
-            key={t.id}
-            role="status"
-            className={cn(
-              "pointer-events-auto rounded-md border px-3 py-1.5 text-xs shadow-sm",
-              t.kind === "info" && "border-divider bg-surface text-foreground",
-              t.kind === "warn" && "border-[var(--warning)] bg-[var(--warning)]/10 text-[var(--warning)]",
-              t.kind === "error" &&
-                "border-[var(--error-border)] bg-[var(--error-bg)] text-[var(--error-text)]"
-            )}
+            ref={surfaceRef}
+            tabIndex={0}
+            onKeyDown={onSurfaceKeyDown}
+            onCopy={onSurfaceCopy}
+            onCut={onSurfaceCut}
+            onPaste={onSurfacePaste}
+            data-testid="xlsx-surface"
+            data-whole-row={wholeRowSelection ? "1" : "0"}
+            data-whole-col={wholeColSelection ? "1" : "0"}
+            className="relative flex h-full min-h-0 flex-col gap-2 p-3 outline-none"
           >
-            {t.text}
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif"
+              data-testid="insert-image-input"
+              className="sr-only"
+              onChange={onImageInputChange}
+            />
+            {!agent ? (
+              <EmptyState product="xlsx" onOpen={() => void onPickFile()} />
+            ) : (
+              <>
+                <TextToColumnsPopover
+                  open={ttocOpen}
+                  defaultDelimiter={ttocDefaultDelim}
+                  onCancel={() => setTtocOpen(false)}
+                  onConfirm={onTextToColumnsConfirm}
+                />
+
+                {activeSheet?.autoFilter && filterDropdown ? (
+                  <FilterDropdown
+                    open
+                    sheet={activeSheet}
+                    styles={snapshot!.root.styles}
+                    autoFilter={activeSheet.autoFilter}
+                    colId={filterDropdown.colId}
+                    anchor={filterDropdown.anchor}
+                    onClose={onCloseFilter}
+                    onSort={onSortFromFilter}
+                    onClear={onClearFilterColumn}
+                    onApply={onApplyFilterColumn}
+                  />
+                ) : null}
+
+                {snapshot && formatCellsTab !== null ? (
+                  <FormatCellsDialog
+                    open
+                    styles={snapshot.root.styles}
+                    anchorStyleId={selectedCell?.styleId}
+                    initialTab={formatCellsTab}
+                    onClose={() => setFormatCellsTab(null)}
+                    onApply={(patch) => onApplyFormat(patch)}
+                  />
+                ) : null}
+
+                <PasteSpecialDialog
+                  open={pasteSpecialOpen}
+                  onClose={() => setPasteSpecialOpen(false)}
+                  onConfirm={onPasteSpecialConfirm}
+                />
+
+                {activeSheet ? (
+                  <ConditionalFormatDialog
+                    open={conditionalFormatOpen}
+                    onClose={() => setConditionalFormatOpen(false)}
+                    defaultRange={selection ? formatSelection(selection) : "A1"}
+                    rules={activeSheet.conditionalFormats}
+                    onAddRule={onAddConditionalFormat}
+                    onRemoveRule={onRemoveConditionalFormat}
+                    onClearRules={onClearConditionalFormats}
+                  />
+                ) : null}
+
+                {activeSheet ? (
+                  <DataValidationDialog
+                    open={dataValidationOpen}
+                    onClose={() => setDataValidationOpen(false)}
+                    defaultRange={selection ? formatSelection(selection) : "A1"}
+                    rules={activeSheet.dataValidations}
+                    hasOpaqueRules={Boolean(activeSheet.opaqueDataValidations)}
+                    onAddRule={onAddDataValidation}
+                    onRemoveRule={onRemoveDataValidation}
+                    onClearRules={onClearDataValidations}
+                  />
+                ) : null}
+
+                <NameManagerDialog
+                  open={nameManagerOpen}
+                  onClose={() => setNameManagerOpen(false)}
+                  definedNames={definedNames}
+                  sheetNames={(snapshot?.root.sheets ?? []).map((s) => s.name)}
+                  defaultRefersTo={selectionRefersTo}
+                  onAdd={onAddDefinedName}
+                  onUpdate={onUpdateDefinedName}
+                  onRemove={onRemoveDefinedName}
+                />
+
+                <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
+                  <NameBox
+                    selectionRef={selectedRef}
+                    definedNames={definedNames}
+                    activeSheet={activeSheet?.name}
+                    onJump={onJumpFromNameBox}
+                    onCreateName={onCreateNameFromBox}
+                    onOpenManager={() => setNameManagerOpen(true)}
+                    disabled={!agent}
+                  />
+                  <span className="text-secondary text-xs font-mono">fx</span>
+                  <div className="relative flex-1 font-mono text-xs">
+                    <FormulaHighlight
+                      value={formulaValue}
+                      tokens={formulaTokens}
+                      refColors={refColors}
+                      scrollLeft={formulaScrollLeft}
+                    />
+                    <input
+                      ref={formulaInputRef}
+                      data-testid="formula-input"
+                      aria-label="Formula bar"
+                      value={formulaValue}
+                      onScroll={(e) => setFormulaScrollLeft(e.currentTarget.scrollLeft)}
+                      onChange={(e) => {
+                        // A user keystroke invalidates the click-to-insert pending
+                        // span — anything they type from here adds to / replaces
+                        // the formula instead of extending the picked ref.
+                        pendingRefSpanRef.current = null;
+                        pendingRefAnchorRef.current = null;
+                        setFormulaDraft(e.target.value);
+                        captureCaret();
+                      }}
+                      onSelect={captureCaret}
+                      onClick={captureCaret}
+                      onFocus={() => {
+                        // Only seed the draft from the resolved cell value when the
+                        // user is focusing the bar fresh (mouse click, Tab). When
+                        // type-to-edit has already pre-filled `formulaDraft`, leave
+                        // it alone — otherwise the just-typed character would be
+                        // clobbered by the cell's prior value.
+                        if (formulaDraft === "") setFormulaDraft(derivedFormulaDisplay);
+                        setFormulaFocused(true);
+                        requestAnimationFrame(captureCaret);
+                      }}
+                      onBlur={() => {
+                        setFormulaFocused(false);
+                        setFormulaDraft("");
+                        pendingRefSpanRef.current = null;
+                        pendingRefAnchorRef.current = null;
+                      }}
+                      onKeyDown={(e) => {
+                        const hasSuggestions = suggestionMatches.length > 0;
+                        if (hasSuggestions && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                          e.preventDefault();
+                          setSuggestHighlight((prev) => {
+                            const dir = e.key === "ArrowDown" ? 1 : -1;
+                            const n = suggestionMatches.length;
+                            return (prev + dir + n) % n;
+                          });
+                          return;
+                        }
+                        if (hasSuggestions && (e.key === "Tab" || e.key === "Enter")) {
+                          // Enter accepts a suggestion only while the popover is
+                          // open; otherwise it submits the formula.
+                          const pick =
+                            suggestionMatches[Math.min(suggestHighlight, suggestionMatches.length - 1)];
+                          if (pick) {
+                            e.preventDefault();
+                            acceptSuggestion(pick);
+                            return;
+                          }
+                        }
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          onFormulaSubmit({ row: e.shiftKey ? -1 : 1, col: 0 });
+                        } else if (e.key === "Tab") {
+                          e.preventDefault();
+                          onFormulaSubmit({ row: 0, col: e.shiftKey ? -1 : 1 });
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setFormulaFocused(false);
+                          setFormulaDraft("");
+                          pendingRefSpanRef.current = null;
+                          pendingRefAnchorRef.current = null;
+                          formulaInputRef.current?.blur();
+                          surfaceRef.current?.focus();
+                        } else {
+                          captureCaret();
+                        }
+                      }}
+                      placeholder={selection ? "Type a value or =formula" : "Select a cell to edit"}
+                      disabled={!selection || !agent}
+                      // When the formula starts with `=`, the FormulaHighlight
+                      // overlay is responsible for the visible glyphs — make the
+                      // input's own text transparent (but keep the caret visible
+                      // via `caretColor`). Plain literals stay rendered by the
+                      // input itself so we don't have to model number / string
+                      // colours in the overlay too.
+                      style={{
+                        position: "relative",
+                        zIndex: 1,
+                        background: "transparent",
+                        color: formulaValue.startsWith("=") ? "transparent" : undefined,
+                        caretColor: "var(--foreground)",
+                      }}
+                      className="block w-full bg-transparent p-1 text-xs text-foreground placeholder:text-tertiary focus:outline-none"
+                    />
+                  </div>
+                  <div className="absolute left-[68px] right-2 top-full z-40">
+                    <FormulaSuggest
+                      matches={suggestionMatches}
+                      highlight={Math.min(suggestHighlight, Math.max(suggestionMatches.length - 1, 0))}
+                      onPick={acceptSuggestion}
+                      onHighlight={setSuggestHighlight}
+                    />
+                  </div>
+                </div>
+
+                <div className="relative flex flex-1 min-h-0">
+                  <div
+                    className="relative flex-1 min-h-0"
+                    data-format-painter={formatPainter ? "1" : undefined}
+                    style={
+                      formatPainter
+                        ? {
+                            cursor:
+                              "url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2220%22 height=%2220%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22currentColor%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22M14.622 17.897l-10.68-2.913%22/><path d=%22M18.376 2.622a1 1 0 1 1 3.002 3.002L17.36 9.643a.5.5 0 0 0 0 .707l.944.944a2.41 2.41 0 0 1 0 3.408l-.944.944a.5.5 0 0 1-.707 0L8.354 7.348a.5.5 0 0 1 0-.707l.944-.944a2.41 2.41 0 0 1 3.408 0l.944.944a.5.5 0 0 0 .707 0z%22/><path d=%22M9 8c-1.804 2.71-3.97 3.46-6.583 3.948a.507.507 0 0 0-.302.819l7.32 8.883a1 1 0 0 0 1.185.204C12.735 20.405 16 16.792 16 15%22/></svg>') 4 18, crosshair",
+                          }
+                        : undefined
+                    }
+                  >
+                    {activeSheet && snapshot ? (
+                      <Grid
+                        sheet={activeSheet}
+                        styles={snapshot.root.styles}
+                        selection={selection}
+                        onSelect={handleGridSelect}
+                        onCommitEdit={onCommitGridEdit}
+                        onResizeColumn={onResizeColumn}
+                        onResizeRow={onResizeRow}
+                        refRects={refRects}
+                        commentMarkers={commentMarkers}
+                        scrollTarget={commentScrollTarget}
+                        onSelectAxis={handleAxisSelect}
+                        onContextMenu={onContextMenuOpen}
+                        marchingAnts={
+                          marchingAnts && marchingAnts.sheet === activeSheet.name
+                            ? {
+                                r1: marchingAnts.r1,
+                                c1: marchingAnts.c1,
+                                r2: marchingAnts.r2,
+                                c2: marchingAnts.c2,
+                                mode: marchingAnts.mode,
+                              }
+                            : null
+                        }
+                        onFill={onFill}
+                        onOpenFilter={onOpenFilter}
+                        imageObjectUrls={imageObjectUrls}
+                        selectedImageId={selectedImageId}
+                        onSelectImage={(id) => {
+                          setSelectedImageId(id);
+                          if (id !== null) surfaceRef.current?.focus({ preventScroll: true });
+                        }}
+                        onMoveImage={onMoveImage}
+                        onResizeImage={onResizeImage}
+                        onImageContextMenu={(imageId, coords) => {
+                          setSelectedImageId(imageId);
+                          setCtxMenu({ target: { kind: "image", imageId }, x: coords.x, y: coords.y });
+                        }}
+                        liveEditDraft={
+                          formulaFocused && selection && isSingle(selection)
+                            ? {
+                                row: selection.anchor.row,
+                                col: selection.anchor.col,
+                                draft: formulaDraft,
+                              }
+                            : null
+                        }
+                        cfOverlays={cfOverlays}
+                        dvIndex={dvIndex}
+                        extraAreas={extraAreas}
+                        selectedChartId={selectedChartId}
+                        onSelectChart={(id) => {
+                          setSelectedChartId(id);
+                          if (id !== null) surfaceRef.current?.focus({ preventScroll: true });
+                        }}
+                        onRemoveChart={(id) => {
+                          if (!activeSheet) return;
+                          dispatchOrToast("xlsx:remove-chart", {
+                            sheet: activeSheet.name,
+                            chartId: id,
+                          });
+                          setSelectedChartId(null);
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">
+                        <Loader2 className="mr-2 animate-spin" size={14} />
+                        Loading workbook…
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <SheetTabBar
+                  sheets={sheets.map((s) => ({ id: String(s.id), name: s.name, state: s.state }))}
+                  activeName={activeSheetName}
+                  onActivate={(name) => {
+                    // If the user clicks a hidden sheet's "unhide" chip the
+                    // sheet may not yet be visible — flip it to visible first
+                    // so the activation lands on a renderable surface.
+                    const s = sheets.find((x) => x.name === name);
+                    if (s && s.state !== "visible") {
+                      void onSetSheetState(name, "visible");
+                    }
+                    setActiveSheetName(name);
+                    setExtraAreas([]);
+                  }}
+                  onRename={(currentName, nextName) => onRenameSheet(currentName, nextName)}
+                  onDelete={(name) => onDeleteSheet(name)}
+                  onMove={(name, to) => onMoveSheet(name, to)}
+                  onAdd={() => onAddSheet()}
+                  onSetState={(name, state) => onSetSheetState(name, state)}
+                />
+
+                <ContextMenu
+                  open={ctxMenu !== null}
+                  x={ctxMenu?.x ?? 0}
+                  y={ctxMenu?.y ?? 0}
+                  items={ctxMenuItems}
+                  onClose={closeCtxMenu}
+                />
+              </>
+            )}
           </div>
-        ))}
-      </div>
+        }
+        toasts={toasts}
+        onDismissToast={dismissToast}
+        onFileDrop={onShellFileDrop}
+        dropExtension=".xlsx"
+        onRenameFilename={(next) => setFilename(next)}
+      />
       <KeyboardShortcutsDialog
         product="xlsx"
         open={shortcutsDialog.open}
         onClose={() => shortcutsDialog.setOpen(false)}
       />
-    </div>
+      <InsertChartDialog
+        open={insertChartOpen}
+        defaultRange={selection ? formatSelection(selection) : "A1:B5"}
+        onCancel={() => setInsertChartOpen(false)}
+        onSubmit={(args) => {
+          if (!activeSheet) return;
+          dispatchOrToast("xlsx:add-chart", {
+            sheet: activeSheet.name,
+            kind: args.kind,
+            dataRange: args.dataRange,
+            hasHeaderRow: args.hasHeaderRow,
+            hasCategoryColumn: args.hasCategoryColumn,
+            ...(args.title ? { title: args.title } : {}),
+          });
+          setInsertChartOpen(false);
+        }}
+      />
+    </>
   );
 }
 
@@ -2510,6 +3854,46 @@ export function XlsxEditor(): ReactNode {
  *   - `"true"`    → boolean
  *   - everything else stays a string
  */
+/**
+ * C11 — Resolve a `formula` data-validation source like
+ * `=Sheet1!$A$1:$A$5` (or `=$A$1:$A$5` for same-sheet) into its
+ * stringified cell values. Cross-sheet refs are best-effort: if the
+ * referenced sheet isn't in scope here we fall back to an empty
+ * options list (the dropdown still appears so the user can edit).
+ */
+function resolveFormulaListOptions(source: string, sheet: Sheet): string[] {
+  const trimmed = source.replace(/^=/, "").trim();
+  // Strip optional "SheetName!" prefix; we only resolve same-sheet refs.
+  const bang = trimmed.indexOf("!");
+  const ref = bang >= 0 ? trimmed.slice(bang + 1) : trimmed;
+  // Drop $ anchors before parsing.
+  const cleaned = ref.replace(/\$/g, "");
+  let range;
+  try {
+    range = parseRange(cleaned);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (let r = range.start.row; r <= range.end.row; r++) {
+    for (let c = range.start.col; c <= range.end.col; c++) {
+      const cell = sheet.cells.get(cellKey(r, c));
+      if (!cell || cell.value === null || cell.value === undefined) continue;
+      out.push(stringifyCellValue(cell.value));
+    }
+  }
+  return out;
+}
+
+function stringifyCellValue(value: CellValue): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "object" && "kind" in value && value.kind === "error") return value.code;
+  return String(value);
+}
+
 function parseLiteral(raw: string): CellValue {
   const t = raw.trim();
   if (t === "") return null;

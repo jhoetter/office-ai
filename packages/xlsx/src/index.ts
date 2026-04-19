@@ -58,6 +58,14 @@ export {
   type FilterColumnTop10,
   type FilterColumnValues,
   type Formula,
+  type FreezePanes,
+  type ConditionalFormat,
+  type ConditionalFormatOverlay,
+  type DataValidation,
+  type DefinedName,
+  type TableDef,
+  type ChartKind,
+  type SheetChart,
   type MergedCell,
   type OpaquePart,
   type Sheet,
@@ -74,6 +82,11 @@ export {
   contentTypeForExtension,
   EXTENSION_BY_CONTENT_TYPE,
 } from "./model/index.js";
+
+export {
+  evaluateConditionalFormats,
+  type OverlayMap as ConditionalFormatOverlayMap,
+} from "./conditional-format/evaluate.js";
 
 export { flattenCellXf, type EffectiveStyle } from "./model/style-mutate.js";
 export {
@@ -97,6 +110,17 @@ export {
   unmergeCellsHandler,
   renameSheetHandler,
   addSheetHandler,
+  moveSheetHandler,
+  setSheetStateHandler,
+  addConditionalFormatHandler,
+  removeConditionalFormatHandler,
+  clearConditionalFormatsHandler,
+  addDataValidationHandler,
+  removeDataValidationHandler,
+  clearDataValidationsHandler,
+  addDefinedNameHandler,
+  updateDefinedNameHandler,
+  removeDefinedNameHandler,
   insertRowHandler,
   insertColumnHandler,
   deleteRowHandler,
@@ -113,11 +137,21 @@ export {
   setAutoFilterHandler,
   setFilterColumnHandler,
   clearFilterColumnHandler,
+  freezePanesHandler,
+  unfreezePanesHandler,
+  addTableHandler,
+  removeTableHandler,
+  addChartHandler,
+  removeChartHandler,
+  moveChartHandler,
+  resizeChartHandler,
   sortRangeHandler,
   recomputeHiddenRows,
   type SetAutoFilterPayload,
   type SetFilterColumnPayload,
   type ClearFilterColumnPayload,
+  type FreezePanesPayload,
+  type UnfreezePanesPayload,
   type SortRangePayload,
   type SetCellValuePayload,
   type SetCellFormulaPayload,
@@ -129,6 +163,17 @@ export {
   type UnmergeCellsPayload,
   type RenameSheetPayload,
   type AddSheetPayload,
+  type MoveSheetPayload,
+  type SetSheetStatePayload,
+  type AddConditionalFormatPayload,
+  type RemoveConditionalFormatPayload,
+  type ClearConditionalFormatsPayload,
+  type AddDataValidationPayload,
+  type RemoveDataValidationPayload,
+  type ClearDataValidationsPayload,
+  type AddDefinedNamePayload,
+  type UpdateDefinedNamePayload,
+  type RemoveDefinedNamePayload,
   type InsertRowPayload,
   type InsertColumnPayload,
   type DeleteRowPayload,
@@ -148,6 +193,12 @@ export {
   type PasteRangePayload,
   type FillRangePayload,
   type TextToColumnsPayload,
+  type AddTablePayload,
+  type RemoveTablePayload,
+  type AddChartPayload,
+  type RemoveChartPayload,
+  type MoveChartPayload,
+  type ResizeChartPayload,
 } from "./commands/index.js";
 
 export {
@@ -161,11 +212,7 @@ export {
   type XlsxClipboardSnapshot,
 } from "./clipboard/snapshot.js";
 
-export {
-  parseExternalClipboard,
-  parseHtmlTable,
-  parseFingerprintHtml,
-} from "./clipboard/external.js";
+export { parseExternalClipboard, parseHtmlTable, parseFingerprintHtml } from "./clipboard/external.js";
 
 export {
   XlsxAgent,

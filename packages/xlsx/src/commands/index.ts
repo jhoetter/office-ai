@@ -8,6 +8,23 @@ export { mergeCellsHandler } from "./merge-cells.js";
 export { unmergeCellsHandler } from "./unmerge-cells.js";
 export { renameSheetHandler } from "./rename-sheet.js";
 export { addSheetHandler } from "./add-sheet.js";
+export { moveSheetHandler } from "./move-sheet.js";
+export { setSheetStateHandler } from "./set-sheet-state.js";
+export {
+  addConditionalFormatHandler,
+  removeConditionalFormatHandler,
+  clearConditionalFormatsHandler,
+} from "./conditional-format.js";
+export {
+  addDataValidationHandler,
+  removeDataValidationHandler,
+  clearDataValidationsHandler,
+} from "./data-validation.js";
+export {
+  addDefinedNameHandler,
+  removeDefinedNameHandler,
+  updateDefinedNameHandler,
+} from "./defined-names.js";
 export { insertRowHandler } from "./insert-row.js";
 export { insertColumnHandler } from "./insert-column.js";
 export { deleteRowHandler } from "./delete-row.js";
@@ -31,6 +48,15 @@ export { deleteSheetHandler } from "./delete-sheet.js";
 export { pasteRangeHandler } from "./paste-range.js";
 export { textToColumnsHandler } from "./text-to-columns.js";
 export { fillRangeHandler } from "./fill-range.js";
+export { freezePanesHandler, unfreezePanesHandler } from "./freeze-panes.js";
+export { addTableHandler } from "./add-table.js";
+export { removeTableHandler } from "./remove-table.js";
+export {
+  addChartHandler,
+  removeChartHandler,
+  moveChartHandler,
+  resizeChartHandler,
+} from "./chart-commands.js";
 export { setAutoFilterHandler } from "./set-auto-filter.js";
 export { setFilterColumnHandler } from "./set-filter-column.js";
 export { clearFilterColumnHandler } from "./clear-filter-column.js";

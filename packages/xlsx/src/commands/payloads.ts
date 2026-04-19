@@ -71,6 +71,126 @@ export interface RenameSheetPayload {
   readonly newName: string;
 }
 
+/**
+ * `xlsx:move-sheet` — reorder a worksheet within the workbook.
+ *
+ * The serializer rewrites the workbook `<sheets>` block from the new
+ * `workbook.sheets` order, so the OOXML round-trip is preserved.
+ * Cross-sheet formula refs are unaffected (Excel anchors them by
+ * sheet name, not position).
+ */
+export interface MoveSheetPayload {
+  /** Current sheet name (case-sensitive lookup). */
+  readonly name: string;
+  /**
+   * Target 0-based position in the final ordering. Clamped to
+   * `[0, sheets.length-1]`. The currently-active sheet stays
+   * selected because the editor keys on `name`, not index.
+   */
+  readonly to: number;
+}
+
+/**
+ * `xlsx:set-sheet-state` — flip a sheet between
+ * `visible` / `hidden` / `veryHidden`. Excel uses this for the
+ * "Hide" / "Unhide…" affordance on the sheet tab context menu.
+ *
+ * The command refuses to leave the workbook with zero visible
+ * sheets (Excel parity).
+ */
+export interface SetSheetStatePayload {
+  readonly name: string;
+  readonly state: "visible" | "hidden" | "veryHidden";
+}
+
+/**
+ * `xlsx:add-conditional-format` — add a typed conditional
+ * formatting rule to a sheet.
+ *
+ * Round-trip caveat: typed CF rules are evaluated at render time
+ * but not yet emitted to OOXML on serialize. Existing CF blocks
+ * from the parsed workbook are preserved verbatim.
+ */
+export interface AddConditionalFormatPayload {
+  readonly sheet: string;
+  readonly rule: import("../model/types.js").ConditionalFormat;
+}
+
+/**
+ * `xlsx:remove-conditional-format` — drop a single rule by id.
+ */
+export interface RemoveConditionalFormatPayload {
+  readonly sheet: string;
+  readonly id: string;
+}
+
+/**
+ * `xlsx:clear-conditional-formats` — drop every typed CF rule on a
+ * sheet. Opaque preserved blocks are NOT cleared by this command.
+ */
+export interface ClearConditionalFormatsPayload {
+  readonly sheet: string;
+}
+
+/**
+ * `xlsx:add-data-validation` — append a typed data-validation rule
+ * (`list` only in C11; richer kinds preserve via opaque round-trip
+ * until we extend the model).
+ */
+export interface AddDataValidationPayload {
+  readonly sheet: string;
+  readonly rule: import("../model/types.js").DataValidation;
+}
+
+/**
+ * `xlsx:remove-data-validation` — drop a single typed rule by id.
+ * Opaque (non-list) rules captured at parse time aren't addressable
+ * from this command; clear them via the dialog's "Remove all rules"
+ * action which calls `clear-data-validations`.
+ */
+export interface RemoveDataValidationPayload {
+  readonly sheet: string;
+  readonly id: string;
+}
+
+/** `xlsx:clear-data-validations` — wipes both typed and opaque rules. */
+export interface ClearDataValidationsPayload {
+  readonly sheet: string;
+}
+
+/* ── Defined names (named ranges) — `xlsx:add-defined-name` ───────────────
+ * C12. Workbook- or sheet-scoped names that resolve to a range / cell /
+ * formula expression. Round-trips through `xl/workbook.xml`'s
+ * `<definedNames>` block.
+ */
+
+export interface AddDefinedNamePayload {
+  /** Display name, e.g. `"Revenue"`. Excel rules: starts with letter or `_`,
+   * no spaces, ≤ 255 chars, not a cell ref (`A1`/`R1C1`), not a reserved word. */
+  readonly name: string;
+  /** OOXML refersTo expression without leading `=`, e.g. `"Sheet1!$A$1:$B$5"`. */
+  readonly refersTo: string;
+  /** Sheet-name scope. Omitted = workbook-scoped. */
+  readonly scope?: string;
+  readonly comment?: string;
+}
+
+export interface UpdateDefinedNamePayload {
+  /** Lookup key — name + scope identify the entry uniquely. */
+  readonly name: string;
+  readonly scope?: string;
+  /** New name (rename). When omitted, name stays the same. */
+  readonly nextName?: string;
+  /** New refersTo expression. */
+  readonly refersTo?: string;
+  readonly comment?: string;
+}
+
+export interface RemoveDefinedNamePayload {
+  readonly name: string;
+  readonly scope?: string;
+}
+
 /* ── `xlsx:set-cell-format` (§4) ──────────────────────────────────────────
  * Patch-style format payload — undefined fields are left unchanged.
  * Per spec/xlsx/agent-commands.md §4, `format` carries the friendly
@@ -122,6 +242,17 @@ export interface CellFormatPatch {
   };
   /** Built-in numFmtId as a string, or a custom format string. */
   readonly numberFormat?: string;
+  /**
+   * Cell protection flags. Honored only when the worksheet itself is
+   * protected — Excel's "lock" attribute is a per-cell hint, but the
+   * protection only kicks in once the sheet is locked. We model both
+   * fields explicitly so a Format Cells round-trip preserves whatever
+   * the source workbook had.
+   */
+  readonly protection?: {
+    readonly locked?: boolean;
+    readonly hidden?: boolean;
+  };
 }
 
 export interface SetCellFormatPayload {
@@ -260,7 +391,16 @@ export interface PasteRangePayload {
   /** A1 single-cell ref pointing at the destination top-left. */
   readonly target: string;
   readonly source: import("../clipboard/snapshot.js").XlsxClipboardSnapshot;
-  readonly mode?: "all" | "values" | "formats";
+  /**
+   * Paste Special variants:
+   *   - "all"      : values + formulas + formats (default; current Cmd+V)
+   *   - "values"   : computed values only — formulas collapse to their
+   *                  cached value, no styles, no merges
+   *   - "formulas" : formulas (relative-shifted) + cached values for
+   *                  literals, no styles, no merges
+   *   - "formats"  : per-cell style id only, never overwrites values
+   */
+  readonly mode?: "all" | "values" | "formulas" | "formats";
   readonly transpose?: boolean;
 }
 
@@ -396,4 +536,112 @@ export interface ResizeImagePayload {
 export interface RemoveImagePayload {
   readonly sheet: string;
   readonly imageId: string;
+}
+
+/* ── Freeze panes (C3) ─────────────────────────────────────────────────── */
+
+/**
+ * `xlsx:freeze-panes` — freeze a number of rows from the top and/or
+ * columns from the left. Setting both to `0` is equivalent to
+ * `xlsx:unfreeze-panes`.
+ *
+ * Bounds:
+ *   - `rows` ∈ [0, 1048576]
+ *   - `cols` ∈ [0, 16384]
+ *
+ * Excel parity: any non-zero `rows`/`cols` writes a
+ * `<pane state="frozen"/>` block to the worksheet's `<sheetView>`,
+ * which Excel restores on open. Round-trips through our serializer.
+ */
+export interface FreezePanesPayload {
+  readonly sheet: string;
+  readonly rows: number;
+  readonly cols: number;
+}
+
+/** `xlsx:unfreeze-panes` — clear any frozen-pane configuration. */
+export interface UnfreezePanesPayload {
+  readonly sheet: string;
+}
+
+/* ── Excel Tables / ListObjects (C14) ──────────────────────────────────── */
+
+/**
+ * `xlsx:add-table` — promote a range to an Excel Table.
+ *
+ * Mirrors Excel's Ctrl+T affordance:
+ *   - `range` covers headers + body. The first row is treated as the
+ *     header row when `hasHeaders !== false`.
+ *   - When `hasHeaders` is `false`, the table gets synthesised
+ *     `Column1`, `Column2`, … names just like Excel does.
+ *   - The table's name is derived from `name` if supplied, otherwise
+ *     the next available `TableN` (workbook-scoped, since OOXML
+ *     enforces global table-name uniqueness).
+ *
+ * The handler also installs an AutoFilter at the table range so
+ * filter buttons appear immediately, matching Excel's default. C14
+ * does not (yet) auto-extend the table on adjacent edits — that
+ * lives in a follow-up.
+ */
+export interface AddTablePayload {
+  readonly sheet: string;
+  /** A1 range, e.g. `"A1:E25"`. Must contain at least one body row. */
+  readonly range: string;
+  /** Defaults to `true`. */
+  readonly hasHeaders?: boolean;
+  /** Optional explicit table name. Must be unique workbook-wide. */
+  readonly name?: string;
+}
+
+/** `xlsx:remove-table` — remove an Excel Table from a sheet (cells stay). */
+export interface RemoveTablePayload {
+  readonly sheet: string;
+  readonly tableId: string;
+}
+
+/* ── Charts (C15) ──────────────────────────────────────────────────────── */
+
+/**
+ * `xlsx:add-chart` — drop a free-floating chart on a worksheet.
+ *
+ * MVP scope: column / bar / line / pie. The chart auto-anchors near
+ * the right edge of `dataRange` so it doesn't cover the source data,
+ * unless an explicit `anchor` is provided.
+ */
+export interface AddChartPayload {
+  readonly sheet: string;
+  readonly kind: import("../model/types.js").ChartKind;
+  /** A1 range of the chart's data, e.g. `"A1:B7"`. */
+  readonly dataRange: string;
+  /** Defaults to `true` — first row becomes the series legend. */
+  readonly hasHeaderRow?: boolean;
+  /** Defaults to `true` — first column becomes the category labels. */
+  readonly hasCategoryColumn?: boolean;
+  readonly title?: string;
+  /** Optional explicit anchor; auto-derived from `dataRange` when omitted. */
+  readonly anchor?: import("../model/drawings.js").ImageAnchor;
+}
+
+/** `xlsx:remove-chart` — drop a chart from a sheet. */
+export interface RemoveChartPayload {
+  readonly sheet: string;
+  readonly chartId: string;
+}
+
+/** `xlsx:move-chart` — repin a chart's anchor without resizing. */
+export interface MoveChartPayload {
+  readonly sheet: string;
+  readonly chartId: string;
+  readonly fromRow: number;
+  readonly fromCol: number;
+  readonly fromOffsetXPx: number;
+  readonly fromOffsetYPx: number;
+}
+
+/** `xlsx:resize-chart` — change a chart's rendered size in CSS pixels. */
+export interface ResizeChartPayload {
+  readonly sheet: string;
+  readonly chartId: string;
+  readonly widthPx: number;
+  readonly heightPx: number;
 }

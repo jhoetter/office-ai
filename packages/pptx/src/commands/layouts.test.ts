@@ -62,9 +62,7 @@ describe("pptx:add-slide with layoutKind", () => {
     const layoutPaths = [...c.parts.keys()].filter((p) => p.startsWith("ppt/slideLayouts/"));
     expect(layoutPaths.length).toBeGreaterThan(0);
     // The new slide's rels file must point at one of them.
-    const slideRelPaths = [...c.parts.keys()].filter((p) =>
-      p.startsWith("ppt/slides/_rels/")
-    );
+    const slideRelPaths = [...c.parts.keys()].filter((p) => p.startsWith("ppt/slides/_rels/"));
     const lastRelXml = c.readText(slideRelPaths[slideRelPaths.length - 1]);
     expect(lastRelXml).toContain("slideLayout");
 

@@ -61,7 +61,11 @@ test.describe("shortcuts dialog", () => {
     await page.keyboard.press("ControlOrMeta+/");
     await expect(dialog(page)).toBeVisible();
     // XLSX-only entry that isn't in DOCX/PPTX (4 directions, just probe one).
-    await expect(dialog(page).getByText(/Jump to data edge/).first()).toBeVisible();
+    await expect(
+      dialog(page)
+        .getByText(/Jump to data edge/)
+        .first()
+    ).toBeVisible();
   });
 
   test("PPTX: Mod+/ opens with PPTX-scoped entries", async ({ page }) => {
@@ -70,7 +74,11 @@ test.describe("shortcuts dialog", () => {
     await page.keyboard.press("ControlOrMeta+/");
     await expect(dialog(page)).toBeVisible();
     // PPTX-only entry that isn't in DOCX/XLSX (4 directions, just probe one).
-    await expect(dialog(page).getByText(/Nudge shape/).first()).toBeVisible();
+    await expect(
+      dialog(page)
+        .getByText(/Nudge shape/)
+        .first()
+    ).toBeVisible();
     await expect(dialog(page).getByText(/Add new slide/)).toBeVisible();
   });
 });

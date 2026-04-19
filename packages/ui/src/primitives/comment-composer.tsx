@@ -67,12 +67,7 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
         className="min-h-[44px] w-full resize-y rounded border border-divider bg-background p-2 text-xs text-foreground placeholder:text-tertiary focus:border-accent focus:outline-none"
       />
       <div className="flex items-center justify-end gap-1">
-        <Button
-          type="submit"
-          variant="ghost"
-          size="sm"
-          disabled={busy || text.trim().length === 0}
-        >
+        <Button type="submit" variant="ghost" size="sm" disabled={busy || text.trim().length === 0}>
           {props.submitLabel ?? "Comment"}
         </Button>
       </div>

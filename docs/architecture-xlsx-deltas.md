@@ -442,11 +442,11 @@ whole-row / whole-col selections trigger structural deletion.
 Three Excel-native interactions had no DOCX analogue and forced
 new architecture in this layer:
 
-| Surface           | DOCX                                                          | XLSX                                                                                                                                                |
-| ----------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Clipboard         | OS-default cut/copy of the PM selection (no model awareness)  | `XlsxClipboardSnapshot` round-trips through TSV+HTML with a fingerprint, parsed by a headless `parseExternalClipboard` that handles Excel/Sheets/Numbers/CSV without touching the DOM. |
-| Fill / drag       | n/a                                                           | `xlsx:fill-range` + a 6-detector series engine in `packages/xlsx/src/fill/series.ts` (numeric, date, weekday, month, text-numeric, repeat).         |
-| Multi-step Undo   | Per-mutation `before` snapshot; bus had no Undo until Phase 13 | Same `before` snapshots, plus a `redoStack` and `canUndo`/`canRedo`/`undo`/`redo` on `CommandBus`. `MutationStatus` gains `"undone"`. Both agents proxy. |
+| Surface         | DOCX                                                           | XLSX                                                                                                                                                                                   |
+| --------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Clipboard       | OS-default cut/copy of the PM selection (no model awareness)   | `XlsxClipboardSnapshot` round-trips through TSV+HTML with a fingerprint, parsed by a headless `parseExternalClipboard` that handles Excel/Sheets/Numbers/CSV without touching the DOM. |
+| Fill / drag     | n/a                                                            | `xlsx:fill-range` + a 6-detector series engine in `packages/xlsx/src/fill/series.ts` (numeric, date, weekday, month, text-numeric, repeat).                                            |
+| Multi-step Undo | Per-mutation `before` snapshot; bus had no Undo until Phase 13 | Same `before` snapshots, plus a `redoStack` and `canUndo`/`canRedo`/`undo`/`redo` on `CommandBus`. `MutationStatus` gains `"undone"`. Both agents proxy.                               |
 
 **Why headless clipboard parsing**: keeping `parseHtmlTable` /
 `parseFingerprintHtml` / `delimitedToSnapshot` in
@@ -460,7 +460,7 @@ multiline-quoted CSV.
 **Why redo re-runs the handler instead of restoring `after`**:
 between an `undo()` and a `redo()` the user (or an agent) can
 dispatch other mutations, rebase the pending stack, or move sheets
-around. Re-applying the original payload against the *current*
+around. Re-applying the original payload against the _current_
 approved snapshot is the only way to keep redo correct in the face
 of a rebase. The cost is that pure handlers are mandatory — which
 they already are.

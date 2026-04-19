@@ -45,12 +45,8 @@ export function createPptxCommentsProvider(opts: PptxCommentsProviderOptions): C
           slideIndex,
           author: input.author,
           text: input.text,
-          ...(opts.defaultPin
-            ? { xEmu: opts.defaultPin.xEmu, yEmu: opts.defaultPin.yEmu }
-            : {}),
-          ...(input.anchor.kind === "pptx-pin"
-            ? { xEmu: input.anchor.xEmu, yEmu: input.anchor.yEmu }
-            : {}),
+          ...(opts.defaultPin ? { xEmu: opts.defaultPin.xEmu, yEmu: opts.defaultPin.yEmu } : {}),
+          ...(input.anchor.kind === "pptx-pin" ? { xEmu: input.anchor.xEmu, yEmu: input.anchor.yEmu } : {}),
           ...(input.anchor.kind === "pptx-pin" && input.anchor.shapeId
             ? { shapeId: input.anchor.shapeId }
             : {}),
@@ -119,11 +115,7 @@ function normalize(
   };
 }
 
-function memoCommentId(
-  _memo: unknown,
-  agent: PptxAgent,
-  slideIndex: number
-): string | null {
+function memoCommentId(_memo: unknown, agent: PptxAgent, slideIndex: number): string | null {
   // The command memo doesn't surface the new comment id directly; the
   // last entry on the slide's comments part is the freshest.
   const snap = agent.getSnapshot();

@@ -1328,7 +1328,7 @@ symmetrical.
 > bus-level Undo / Redo mechanism is documented in
 > `spec/core/command-bus.md` (§undo).
 
-### `xlsx:paste-range`  ·  §14
+### `xlsx:paste-range` · §14
 
 ```typescript
 type PasteRangePayload = {
@@ -1347,7 +1347,7 @@ type PasteRangePayload = {
 3. Validate that the rectangle implied by `source.height × source.width`
    (transposed if `transpose: true`) fits inside the worksheet
    (`out-of-bounds`).
-4. Reject when the destination *partially* overlaps an existing merge
+4. Reject when the destination _partially_ overlaps an existing merge
    (`merge-overlap`); a merge-anchored target that fully contains the
    pre-existing merge is accepted (the existing merge is dropped first).
 5. For each source cell, project into the target rectangle:
@@ -1366,15 +1366,15 @@ type PasteRangePayload = {
 
 #### `precheck`
 
-| `reason`         | When                                                              |
-| ---------------- | ----------------------------------------------------------------- |
-| `unknown-sheet`  | `sheet` not found                                                 |
-| `bad-target`     | `target` is not a valid single-cell A1 ref                        |
-| `empty-source`   | `source.height === 0 || source.width === 0`                       |
-| `out-of-bounds`  | the projected rectangle exceeds 1048576×16384                     |
-| `merge-overlap`  | the rectangle clips a pre-existing merge it doesn't fully contain |
+| `reason`        | When                                                              |
+| --------------- | ----------------------------------------------------------------- | --- | ------------------- |
+| `unknown-sheet` | `sheet` not found                                                 |
+| `bad-target`    | `target` is not a valid single-cell A1 ref                        |
+| `empty-source`  | `source.height === 0                                              |     | source.width === 0` |
+| `out-of-bounds` | the projected rectangle exceeds 1048576×16384                     |
+| `merge-overlap` | the rectangle clips a pre-existing merge it doesn't fully contain |
 
-### `xlsx:fill-range`  ·  §15
+### `xlsx:fill-range` · §15
 
 ```typescript
 type FillRangePayload = {
@@ -1407,14 +1407,14 @@ type FillRangePayload = {
 
 #### `precheck`
 
-| `reason`        | When                                                       |
-| --------------- | ---------------------------------------------------------- |
-| `unknown-sheet` | `sheet` not found                                          |
-| `bad-source`    | `source` is not a valid A1 range                           |
-| `bad-target`    | `target` is not a valid A1 range                           |
-| `bad-geometry`  | `target` does not enclose `source`, or extends wrong axis  |
+| `reason`        | When                                                      |
+| --------------- | --------------------------------------------------------- |
+| `unknown-sheet` | `sheet` not found                                         |
+| `bad-source`    | `source` is not a valid A1 range                          |
+| `bad-target`    | `target` is not a valid A1 range                          |
+| `bad-geometry`  | `target` does not enclose `source`, or extends wrong axis |
 
-### `xlsx:text-to-columns`  ·  §16
+### `xlsx:text-to-columns` · §16
 
 ```typescript
 type TextToColumnsPayload = {
@@ -1433,7 +1433,7 @@ type TextToColumnsPayload = {
    - Read the leftmost cell value (coerced to string via the standard
      `displayValue` projection).
    - Split on `delimiter`. With `treatConsecutiveAsOne === true`, drop
-     all empty fields (matches Excel exactly — *not* "collapse runs").
+     all empty fields (matches Excel exactly — _not_ "collapse runs").
    - Coerce each part via the literal coercion rules: numeric strings
      become numbers, `"TRUE"` / `"FALSE"` (any case) become booleans,
      everything else is kept as text.
@@ -1443,12 +1443,12 @@ type TextToColumnsPayload = {
 
 #### `precheck`
 
-| `reason`         | When                                |
-| ---------------- | ----------------------------------- |
-| `unknown-sheet`  | `sheet` not found                   |
-| `bad-range`      | `range` is not a valid A1 range     |
-| `bad-delimiter`  | `delimiter === ""`                  |
-| `bad-destination`| `destination` is not a single cell  |
+| `reason`          | When                               |
+| ----------------- | ---------------------------------- |
+| `unknown-sheet`   | `sheet` not found                  |
+| `bad-range`       | `range` is not a valid A1 range    |
+| `bad-delimiter`   | `delimiter === ""`                 |
+| `bad-destination` | `destination` is not a single cell |
 
 ---
 
