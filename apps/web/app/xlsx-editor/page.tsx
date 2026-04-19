@@ -16,7 +16,7 @@ const XlsxEditor = dynamic(() => import("./XlsxEditor").then((m) => m.XlsxEditor
 export default function XlsxEditorPage(): React.ReactNode {
   const [ready, setReady] = useState(false);
   return (
-    <main className="flex h-screen w-full flex-col">
+    <main className="flex h-screen w-full flex-col overflow-hidden">
       <XlsxEditor onBootstrapReady={setReady} />
       <LoadingScreen variant="splash" product="xlsx" show={!ready} />
     </main>

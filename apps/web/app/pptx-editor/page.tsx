@@ -16,7 +16,7 @@ const PptxEditor = dynamic(() => import("./PptxEditor").then((m) => m.PptxEditor
 export default function PptxEditorPage(): React.ReactNode {
   const [ready, setReady] = useState(false);
   return (
-    <main className="flex h-screen w-full flex-col">
+    <main className="flex h-screen w-full flex-col overflow-hidden">
       <PptxEditor onBootstrapReady={setReady} />
       <LoadingScreen variant="splash" product="pptx" show={!ready} />
     </main>

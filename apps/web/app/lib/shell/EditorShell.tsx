@@ -136,7 +136,7 @@ export function EditorShell({
 
   return (
     <div
-      className="flex h-full min-h-0 w-full flex-col bg-background text-foreground"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground"
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}

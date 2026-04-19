@@ -19,7 +19,7 @@ const DocxEditor = dynamic(() => import("./DocxEditor").then((m) => m.DocxEditor
 export default function EditorPage() {
   const [ready, setReady] = useState(false);
   return (
-    <main className="flex h-screen w-full flex-col">
+    <main className="flex h-screen w-full flex-col overflow-hidden">
       <DocxEditor onBootstrapReady={setReady} />
       <LoadingScreen variant="splash" product="docx" show={!ready} />
     </main>
