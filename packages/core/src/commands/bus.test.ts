@@ -183,5 +183,107 @@ describe("CommandBus", () => {
       bus.redo();
       expect(bus.getApproved().root.value).toBe(6);
     });
+
+    it("notifies subscribers with rebase-failed when a pending mutation can't be replayed", async () => {
+      // A handler that *requires* `value >= 5` to apply. With `value = 5`
+      // (the post-human-mutation state) the pending agent mutation
+      // applies cleanly. After we undo the human mutation, `value`
+      // drops to 0 and the rebase pass throws — the bus should flip
+      // the pending mutation to `rejected` AND notify.
+      const requiresFive: CommandHandler<{ delta: number }, ToySnapshot> = {
+        type: "toy:requires-five",
+        apply(snapshot, payload) {
+          if (snapshot.root.value < 5) {
+            throw new CommandError("preconditions-not-met", "value < 5");
+          }
+          return {
+            next: {
+              ...snapshot,
+              revision: snapshot.revision + 1,
+              root: { value: snapshot.root.value + payload.delta },
+            },
+            diff: {
+              format: "docx",
+              fromRevision: snapshot.revision,
+              toRevision: snapshot.revision + 1,
+              changes: [],
+            },
+          };
+        },
+      };
+
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+      bus.register(requiresFive);
+
+      await bus.dispatch({ type: "toy:inc", payload: { by: 5 }, source: "human" });
+      const pending = await bus.dispatch({
+        type: "toy:requires-five",
+        payload: { delta: 2 },
+        source: "agent",
+      });
+      expect(pending.status).toBe("pending");
+      expect(bus.getWorking().root.value).toBe(7);
+
+      const events: Array<{ id: string; status: string; code?: string }> = [];
+      bus.subscribe((_s, m) =>
+        events.push({ id: m.id, status: m.status, code: m.rejection?.code })
+      );
+
+      // Undo the human mutation — value drops to 0, rebase of the
+      // pending `requires-five` mutation now throws.
+      bus.undo();
+
+      const rebaseFailed = events.find((e) => e.id === pending.id);
+      expect(rebaseFailed).toBeDefined();
+      expect(rebaseFailed?.status).toBe("rejected");
+      // Default code when the thrown error is not a CommandError;
+      // the helper preserves the CommandError code when there is one.
+      expect(rebaseFailed?.code).toBe("preconditions-not-met");
+
+      // Pending stack drained — no more "phantom" pending mutation
+      // sitting around with status: rejected.
+      expect(bus.getPending()).toHaveLength(0);
+      // History captured the rejected mutation for auditability.
+      const histRej = bus.getHistory().find((m) => m.id === pending.id);
+      expect(histRej?.status).toBe("rejected");
+      expect(histRej?.rejection?.code).toBe("preconditions-not-met");
+    });
+
+    it("keeps a rebaseable pending mutation stable across an undo + redo of an approved mutation", async () => {
+      // Two approved mutations on top, one pending agent mutation
+      // last. Undo the most-recent approved → pending rebases
+      // cleanly against the new floor. Redo → pending rebases again,
+      // back on top. `working` should reflect the pending mutation
+      // BOTH times; it should not silently disappear.
+      const bus = new CommandBus<ToySnapshot>(initial);
+      bus.register(incHandler);
+
+      await bus.dispatch({ type: "toy:inc", payload: { by: 1 }, source: "human" });
+      await bus.dispatch({ type: "toy:inc", payload: { by: 10 }, source: "human" });
+      const pending = await bus.dispatch({
+        type: "toy:inc",
+        payload: { by: 100 },
+        source: "agent",
+      });
+      expect(pending.status).toBe("pending");
+      expect(bus.getApproved().root.value).toBe(11);
+      expect(bus.getWorking().root.value).toBe(111);
+
+      bus.undo();
+      // Approved drops to 1; the +100 pending rebase keeps it visible
+      // in `working` (1 + 100 = 101). Pending stack still has it.
+      expect(bus.getApproved().root.value).toBe(1);
+      expect(bus.getWorking().root.value).toBe(101);
+      expect(bus.getPending()).toHaveLength(1);
+      expect(bus.getPending()[0].id).toBe(pending.id);
+
+      bus.redo();
+      // Approved climbs back to 11; pending re-rebases on top.
+      expect(bus.getApproved().root.value).toBe(11);
+      expect(bus.getWorking().root.value).toBe(111);
+      expect(bus.getPending()).toHaveLength(1);
+      expect(bus.getPending()[0].id).toBe(pending.id);
+    });
   });
 });

@@ -44,10 +44,11 @@ export interface LoadingScreenProps {
    * Ignored by `overlay` because the editor chrome already shows
    * the product. */
   readonly product?: ProductKind;
-  /** Defaults to "Loading…" (or "Loading <product>…" when
-   * `product` is set). Pass a more specific label when the generic
-   * one would be confusing — e.g. when the editor is mounted but a
-   * different artefact is being prepared. */
+  /** Defaults to "Loading editor…" — the same wording the page-
+   * level dynamic fallback uses, so the text doesn't flicker when
+   * the splash hands off from `fill` to `splash` mid-bootstrap.
+   * Pass a more specific label only when the generic one would be
+   * confusing (e.g. a different artefact is being prepared). */
   readonly label?: string;
   readonly testId?: string;
 }
@@ -58,19 +59,13 @@ const PRODUCT_ICON: Record<ProductKind, ComponentType<{ size?: number }>> = {
   pptx: Presentation,
 };
 
-const PRODUCT_LABEL: Record<ProductKind, string> = {
-  docx: "Loading Word document…",
-  xlsx: "Loading Excel workbook…",
-  pptx: "Loading PowerPoint presentation…",
-};
-
 export function LoadingScreen({
   variant = "fill",
   product,
   label,
   testId = "loading-screen",
 }: LoadingScreenProps): ReactNode {
-  const resolvedLabel = label ?? (product ? PRODUCT_LABEL[product] : "Loading…");
+  const resolvedLabel = label ?? "Loading editor…";
 
   if (variant === "splash" && product) {
     return (

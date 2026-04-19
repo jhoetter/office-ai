@@ -300,10 +300,26 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
         setUiTick((t) => t + 1);
       };
       let firstSnap = true;
-      const off = agentInstance.subscribe(() => {
+      const off = agentInstance.subscribe((_snap, mutation) => {
         refreshState();
         if (firstSnap) {
           firstSnap = false;
+          return;
+        }
+        // Surface rebase rejections — when an undo/redo (or a
+        // pending-mutation rebase pass) flips a previously
+        // pending agent mutation to "rejected", the bus fires
+        // one notify per rejected mutation with the
+        // `rebase-failed` code. The user sees a toast instead
+        // of the suggestion silently disappearing.
+        if (
+          mutation.status === "rejected" &&
+          mutation.rejection?.code === "rebase-failed"
+        ) {
+          pushToast(
+            "warn",
+            `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
+          );
           return;
         }
         setSaveState("modified");

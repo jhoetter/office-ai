@@ -19,6 +19,7 @@ import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
 import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
+import { handleUndoRedo, isFormField } from "@/lib/undo-redo";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 import {
@@ -351,8 +352,23 @@ export function PptxEditor(): React.ReactNode {
     setReady(true);
     setTick((t) => t + 1);
     setSaveState("saved");
-    next.subscribe(() => {
+    next.subscribe((_snap, mutation) => {
       setTick((t) => t + 1);
+      // Surface bus rebase rejections (see
+      // packages/core/src/commands/bus.ts.recomputeWorking).
+      // A pending agent mutation that no longer applies after
+      // an undo gets flipped to `rejected` with the
+      // `rebase-failed` code; previously it just disappeared.
+      if (
+        mutation.status === "rejected" &&
+        mutation.rejection?.code === "rebase-failed"
+      ) {
+        pushToastRef.current?.(
+          "warn",
+          `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
+        );
+        return;
+      }
       setSaveState("modified");
     });
   }, []);
@@ -385,38 +401,28 @@ export function PptxEditor(): React.ReactNode {
   const groupRef = useRef<() => void>(() => {});
   const ungroupRef = useRef<() => void>(() => {});
 
-  // D1 — Undo / Redo keyboard shortcuts (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z,
-  // Cmd/Ctrl+Y). We bind on document so they fire regardless of which
-  // surface element is focused, and skip when the user is typing inside
-  // a real text input/textarea/contenteditable so we don't fight the
-  // browser's native undo for those fields.
+  // D1 — Undo / Redo + duplicate / group / ungroup. We bind on
+  // document so they fire regardless of which surface element is
+  // focused. Undo / redo go through the shared `handleUndoRedo`
+  // helper (chord detection + form-field guard + bus dispatch
+  // are identical across DOCX / XLSX / PPTX). The
+  // duplicate/group/ungroup chords stay PPTX-local because they
+  // aren't part of the cross-editor shortcut catalog.
   useEffect(() => {
-    const isFormField = (target: EventTarget | null): boolean => {
-      if (!(target instanceof HTMLElement)) return false;
-      const tag = target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return true;
-      if (target.isContentEditable) return true;
-      return false;
-    };
     const onKey = (e: KeyboardEvent) => {
+      if (handleUndoRedo(e, agentRef.current)) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
-      const isUndo = key === "z" && !e.shiftKey;
-      const isRedo = (key === "z" && e.shiftKey) || key === "y";
       const isDuplicate = key === "d" && !e.shiftKey && !e.altKey;
       const isUngroup = key === "g" && e.shiftKey && e.altKey;
       const isGroup = key === "g" && e.shiftKey && !e.altKey;
-      if (!isUndo && !isRedo && !isDuplicate && !isGroup && !isUngroup) return;
+      if (!isDuplicate && !isGroup && !isUngroup) return;
       if (isFormField(e.target)) return;
       const a = agentRef.current;
       if (!a) return;
       e.preventDefault();
-      if (isUndo) {
-        if (a.canUndo()) a.undo();
-      } else if (isRedo) {
-        if (a.canRedo()) a.redo();
-      } else if (isDuplicate) {
+      if (isDuplicate) {
         duplicateRef.current();
       } else if (isUngroup) {
         ungroupRef.current();
@@ -1926,7 +1932,8 @@ export function PptxEditor(): React.ReactNode {
                     ref={slideSurfaceRef as React.RefObject<HTMLElement>}
                     tabIndex={-1}
                     data-testid="pptx-slide-surface"
-                    className="relative flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-divider bg-background p-4"
+                    className="relative flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-divider p-4"
+                    style={{ backgroundColor: "var(--page-backdrop)" }}
                   >
                     <div className="w-full max-w-[1100px]" style={{ alignSelf: "flex-start" }}>
                       <SlideCanvas

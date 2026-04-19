@@ -82,6 +82,42 @@ const buffer = await agent.exportFile();
 fs.writeFileSync("contract-edited.docx", Buffer.from(buffer));
 ```
 
+## Undo / redo invariant — the bus is the only history
+
+There is exactly **one** undo/redo history per document, owned by the
+`CommandBus` (and exposed on every agent as `canUndo() / canRedo() /
+undo() / redo()`). Renderers must not install parallel histories
+(e.g. `prosemirror-history`) or maintain their own undo stacks.
+
+Concretely:
+
+- The toolbar `Undo` / `Redo` buttons read `agent.canUndo() /
+  canRedo()` and call `agent.undo() / redo()`.
+- The keyboard chord (`Cmd-Z` / `Cmd-Shift-Z` / `Cmd-Y`) routes
+  through the same `agent.undo() / redo()` (see
+  `apps/web/app/lib/undo-redo.ts` for the shared chord helper).
+- Snapshot re-projections that paint bus state into the renderer
+  (in DOCX: `from-bus` transactions in
+  `packages/docx/src/renderer/mount.ts`) are marked
+  `addToHistory: false` so they cannot leak into any future
+  renderer-side history plugin.
+- Transactions whose steps cannot be translated into bus commands
+  must NOT be applied to the renderer doc — that would produce
+  bus/renderer drift (and silent "edit just disappeared" bugs
+  after the next from-bus projection). The renderer surfaces the
+  drop via `onUnsupported` instead.
+
+### Rebase rejections are observable
+
+When `recomputeWorking()` re-applies pending agent mutations on top
+of a shifted floor (after `approve` / `reject` / `undo` / `redo` /
+`rollback`), a mutation whose handler now throws is flipped to
+`status: "rejected"` with a `rejection.code` of `"rebase-failed"`
+(or the underlying `CommandError.code` if the handler raised one).
+Subscribers get one `notify(mutation)` call per rejected mutation
+so the host UI can toast — silent vanishing of agent suggestions
+is forbidden.
+
 ## Headless invariant
 
 `@officeai/docx/agent` (and its peers) **must not import**:

@@ -319,9 +319,30 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
     return m;
   }
 
+  /**
+   * Re-apply every pending agent mutation on top of the current
+   * `approved` snapshot. Called after `approveMutation`,
+   * `rejectMutation`, `undo`, `redo`, and `rollback` — anything
+   * that shifts the floor under the pending stack.
+   *
+   * Rebase invariants:
+   *   - A pending mutation whose handler now throws is flipped to
+   *     `"rejected"` with a `rebase-failed` rejection. Callers
+   *     (the editor's `subscribe` listener) get notified so the UI
+   *     can surface a toast — the previous behaviour silently
+   *     dropped the mutation, producing the "agent suggestion just
+   *     vanished after Cmd+Z" class of bug.
+   *   - A mutation whose handler still applies cleanly keeps its
+   *     `id` and `command`; the `before` / `after` / `diff` fields
+   *     are refreshed against the new floor.
+   *   - The `working` snapshot reflects the rebased stack so the
+   *     editor's render loop sees a consistent doc on the next
+   *     subscribe tick.
+   */
   private recomputeWorking(): void {
     let snapshot = this.approved;
     const newPending: Mutation<TSnapshot>[] = [];
+    const rejected: Mutation<TSnapshot>[] = [];
     for (const m of this.pending) {
       const handler = this.handlers.get(m.command.type);
       if (!handler) {
@@ -338,12 +359,36 @@ export class CommandBus<TSnapshot extends DocumentSnapshot = DocumentSnapshot> {
         };
         snapshot = out.next;
         newPending.push(re);
-      } catch {
-        newPending.push({ ...m, status: "rejected" });
+      } catch (err) {
+        // Capture full rejection details (mirrors the synchronous
+        // reject path in `applyOneSync`). The well-known code
+        // `rebase-failed` lets editor subscribers pattern-match
+        // and surface a toast — see spec/shared/agent-api.md.
+        const rej: Mutation<TSnapshot> = {
+          ...m,
+          status: "rejected",
+          rejection: {
+            code: err instanceof CommandError ? err.code : "rebase-failed",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        };
+        rejected.push(rej);
       }
     }
     this.pending = newPending;
     this.working = snapshot;
+    // Move rebase-failed mutations into history so they're
+    // auditable (matches `rejectMutation`'s bookkeeping). The
+    // previous code kept them in `pending` with `status:
+    // "rejected"`, where they accumulated forever and skewed
+    // every subsequent rebase pass. Pushing to history makes the
+    // status transition observable AND terminal.
+    for (const m of rejected) this.history.push(m);
+    // Notify AFTER the bus state is fully reconciled so subscribers
+    // observing `getWorking()` / `getPending()` see the post-rebase
+    // world, not a half-updated one. Notifications fire one per
+    // rejected mutation so each can be surfaced individually.
+    for (const m of rejected) this.notify(m);
   }
 
   private normalize(c: Command | CommandLite): Command {

@@ -2,11 +2,27 @@ import { EditorState, Plugin, TextSelection, type Transaction } from "prosemirro
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import { baseKeymap } from "prosemirror-commands";
-import { history, undo, redo } from "prosemirror-history";
 import type { DocxAgent } from "../agent/agent.js";
 import { docxSchema } from "./schema.js";
 import { docToPM } from "./doc-to-pm.js";
 import { transactionToCommands, type UnsupportedTx } from "./transaction-to-commands.js";
+
+/**
+ * Why no `prosemirror-history` plugin?
+ *
+ * Every approved mutation in this editor flows through the
+ * `CommandBus` (`agent.applyCommand` / `applyCommands`), which owns
+ * the canonical undo/redo stack. Installing PM's history plugin
+ * alongside the bus produced two parallel stacks: the toolbar's
+ * `Undo` button toggled the bus, while `Cmd-Z` toggled PM, and the
+ * snapshot-driven re-projection silently leaked into PM's history
+ * as a giant `replaceWith` step that PM would later try to invert
+ * — desyncing the bus from the doc.
+ *
+ * We bind `Mod-Z` / `Mod-Y` / `Mod-Shift-Z` directly to the bus so
+ * there is exactly one history per document. See
+ * `spec/shared/agent-api.md` for the invariant.
+ */
 
 export interface MountOptions {
   agent: DocxAgent;
@@ -79,12 +95,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
     schema: docxSchema,
     doc: initialDoc,
     plugins: [
-      history(),
-      keymap({
-        "Mod-z": undo,
-        "Mod-y": redo,
-        "Mod-Shift-z": redo,
-      }),
+      keymap(busUndoRedoKeymap(agent)),
       keymap(baseKeymap),
       ...(opts.extraPlugins ?? []),
     ],
@@ -138,11 +149,26 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       });
       if (result.unsupported.length > 0) opts.onUnsupported?.(result.unsupported);
 
-      const isTracked =
-        result.commands.length > 0 &&
-        result.commands.some(
-          (c) => c.type === "docx:insert-text-tracked" || c.type === "docx:delete-range-tracked"
-        );
+      // Drift guard: if the funnel can't translate ANY of the
+      // transaction's steps into commands, refuse to apply the
+      // transaction locally. The previous behaviour was to
+      // optimistically `view.updateState(before.apply(tx))` and
+      // then fall through with an empty `result.commands`, which
+      // mutated PM's doc without a corresponding bus mutation.
+      // The doc and the snapshot would silently diverge — undo
+      // couldn't reach the change, and the next from-bus
+      // projection would erase whatever the user had just
+      // produced. Rejecting up-front keeps the invariant
+      // "PM's doc == bus snapshot projection" intact, and
+      // `onUnsupported` already fired above so the host UI can
+      // toast (e.g. "this list reflow isn't supported yet").
+      if (result.commands.length === 0) {
+        return;
+      }
+
+      const isTracked = result.commands.some(
+        (c) => c.type === "docx:insert-text-tracked" || c.type === "docx:delete-range-tracked"
+      );
 
       if (isTracked) {
         // Tracked-changes path: PM's optimistic apply would land the
@@ -180,7 +206,6 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       // re-projection (which would clobber the selection we just
       // preserved).
       view.updateState(before.apply(tx));
-      if (result.commands.length === 0) return;
       pendingFunnelCount += result.commands.length;
       void agent.applyCommands(result.commands).catch((err) => {
         // Make sure we don't leak the suppression count if the
@@ -226,6 +251,16 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
         /* selection couldn't be set; PM will fall back to default */
       }
       tr.setMeta("from-bus", true);
+      // Belt-and-suspenders against any future plugin (collab,
+      // list keymap, alternate history, etc.) that might inspect
+      // `tx.docChanged` and decide to record this as an
+      // undoable user edit. The bus already owns the canonical
+      // history; a from-bus projection IS that canonical state
+      // being painted, not a new edit. Marking it as
+      // `addToHistory: false` keeps the contract — "PM is a view,
+      // the bus is the model" — even if someone re-installs a
+      // history plugin upstream.
+      tr.setMeta("addToHistory", false);
       view.dispatch(tr);
     } finally {
       isProjecting = false;
@@ -245,8 +280,43 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       // dispatch). Pushing an empty meta-only transaction is the
       // canonical "force a re-render without changing the doc" hack.
       const tr = view.state.tr.setMeta("from-bus", true);
+      tr.setMeta("addToHistory", false);
       view.dispatch(tr);
     },
+  };
+}
+
+/**
+ * Build a `prosemirror-keymap` map that routes Mod-Z / Mod-Y /
+ * Mod-Shift-Z directly to the bus. Returning `true` from each
+ * binding consumes the event so the browser doesn't ALSO try to
+ * undo (which on a contenteditable surface produces a phantom
+ * "execCommand" undo that bypasses both PM and the bus and was a
+ * known source of phantom edits before the bus existed).
+ *
+ * The bindings are written so that pressing the chord with nothing
+ * to undo / redo still consumes the event — same as the inline
+ * handlers in the XLSX and PPTX editors. That's deliberate: a
+ * disabled toolbar button is a better signal to the user than
+ * silently letting the browser pop up its own undo on the live
+ * document surface.
+ */
+function busUndoRedoKeymap(agent: DocxAgent): Record<
+  string,
+  (state: EditorState, dispatch?: (tr: Transaction) => void, view?: EditorView) => boolean
+> {
+  const undo = (): boolean => {
+    if (agent.canUndo()) agent.undo();
+    return true;
+  };
+  const redo = (): boolean => {
+    if (agent.canRedo()) agent.redo();
+    return true;
+  };
+  return {
+    "Mod-z": undo,
+    "Mod-y": redo,
+    "Mod-Shift-z": redo,
   };
 }
 

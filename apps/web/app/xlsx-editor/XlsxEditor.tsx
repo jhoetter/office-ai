@@ -56,6 +56,7 @@ import {
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import { computeXlsxActive, createXlsxFormatProvider } from "./xlsxFormatProvider";
 import { buildSampleXlsx } from "@/lib/sample-xlsx";
+import { handleUndoRedo } from "@/lib/undo-redo";
 import {
   Grid,
   type CommentMarker,
@@ -369,12 +370,27 @@ export function XlsxEditor(): ReactNode {
       setExtraAreas([]);
       setPendingCount(a.getPendingMutations().length);
       let first = true;
-      offRef.current = a.subscribe((s) => {
+      offRef.current = a.subscribe((s, mutation) => {
         setSnapshot(s);
         setPendingCount(a.getPendingMutations().length);
         // Skip the synchronous initial snapshot most agents emit.
         if (first) {
           first = false;
+          return;
+        }
+        // Surface bus rebase rejections (see
+        // packages/core/src/commands/bus.ts.recomputeWorking).
+        // Without this toast a pending agent mutation that
+        // becomes inconsistent after an undo just vanishes —
+        // the user has no way to know what happened.
+        if (
+          mutation.status === "rejected" &&
+          mutation.rejection?.code === "rebase-failed"
+        ) {
+          pushToast(
+            "warn",
+            `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
+          );
           return;
         }
         setSaveState("modified");
@@ -1262,27 +1278,13 @@ export function XlsxEditor(): ReactNode {
         return;
       }
 
-      // Undo / Redo — match Excel exactly:
-      //   Cmd/Ctrl+Z       → undo
-      //   Cmd/Ctrl+Shift+Z → redo (Cmd/Ctrl+Y also accepted)
-      if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
-        e.preventDefault();
-        const a = agentRef.current;
-        if (!a) return;
-        if (e.shiftKey) {
-          if (a.canRedo()) a.redo();
-        } else {
-          if (a.canUndo()) a.undo();
-        }
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || e.key === "Y")) {
-        e.preventDefault();
-        const a = agentRef.current;
-        if (!a) return;
-        if (a.canRedo()) a.redo();
-        return;
-      }
+      // Undo / Redo — Excel-parity (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z,
+      // Cmd/Ctrl+Y). All three editors share `handleUndoRedo` so
+      // the chord detection, the form-field guard, and the
+      // dispatch-onto-the-bus contract are identical. The bus is
+      // the single source of truth for history (see
+      // spec/shared/agent-api.md).
+      if (handleUndoRedo(e, agentRef.current)) return;
 
       // C7 — Excel-parity Paste Special shortcut (Cmd+Shift+V).
       // Native paste (Cmd+V) is captured via `onSurfacePaste`;
