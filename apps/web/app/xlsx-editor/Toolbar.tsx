@@ -21,14 +21,14 @@ import {
   Grid3x3,
   Paintbrush,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
 import { flattenCellXf } from "@officeai/xlsx";
 import { NUMBER_FORMAT_PRESETS, type NumberFormatPresetId } from "./styles";
 import type { Selection } from "./selection";
-import { ToolbarRow } from "../lib/shell";
+import { ToolbarMenu, ToolbarRow } from "../lib/shell";
 
 export interface ToolbarProps {
   readonly disabled: boolean;
@@ -485,24 +485,7 @@ interface FreezeMenuProps {
 function FreezeMenu(props: FreezeMenuProps): ReactNode {
   const { disabled, freeze, anchor, onFreeze } = props;
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDocClick);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDocClick);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const isFrozen = !!freeze && (freeze.rows > 0 || freeze.cols > 0);
   // "Freeze panes at selection" only makes sense when the anchor is
@@ -511,8 +494,9 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
   const canFreezeAtSelection = !!anchor && (anchor.row > 0 || anchor.col > 0);
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         data-testid="action-freeze-toggle"
         title="Freeze panes"
@@ -530,54 +514,55 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
         <Snowflake size={14} />
         <ChevronDown size={10} />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          data-testid="freeze-menu"
-          className="absolute left-0 top-8 z-30 min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
-        >
-          <FreezeMenuItem
-            label="Freeze top row"
-            shortcut=""
-            checked={isFrozen && freeze!.rows === 1 && freeze!.cols === 0}
-            onClick={() => {
-              setOpen(false);
-              onFreeze(1, 0);
-            }}
-          />
-          <FreezeMenuItem
-            label="Freeze first column"
-            shortcut=""
-            checked={isFrozen && freeze!.rows === 0 && freeze!.cols === 1}
-            onClick={() => {
-              setOpen(false);
-              onFreeze(0, 1);
-            }}
-          />
-          <FreezeMenuItem
-            label="Freeze panes at selection"
-            shortcut={canFreezeAtSelection ? `${anchor!.row}r×${anchor!.col}c` : ""}
-            disabled={!canFreezeAtSelection}
-            checked={!!anchor && isFrozen && freeze!.rows === anchor.row && freeze!.cols === anchor.col}
-            onClick={() => {
-              if (!anchor) return;
-              setOpen(false);
-              onFreeze(anchor.row, anchor.col);
-            }}
-          />
-          <div className="my-1 h-px bg-divider" />
-          <FreezeMenuItem
-            label="Unfreeze panes"
-            shortcut=""
-            disabled={!isFrozen}
-            onClick={() => {
-              setOpen(false);
-              onFreeze(0, 0);
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="freeze-menu"
+        className="min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <FreezeMenuItem
+          label="Freeze top row"
+          shortcut=""
+          checked={isFrozen && freeze!.rows === 1 && freeze!.cols === 0}
+          onClick={() => {
+            setOpen(false);
+            onFreeze(1, 0);
+          }}
+        />
+        <FreezeMenuItem
+          label="Freeze first column"
+          shortcut=""
+          checked={isFrozen && freeze!.rows === 0 && freeze!.cols === 1}
+          onClick={() => {
+            setOpen(false);
+            onFreeze(0, 1);
+          }}
+        />
+        <FreezeMenuItem
+          label="Freeze panes at selection"
+          shortcut={canFreezeAtSelection ? `${anchor!.row}r×${anchor!.col}c` : ""}
+          disabled={!canFreezeAtSelection}
+          checked={!!anchor && isFrozen && freeze!.rows === anchor.row && freeze!.cols === anchor.col}
+          onClick={() => {
+            if (!anchor) return;
+            setOpen(false);
+            onFreeze(anchor.row, anchor.col);
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <FreezeMenuItem
+          label="Unfreeze panes"
+          shortcut=""
+          disabled={!isFrozen}
+          onClick={() => {
+            setOpen(false);
+            onFreeze(0, 0);
+          }}
+        />
+      </ToolbarMenu>
+    </>
   );
 }
 
@@ -640,29 +625,12 @@ interface BordersMenuProps {
 function BordersMenu(props: BordersMenuProps): ReactNode {
   const { disabled, last, onApply, onOpenMore } = props;
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDocClick);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDocClick);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const Icon = last === "none" ? SquareDashed : last === "all" ? Grid3x3 : Square;
 
   return (
-    <div ref={ref} className="relative inline-flex items-center">
+    <span className="inline-flex items-center">
       <button
         type="button"
         data-testid="format-borders-apply"
@@ -676,6 +644,7 @@ function BordersMenu(props: BordersMenuProps): ReactNode {
         <Icon size={14} />
       </button>
       <button
+        ref={triggerRef}
         type="button"
         data-testid="format-borders-toggle"
         title="More borders"
@@ -689,102 +658,103 @@ function BordersMenu(props: BordersMenuProps): ReactNode {
       >
         <ChevronDown size={10} />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          data-testid="borders-menu"
-          className="absolute left-0 top-8 z-30 min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="borders-menu"
+        className="min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <BordersMenuItem
+          preset="all"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <BordersMenuItem
+          preset="outside"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <BordersMenuItem
+          preset="thick-outside"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <BordersMenuItem
+          preset="top"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <BordersMenuItem
+          preset="bottom"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <BordersMenuItem
+          preset="left"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <BordersMenuItem
+          preset="right"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <BordersMenuItem
+          preset="top-bottom"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <BordersMenuItem
+          preset="top-thick-bottom"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <BordersMenuItem
+          preset="none"
+          onPick={(p) => {
+            setOpen(false);
+            onApply(p);
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="borders-menu-more"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            setOpen(false);
+            onOpenMore();
+          }}
+          className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover"
         >
-          <BordersMenuItem
-            preset="all"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <BordersMenuItem
-            preset="outside"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <BordersMenuItem
-            preset="thick-outside"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <div className="my-1 h-px bg-divider" />
-          <BordersMenuItem
-            preset="top"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <BordersMenuItem
-            preset="bottom"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <BordersMenuItem
-            preset="left"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <BordersMenuItem
-            preset="right"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <div className="my-1 h-px bg-divider" />
-          <BordersMenuItem
-            preset="top-bottom"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <BordersMenuItem
-            preset="top-thick-bottom"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <div className="my-1 h-px bg-divider" />
-          <BordersMenuItem
-            preset="none"
-            onPick={(p) => {
-              setOpen(false);
-              onApply(p);
-            }}
-          />
-          <div className="my-1 h-px bg-divider" />
-          <button
-            type="button"
-            role="menuitem"
-            data-testid="borders-menu-more"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              setOpen(false);
-              onOpenMore();
-            }}
-            className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover"
-          >
-            <span>More borders…</span>
-          </button>
-        </div>
-      ) : null}
-    </div>
+          <span>More borders…</span>
+        </button>
+      </ToolbarMenu>
+    </span>
   );
 }
 

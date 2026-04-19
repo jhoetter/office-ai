@@ -25,7 +25,7 @@ import {
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import { ToolbarRow } from "../lib/shell";
+import { ToolbarMenu, ToolbarRow } from "../lib/shell";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -382,17 +382,7 @@ function SectionBreakMenu(props: {
   onInsert: (type: "nextPage" | "continuous" | "evenPage" | "oddPage") => void;
 }): ReactNode {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const choose = (type: "nextPage" | "continuous" | "evenPage" | "oddPage") => {
     props.onInsert(type);
@@ -400,8 +390,9 @@ function SectionBreakMenu(props: {
   };
 
   return (
-    <div ref={ref} className="relative">
+    <span className="inline-flex">
       <button
+        ref={triggerRef}
         type="button"
         title="Insert section break"
         aria-label="Insert section break"
@@ -418,39 +409,40 @@ function SectionBreakMenu(props: {
         <SeparatorHorizontal size={14} />
         <ChevronDown size={10} />
       </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute left-0 z-30 mt-1 w-64 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
-        >
-          <SectionBreakMenuItem
-            label="Next page"
-            description="Start the next section on a new page."
-            shortcut="Mod+Shift+Enter"
-            onClick={() => choose("nextPage")}
-            testId="section-break-next-page"
-          />
-          <SectionBreakMenuItem
-            label="Continuous"
-            description="Begin a new section without a page break."
-            onClick={() => choose("continuous")}
-            testId="section-break-continuous"
-          />
-          <SectionBreakMenuItem
-            label="Even page"
-            description="Start the next section on the next even-numbered page."
-            onClick={() => choose("evenPage")}
-            testId="section-break-even"
-          />
-          <SectionBreakMenuItem
-            label="Odd page"
-            description="Start the next section on the next odd-numbered page."
-            onClick={() => choose("oddPage")}
-            testId="section-break-odd"
-          />
-        </div>
-      )}
-    </div>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        className="w-64 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
+      >
+        <SectionBreakMenuItem
+          label="Next page"
+          description="Start the next section on a new page."
+          shortcut="Mod+Shift+Enter"
+          onClick={() => choose("nextPage")}
+          testId="section-break-next-page"
+        />
+        <SectionBreakMenuItem
+          label="Continuous"
+          description="Begin a new section without a page break."
+          onClick={() => choose("continuous")}
+          testId="section-break-continuous"
+        />
+        <SectionBreakMenuItem
+          label="Even page"
+          description="Start the next section on the next even-numbered page."
+          onClick={() => choose("evenPage")}
+          testId="section-break-even"
+        />
+        <SectionBreakMenuItem
+          label="Odd page"
+          description="Start the next section on the next odd-numbered page."
+          onClick={() => choose("oddPage")}
+          testId="section-break-odd"
+        />
+      </ToolbarMenu>
+    </span>
   );
 }
 
@@ -718,25 +710,16 @@ function SpacingMenu(props: {
   disabled?: boolean;
 }): ReactNode {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const lineDisplay = formatLineSpacing(props.spacing);
   const beforePts = toPoints(props.spacing?.before);
   const afterPts = toPoints(props.spacing?.after);
 
   return (
-    <div ref={ref} className="relative inline-flex">
+    <span className="inline-flex">
       <button
+        ref={triggerRef}
         type="button"
         title="Line and paragraph spacing"
         aria-label="Line and paragraph spacing"
@@ -749,66 +732,68 @@ function SpacingMenu(props: {
         <span className="tabular-nums">{lineDisplay}</span>
         <ChevronDown size={10} />
       </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-divider bg-surface p-2 text-xs shadow-md"
-        >
-          <div className="mb-2 font-medium text-foreground">Line spacing</div>
-          {LINE_SPACING_PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                props.onApply({ line: preset.line, lineRule: "auto" });
-                setOpen(false);
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        align="right"
+        role="menu"
+        className="w-56 rounded-md border border-divider bg-surface p-2 text-xs shadow-md"
+      >
+        <div className="mb-2 font-medium text-foreground">Line spacing</div>
+        {LINE_SPACING_PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              props.onApply({ line: preset.line, lineRule: "auto" });
+              setOpen(false);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded px-2 py-1 text-left hover:bg-hover",
+              isActiveLine(props.spacing, preset.line) && "bg-accent-light text-foreground"
+            )}
+          >
+            <span>{preset.label}</span>
+            <span className="text-secondary tabular-nums">{(preset.line / 240).toFixed(2)}×</span>
+          </button>
+        ))}
+        <div className="mt-3 border-t border-divider pt-2">
+          <div className="mb-1 font-medium text-foreground">Paragraph spacing (pt)</div>
+          <label className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-secondary">Before</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              defaultValue={beforePts ?? ""}
+              onBlur={(e) => {
+                const v = e.target.value === "" ? null : Number(e.target.value);
+                if (v === null) props.onApply({ before: null });
+                else if (Number.isFinite(v) && v >= 0) props.onApply({ before: Math.round(v * 20) });
               }}
-              className={cn(
-                "flex w-full items-center justify-between rounded px-2 py-1 text-left hover:bg-hover",
-                isActiveLine(props.spacing, preset.line) && "bg-accent-light text-foreground"
-              )}
-            >
-              <span>{preset.label}</span>
-              <span className="text-secondary tabular-nums">{(preset.line / 240).toFixed(2)}×</span>
-            </button>
-          ))}
-          <div className="mt-3 border-t border-divider pt-2">
-            <div className="mb-1 font-medium text-foreground">Paragraph spacing (pt)</div>
-            <label className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-secondary">Before</span>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                defaultValue={beforePts ?? ""}
-                onBlur={(e) => {
-                  const v = e.target.value === "" ? null : Number(e.target.value);
-                  if (v === null) props.onApply({ before: null });
-                  else if (Number.isFinite(v) && v >= 0) props.onApply({ before: Math.round(v * 20) });
-                }}
-                className="h-6 w-16 rounded border border-divider bg-surface px-1 text-right tabular-nums focus:outline-none"
-              />
-            </label>
-            <label className="flex items-center justify-between gap-2">
-              <span className="text-secondary">After</span>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                defaultValue={afterPts ?? ""}
-                onBlur={(e) => {
-                  const v = e.target.value === "" ? null : Number(e.target.value);
-                  if (v === null) props.onApply({ after: null });
-                  else if (Number.isFinite(v) && v >= 0) props.onApply({ after: Math.round(v * 20) });
-                }}
-                className="h-6 w-16 rounded border border-divider bg-surface px-1 text-right tabular-nums focus:outline-none"
-              />
-            </label>
-          </div>
+              className="h-6 w-16 rounded border border-divider bg-surface px-1 text-right tabular-nums focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-secondary">After</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              defaultValue={afterPts ?? ""}
+              onBlur={(e) => {
+                const v = e.target.value === "" ? null : Number(e.target.value);
+                if (v === null) props.onApply({ after: null });
+                else if (Number.isFinite(v) && v >= 0) props.onApply({ after: Math.round(v * 20) });
+              }}
+              className="h-6 w-16 rounded border border-divider bg-surface px-1 text-right tabular-nums focus:outline-none"
+            />
+          </label>
         </div>
-      )}
-    </div>
+      </ToolbarMenu>
+    </span>
   );
 }
 

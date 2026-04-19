@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Table as TableIcon } from "lucide-react";
 import { cn } from "@officeai/ui";
+import { ToolbarMenu } from "../lib/shell";
 
 /**
  * B4 — Word-style "Insert Table" grid picker.
@@ -34,17 +35,7 @@ export function InsertTableMenu(props: InsertTableMenuProps): ReactNode {
   const [hover, setHover] = useState<{ rows: number; cols: number } | null>(null);
   const [customRows, setCustomRows] = useState(3);
   const [customCols, setCustomCols] = useState(3);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const commit = (rows: number, cols: number) => {
     props.onInsert(rows, cols);
@@ -53,8 +44,9 @@ export function InsertTableMenu(props: InsertTableMenuProps): ReactNode {
   };
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         title="Insert table"
         aria-label="Insert table"
@@ -71,60 +63,63 @@ export function InsertTableMenu(props: InsertTableMenuProps): ReactNode {
         <TableIcon size={14} />
         <ChevronDown size={10} />
       </button>
-      {open && (
+      <ToolbarMenu
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setHover(null);
+        }}
+        triggerRef={triggerRef}
+        role="dialog"
+        className="w-max rounded-md border border-divider bg-surface p-2 shadow-md"
+      >
         <div
-          role="dialog"
-          aria-label="Insert table size"
-          className="absolute left-0 top-full z-30 mt-1 w-max rounded-md border border-divider bg-surface p-2 shadow-md"
+          className="grid gap-[2px]"
+          style={{
+            gridTemplateColumns: `repeat(${MAX_COLS}, 18px)`,
+            gridTemplateRows: `repeat(${MAX_ROWS}, 18px)`,
+          }}
+          onMouseLeave={() => setHover(null)}
+          data-testid="insert-table-grid"
         >
-          <div
-            className="grid gap-[2px]"
-            style={{
-              gridTemplateColumns: `repeat(${MAX_COLS}, 18px)`,
-              gridTemplateRows: `repeat(${MAX_ROWS}, 18px)`,
-            }}
-            onMouseLeave={() => setHover(null)}
-            data-testid="insert-table-grid"
-          >
-            {Array.from({ length: MAX_ROWS * MAX_COLS }, (_, i) => {
-              const r = Math.floor(i / MAX_COLS) + 1;
-              const c = (i % MAX_COLS) + 1;
-              const inside = hover !== null && r <= hover.rows && c <= hover.cols;
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  aria-label={`${r} × ${c}`}
-                  onMouseEnter={() => setHover({ rows: r, cols: c })}
-                  onClick={() => commit(r, c)}
-                  className={cn(
-                    "h-[18px] w-[18px] rounded-sm border transition-colors",
-                    inside ? "border-accent bg-accent-light" : "border-divider bg-background hover:bg-hover"
-                  )}
-                />
-              );
-            })}
-          </div>
-          <div className="mt-2 text-center text-xs tabular-nums text-secondary">
-            {hover ? `${hover.rows} × ${hover.cols} table` : "Drag to size"}
-          </div>
-          <div className="mt-2 flex items-center justify-center gap-2 border-t border-divider pt-2 text-xs">
-            <span className="text-secondary">Custom</span>
-            <NumberField value={customRows} min={1} max={50} onChange={setCustomRows} label="rows" />
-            <span className="text-secondary">×</span>
-            <NumberField value={customCols} min={1} max={20} onChange={setCustomCols} label="columns" />
-            <button
-              type="button"
-              onClick={() => commit(customRows, customCols)}
-              className="ml-1 rounded border border-divider bg-background px-2 py-0.5 hover:bg-hover"
-              data-testid="insert-table-custom-apply"
-            >
-              Insert
-            </button>
-          </div>
+          {Array.from({ length: MAX_ROWS * MAX_COLS }, (_, i) => {
+            const r = Math.floor(i / MAX_COLS) + 1;
+            const c = (i % MAX_COLS) + 1;
+            const inside = hover !== null && r <= hover.rows && c <= hover.cols;
+            return (
+              <button
+                key={i}
+                type="button"
+                aria-label={`${r} × ${c}`}
+                onMouseEnter={() => setHover({ rows: r, cols: c })}
+                onClick={() => commit(r, c)}
+                className={cn(
+                  "h-[18px] w-[18px] rounded-sm border transition-colors",
+                  inside ? "border-accent bg-accent-light" : "border-divider bg-background hover:bg-hover"
+                )}
+              />
+            );
+          })}
         </div>
-      )}
-    </div>
+        <div className="mt-2 text-center text-xs tabular-nums text-secondary">
+          {hover ? `${hover.rows} × ${hover.cols} table` : "Drag to size"}
+        </div>
+        <div className="mt-2 flex items-center justify-center gap-2 border-t border-divider pt-2 text-xs">
+          <span className="text-secondary">Custom</span>
+          <NumberField value={customRows} min={1} max={50} onChange={setCustomRows} label="rows" />
+          <span className="text-secondary">×</span>
+          <NumberField value={customCols} min={1} max={20} onChange={setCustomCols} label="columns" />
+          <button
+            type="button"
+            onClick={() => commit(customRows, customCols)}
+            className="ml-1 rounded border border-divider bg-background px-2 py-0.5 hover:bg-hover"
+            data-testid="insert-table-custom-apply"
+          >
+            Insert
+          </button>
+        </div>
+      </ToolbarMenu>
+    </>
   );
 }
 

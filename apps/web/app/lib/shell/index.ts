@@ -10,6 +10,7 @@ export { InlineSpinner, type InlineSpinnerProps } from "./InlineSpinner";
 export { Toaster, createToastId, type ToastKind, type ToastItem, type ToasterProps } from "./Toaster";
 export { ZoomControl, type ZoomControlProps } from "./ZoomControl";
 export { ToolbarRow, type ToolbarRowProps } from "./ToolbarRow";
+export { ToolbarMenu, type ToolbarMenuProps } from "./ToolbarMenu";
 export { ExportDialog, type ExportDialogProps } from "./ExportDialog";
 export type {
   CommentsBadge,
