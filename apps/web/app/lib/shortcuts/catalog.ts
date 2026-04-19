@@ -147,8 +147,18 @@ export const XLSX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   { keys: ["Home"], label: "Jump to start of row", category: "Navigation" },
   { keys: ["Mod", "Home"], label: "Jump to A1", category: "Navigation" },
   { keys: ["Mod", "End"], label: "Jump to last used cell", category: "Navigation" },
+  { keys: ["PageUp"], label: "Move selection up one page", category: "Navigation" },
+  { keys: ["PageDown"], label: "Move selection down one page", category: "Navigation" },
+  { keys: ["Mod", "PageUp"], label: "Previous sheet", category: "Navigation" },
+  { keys: ["Mod", "PageDown"], label: "Next sheet", category: "Navigation" },
   { keys: ["Tab"], label: "Move selection right (commit)", category: "Navigation" },
   { keys: ["Enter"], label: "Move selection down (commit)", category: "Navigation" },
+
+  // Selection
+  { keys: ["Mod", "A"], label: "Select used range / entire sheet", category: "Selection" },
+  { keys: ["Mod", "Shift", "Space"], label: "Select entire sheet", category: "Selection" },
+  { keys: ["Mod", "Space"], label: "Select entire column", category: "Selection" },
+  { keys: ["Shift", "Space"], label: "Select entire row", category: "Selection" },
 
   // Editing
   { keys: ["F2"], label: "Edit active cell in formula bar", category: "Editing" },
@@ -156,6 +166,11 @@ export const XLSX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   { keys: ["Backspace"], label: "Clear selection", category: "Editing" },
   { keys: ["Delete"], label: "Clear selection / delete row or column", category: "Editing" },
   { keys: ["Mod", "Shift", "V"], label: "Paste Special…", category: "Editing" },
+  { keys: ["Mod", "D"], label: "Fill down", category: "Editing" },
+  { keys: ["Mod", "R"], label: "Fill right", category: "Editing" },
+  { keys: ["Mod", "Enter"], label: "Fill all selected cells with active value", category: "Editing" },
+  { keys: ["Mod", ";"], label: "Insert today's date", category: "Editing" },
+  { keys: ["Mod", "Shift", ";"], label: "Insert current time", category: "Editing" },
 
   // Inline marks
   { keys: ["Mod", "B"], label: "Bold", category: "Inline marks" },
@@ -169,6 +184,7 @@ export const XLSX_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
   // Names
   { keys: ["F3"], label: "Open Name Manager", category: "Data" },
   { keys: ["Mod", "T"], label: "Format as Table", category: "Data" },
+  { keys: ["Mod", "Shift", "L"], label: "Toggle filter", category: "Data" },
 
   // Number formats
   { keys: ["Mod", "Shift", "1"], label: "Number format (#,##0.00)", category: "Number format" },
