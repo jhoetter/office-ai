@@ -8,6 +8,11 @@
  *   - sourceExt  (string) one of "docx" | "xlsx" | "pptx"
  *   - targetExt  (string) one of "pdf" | "html"
  *   - filename   (string, optional) base filename for the response
+ *   - pageRange  (string, optional) PDF-only. LibreOffice page-range
+ *                expression like "1-3,5,7" — passed straight through
+ *                to the appropriate `*_pdf_Export` filter via
+ *                `--convert-to`. Validated against a strict allowlist
+ *                so we never pass user input into the shell.
  *
  * Returns the converted bytes as the response body with the correct
  * Content-Type and Content-Disposition. Errors are returned as JSON
@@ -38,6 +43,23 @@ const TARGET_MIME: Record<TargetExt, string> = {
   html: "text/html; charset=utf-8",
 };
 
+/** LibreOffice's PDF export filter is product-specific. */
+const PDF_FILTER: Record<SourceExt, string> = {
+  docx: "writer_pdf_Export",
+  xlsx: "calc_pdf_Export",
+  pptx: "impress_pdf_Export",
+};
+
+/**
+ * Page-range expression accepted by LibreOffice's PDF export filter:
+ * comma-separated list of single 1-based indices and `from-to` ranges,
+ * with optional surrounding whitespace (e.g. `"1-3, 5, 7"`). We
+ * validate strictly so the value can never inject shell metacharacters
+ * even though we use `spawn` (no shell) — the JSON we build below also
+ * winds up inside soffice's own option parser.
+ */
+const PAGE_RANGE_RE = /^\s*\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*\s*$/;
+
 /** Hard cap on input size to keep DoS surface narrow (50 MB). */
 const MAX_INPUT_BYTES = 50 * 1024 * 1024;
 
@@ -64,6 +86,7 @@ export async function POST(request: Request): Promise<Response> {
   const sourceExtRaw = String(formData.get("sourceExt") ?? "").toLowerCase();
   const targetExtRaw = String(formData.get("targetExt") ?? "").toLowerCase();
   const filenameInput = String(formData.get("filename") ?? "document");
+  const pageRangeRaw = formData.get("pageRange");
 
   if (!(file instanceof Blob)) {
     return NextResponse.json({ message: "Missing `file` field." }, { status: 400 });
@@ -91,6 +114,23 @@ export async function POST(request: Request): Promise<Response> {
   const targetExt = targetExtRaw;
   const baseFilename = sanitizeFilenameBase(filenameInput);
 
+  let pageRange: string | undefined;
+  if (typeof pageRangeRaw === "string" && pageRangeRaw.length > 0) {
+    if (targetExt !== "pdf") {
+      return NextResponse.json(
+        { message: "`pageRange` is only supported when targetExt is 'pdf'." },
+        { status: 400 }
+      );
+    }
+    if (!PAGE_RANGE_RE.test(pageRangeRaw)) {
+      return NextResponse.json(
+        { message: `Invalid pageRange "${pageRangeRaw}".` },
+        { status: 400 }
+      );
+    }
+    pageRange = pageRangeRaw.replace(/\s+/g, "");
+  }
+
   let workdir: string | null = null;
   try {
     workdir = await mkdtemp(path.join(tmpdir(), "officeai-convert-"));
@@ -103,7 +143,9 @@ export async function POST(request: Request): Promise<Response> {
       cwd: workdir,
       inputPath,
       outdir: workdir,
+      sourceExt,
       targetExt,
+      pageRange,
     });
 
     const outputPath = path.join(workdir, `input.${targetExt}`);
@@ -145,13 +187,16 @@ function runSoffice(args: {
   readonly cwd: string;
   readonly inputPath: string;
   readonly outdir: string;
+  readonly sourceExt: SourceExt;
   readonly targetExt: TargetExt;
+  readonly pageRange?: string;
 }): Promise<void> {
   // `soffice` insists on a unique user profile per invocation when
   // multiple conversions can overlap; without it, parallel calls die
   // with a "another instance is running" error.
   const profileDir = path.join(args.cwd, "lo-profile");
   const sofficeBin = process.env.OFFICEAI_SOFFICE_BIN || "soffice";
+  const convertTo = buildConvertToArg(args.sourceExt, args.targetExt, args.pageRange);
   const cliArgs = [
     "--headless",
     "--norestore",
@@ -159,7 +204,7 @@ function runSoffice(args: {
     "--nofirststartwizard",
     `-env:UserInstallation=file://${profileDir}`,
     "--convert-to",
-    args.targetExt,
+    convertTo,
     "--outdir",
     args.outdir,
     args.inputPath,
@@ -208,6 +253,26 @@ function runSoffice(args: {
       );
     });
   });
+}
+
+/**
+ * Build the `--convert-to` argument. For plain conversions this is
+ * just the target extension (e.g. `"pdf"`). When the caller supplied
+ * extra filter options we encode them in LibreOffice's documented
+ * `target:filter:json-options` form, e.g.
+ * `pdf:writer_pdf_Export:{"PageRange":{"type":"string","value":"1-3"}}`.
+ */
+function buildConvertToArg(
+  sourceExt: SourceExt,
+  targetExt: TargetExt,
+  pageRange: string | undefined
+): string {
+  if (targetExt !== "pdf" || !pageRange) return targetExt;
+  const filter = PDF_FILTER[sourceExt];
+  const options = {
+    PageRange: { type: "string", value: pageRange },
+  };
+  return `pdf:${filter}:${JSON.stringify(options)}`;
 }
 
 function sanitizeFilenameBase(name: string): string {

@@ -24,9 +24,16 @@ export type SaveState = "saved" | "modified" | "saving" | "error" | "unknown";
  * ("dialog"). The shell branches on this from the dropdown. */
 export type ExportFormatKind = "instant" | "dialog";
 
-/** Visual grouping in the Export dialog left rail. The shell uses
- * the order Native → PDF & web → Data → Images. */
-export type ExportFormatGroup = "native" | "pdf-web" | "data" | "images";
+/** Visual grouping in the Export dropdown / dialog left rail. The
+ * shell renders the groups in the order they appear here:
+ *  - `current` — exports of the current page / slide / sheet
+ *    (always rendered first because it's almost always what the user
+ *    wants when they reach for "Export this");
+ *  - `native` — the product's own format;
+ *  - `pdf-web` — PDF / HTML (server-side conversion);
+ *  - `data`   — CSV/TSV/JSON/MD;
+ *  - `images` — PNG/SVG/JPEG bundles. */
+export type ExportFormatGroup = "current" | "native" | "pdf-web" | "data" | "images";
 
 /** Lucide icon family used for the format row. The shell maps these
  * to concrete icons (kept here so adapters don't import lucide). */

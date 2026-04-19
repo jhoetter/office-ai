@@ -25,6 +25,13 @@ export interface ConvertViaServerArgs {
    * Blob). Optional — we default to the right OOXML MIME for each
    * source extension. */
   readonly sourceMime?: string;
+  /**
+   * PDF-only: LibreOffice page-range expression to pass through to
+   * the export filter (`"1-3,5"`). Lets DOCX/XLSX export specific
+   * pages and PPTX export specific slides. Ignored for non-PDF
+   * targets — the server will return 400 if both are set.
+   */
+  readonly pageRange?: string;
   /** Optional abort signal for cancellation. */
   readonly signal?: AbortSignal;
 }
@@ -62,6 +69,9 @@ export async function convertViaServer(args: ConvertViaServerArgs): Promise<Blob
   form.append("sourceExt", args.sourceExt);
   form.append("targetExt", args.targetExt);
   form.append("filename", args.filename);
+  if (args.pageRange && args.pageRange.length > 0) {
+    form.append("pageRange", args.pageRange);
+  }
 
   const response = await fetch("/api/convert", {
     method: "POST",

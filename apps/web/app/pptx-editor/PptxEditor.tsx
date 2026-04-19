@@ -44,10 +44,81 @@ import { convertViaServer } from "@/lib/files/convert-client";
 import {
   parseSlideRange,
   snapshotToPngZip,
+  snapshotToSlideJpeg,
+  snapshotToSlidePng,
+  snapshotToSlideSvg,
   snapshotToSvgZip,
 } from "./lib/export-images";
 
+const SCALE_OPTIONS = {
+  type: "select" as const,
+  defaultId: "2",
+  options: [
+    { id: "1", label: "1× (standard)" },
+    { id: "2", label: "2× (retina)" },
+    { id: "3", label: "3× (high-DPI)" },
+  ],
+};
+
 const PPTX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
+  {
+    id: "slide-png",
+    label: "Current slide — PNG (.png)",
+    description: "Just the slide that's currently in view. Lossless, with a white matte.",
+    extension: "png",
+    mime: "image/png",
+    kind: "dialog",
+    group: "current",
+    icon: "image",
+    optionFields: [{ id: "scale", label: "Resolution", control: SCALE_OPTIONS }],
+  },
+  {
+    id: "slide-jpeg",
+    label: "Current slide — JPEG (.jpg)",
+    description: "Smaller, share-friendly version of the current slide.",
+    extension: "jpg",
+    mime: "image/jpeg",
+    kind: "dialog",
+    group: "current",
+    icon: "image",
+    optionFields: [
+      { id: "scale", label: "Resolution", control: SCALE_OPTIONS },
+      {
+        id: "quality",
+        label: "Quality",
+        control: {
+          type: "select",
+          defaultId: "high",
+          options: [
+            { id: "low", label: "Low (~60%)" },
+            { id: "medium", label: "Medium (~75%)" },
+            { id: "high", label: "High (~92%)" },
+            { id: "max", label: "Maximum (~98%)" },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "slide-svg",
+    label: "Current slide — SVG (.svg)",
+    description: "Resolution-independent vector of the current slide.",
+    extension: "svg",
+    mime: "image/svg+xml",
+    kind: "instant",
+    group: "current",
+    icon: "image",
+  },
+  {
+    id: "slide-pdf",
+    label: "Current slide — PDF (.pdf)",
+    description: "Single-page PDF of the current slide. Server-side via LibreOffice.",
+    extension: "pdf",
+    mime: "application/pdf",
+    kind: "instant",
+    group: "current",
+    icon: "pdf",
+  },
   {
     id: "pptx",
     label: "PowerPoint presentation (.pptx)",
@@ -146,6 +217,32 @@ function stripPptxExtension(name: string): string {
   return name.replace(/\.pptx$/i, "");
 }
 
+/** Coerce a dialog "scale" option (`"1" | "2" | "3"`) into the
+ * narrowed numeric type the renderer accepts. Defaults to 2× to
+ * match the export-zip default. */
+function parseScale(raw: ExportOptionValues[string] | undefined): 1 | 2 | 3 {
+  const s = typeof raw === "string" ? raw : "2";
+  return s === "1" ? 1 : s === "3" ? 3 : 2;
+}
+
+/** Map the dialog's coarse quality picker to the 0-1 number canvas
+ * wants. Mirrors the lossless-vs-share trade-off most users actually
+ * care about; the in-between values come from PhotoShop's "Save for
+ * web" presets. */
+function parseJpegQuality(raw: ExportOptionValues[string] | undefined): number {
+  switch (typeof raw === "string" ? raw : "high") {
+    case "low":
+      return 0.6;
+    case "medium":
+      return 0.75;
+    case "max":
+      return 0.98;
+    case "high":
+    default:
+      return 0.92;
+  }
+}
+
 const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
   "image/png",
   "image/jpeg",
@@ -166,6 +263,12 @@ export function PptxEditor(): React.ReactNode {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [zoom, setZoom] = useState(1);
   const [presenting, setPresenting] = useState(false);
+  // Speaker-notes panel is hidden by default — matches PowerPoint's
+  // "View ▸ Notes" opt-in. Users toggle it via the trailing toolbar
+  // button; we deliberately don't persist this across sessions because
+  // the panel takes meaningful vertical space and the default state is
+  // what users expect when reopening a deck.
+  const [notesOpen, setNotesOpen] = useState(false);
   const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
   const selectedShapeId = selectedShapeIds[0] ?? null;
   const [textSelection, setTextSelection] = useState<PptxTextSelection | null>(null);
@@ -411,7 +514,13 @@ export function PptxEditor(): React.ReactNode {
       const a = agentRef.current;
       if (!a) return;
       const baseName = stripPptxExtension(docName);
-      const downloadName = `${baseName}.${format.extension}`;
+      // Single-slide exports get a `-slideN` suffix so a "current
+      // slide" PNG can't silently overwrite a previous deck-level
+      // export sitting in the user's Downloads folder.
+      const slideIdx = slideIndexRef.current;
+      const isCurrentSlideFormat = format.group === "current";
+      const slideSuffix = isCurrentSlideFormat ? `-slide${slideIdx + 1}` : "";
+      const downloadName = `${baseName}${slideSuffix}.${format.extension}`;
       try {
         switch (format.id) {
           case "pptx": {
@@ -436,6 +545,45 @@ export function PptxEditor(): React.ReactNode {
             downloadBlob(out, downloadName);
             break;
           }
+          case "slide-pdf": {
+            // Server-converted single-slide PDF. We send the whole
+            // pptx and let LibreOffice's `PageRange` filter cut it
+            // down — that keeps the renderer a single code path
+            // (vs. building a one-slide pptx in the browser) and
+            // matches what PowerPoint's "Print → Selection" does
+            // under the hood.
+            const buf = await a.exportFile();
+            const out = await convertViaServer({
+              bytes: new Uint8Array(buf),
+              sourceExt: "pptx",
+              targetExt: "pdf",
+              filename: `${baseName}-slide${slideIdx + 1}`,
+              pageRange: String(slideIdx + 1),
+            });
+            downloadBlob(out, downloadName);
+            break;
+          }
+          case "slide-png": {
+            const snap = a.getSnapshot();
+            const scale = parseScale(options?.scale);
+            const blob = await snapshotToSlidePng(snap, slideIdx, { scale });
+            downloadBlob(blob, downloadName);
+            break;
+          }
+          case "slide-jpeg": {
+            const snap = a.getSnapshot();
+            const scale = parseScale(options?.scale);
+            const quality = parseJpegQuality(options?.quality);
+            const blob = await snapshotToSlideJpeg(snap, slideIdx, { scale, quality });
+            downloadBlob(blob, downloadName);
+            break;
+          }
+          case "slide-svg": {
+            const snap = a.getSnapshot();
+            const svg = snapshotToSlideSvg(snap, slideIdx);
+            downloadBlob(new Blob([svg], { type: format.mime }), downloadName);
+            break;
+          }
           case "png-zip": {
             const snap = a.getSnapshot();
             const total = snap.root.slides.length;
@@ -444,8 +592,7 @@ export function PptxEditor(): React.ReactNode {
             if (indices.length === 0) {
               throw new Error("Slide range matched no slides.");
             }
-            const scaleRaw = typeof options?.scale === "string" ? options.scale : "2";
-            const scale = scaleRaw === "1" ? 1 : scaleRaw === "3" ? 3 : 2;
+            const scale = parseScale(options?.scale);
             const blob = await snapshotToPngZip(snap, { scale, indices });
             downloadBlob(blob, downloadName);
             break;
@@ -1734,6 +1881,8 @@ export function PptxEditor(): React.ReactNode {
             onAddComment={focusCommentComposer}
             onPresent={() => startPresenting(true)}
             canPresent={ready && slides.length > 0}
+            onToggleNotes={() => setNotesOpen((v) => !v)}
+            notesOpen={notesOpen}
           />
         }
         statusBarRight={
@@ -1809,7 +1958,7 @@ export function PptxEditor(): React.ReactNode {
                     ) : null}
                   </section>
                 </div>
-                {snap ? (
+                {snap && notesOpen ? (
                   <NotesPanel
                     key={`notes-${activeIndex}-${tick}`}
                     notesText={readNotesText(snap, activeIndex)}

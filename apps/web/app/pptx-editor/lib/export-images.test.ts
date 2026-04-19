@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseSlideRange } from "./export-images";
+import type { PptxSnapshot } from "@officeai/pptx";
+import { parseSlideRange, snapshotToSlideSvg } from "./export-images";
 
 /**
- * The slide-range mini-DSL is the only piece of `export-images`
- * that's reasonable to unit-test in Node — `snapshotToPngZip` needs
- * a DOM canvas and `snapshotToSvgZip` needs an in-memory snapshot
- * built from a real fixture (covered by the e2e specs).
+ * Pure helpers from `export-images` get unit coverage here.
+ * `snapshotToPng/Jpeg` and the SVG-rendering happy path need a real
+ * snapshot from a fixture and a DOM canvas, respectively — those are
+ * covered by the Playwright specs.
  */
 describe("parseSlideRange", () => {
   it("returns every slide for empty input", () => {
@@ -52,5 +53,13 @@ describe("parseSlideRange", () => {
 
   it("tolerates extra whitespace", () => {
     expect(parseSlideRange(" 1 , 3 - 5 ", 5)).toEqual([0, 2, 3, 4]);
+  });
+});
+
+describe("snapshotToSlideSvg", () => {
+  it("throws a clear error when the slide index is out of range", () => {
+    const empty = { root: { slides: [] } } as unknown as PptxSnapshot;
+    expect(() => snapshotToSlideSvg(empty, 0)).toThrow(/out of range/i);
+    expect(() => snapshotToSlideSvg(empty, 7)).toThrow(/out of range/i);
   });
 });

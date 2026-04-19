@@ -44,7 +44,9 @@ test.describe("export dialog — DOCX", () => {
     await expect(dialog).toBeVisible();
     // Filename preview reflects the selected format's extension.
     await expect(page.getByTestId("shell-export-filename-preview")).toContainText(".pdf");
-    // PDF-specific options are rendered.
+    // PDF-specific options are rendered, including the new page-range
+    // text input that pipes through to LibreOffice's PDF filter.
+    await expect(page.getByTestId("shell-export-option-pageRange")).toBeVisible();
     await expect(page.getByTestId("shell-export-option-pageSize")).toBeVisible();
     await expect(page.getByTestId("shell-export-option-embedFonts")).toBeVisible();
   });
@@ -110,5 +112,49 @@ test.describe("export dialog — PPTX", () => {
     await expect(page.getByTestId("shell-export-dialog")).toBeVisible();
     await expect(page.getByTestId("shell-export-option-scale")).toBeVisible();
     await expect(page.getByTestId("shell-export-option-slideRange")).toBeVisible();
+  });
+
+  test("Current slide JPEG dialog exposes scale + quality (and downloads with -slideN suffix)", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    await page.getByTestId("shell-export").click();
+    await page.getByTestId("shell-export-slide-jpeg").click();
+
+    await expect(page.getByTestId("shell-export-dialog")).toBeVisible();
+    await expect(page.getByTestId("shell-export-option-scale")).toBeVisible();
+    await expect(page.getByTestId("shell-export-option-quality")).toBeVisible();
+    // Filename preview shows the slide-suffix so the user can see
+    // exactly which file is about to land in their Downloads folder.
+    await expect(page.getByTestId("shell-export-filename-preview")).toContainText("-slide");
+    await expect(page.getByTestId("shell-export-filename-preview")).toContainText(".jpg");
+  });
+
+  test("Current slide PDF download is instant and includes the slide suffix", async ({ page }) => {
+    // Server-side conversion is mocked so this test doesn't depend
+    // on LibreOffice; the assertion is on the request shape (the
+    // editor must hand the API a `pageRange` matching the active
+    // slide) plus the filename suffix on the response.
+    let pageRangeSent: string | null = null;
+    await page.route("**/api/convert", async (route) => {
+      const post = route.request().postData() ?? "";
+      const m = /name="pageRange"\r\n\r\n([^\r]+)\r\n/.exec(post);
+      pageRangeSent = m?.[1] ?? null;
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'attachment; filename="stub.pdf"',
+        },
+        body: Buffer.from("%PDF-1.4 slide-mock"),
+      });
+    });
+    await gotoPptxEditor(page);
+
+    await page.getByTestId("shell-export").click();
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("shell-export-slide-pdf").click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/-slide\d+\.pdf$/);
+    expect(pageRangeSent).toBe("1");
   });
 });

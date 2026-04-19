@@ -48,6 +48,7 @@ export interface ExportDialogProps {
 }
 
 const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
+  "current",
   "native",
   "pdf-web",
   "data",
@@ -55,6 +56,7 @@ const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
 ];
 
 const GROUP_LABEL: Record<ExportFormatGroup, string> = {
+  current: "This page",
   native: "Native format",
   "pdf-web": "PDF & web",
   data: "Data",

@@ -62,6 +62,17 @@ export interface SlideRenderOptions {
   readonly indices?: ReadonlyArray<number>;
 }
 
+export interface SingleSlideRasterOptions {
+  /** 1, 2 or 3× of the slide's natural pixel size. Defaults to 2. */
+  readonly scale?: 1 | 2 | 3;
+}
+
+export interface JpegOptions extends SingleSlideRasterOptions {
+  /** 0–1 quality knob handed to `canvas.toBlob('image/jpeg', q)`.
+   *  Defaults to 0.92, which is canvas's own default. */
+  readonly quality?: number;
+}
+
 interface RenderedSlide {
   readonly index: number;
   readonly svg: string;
@@ -147,16 +158,85 @@ export async function snapshotToPngZip(
   const pad = padWidth(snapshot.root.slides.length);
   for (const { slide, index } of slides) {
     const rendered = renderSlide(snapshot, slide, index);
-    const png = await rasterizeSvgToPng(rendered, scale);
+    const png = await rasterizeSvg(rendered, scale, "image/png");
     const name = `slide-${String(index + 1).padStart(pad, "0")}.png`;
     zip.file(name, png);
   }
   return await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
 }
 
-async function rasterizeSvgToPng(
+/* ── single-slide exports ────────────────────────────────────────── */
+
+/**
+ * Resolve the SVG markup for a single slide. Pure-data, safe to call
+ * server-side (used by `snapshotToSlideSvg` and shared with the zip
+ * helpers).
+ */
+export function snapshotToSlideSvg(
+  snapshot: PptxSnapshot,
+  slideIndex: number
+): string {
+  const slide = snapshot.root.slides[slideIndex];
+  if (!slide) {
+    throw new Error(`Slide index out of range: ${slideIndex}`);
+  }
+  return renderSlide(snapshot, slide, slideIndex).svg;
+}
+
+/**
+ * Rasterize a single slide to a PNG `Blob`. Browser-only (uses
+ * `<canvas>`).
+ */
+export async function snapshotToSlidePng(
+  snapshot: PptxSnapshot,
+  slideIndex: number,
+  options: SingleSlideRasterOptions = {}
+): Promise<Blob> {
+  return rasterizeSingleSlide(snapshot, slideIndex, options.scale ?? 2, "image/png");
+}
+
+/**
+ * Rasterize a single slide to a JPEG `Blob`. Browser-only. Useful
+ * for share-sized assets where the lossy size win matters more than
+ * the perfect colour fidelity PNG gives us.
+ */
+export async function snapshotToSlideJpeg(
+  snapshot: PptxSnapshot,
+  slideIndex: number,
+  options: JpegOptions = {}
+): Promise<Blob> {
+  return rasterizeSingleSlide(
+    snapshot,
+    slideIndex,
+    options.scale ?? 2,
+    "image/jpeg",
+    options.quality ?? 0.92
+  );
+}
+
+async function rasterizeSingleSlide(
+  snapshot: PptxSnapshot,
+  slideIndex: number,
+  scale: number,
+  mime: "image/png" | "image/jpeg",
+  quality?: number
+): Promise<Blob> {
+  if (typeof window === "undefined") {
+    throw new Error(`${mime} export is only available in the browser.`);
+  }
+  const slide = snapshot.root.slides[slideIndex];
+  if (!slide) {
+    throw new Error(`Slide index out of range: ${slideIndex}`);
+  }
+  const rendered = renderSlide(snapshot, slide, slideIndex);
+  return await rasterizeSvg(rendered, scale, mime, quality);
+}
+
+async function rasterizeSvg(
   rendered: RenderedSlide,
-  scale: number
+  scale: number,
+  mime: "image/png" | "image/jpeg",
+  quality?: number
 ): Promise<Blob> {
   const targetWidth = Math.max(1, Math.round(rendered.viewBoxWidth * scale));
   const targetHeight = Math.max(1, Math.round(rendered.viewBoxHeight * scale));
@@ -175,6 +255,9 @@ async function rasterizeSvgToPng(
     canvas.height = targetHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas 2D context unavailable.");
+    // JPEG can't represent transparency, so we always paint a white
+    // matte first. PNG gets the same matte so the visual matches
+    // PowerPoint's "transparent slide background" default (white).
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, targetWidth, targetHeight);
     ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
@@ -182,9 +265,10 @@ async function rasterizeSvgToPng(
       canvas.toBlob(
         (blob) => {
           if (blob) resolve(blob);
-          else reject(new Error("Failed to encode PNG."));
+          else reject(new Error(`Failed to encode ${mime}.`));
         },
-        "image/png"
+        mime,
+        quality
       );
     });
   } finally {

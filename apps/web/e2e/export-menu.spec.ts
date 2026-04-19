@@ -88,9 +88,16 @@ test.describe("export dropdown — XLSX", () => {
 test.describe("export dropdown — PPTX", () => {
   test.setTimeout(60_000);
 
-  test("lists pptx + pdf + html + image bundles", async ({ page }) => {
+  test("lists current-slide + native + pdf-web + image bundles", async ({ page }) => {
     await gotoPptxEditor(page);
     await openExportDropdown(page);
+
+    // The new "This page" group sits at the top with single-slide
+    // exports for the slide that's currently in view.
+    await expect(page.getByTestId("shell-export-slide-png")).toBeVisible();
+    await expect(page.getByTestId("shell-export-slide-jpeg")).toBeVisible();
+    await expect(page.getByTestId("shell-export-slide-svg")).toBeVisible();
+    await expect(page.getByTestId("shell-export-slide-pdf")).toBeVisible();
 
     await expect(page.getByTestId("shell-export-pptx")).toBeVisible();
     await expect(page.getByTestId("shell-export-pdf")).toBeVisible();
@@ -106,5 +113,17 @@ test.describe("export dropdown — PPTX", () => {
     await page.getByTestId("shell-export-svg-zip").click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/\.zip$/);
+  });
+
+  test("instant 'current slide as SVG' triggers a single-file SVG download", async ({ page }) => {
+    await gotoPptxEditor(page);
+    await openExportDropdown(page);
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("shell-export-slide-svg").click();
+    const download = await downloadPromise;
+    // Filename includes a `-slide{N}` suffix so single-slide exports
+    // don't clobber a previously downloaded deck-level export.
+    expect(download.suggestedFilename()).toMatch(/-slide\d+\.svg$/);
   });
 });

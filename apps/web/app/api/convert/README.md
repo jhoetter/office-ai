@@ -8,14 +8,17 @@ XLSX, or PPTX upload.
 
 `multipart/form-data` with these fields:
 
-| Field       | Type    | Required | Notes                                        |
-| ----------- | ------- | -------- | -------------------------------------------- |
-| `file`      | Blob    | yes      | Source document bytes.                       |
-| `sourceExt` | string  | yes      | One of `docx`, `xlsx`, `pptx`.               |
-| `targetExt` | string  | yes      | One of `pdf`, `html`.                        |
-| `filename`  | string  | no       | Base filename for the response (no extension). |
+| Field       | Type    | Required | Notes                                                                                                          |
+| ----------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `file`      | Blob    | yes      | Source document bytes.                                                                                         |
+| `sourceExt` | string  | yes      | One of `docx`, `xlsx`, `pptx`.                                                                                 |
+| `targetExt` | string  | yes      | One of `pdf`, `html`.                                                                                          |
+| `filename`  | string  | no       | Base filename for the response (no extension).                                                                 |
+| `pageRange` | string  | no       | PDF only. LibreOffice page-range expression (`"1-3,5,7"`). Used for DOCX page ranges and PPTX single/multi-slide PDFs. |
 
-Limits: input ≤ 50 MB, conversion ≤ 60 s wall-clock.
+Limits: input ≤ 50 MB, conversion ≤ 60 s wall-clock. `pageRange` is
+validated against `/^\d+(-\d+)?(,\d+(-\d+)?)*$/` (whitespace allowed)
+before being relayed to the appropriate `*_pdf_Export` filter.
 
 ## Response
 

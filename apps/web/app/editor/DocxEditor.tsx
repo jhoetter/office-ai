@@ -113,6 +113,12 @@ const DOCX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
     icon: "pdf",
     optionFields: [
       {
+        id: "pageRange",
+        label: "Page range",
+        control: { type: "text", placeholder: "All pages — try 1-3, 5" },
+        hint: "Leave blank for the whole document. Examples: 1,3 — 2-5 — 1,4-7,10.",
+      },
+      {
         id: "pageSize",
         label: "Page size",
         control: {
@@ -454,11 +460,19 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
           case "pdf":
           case "html": {
             const buf = await agent.exportFile();
+            // Page-range is PDF-only; HTML export ignores it. We
+            // trim whitespace defensively because the dialog's text
+            // input can carry leading/trailing spaces from copy-paste.
+            const pageRange =
+              format.id === "pdf" && typeof options?.pageRange === "string"
+                ? options.pageRange.trim()
+                : "";
             const out = await convertViaServer({
               bytes: new Uint8Array(buf),
               sourceExt: "docx",
               targetExt: format.id,
               filename: baseName,
+              pageRange: pageRange.length > 0 ? pageRange : undefined,
             });
             downloadBlob(out, downloadName);
             break;
@@ -481,7 +495,6 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
         pushToast("error", err instanceof Error ? err.message : String(err));
         throw err;
       }
-      void options;
     },
     [docName, pushToast]
   );

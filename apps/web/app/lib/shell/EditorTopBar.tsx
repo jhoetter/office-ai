@@ -263,12 +263,14 @@ function SaveStatePill({ state }: { readonly state: SaveState }): React.ReactNod
 }
 
 const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
+  "current",
   "native",
   "pdf-web",
   "data",
   "images",
 ];
 const GROUP_LABEL: Record<ExportFormatGroup, string> = {
+  current: "This page",
   native: "Native",
   "pdf-web": "PDF & web",
   data: "Data",
