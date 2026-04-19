@@ -7,7 +7,6 @@ import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   EditorShell,
   EmptyState,
-  LoadingScreen,
   createToastId,
   type ExportFormat,
   type ExportOptionValues,
@@ -286,7 +285,18 @@ function isFormControlTarget(t: EventTarget | null): boolean {
  * `office-agent` CLI. The editor surface itself is human-only — agent
  * affordances live in the CLI, not the UI.
  */
-export function XlsxEditor(): ReactNode {
+export interface XlsxEditorProps {
+  /** Fired whenever the editor's bootstrap-ready state changes. The
+   * page-level splash listens to this to know when to fade out and
+   * unveil the workbook. Stays `false` until the agent is mounted
+   * AND the first snapshot + active sheet are resolved (or until the
+   * initial sample load has failed, in which case we treat the
+   * EmptyState recovery affordance as "ready" so the splash unveils
+   * it). */
+  readonly onBootstrapReady?: (ready: boolean) => void;
+}
+
+export function XlsxEditor({ onBootstrapReady }: XlsxEditorProps = {}): ReactNode {
   const agentRef = useRef<XlsxAgent | null>(null);
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
@@ -324,13 +334,14 @@ export function XlsxEditor(): ReactNode {
   const [marchingAnts, setMarchingAnts] = useState<(MarchingAntsRect & { readonly sheet: string }) | null>(
     null
   );
-  // Tracks the initial sample-load lifecycle. While true and `agent`
-  // is still null we render the shared `LoadingScreen` splash so the
-  // editor surface looks alive on the very first paint instead of
-  // asking the user to "Open a workbook" for the ~150-300 ms it
-  // takes JSZip + the parser to materialise the synthetic sample.
-  // Flips to true only on failure, at which point we surface
-  // EmptyState as the recovery affordance.
+  // Tracks the initial sample-load lifecycle. The page-level splash
+  // (see `apps/web/app/xlsx-editor/page.tsx`) stays up until the
+  // agent + first snapshot are ready, so the editor surface looks
+  // alive on the very first paint instead of asking the user to
+  // "Open a workbook" for the ~150-300 ms it takes JSZip + the
+  // parser to materialise the synthetic sample. Flips to true only
+  // on failure, at which point we report ready up so the splash
+  // unveils EmptyState as the recovery affordance.
   const [initialLoadFailed, setInitialLoadFailed] = useState(false);
   const shortcutsDialog = useShortcutsDialog();
 
@@ -530,6 +541,21 @@ export function XlsxEditor(): ReactNode {
     if (!snapshot || !activeSheetName) return null;
     return snapshot.root.sheets.find((s) => s.name === activeSheetName) ?? null;
   }, [snapshot, activeSheetName]);
+
+  // Mirror bootstrap-ready up to the page-level splash so it can
+  // fade out and unveil either the grid or the EmptyState. Owning
+  // the splash at page scope (not here) keeps the badge `<span>`
+  // mounted across the dynamic-import handoff — see
+  // `apps/web/app/xlsx-editor/page.tsx`. We treat
+  // `initialLoadFailed` as "ready" because once the failure has
+  // surfaced, the EmptyState is the recovery UI the user should see
+  // — the splash's job is done.
+  useEffect(() => {
+    const ready = initialLoadFailed
+      ? true
+      : Boolean(agent && activeSheet && snapshot);
+    onBootstrapReady?.(ready);
+  }, [agent, activeSheet, snapshot, initialLoadFailed, onBootstrapReady]);
 
   // Mirror React state into refs so the shared TextFormatBar provider
   // (built once via the lazy useState below) can read the latest
@@ -1215,6 +1241,155 @@ export function XlsxEditor(): ReactNode {
         return;
       }
 
+      // Mod+A — Excel-style "Select All". First press expands the
+      // selection to cover the used range; a follow-up press (or
+      // pressing it on an empty sheet) goes all the way to the
+      // worksheet's full extent. Matches Excel's two-stage chord.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        if (!activeSheet) return;
+        const used = computeUsedRange(activeSheet.cells);
+        const range = selection ? selectionToRange(selection) : null;
+        const matchesUsed =
+          !!used &&
+          !!range &&
+          range.start.row === used.r1 &&
+          range.start.col === used.c1 &&
+          range.end.row === used.r2 &&
+          range.end.col === used.c2;
+        setExtraAreas([]);
+        if (!used || matchesUsed) {
+          setSelection({
+            anchor: { row: 0, col: 0 },
+            focus: { row: GRID_ROWS - 1, col: GRID_COLS - 1 },
+          });
+        } else {
+          setSelection({
+            anchor: { row: used.r1, col: used.c1 },
+            focus: { row: used.r2, col: used.c2 },
+          });
+        }
+        return;
+      }
+
+      // Mod+Shift+Space — promote the selection to the entire sheet.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.code === "Space") {
+        e.preventDefault();
+        setExtraAreas([]);
+        setSelection({
+          anchor: { row: 0, col: 0 },
+          focus: { row: GRID_ROWS - 1, col: GRID_COLS - 1 },
+        });
+        return;
+      }
+
+      // Mod+Space — promote the selection to the full column(s) it
+      // touches. macOS swallows Cmd+Space (Spotlight); Excel for Mac
+      // documents Ctrl+Space for column-select, which still reaches
+      // us through `e.ctrlKey`.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === "Space") {
+        if (!selection) return;
+        e.preventDefault();
+        const r = selectionToRange(selection);
+        setExtraAreas([]);
+        setSelection({
+          anchor: { row: 0, col: r.start.col },
+          focus: { row: GRID_ROWS - 1, col: r.end.col },
+        });
+        return;
+      }
+
+      // Shift+Space — promote the selection to the full row(s) it touches.
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && e.shiftKey && e.code === "Space") {
+        if (!selection) return;
+        e.preventDefault();
+        const r = selectionToRange(selection);
+        setExtraAreas([]);
+        setSelection({
+          anchor: { row: r.start.row, col: 0 },
+          focus: { row: r.end.row, col: GRID_COLS - 1 },
+        });
+        return;
+      }
+
+      // Mod+PageUp / Mod+PageDown — switch to the previous / next
+      // visible sheet (Excel parity). Wraps around either end.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === "PageUp" || e.key === "PageDown")
+      ) {
+        const allSheets = snapshotRef.current?.root.sheets ?? [];
+        // Skip hidden / very-hidden sheets so the chord matches what
+        // the tab strip actually shows the user.
+        const visible = allSheets.filter(
+          (s) => s.state !== "hidden" && s.state !== "veryHidden"
+        );
+        if (visible.length === 0) return;
+        e.preventDefault();
+        const idx = Math.max(
+          0,
+          visible.findIndex((s) => s.name === activeSheetName)
+        );
+        const dir = e.key === "PageDown" ? 1 : -1;
+        const next = visible[(idx + dir + visible.length) % visible.length];
+        if (next) setActiveSheetName(next.name);
+        return;
+      }
+
+      // PageUp / PageDown — Excel's "page" of vertical movement. We
+      // don't track the visible row count at this layer, so 24 rows
+      // (≈ a default Excel viewport) is a reasonable constant. Shift
+      // extends the active range, matching arrow-key behaviour.
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "PageUp" || e.key === "PageDown")) {
+        e.preventDefault();
+        const dir = e.key === "PageDown" ? 1 : -1;
+        moveSelection(dir * 24, 0, { extend: e.shiftKey });
+        return;
+      }
+
+      // Mod+Enter — commit the active anchor cell's value/formula
+      // across every other cell in the selection. This is the
+      // "fill all selected" chord Excel uses when you've typed into
+      // a multi-cell selection. Skipped on a single-cell anchor
+      // (nothing else to fan out to).
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+        if (!activeSheet || !selection || isSingle(selection)) return;
+        e.preventDefault();
+        const a = agentRef.current;
+        if (!a) return;
+        const r = selectionToRange(selection);
+        const anchorCell = activeSheet.cells.get(
+          cellKey(selection.anchor.row, selection.anchor.col)
+        );
+        const anchorFormula = anchorCell?.formula?.text ?? null;
+        const anchorValue: CellValue = anchorCell?.value ?? null;
+        for (let row = r.start.row; row <= r.end.row; row++) {
+          for (let col = r.start.col; col <= r.end.col; col++) {
+            if (row === selection.anchor.row && col === selection.anchor.col) continue;
+            const ref = formatA1({ row, col });
+            const cmd = anchorFormula
+              ? ({
+                  type: "xlsx:set-cell-formula" as const,
+                  payload: { sheet: activeSheet.name, ref, formula: anchorFormula },
+                  source: "human" as const,
+                })
+              : ({
+                  type: "xlsx:set-cell-value" as const,
+                  payload: { sheet: activeSheet.name, ref, value: anchorValue },
+                  source: "human" as const,
+                });
+            void a
+              .applyCommand(cmd)
+              .catch((err: unknown) =>
+                pushToast("error", err instanceof Error ? err.message : String(err))
+              );
+          }
+        }
+        return;
+      }
+
       if (e.key === "Tab") {
         e.preventDefault();
         moveSelection(0, e.shiftKey ? -1 : 1, { extend: false });
@@ -1244,6 +1419,61 @@ export function XlsxEditor(): ReactNode {
           sheet: activeSheet.name,
           range,
         });
+        return;
+      }
+
+      // Mod+D — Excel "Fill Down". Replicate the top row of the
+      // selection over every row beneath it via the shared
+      // `xlsx:fill-range` handler (so series detection / formula
+      // re-anchoring stay consistent with the drag-handle path).
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "d" || e.key === "D")) {
+        if (!activeSheet || !selection) return;
+        const r = selectionToRange(selection);
+        if (r.start.row === r.end.row) return;
+        e.preventDefault();
+        const sourceRange = formatRange({
+          start: { row: r.start.row, col: r.start.col },
+          end: { row: r.start.row, col: r.end.col },
+        });
+        const targetRange = formatRange({ start: r.start, end: r.end });
+        dispatchOrToast("xlsx:fill-range", {
+          sheet: activeSheet.name,
+          source: sourceRange,
+          target: targetRange,
+          direction: "down",
+        });
+        return;
+      }
+
+      // Mod+R — Excel "Fill Right". Same deal, but the leftmost
+      // column propagates across the rest of the selection.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "r" || e.key === "R")) {
+        if (!activeSheet || !selection) return;
+        const r = selectionToRange(selection);
+        if (r.start.col === r.end.col) return;
+        e.preventDefault();
+        const sourceRange = formatRange({
+          start: { row: r.start.row, col: r.start.col },
+          end: { row: r.end.row, col: r.start.col },
+        });
+        const targetRange = formatRange({ start: r.start, end: r.end });
+        dispatchOrToast("xlsx:fill-range", {
+          sheet: activeSheet.name,
+          source: sourceRange,
+          target: targetRange,
+          direction: "right",
+        });
+        return;
+      }
+
+      // Mod+Shift+L — toggle the AutoFilter band on / off (Excel
+      // parity). Routes through the same callback the toolbar's
+      // Filter button uses, so the active-sheet detection + range
+      // inference stays in one place.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === "l" || e.key === "L")) {
+        if (!activeSheet) return;
+        e.preventDefault();
+        onToggleFilter();
         return;
       }
 
@@ -1376,6 +1606,37 @@ export function XlsxEditor(): ReactNode {
         }
       }
 
+      // Mod+; / Mod+Shift+; — insert today's date / current time at
+      // the active anchor. We write a real Excel date serial AND
+      // apply the matching built-in number format so the cell reads
+      // "10/19/2026" / "11:30:00 AM" instead of a literal string.
+      // Use `e.code === "Semicolon"` so Shift+; (which yields ":"
+      // on most layouts) still maps to the physical key.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === "Semicolon") {
+        if (!activeSheet || !selection) return;
+        e.preventDefault();
+        const a = agentRef.current;
+        if (!a) return;
+        const insertTime = e.shiftKey;
+        const now = new Date();
+        const serial = insertTime ? excelTimeSerial(now) : excelDateSerial(now);
+        const ref = formatA1({ row: selection.anchor.row, col: selection.anchor.col });
+        void a
+          .applyCommand({
+            type: "xlsx:set-cell-value",
+            payload: { sheet: activeSheet.name, ref, value: serial },
+            source: "human",
+          })
+          .catch((err: unknown) =>
+            pushToast("error", err instanceof Error ? err.message : String(err))
+          );
+        // Built-in numFmtIds: 14 = m/d/yyyy, 19 = h:mm:ss AM/PM.
+        // Pushed through `onApplyFormat` so multi-area selections
+        // (Ctrl-clicked extras) also pick up the format.
+        onApplyFormat({ numberFormat: insertTime ? "19" : "14" });
+        return;
+      }
+
       if (e.key === "Backspace" || e.key === "Delete") {
         if (!activeSheet) return;
         if (selectedImageId) {
@@ -1473,6 +1734,7 @@ export function XlsxEditor(): ReactNode {
     },
     [
       activeSheet,
+      activeSheetName,
       derivedFormulaDisplay,
       jumpToDataEdge,
       marchingAnts,
@@ -3684,9 +3946,7 @@ export function XlsxEditor(): ReactNode {
             {!agent ? (
               initialLoadFailed ? (
                 <EmptyState product="xlsx" onOpen={() => void onPickFile()} />
-              ) : (
-                <LoadingScreen variant="splash" product="xlsx" />
-              )
+              ) : null
             ) : (
               <>
                 <TextToColumnsPopover
@@ -3961,9 +4221,7 @@ export function XlsxEditor(): ReactNode {
                           setSelectedChartId(null);
                         }}
                       />
-                    ) : (
-                      <LoadingScreen variant="splash" product="xlsx" />
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
@@ -4089,4 +4347,31 @@ function parseLiteral(raw: string): CellValue {
   if (lower === "true") return true;
   if (lower === "false") return false;
   return raw;
+}
+
+/**
+ * Excel date serial for the *local* calendar date in `d`. Excel's
+ * epoch is 1899-12-30 because the file format treats 1900 as a leap
+ * year (Lotus 1-2-3 bug); using Dec 30 1899 as the origin makes the
+ * arithmetic work correctly for every modern date without us having
+ * to special-case the phantom 2/29/1900. We round to the day in the
+ * user's local timezone so "today" matches what their calendar
+ * shows, regardless of UTC offset.
+ */
+function excelDateSerial(d: Date): number {
+  const epoch = Date.UTC(1899, 11, 30);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const local = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.floor((local - epoch) / dayMs);
+}
+
+/**
+ * Excel time-of-day serial — the fractional-day component (0 ≤ t < 1)
+ * that pairs with built-in numFmtIds 18 / 19 / 20 to render as
+ * "11:30 AM" etc. Computed against `d`'s local clock so the chord
+ * inserts the wall-clock time the user sees on screen.
+ */
+function excelTimeSerial(d: Date): number {
+  const seconds = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+  return seconds / 86400;
 }

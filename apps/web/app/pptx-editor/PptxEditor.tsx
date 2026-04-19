@@ -38,7 +38,6 @@ import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 import {
   EditorShell,
   EmptyState,
-  LoadingScreen,
   ZoomControl,
   createToastId,
   type ExportFormat,
@@ -270,10 +269,26 @@ const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
   "image/svg+xml",
 ]);
 
-export function PptxEditor(): React.ReactNode {
+export interface PptxEditorProps {
+  /** Fired whenever the editor's bootstrap-ready state changes. The
+   * page-level splash listens to this to know when to fade out and
+   * unveil the editor. Stays `false` until the agent is mounted and
+   * the first deck has been parsed, then `true`. */
+  readonly onBootstrapReady?: (ready: boolean) => void;
+}
+
+export function PptxEditor({ onBootstrapReady }: PptxEditorProps = {}): React.ReactNode {
   const [agent, setAgent] = useState<PptxAgent | null>(null);
   const agentRef = useRef<PptxAgent | null>(null);
   const [ready, setReady] = useState(false);
+
+  // Mirror `ready` up to the page-level splash so it can fade out
+  // and unveil the deck. Owning the splash at page scope (not here)
+  // keeps the badge `<span>` mounted across the dynamic-import
+  // handoff — see `apps/web/app/pptx-editor/page.tsx`.
+  useEffect(() => {
+    onBootstrapReady?.(ready);
+  }, [ready, onBootstrapReady]);
   const [docName, setDocName] = useState("welcome.pptx");
   const [activeIndex, setActiveIndex] = useState(0);
   const [tick, setTick] = useState(0);
@@ -2032,7 +2047,6 @@ export function PptxEditor(): React.ReactNode {
                         </div>
                       ) : null}
                     </div>
-                    <LoadingScreen variant="splash" product="pptx" show={!ready} />
                   </section>
                 </div>
                 {snap && notesOpen ? (

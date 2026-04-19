@@ -5,7 +5,6 @@ import { Button, cn } from "@officeai/ui";
 import {
   EditorShell,
   EmptyState,
-  LoadingScreen,
   ZoomControl,
   createToastId,
   type ExportFormat,
@@ -176,7 +175,13 @@ function stripDocxExtension(name: string): string {
   return name.replace(/\.docx$/i, "");
 }
 
-export interface DocxEditorProps {}
+export interface DocxEditorProps {
+  /** Fired whenever the editor's bootstrap-ready state changes. The
+   * page-level splash listens to this to know when to fade out and
+   * unveil the editor. Stays `false` until the agent is mounted and
+   * the first snapshot has been rendered, then `true`. */
+  readonly onBootstrapReady?: (ready: boolean) => void;
+}
 
 /**
  * The editor surface composed from the right-hand collaboration panels:
@@ -198,7 +203,7 @@ export interface DocxEditorProps {}
  * integration point for third-party agents. The bus stays the same
  * either way; this UI only shows human-driven actions.
  */
-export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
+export function DocxEditor({ onBootstrapReady }: DocxEditorProps = {}): React.ReactNode {
   // The editor host DOM node is exposed via a callback ref so that
   // descendants (e.g. TrackedChangesUI's hover delegation) can read it
   // from React state during render — accessing `hostRef.current`
@@ -220,6 +225,14 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
   const [agent, setAgent] = useState<DocxAgent | null>(null);
   const [view, setView] = useState<EditorView | null>(null);
   const [agentReady, setAgentReady] = useState(false);
+
+  // Mirror `agentReady` up to the page-level splash so it can fade
+  // out and unveil the editor. Owning the splash at page scope (not
+  // here) keeps the badge `<span>` mounted across the dynamic-import
+  // handoff — see `apps/web/app/editor/page.tsx`.
+  useEffect(() => {
+    onBootstrapReady?.(agentReady);
+  }, [agentReady, onBootstrapReady]);
   const [toasts, setToasts] = useState<ReadonlyArray<ToastItem>>([]);
   const [docName, setDocName] = useState("welcome.docx");
   const [docInfo, setDocInfo] = useState<{
@@ -1687,7 +1700,6 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
                   </div>
                 );
               })()}
-              {!agentReady && <LoadingScreen variant="splash" product="docx" />}
               <TrackedChangesMargin
                 snapshot={snapshot}
                 editorHost={hostEl}
