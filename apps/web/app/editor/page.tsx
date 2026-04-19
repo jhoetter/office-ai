@@ -1,12 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { LoadingScreen } from "@/lib/shell";
 
 const DocxEditor = dynamic(() => import("./DocxEditor").then((m) => m.DocxEditor), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center text-sm text-secondary">Loading editor…</div>
-  ),
+  loading: () => <LoadingScreen product="docx" label="Loading editor…" />,
 });
 
 export default function EditorPage() {

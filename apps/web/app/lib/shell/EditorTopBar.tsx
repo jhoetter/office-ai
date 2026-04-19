@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle, cn } from "@officeai/ui";
 import { ExportDialog } from "./ExportDialog";
+import { InlineSpinner } from "./InlineSpinner";
 import type {
   ExportFormat,
   ExportFormatGroup,
@@ -253,10 +254,11 @@ function SaveStatePill({ state }: { readonly state: SaveState }): React.ReactNod
         : "text-tertiary";
   return (
     <span
-      className={cn("ml-1 text-xs tabular-nums", tone)}
+      className={cn("ml-1 inline-flex items-center gap-1 text-xs tabular-nums", tone)}
       aria-live="polite"
       data-testid={`shell-save-state-${state}`}
     >
+      {state === "saving" ? <InlineSpinner size={11} /> : null}
       {label}
     </span>
   );

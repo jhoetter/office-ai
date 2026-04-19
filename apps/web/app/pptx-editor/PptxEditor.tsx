@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
 import { CommentComposer, CommentsSidebar } from "@officeai/ui";
 import { createPptxCommentsProvider } from "./pptxCommentsProvider";
 import { PptxAgent } from "@officeai/pptx/agent";
@@ -25,6 +24,7 @@ import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 import {
   EditorShell,
   EmptyState,
+  LoadingScreen,
   ZoomControl,
   createToastId,
   type ExportFormat,
@@ -1953,12 +1953,7 @@ export function PptxEditor(): React.ReactNode {
                         </div>
                       ) : null}
                     </div>
-                    {!ready ? (
-                      <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
-                        <Loader2 className="mr-2 animate-spin" size={14} />
-                        Loading…
-                      </div>
-                    ) : null}
+                    {!ready ? <LoadingScreen variant="overlay" /> : null}
                   </section>
                 </div>
                 {snap && notesOpen ? (

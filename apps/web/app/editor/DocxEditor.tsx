@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
 import { Button, cn } from "@officeai/ui";
 import {
   EditorShell,
   EmptyState,
+  LoadingScreen,
   ZoomControl,
   createToastId,
   type ExportFormat,
@@ -1671,12 +1671,7 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
                   </div>
                 );
               })()}
-              {!agentReady && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
-                  <Loader2 className="mr-2 animate-spin" size={14} />
-                  Loading…
-                </div>
-              )}
+              {!agentReady && <LoadingScreen variant="overlay" />}
               <TrackedChangesMargin
                 snapshot={snapshot}
                 editorHost={hostEl}

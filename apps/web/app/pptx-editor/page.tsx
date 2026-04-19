@@ -1,12 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { LoadingScreen } from "@/lib/shell";
 
 const PptxEditor = dynamic(() => import("./PptxEditor").then((m) => m.PptxEditor), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center text-sm text-secondary">Loading editor…</div>
-  ),
+  loading: () => <LoadingScreen product="pptx" label="Loading editor…" />,
 });
 
 export default function PptxEditorPage(): React.ReactNode {

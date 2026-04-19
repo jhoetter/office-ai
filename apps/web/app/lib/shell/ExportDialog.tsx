@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@officeai/ui";
+import { InlineSpinner } from "./InlineSpinner";
 import type {
   ExportFormat,
   ExportFormatGroup,
@@ -226,14 +227,21 @@ export function ExportDialog({
             onClick={() => void handleConfirm()}
             disabled={busy}
             className={cn(
-              "inline-flex h-8 items-center rounded-md bg-[color:var(--accent)] px-3 text-sm font-medium text-white shadow-sm",
+              "inline-flex h-8 items-center gap-1.5 rounded-md bg-[color:var(--accent)] px-3 text-sm font-medium text-white shadow-sm",
               "hover:bg-[color:var(--accent-hover,var(--accent))]",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)]/40",
               busy && "opacity-60"
             )}
             data-testid="shell-export-confirm"
           >
-            {busy ? "Exporting…" : `Export ${selected.extension.toUpperCase()}`}
+            {busy ? (
+              <>
+                <InlineSpinner size={12} />
+                Exporting…
+              </>
+            ) : (
+              `Export ${selected.extension.toUpperCase()}`
+            )}
           </button>
         </div>
       </div>

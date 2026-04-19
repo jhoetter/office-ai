@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "@officeai/ui";
+import { InlineSpinner } from "./InlineSpinner";
 import type { ProductAdapter, SaveState } from "./types";
 
 export interface EditorStatusBarProps {
@@ -71,5 +72,10 @@ function SaveStateMirror({ state }: { readonly state: SaveState }): ReactNode {
       : state === "modified"
         ? "text-[color:var(--warning)]"
         : "text-tertiary";
-  return <span className={cn("tabular-nums", tone)}>{label}</span>;
+  return (
+    <span className={cn("inline-flex items-center gap-1 tabular-nums", tone)}>
+      {state === "saving" ? <InlineSpinner size={10} /> : null}
+      {label}
+    </span>
+  );
 }

@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Loader2 } from "lucide-react";
 import { CommentComposer, CommentsSidebar, cn } from "@officeai/ui";
 import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   EditorShell,
   EmptyState,
+  LoadingScreen,
   createToastId,
   type ExportFormat,
   type ExportOptionValues,
@@ -3961,10 +3961,7 @@ export function XlsxEditor(): ReactNode {
                         }}
                       />
                     ) : (
-                      <div className="flex h-full items-center justify-center rounded-md border border-divider bg-background text-sm text-secondary">
-                        <Loader2 className="mr-2 animate-spin" size={14} />
-                        Loading workbook…
-                      </div>
+                      <LoadingScreen variant="overlay" label="Loading workbook…" />
                     )}
                   </div>
                 </div>

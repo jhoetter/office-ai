@@ -1,12 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { LoadingScreen } from "@/lib/shell";
 
 const XlsxEditor = dynamic(() => import("./XlsxEditor").then((m) => m.XlsxEditor), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center text-sm text-secondary">Loading editor…</div>
-  ),
+  loading: () => <LoadingScreen product="xlsx" label="Loading editor…" />,
 });
 
 export default function XlsxEditorPage(): React.ReactNode {
