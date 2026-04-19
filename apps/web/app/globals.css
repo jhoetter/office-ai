@@ -1021,16 +1021,14 @@ textarea::placeholder {
  * of a chunk inherit the side borders only and visually flow into the
  * cap/edge above and below them.
  *
- * Top-level `<table>` blocks (.pm-table) opt out: they sit inside the
- * page margin via their own `margin-left/right` rule so applying side
- * borders directly to the table would tuck them inside the margin
- * instead of along the sheet edge. Tables rendered as top-level body
- * blocks therefore briefly show desk colour in the page-margin gutter
- * to the left and right of the table; uncommon enough in real
- * documents that the paragraph-only sheet treatment is the right
- * priority. If this becomes a sore spot, the fix is to wrap each
- * chunk in a `Decoration.widget` host that absolute-positions a
- * sheet background BEHIND the chunk's blocks. */
+ * Top-level `<table>` blocks (.pm-table) ARE included via the
+ * pseudo-element rule below: they sit inside the page margin via
+ * their own `margin-left/right` rule, so applying the white sheet to
+ * the table directly would only paint the cell area and leave desk
+ * colour showing in the page-margin gutters and in the empty column
+ * space beside narrow tables. The pseudo paints a full page-width
+ * sheet *behind* the table so the page reads as one continuous piece
+ * of paper regardless of table width. */
 .prose-pm .ProseMirror > .pm-page-cap-top,
 .prose-pm .ProseMirror > .pm-page-cap-bottom,
 .prose-pm .ProseMirror > .pm-page-block:not(.pm-table),
@@ -1177,15 +1175,61 @@ html.dark .prose-pm .ProseMirror > .pm-wrapper-marker {
  * table that exceeds the live margin width never overflows the
  * page sheet. Inline `margin-left` / `margin-right` (emitted by the
  * schema for `<w:jc w:val="center"/>` and `<w:tblInd>`) still wins
- * over these class rules via specificity. */
+ * over these class rules via specificity.
+ *
+ * Vertical margins are zeroed so the surrounding paragraphs' white
+ * sheets meet the table's painted-via-::before sheet directly with
+ * no desk-colour strip in between. The visual breathing room above
+ * and below the table comes from the adjacent paragraphs' own
+ * top/bottom padding (or `pm-page-first` / `pm-page-last` 4 px
+ * insets when the table is first or last in a chunk).
+ *
+ * `position: relative` + `isolation: isolate` set up a stacking
+ * context so the `::before` pseudo with `z-index: -1` paints
+ * BEHIND the cells but stays inside the table's own context (without
+ * `isolate` it would pop behind the editor surface entirely and
+ * never become visible). */
 .prose-pm .ProseMirror > .pm-table {
   padding-left: 0;
   padding-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
   margin-left: var(--pm-page-margin-left, 94px);
   margin-right: var(--pm-page-margin-right, 94px);
   max-width: calc(
     100% - var(--pm-page-margin-left, 94px) - var(--pm-page-margin-right, 94px)
   );
+  position: relative;
+  isolation: isolate;
+}
+
+/* Page-wide sheet behind a top-level table. Anchored at the
+ * .ProseMirror's left edge (-margin-left from the table's left) and
+ * spanning the full page width so:
+ *   • the left page-margin gutter is white,
+ *   • the right page-margin gutter is white,
+ *   • any empty column space to the right of a narrow table is white,
+ *   • the side borders match the per-block sheet treatment so the
+ *     page outline stays continuous through the table row.
+ * Pointer-events disabled so clicks land on cells, not the pseudo. */
+.prose-pm .ProseMirror > .pm-table::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--pm-page-margin-left, 94px));
+  width: var(--pm-page-width, 794px);
+  background: var(--background);
+  border-left: 1px solid var(--divider);
+  border-right: 1px solid var(--divider);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.dark .prose-pm .ProseMirror > .pm-table::before,
+html.dark .prose-pm .ProseMirror > .pm-table::before {
+  border-left-color: rgba(255, 255, 255, 0.05);
+  border-right-color: rgba(255, 255, 255, 0.05);
 }
 
 /* Page cap (top): the white top-margin strip of the very first page,
