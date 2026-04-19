@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import type { PaletteCommand } from "./types";
 
 export interface CommandPaletteProps {
@@ -25,6 +26,7 @@ const RECENT_LIMIT = 6;
  *     product prefix from the adapter side).
  */
 export function CommandPalette({ open, onClose, commands }: CommandPaletteProps): ReactNode {
+  const { t } = useTranslator();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -99,7 +101,7 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Command palette"
+      aria-label={t("common.commandPalette")}
       className="fixed inset-0 z-40 flex items-start justify-center bg-black/30 px-4 pt-[18vh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -113,15 +115,15 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onInputKey}
-            placeholder="Type a command…"
+            placeholder={t("common.commandPalettePlaceholder")}
             className="h-8 w-full rounded-md bg-background px-2 text-sm text-foreground outline-none placeholder:text-tertiary"
             data-testid="command-palette-input"
-            aria-label="Search commands"
+            aria-label={t("common.searchCommands")}
           />
         </div>
         <div ref={listRef} className="max-h-[50vh] overflow-y-auto p-1">
           {filtered.length === 0 ? (
-            <div className="px-3 py-6 text-center text-sm text-secondary">No commands match.</div>
+            <div className="px-3 py-6 text-center text-sm text-secondary">{t("common.commandPaletteEmpty")}</div>
           ) : (
             filtered.map((c, i) => (
               <button

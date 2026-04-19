@@ -3,6 +3,7 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { FileSpreadsheet, FileText, Presentation } from "lucide-react";
 import { InlineSpinner } from "./InlineSpinner";
+import { useTranslator } from "@/lib/i18n";
 import type { ProductKind } from "./types";
 
 const SPLASH_FADE_OUT_MS = 280;
@@ -81,7 +82,9 @@ export function LoadingScreen({
   testId = "loading-screen",
   show = true,
 }: LoadingScreenProps): ReactNode {
-  const resolvedLabel = label ?? "Loading editor…";
+  const { t } = useTranslator();
+  const fallbackLabel = product ? t(`loading.${product}`) : t("common.loading");
+  const resolvedLabel = label ?? fallbackLabel;
 
   if (variant === "splash" && product) {
     return (

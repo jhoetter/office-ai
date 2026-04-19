@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
+import { LocaleToggle, useTranslator } from "@/lib/i18n";
 
 type Kind = "docx" | "xlsx" | "pptx";
 
@@ -17,8 +18,8 @@ interface SampleFileEntry {
 
 interface NewAction {
   readonly id: Kind;
-  readonly title: string;
-  readonly subtitle: string;
+  readonly titleKey: string;
+  readonly subtitleKey: string;
   readonly href: string;
   readonly icon: typeof FileText;
   readonly accent: string;
@@ -33,48 +34,48 @@ interface NewAction {
 const NEW_ACTIONS: ReadonlyArray<NewAction> = [
   {
     id: "docx",
-    title: "New document",
-    subtitle: "Word-compatible .docx",
+    titleKey: "home.newDocument",
+    subtitleKey: "home.subDocx",
     href: "/editor?new=1",
     icon: FileText,
     accent: "text-[var(--office-blue)]",
   },
   {
     id: "xlsx",
-    title: "New spreadsheet",
-    subtitle: "Excel-compatible .xlsx",
+    titleKey: "home.newSpreadsheet",
+    subtitleKey: "home.subXlsx",
     href: "/xlsx-editor?new=1",
     icon: FileSpreadsheet,
     accent: "text-emerald-600 dark:text-emerald-400",
   },
   {
     id: "pptx",
-    title: "New presentation",
-    subtitle: "PowerPoint-compatible .pptx",
+    titleKey: "home.newPresentation",
+    subtitleKey: "home.subPptx",
     href: "/pptx-editor?new=1",
     icon: Presentation,
     accent: "text-orange-600 dark:text-orange-400",
   },
 ];
 
-const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; label: string; accent: string }> =
+const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; labelKey: string; accent: string }> =
   {
     docx: {
       editorPath: "/editor",
       icon: FileText,
-      label: "Word document",
+      labelKey: "common.kindDocx",
       accent: "text-[var(--office-blue)]",
     },
     xlsx: {
       editorPath: "/xlsx-editor",
       icon: FileSpreadsheet,
-      label: "Excel workbook",
+      labelKey: "common.kindXlsx",
       accent: "text-emerald-600 dark:text-emerald-400",
     },
     pptx: {
       editorPath: "/pptx-editor",
       icon: Presentation,
-      label: "PowerPoint deck",
+      labelKey: "common.kindPptx",
       accent: "text-orange-600 dark:text-orange-400",
     },
   };
@@ -85,10 +86,10 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, locale?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return d.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
 }
 
 function sampleHref(file: SampleFileEntry): string {
@@ -98,6 +99,7 @@ function sampleHref(file: SampleFileEntry): string {
 }
 
 export default function HomePage() {
+  const { t } = useTranslator();
   const [files, setFiles] = useState<ReadonlyArray<SampleFileEntry> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,27 +125,27 @@ export default function HomePage() {
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="h-6 w-6 rounded-md bg-[var(--office-blue)]" aria-hidden />
-          <span className="font-semibold tracking-tight">officeAI</span>
+          <span className="font-semibold tracking-tight">{t("common.appName")}</span>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <LocaleToggle />
+          <ThemeToggle />
+        </div>
       </header>
 
       <section className="mt-12 flex flex-col gap-2">
         <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-[var(--ai-violet-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--ai-violet)]">
           <Sparkles size={12} />
-          AI-native office editors
+          {t("home.badge")}
         </span>
         <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          Start a new file or open a sample.
+          {t("home.title")}
         </h1>
-        <p className="max-w-prose text-sm text-secondary">
-          Word-, Excel- and PowerPoint-compatible editors built around an OOXML-faithful core. Every change —
-          human or AI — flows through the same typed command bus.
-        </p>
+        <p className="max-w-prose text-sm text-secondary">{t("home.intro")}</p>
       </section>
 
       <section className="mt-8">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-tertiary">Create new</h2>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-tertiary">{t("home.createNew")}</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {NEW_ACTIONS.map((action) => {
             const Icon = action.icon;
@@ -157,8 +159,8 @@ export default function HomePage() {
                   <Icon size={20} className={action.accent} />
                 </div>
                 <div className="flex flex-1 flex-col">
-                  <span className="text-sm font-medium text-foreground">{action.title}</span>
-                  <span className="text-xs text-secondary">{action.subtitle}</span>
+                  <span className="text-sm font-medium text-foreground">{t(action.titleKey)}</span>
+                  <span className="text-xs text-secondary">{t(action.subtitleKey)}</span>
                 </div>
                 <Plus size={16} className="text-tertiary transition group-hover:text-[var(--office-blue)]" />
               </Link>
@@ -171,28 +173,27 @@ export default function HomePage() {
         <div className="mb-3 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-tertiary">
             <FolderOpen size={14} />
-            Sample files
+            {t("home.sampleFiles")}
           </h2>
           {files !== null ? (
             <span className="text-xs text-tertiary">
-              {files.length} {files.length === 1 ? "file" : "files"}
+              {files.length} {files.length === 1 ? t("home.fileOne") : t("home.fileMany")}
             </span>
           ) : null}
         </div>
 
         {error ? (
           <div className="rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
-            Couldn&apos;t load samples: {error}
+            {t("home.loadError")}: {error}
           </div>
         ) : files === null ? (
           <div className="flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
             <Loader2 size={14} className="animate-spin" />
-            Listing sample files…
+            {t("home.listing")}
           </div>
         ) : files.length === 0 ? (
           <div className="rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
-            No sample files yet. Drop .docx, .xlsx or .pptx files into{" "}
-            <code className="font-mono text-xs">apps/web/public/sample-files/</code> and refresh.
+            {t("home.noSamplesLong")}
           </div>
         ) : (
           <SampleFileTable files={files} />
@@ -200,25 +201,23 @@ export default function HomePage() {
       </section>
 
       <footer className="mt-12 flex flex-wrap items-center gap-3 border-t border-divider pt-6 text-xs text-tertiary">
-        <span>
-          OOXML round-trip · typed command bus · headless <code className="font-mono">office-agent</code> CLI
-          for server-side AI workflows.
-        </span>
+        <span>{t("home.footer")}</span>
       </footer>
     </main>
   );
 }
 
 function SampleFileTable({ files }: { files: ReadonlyArray<SampleFileEntry> }) {
+  const { t, locale } = useTranslator();
   return (
     <div className="overflow-hidden rounded-lg border border-divider bg-surface">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-divider text-left text-xs uppercase tracking-wide text-tertiary">
-            <th className="px-4 py-2 font-medium">Name</th>
-            <th className="px-4 py-2 font-medium">Type</th>
-            <th className="hidden px-4 py-2 font-medium sm:table-cell">Modified</th>
-            <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Size</th>
+            <th className="px-4 py-2 font-medium">{t("home.tableName")}</th>
+            <th className="px-4 py-2 font-medium">{t("home.tableType")}</th>
+            <th className="hidden px-4 py-2 font-medium sm:table-cell">{t("home.tableModified")}</th>
+            <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">{t("home.tableSize")}</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -237,9 +236,9 @@ function SampleFileTable({ files }: { files: ReadonlyArray<SampleFileEntry> }) {
                     <span className="truncate">{file.name}</span>
                   </Link>
                 </td>
-                <td className="px-4 py-2.5 text-xs text-secondary">{meta.label}</td>
+                <td className="px-4 py-2.5 text-xs text-secondary">{t(meta.labelKey)}</td>
                 <td className="hidden px-4 py-2.5 text-xs text-secondary sm:table-cell">
-                  {formatDate(file.modifiedAt)}
+                  {formatDate(file.modifiedAt, locale)}
                 </td>
                 <td className="hidden px-4 py-2.5 text-right text-xs text-secondary sm:table-cell">
                   {formatBytes(file.size)}
@@ -247,7 +246,7 @@ function SampleFileTable({ files }: { files: ReadonlyArray<SampleFileEntry> }) {
                 <td className="px-4 py-2.5 text-right">
                   <Link href={sampleHref(file)}>
                     <Button variant="ghost" size="sm">
-                      Open
+                      {t("common.open")}
                     </Button>
                   </Link>
                 </td>

@@ -8,6 +8,7 @@ import { EditorTopBar } from "./EditorTopBar";
 import { FindReplacePanel } from "./FindReplacePanel";
 import { RightRail, useRightRailController, type RightRailTab } from "./RightRail";
 import { Toaster, type ToastItem } from "./Toaster";
+import { useTranslator } from "@/lib/i18n";
 import type { ProductAdapter } from "./types";
 
 export interface EditorShellProps {
@@ -233,6 +234,7 @@ function pickAcceptableFile(dt: DataTransfer, ext?: string): File | null {
 }
 
 function DropOverlay({ extension }: { readonly extension?: string }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div
       className={cn(
@@ -242,7 +244,7 @@ function DropOverlay({ extension }: { readonly extension?: string }): ReactNode 
       aria-hidden
     >
       <div className="rounded-md border-2 border-dashed border-[color:var(--accent)] bg-background px-4 py-3 text-sm font-medium text-foreground shadow-md">
-        Drop {extension ? extension : "a file"} to open
+        {t("common.draftFile", { ext: extension ?? "" })}
       </div>
     </div>
   );
