@@ -63,7 +63,6 @@ import {
   type MarchingAntsRect,
   type RefRect,
 } from "./Grid";
-import { GridSkeleton } from "./GridSkeleton";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { computeUsedRange } from "./gridDimensions";
 import { FormulaHighlight } from "./FormulaHighlight";
@@ -325,12 +324,12 @@ export function XlsxEditor(): ReactNode {
     null
   );
   // Tracks the initial sample-load lifecycle. While true and `agent`
-  // is still null we render a static GridSkeleton instead of the
-  // EmptyState, so the editor surface looks alive on the very first
-  // paint instead of asking the user to "Open a workbook" for the
-  // ~150-300 ms it takes JSZip + the parser to materialise the
-  // synthetic sample. Flips to false on success (agent appears) or
-  // failure (we then surface EmptyState as the recovery affordance).
+  // is still null we render the shared `LoadingScreen` splash so the
+  // editor surface looks alive on the very first paint instead of
+  // asking the user to "Open a workbook" for the ~150-300 ms it
+  // takes JSZip + the parser to materialise the synthetic sample.
+  // Flips to true only on failure, at which point we surface
+  // EmptyState as the recovery affordance.
   const [initialLoadFailed, setInitialLoadFailed] = useState(false);
   const shortcutsDialog = useShortcutsDialog();
 
@@ -3684,7 +3683,7 @@ export function XlsxEditor(): ReactNode {
               initialLoadFailed ? (
                 <EmptyState product="xlsx" onOpen={() => void onPickFile()} />
               ) : (
-                <GridSkeleton />
+                <LoadingScreen variant="splash" product="xlsx" />
               )
             ) : (
               <>
@@ -3961,7 +3960,7 @@ export function XlsxEditor(): ReactNode {
                         }}
                       />
                     ) : (
-                      <LoadingScreen variant="overlay" label="Loading workbook…" />
+                      <LoadingScreen variant="splash" product="xlsx" />
                     )}
                   </div>
                 </div>

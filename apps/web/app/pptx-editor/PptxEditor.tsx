@@ -1953,7 +1953,7 @@ export function PptxEditor(): React.ReactNode {
                         </div>
                       ) : null}
                     </div>
-                    {!ready ? <LoadingScreen variant="overlay" /> : null}
+                    {!ready ? <LoadingScreen variant="splash" product="pptx" /> : null}
                   </section>
                 </div>
                 {snap && notesOpen ? (

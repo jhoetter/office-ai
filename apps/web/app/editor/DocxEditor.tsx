@@ -1671,7 +1671,7 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
                   </div>
                 );
               })()}
-              {!agentReady && <LoadingScreen variant="overlay" />}
+              {!agentReady && <LoadingScreen variant="splash" product="docx" />}
               <TrackedChangesMargin
                 snapshot={snapshot}
                 editorHost={hostEl}
