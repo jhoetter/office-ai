@@ -76,7 +76,7 @@ export function resolveLayoutForKind(snapshot: PptxSnapshot, kind: LayoutKindPay
   for (const l of snapshot.root.layouts.values()) {
     if (l.kind !== (kind as LayoutKind)) continue;
     if (l.placeholders.length > 0) return { layout: l };
-    const enriched = builtinPlaceholdersFor(kind);
+    const enriched = builtinPlaceholdersFor(kind, snapshot.root.slideSize);
     if (enriched.length === 0) return { layout: l };
     return { layout: { ...l, placeholders: enriched } };
   }
@@ -88,12 +88,54 @@ export function resolveLayoutForKind(snapshot: PptxSnapshot, kind: LayoutKindPay
  * placeholder specs. The synthesised layout is discarded — only the
  * placeholders are returned, so callers can stamp them onto a slide
  * without installing a duplicate layout part.
+ *
+ * Built-in templates are authored against the standard 16:9 footprint
+ * (12_192_000 × 6_858_000 EMU). When the deck is a different size —
+ * 4:3 (9_144_000 × 6_858_000) is the common case — we proportionally
+ * rescale every placeholder rectangle so the cloned shapes stay
+ * inside the slide bounds. Without this, a deck-with-empty-title-
+ * layout would produce placeholders whose right edge sat ~3 inches
+ * past the slide.
  */
-function builtinPlaceholdersFor(kind: LayoutKindPayload): ReadonlyArray<PlaceholderSpec> {
+function builtinPlaceholdersFor(
+  kind: LayoutKindPayload,
+  slideSize: { readonly cxEmu: number; readonly cyEmu: number }
+): ReadonlyArray<PlaceholderSpec> {
   const tmpl = BUILTIN_LAYOUTS[kind];
   if (!tmpl) return [];
   const layout = parseSlideLayoutFromXml(`${LAYOUT_DIR}__builtin_${kind}.xml`, tmpl.xml);
-  return layout.placeholders;
+  return rescalePlaceholders(layout.placeholders, slideSize);
+}
+
+const BUILTIN_TEMPLATE_W = 12_192_000;
+const BUILTIN_TEMPLATE_H = 6_858_000;
+
+function rescalePlaceholders(
+  phs: ReadonlyArray<PlaceholderSpec>,
+  slideSize: { readonly cxEmu: number; readonly cyEmu: number }
+): ReadonlyArray<PlaceholderSpec> {
+  const sx = slideSize.cxEmu / BUILTIN_TEMPLATE_W;
+  const sy = slideSize.cyEmu / BUILTIN_TEMPLATE_H;
+  if (sx === 1 && sy === 1) return phs;
+  return phs.map((ph) => ({
+    ...ph,
+    ...(ph.position
+      ? {
+          position: {
+            xEmu: Math.round(ph.position.xEmu * sx),
+            yEmu: Math.round(ph.position.yEmu * sy),
+          },
+        }
+      : {}),
+    ...(ph.size
+      ? {
+          size: {
+            cxEmu: Math.round(ph.size.cxEmu * sx),
+            cyEmu: Math.round(ph.size.cyEmu * sy),
+          },
+        }
+      : {}),
+  }));
 }
 
 function synthesiseBuiltinLayout(snapshot: PptxSnapshot, kind: LayoutKindPayload): LayoutResolution {
@@ -107,7 +149,19 @@ function synthesiseBuiltinLayout(snapshot: PptxSnapshot, kind: LayoutKindPayload
     n++;
     partPath = `${LAYOUT_DIR}slideLayout${n}.xml`;
   }
-  const layout = parseSlideLayoutFromXml(partPath, tmpl.xml);
+  const parsed = parseSlideLayoutFromXml(partPath, tmpl.xml);
+  // Built-in templates target a 12.192M × 6.858M canvas; rescale to
+  // match the deck so placeholders land inside the slide bounds (see
+  // `builtinPlaceholdersFor` for the rationale). The on-disk XML is
+  // left at the template's coordinates — PowerPoint reflows layout
+  // placeholders against the deck's slide size on open, and our own
+  // renderer pulls coordinates from the in-memory `placeholders`
+  // array (which we rescale here), so this stays consistent without
+  // having to rewrite the XML.
+  const layout: SlideLayout = {
+    ...parsed,
+    placeholders: rescalePlaceholders(parsed.placeholders, snapshot.root.slideSize),
+  };
   const relsPath = relsPathFor(partPath);
 
   // Pick a master to point the new layout at — every layout part needs

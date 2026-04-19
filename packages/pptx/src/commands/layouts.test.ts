@@ -115,6 +115,39 @@ describe("pptx:set-slide-layout", () => {
     expect(text).toBe("Hello");
   });
 
+  it("rescales built-in placeholders to the deck's slide size so they don't overflow", async () => {
+    // 01-blank.pptx is a 9_144_000 × 6_858_000 deck (4:3 aspect). The
+    // built-in templates are authored against 12_192_000 × 6_858_000
+    // (16:9), so without rescaling the title placeholder's right edge
+    // would land ~3 inches past the slide. We need every cloned
+    // placeholder rect to stay inside the slide bounds.
+    const agent = await loadAgent("01-blank.pptx");
+    const slideSize = agent.getSnapshot().root.slideSize;
+    // Force the resolver down the synthesise path by picking a kind
+    // the fixture doesn't ship.
+    await agent.applyCommand({
+      type: "pptx:add-slide",
+      payload: { layoutKind: "title" },
+      source: "human",
+    });
+    const after = agent.getSnapshot();
+    const newSlide = after.root.slides[after.root.slides.length - 1];
+    const placeholderShapes = newSlide.shapes.filter(
+      (s) => s.kind === "text" && (s as TextShape).placeholder
+    ) as TextShape[];
+    expect(placeholderShapes.length).toBeGreaterThan(0);
+    for (const s of placeholderShapes) {
+      const x = s.position?.xEmu ?? 0;
+      const y = s.position?.yEmu ?? 0;
+      const cx = s.size?.cxEmu ?? 0;
+      const cy = s.size?.cyEmu ?? 0;
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(x + cx).toBeLessThanOrEqual(slideSize.cxEmu);
+      expect(y + cy).toBeLessThanOrEqual(slideSize.cyEmu);
+    }
+  });
+
   it("falls back to built-in placeholders when the deck's matching layout has none", async () => {
     // Construct a deck whose `title` layout is intentionally placeholder-
     // less (mirrors `apps/web/app/lib/sample-pptx.ts` and other minimal
