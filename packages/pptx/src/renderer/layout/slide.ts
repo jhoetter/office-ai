@@ -73,6 +73,69 @@ export function stageAspectRatio(
   return w / h;
 }
 
+/**
+ * Pixel rect of the slide card within the outer stage div, plus the
+ * SVG `viewBox` that pins SVG user-units to that rect. Used by the
+ * interactive editor where the stage div fills the user's whole
+ * viewport — the slide is centered with white "card" chrome and the
+ * surrounding gray area is "scratch" space (off-slide shapes live
+ * here in EMU coordinates and remain interactive).
+ *
+ * The returned `viewBox` is sized so SVG (0, 0) coincides with the
+ * top-left of the slide card while the SVG itself spans the whole
+ * stage. That way a shape positioned at negative EMU coordinates
+ * naturally renders in the scratch margin without any coordinate
+ * gymnastics in the renderer.
+ */
+export interface DynamicStageLayout {
+  readonly slidePxLeft: number;
+  readonly slidePxTop: number;
+  readonly slidePxW: number;
+  readonly slidePxH: number;
+  /** SVG viewBox: `${vbX} ${vbY} ${vbW} ${vbH}`, rounded to 2dp. */
+  readonly stageViewBox: string;
+}
+
+/**
+ * Compute the slide card's pixel rect inside a stage of `stageW` ×
+ * `stageH` pixels, plus a matching SVG viewBox.
+ *
+ * - The slide preserves its aspect ratio and fits inside the stage:
+ *   `min(stageW / aspect, stageH) * zoom`.
+ * - The card is centered horizontally and vertically.
+ * - The viewBox is `{slideW user units across the slide rect}` and
+ *   the origin is shifted so SVG (0, 0) lines up with the top-left
+ *   of the slide card. Returns `null` for a zero-sized stage so
+ *   callers can no-op until layout settles.
+ */
+export function computeStageLayout(
+  size: SlideSize,
+  stageW: number,
+  stageH: number,
+  zoom: number = 1
+): DynamicStageLayout | null {
+  if (stageW <= 0 || stageH <= 0) return null;
+  const slideAspect = slideAspectRatio(size);
+  const fitW = Math.min(stageW, stageH * slideAspect);
+  const slidePxW = fitW * zoom;
+  const slidePxH = (fitW / slideAspect) * zoom;
+  const slidePxLeft = (stageW - slidePxW) / 2;
+  const slidePxTop = (stageH - slidePxH) / 2;
+  const slideWUser = size.cxEmu * SVG_UNIT_PER_EMU;
+  const userPerPx = slideWUser / slidePxW;
+  const vbX = -slidePxLeft * userPerPx;
+  const vbY = -slidePxTop * userPerPx;
+  const vbW = stageW * userPerPx;
+  const vbH = stageH * userPerPx;
+  return {
+    slidePxLeft,
+    slidePxTop,
+    slidePxW,
+    slidePxH,
+    stageViewBox: `${round2(vbX)} ${round2(vbY)} ${round2(vbW)} ${round2(vbH)}`,
+  };
+}
+
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }

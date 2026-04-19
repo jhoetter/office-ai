@@ -277,18 +277,12 @@ export function Grid(props: GridProps): ReactNode {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
-  // Wrappers around the col-header band, row-header band, and corner cell.
-  // We pin the headers to the viewport edge by writing `transform` directly
-  // on these refs from the scroll handler — bypassing React's setState
-  // round-trip that visibly lags the headers during fast scrolls (e.g.
-  // racing horizontally from column AA back to A: the row-number column
-  // would drift, then snap, every few frames). React state still updates
-  // (rAF-coalesced below) so anything that genuinely needs to re-render
-  // on scroll change (selection overlays, freeze dividers, frozen-cell
-  // pinning) sees the new position; the headers just no longer wait for it.
-  const colHeadersWrapperRef = useRef<HTMLDivElement | null>(null);
-  const rowHeadersWrapperRef = useRef<HTMLDivElement | null>(null);
-  const cornerRef = useRef<HTMLDivElement | null>(null);
+  // Frozen-cell quadrant wrappers. Pinned at the viewport edge via
+  // `position: sticky` (browser-native, zero per-frame JS) so the
+  // cells inside don't have to encode `scroll.top` / `scroll.left`
+  // in their styles — which used to invalidate the entire `cellList`
+  // memo on every scroll event and made fast scrolling visibly laggy.
+  // Headers and the corner cell use the same sticky-wrapper trick.
   const scrollRafRef = useRef<number | null>(null);
   const latestScrollRef = useRef({ top: 0, left: 0 });
   // Transient yellow pulse painted over a cell after the comments
@@ -423,24 +417,14 @@ export function Grid(props: GridProps): ReactNode {
     const top = el.scrollTop;
     const left = el.scrollLeft;
     latestScrollRef.current = { top, left };
-    // Synchronous, sub-frame pin: write the transforms before React
-    // even hears about the scroll event. Keeps the row / col headers
-    // and the corner cell perfectly locked to the viewport edge even
-    // when the user flings the scrollbar from column AA back to A —
-    // without this, the headers visibly drift behind the body until
-    // React commits the next setScroll.
-    if (rowHeadersWrapperRef.current) {
-      rowHeadersWrapperRef.current.style.transform = `translateX(${left}px)`;
-    }
-    if (colHeadersWrapperRef.current) {
-      colHeadersWrapperRef.current.style.transform = `translateY(${top}px)`;
-    }
-    if (cornerRef.current) {
-      cornerRef.current.style.transform = `translate(${left}px, ${top}px)`;
-    }
-    // Coalesce the React state update to one per animation frame so
-    // a flick-scroll fires ~60 setScroll calls/sec instead of one per
-    // wheel event (which can be 120+ Hz on trackpads).
+    // Headers, the corner cell, and the four frozen quadrants pin
+    // themselves with `position: sticky` so we don't need a per-frame
+    // imperative transform write here — the browser keeps them
+    // locked to the viewport edge automatically. We still coalesce
+    // the React state update to one per animation frame so things
+    // that genuinely need to react to the scroll position (the
+    // virtualised body window, cell-flash overlay, marquee, etc.)
+    // don't fire ~120+ times/sec on a trackpad fling.
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
@@ -576,13 +560,20 @@ export function Grid(props: GridProps): ReactNode {
   const freezeYPx = freezeRows > 0 ? dims.yAt(freezeRows) : 0;
   const freezeXPx = freezeCols > 0 ? dims.xAt(freezeCols) : 0;
 
+  // Cell positions inside their quadrant wrapper. These never depend
+  // on scroll: the wrapper itself is `position: sticky` and the
+  // browser pins it for us, so the cells inside can use raw
+  // (rowYs, colXs) coordinates and their `cellList` memo doesn't get
+  // invalidated by every scroll event. (See the wrappers in the
+  // render block below.) `topFor` / `leftFor` now collapse to the
+  // same scroll-free formula for every cell regardless of freeze.
   const topFor = useCallback(
-    (r: number): number => HEADER_ROW_HEIGHT + (rowYs[r] ?? 0) + (r < freezeRows ? scroll.top : 0),
-    [rowYs, freezeRows, scroll.top]
+    (r: number): number => HEADER_ROW_HEIGHT + (rowYs[r] ?? 0),
+    [rowYs]
   );
   const leftFor = useCallback(
-    (c: number): number => HEADER_COL_WIDTH + (colXs[c] ?? 0) + (c < freezeCols ? scroll.left : 0),
-    [colXs, freezeCols, scroll.left]
+    (c: number): number => HEADER_COL_WIDTH + (colXs[c] ?? 0),
+    [colXs]
   );
 
   // Global mouse handlers for the fill-handle drag. Lives here (after
@@ -721,8 +712,24 @@ export function Grid(props: GridProps): ReactNode {
     return out;
   }, [freezeCols, startCol, endCol]);
 
-  const cellList: ReactNode[] = useMemo(() => {
-    const out: ReactNode[] = [];
+  // The cell list is split into four quadrants — body (the bulk),
+  // frozen-row band, frozen-col band, frozen-corner — so each
+  // quadrant can be wrapped in its own `position: sticky` parent
+  // that pins it to the right edge of the scroll container without
+  // requiring the cells inside to encode `scroll.top` / `scroll.left`
+  // in their styles. This keeps the (potentially 50K+) cell list
+  // memo independent of scroll position, so flick-scrolling no
+  // longer rebuilds every cell on every frame.
+  const cellQuadrants: {
+    body: ReactNode[];
+    frozenRow: ReactNode[];
+    frozenCol: ReactNode[];
+    corner: ReactNode[];
+  } = useMemo(() => {
+    const body: ReactNode[] = [];
+    const frozenRow: ReactNode[] = [];
+    const frozenCol: ReactNode[] = [];
+    const corner: ReactNode[] = [];
     for (const r of rowsToRender) {
       if (sheet.hiddenRows.has(r)) continue;
       const rFrozen = r < freezeRows;
@@ -734,7 +741,13 @@ export function Grid(props: GridProps): ReactNode {
       // (relative to this wrapper, which is anchored at 0,0 so
       // the math is unchanged). On dev builds this turns a
       // multi-second initial mount into ~tens of milliseconds.
-      const rowChildren: ReactNode[] = [];
+      // We bucket per row × per quadrant so each row can have at
+      // most two non-empty buckets (frozen-corner + frozen-row, or
+      // frozen-col + body, depending on `rFrozen`).
+      const cornerChildren: ReactNode[] = [];
+      const frozenRowChildren: ReactNode[] = [];
+      const frozenColChildren: ReactNode[] = [];
+      const bodyChildren: ReactNode[] = [];
       for (const c of colsToRender) {
         const cFrozen = c < freezeCols;
         const cellFrozen = rFrozen || cFrozen;
@@ -757,7 +770,14 @@ export function Grid(props: GridProps): ReactNode {
         // editor owns the cell's contents while it's open.
         const isLiveDrafting =
           !isEditing && !!liveEditDraft && liveEditDraft.row === r && liveEditDraft.col === c;
-        rowChildren.push(
+        const quadrantBucket = rFrozen
+          ? cFrozen
+            ? cornerChildren
+            : frozenRowChildren
+          : cFrozen
+            ? frozenColChildren
+            : bodyChildren;
+        quadrantBucket.push(
           <div
             key={`c-${r}-${c}`}
             data-testid={`cell-${colToLetter(c)}${r + 1}`}
@@ -946,27 +966,49 @@ export function Grid(props: GridProps): ReactNode {
           </div>
         );
       }
-      if (rowChildren.length === 0) continue;
-      out.push(
-        <div
-          key={`rg-${r}`}
-          // Sibling-bucket wrapper — see note above. Zero-size +
-          // `position: absolute` so it doesn't influence layout
-          // and absolute children inside resolve to the same
-          // pixel position they always have.
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: 0,
-            height: 0,
-          }}
-        >
-          {rowChildren}
-        </div>
-      );
+      // Sibling-bucket wrappers — see note above. Zero-size +
+      // `position: absolute` so they don't influence layout and the
+      // absolute children inside resolve to the same pixel position
+      // they always had. We emit one bucket per non-empty quadrant
+      // so each row contributes O(quadrants) wrappers instead of one
+      // giant wrapper that React would have to reconcile linearly.
+      const bucketStyle: CSSProperties = {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: 0,
+        height: 0,
+      };
+      if (cornerChildren.length > 0) {
+        corner.push(
+          <div key={`cn-${r}`} style={bucketStyle}>
+            {cornerChildren}
+          </div>
+        );
+      }
+      if (frozenRowChildren.length > 0) {
+        frozenRow.push(
+          <div key={`fr-${r}`} style={bucketStyle}>
+            {frozenRowChildren}
+          </div>
+        );
+      }
+      if (frozenColChildren.length > 0) {
+        frozenCol.push(
+          <div key={`fc-${r}`} style={bucketStyle}>
+            {frozenColChildren}
+          </div>
+        );
+      }
+      if (bodyChildren.length > 0) {
+        body.push(
+          <div key={`bd-${r}`} style={bucketStyle}>
+            {bodyChildren}
+          </div>
+        );
+      }
     }
-    return out;
+    return { body, frozenRow, frozenCol, corner };
   }, [
     sheet,
     styles,
@@ -1382,11 +1424,12 @@ export function Grid(props: GridProps): ReactNode {
         }}
         style={{
           position: "absolute",
-          // Vertical pinning lives on the wrapper transform now (see
-          // colHeadersWrapperRef in onScroll). Horizontal pinning for
-          // frozen columns still needs to react to scroll.left because
-          // each frozen column has its own pinned X position relative
-          // to the rest of the band.
+          // Vertical pinning is handled by the surrounding sticky
+          // wrapper. Horizontal pinning for frozen columns still
+          // needs to react to scroll.left because each frozen column
+          // has its own pinned X position relative to the rest of
+          // the band — we add `scroll.left` so the column stays at
+          // its natural left edge regardless of horizontal scroll.
           top: 0,
           left: HEADER_COL_WIDTH + colXs[c]! + (cFrozen ? scroll.left : 0),
           width: colWidth,
@@ -1503,12 +1546,13 @@ export function Grid(props: GridProps): ReactNode {
         }}
         style={{
           position: "absolute",
+          // Horizontal pinning is handled by the surrounding sticky
+          // wrapper. Vertical pinning for frozen rows still needs to
+          // react to scroll.top because each frozen row has its own
+          // pinned Y position relative to the rest of the band — we
+          // add `scroll.top` so the row stays at its natural top
+          // edge regardless of vertical scroll.
           top: HEADER_ROW_HEIGHT + rowYs[r]! + (rFrozen ? scroll.top : 0),
-          // Horizontal pinning lives on the wrapper transform now (see
-          // rowHeadersWrapperRef in onScroll). Vertical pinning for
-          // frozen rows still needs to react to scroll.top because each
-          // frozen row has its own pinned Y position relative to the
-          // rest of the band.
           left: 0,
           width: HEADER_COL_WIDTH,
           height: rowHeight,
@@ -1574,64 +1618,128 @@ export function Grid(props: GridProps): ReactNode {
       }}
     >
       <div style={innerStyle}>
-        {/* Top-left corner — anchored to the viewport edge via the
-            imperative `cornerRef.style.transform` write in `onScroll`.
-            The base position is (0, 0); the translate keeps it
-            pixel-locked to the viewport corner during fast scrolls
-            without waiting for a React re-render. */}
+        {/* Body cells — the bulk. No pinning; cells position
+            themselves at (HEADER_COL_WIDTH + colXs[c], HEADER_ROW_HEIGHT
+            + rowYs[r]) and scroll naturally with the inner spacer. */}
         <div
-          ref={cornerRef}
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: HEADER_COL_WIDTH,
-            height: HEADER_ROW_HEIGHT,
-            background: "var(--surface)",
-            borderRight: "1px solid var(--divider)",
-            borderBottom: "1px solid var(--divider)",
-            zIndex: 3,
-            willChange: "transform",
-            transform: `translate(${scroll.left}px, ${scroll.top}px)`,
-          }}
-        />
-        {/* Column header band — wrapped so the whole band can be
-            translateY'd in one synchronous DOM write per scroll
-            event. Individual headers position themselves with `top: 0`
-            and use `left: HEADER_COL_WIDTH + colXs[c]` (their natural
-            X within the spacer); the wrapper provides the vertical
-            pin to the viewport top edge. */}
-        <div
-          ref={colHeadersWrapperRef}
           style={{
             position: "absolute",
             top: 0,
             left: 0,
             width: 0,
             height: 0,
-            willChange: "transform",
-            transform: `translateY(${scroll.top}px)`,
+            zIndex: 1,
+          }}
+        >
+          {cellQuadrants.body}
+        </div>
+        {/* Frozen-row band — cells in `r < freezeRows && c >= freezeCols`.
+            Sticks to the top of the scroll viewport so the rows stay
+            visible while the user scrolls vertically; scrolls
+            horizontally with the body. */}
+        {hasFreeze && freezeRows > 0 && cellQuadrants.frozenRow.length > 0 ? (
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              width: 0,
+              height: 0,
+              zIndex: 2,
+            }}
+          >
+            {cellQuadrants.frozenRow}
+          </div>
+        ) : null}
+        {/* Frozen-col band — cells in `c < freezeCols && r >= freezeRows`.
+            Sticks to the left of the scroll viewport. */}
+        {hasFreeze && freezeCols > 0 && cellQuadrants.frozenCol.length > 0 ? (
+          <div
+            style={{
+              position: "sticky",
+              left: 0,
+              width: 0,
+              height: 0,
+              zIndex: 2,
+            }}
+          >
+            {cellQuadrants.frozenCol}
+          </div>
+        ) : null}
+        {/* Frozen corner — cells in `r < freezeRows && c < freezeCols`.
+            Sticks both ways so they sit above both frozen bands. */}
+        {hasFreeze && freezeRows > 0 && freezeCols > 0 && cellQuadrants.corner.length > 0 ? (
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              left: 0,
+              width: 0,
+              height: 0,
+              zIndex: 3,
+            }}
+          >
+            {cellQuadrants.corner}
+          </div>
+        ) : null}
+        {/* Column header band — sticky at top:0 so it stays pinned to
+            the viewport's top edge during vertical scroll while still
+            scrolling horizontally with the body. Individual headers
+            sit absolutely at `left: HEADER_COL_WIDTH + colXs[c]`
+            inside this wrapper. */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            width: 0,
+            height: 0,
+            zIndex: 5,
           }}
         >
           {colHeaders}
         </div>
-        {/* Row header band — wrapped for the same reason as the column
-            header band, but pinned horizontally instead. */}
+        {/* Row header band — sticky at left:0 so the row index column
+            (1, 2, 3, …) stays pinned to the viewport's left edge
+            during horizontal scroll. Individual row headers sit
+            absolutely at `top: HEADER_ROW_HEIGHT + rowYs[r]`. */}
         <div
-          ref={rowHeadersWrapperRef}
           style={{
-            position: "absolute",
-            top: 0,
+            position: "sticky",
             left: 0,
             width: 0,
             height: 0,
-            willChange: "transform",
-            transform: `translateX(${scroll.left}px)`,
+            zIndex: 5,
           }}
         >
           {rowHeaders}
         </div>
-        {cellList}
+        {/* Top-left corner — sticky in both axes so it always covers
+            the intersection of the row & column header bands. The
+            visible corner box is an absolutely positioned child so
+            the sticky wrapper itself stays at zero-size and doesn't
+            push other in-flow children. */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            left: 0,
+            width: 0,
+            height: 0,
+            zIndex: 6,
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: HEADER_COL_WIDTH,
+              height: HEADER_ROW_HEIGHT,
+              background: "var(--surface)",
+              borderRight: "1px solid var(--divider)",
+              borderBottom: "1px solid var(--divider)",
+            }}
+          />
+        </div>
         {sheet.charts.map((chart) => {
           const a = chart.anchor;
           const top = HEADER_ROW_HEIGHT + (rowYs[a.fromRow] ?? 0) + a.fromOffsetYPx;
@@ -1691,39 +1799,66 @@ export function Grid(props: GridProps): ReactNode {
         {extraAreaOverlays}
         {marquee}
         {fillHandle}
+        {/* Freeze divider lines — pinned to viewport top-left via a
+            sticky 0-size wrapper. The wrapper sticks both axes so it
+            stays locked to (0, 0) of the scroll viewport, and the
+            absolutely-positioned child paints the divider line at
+            the freeze-split offset spanning the visible viewport.
+            This avoids the per-frame recompute the previous
+            scroll-driven positioning needed. */}
         {hasFreeze && freezeRows > 0 ? (
           <div
-            data-testid="freeze-divider-h"
-            aria-hidden
             style={{
-              position: "absolute",
-              top: scroll.top + HEADER_ROW_HEIGHT + freezeYPx - 1,
-              left: scroll.left,
-              width: viewport.width,
-              height: 2,
-              background: "var(--ai-violet)",
-              opacity: 0.6,
-              pointerEvents: "none",
+              position: "sticky",
+              top: 0,
+              left: 0,
+              width: 0,
+              height: 0,
               zIndex: 5,
             }}
-          />
+          >
+            <div
+              data-testid="freeze-divider-h"
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: HEADER_ROW_HEIGHT + freezeYPx - 1,
+                left: 0,
+                width: viewport.width,
+                height: 2,
+                background: "var(--ai-violet)",
+                opacity: 0.6,
+                pointerEvents: "none",
+              }}
+            />
+          </div>
         ) : null}
         {hasFreeze && freezeCols > 0 ? (
           <div
-            data-testid="freeze-divider-v"
-            aria-hidden
             style={{
-              position: "absolute",
-              top: scroll.top,
-              left: scroll.left + HEADER_COL_WIDTH + freezeXPx - 1,
-              width: 2,
-              height: viewport.height,
-              background: "var(--ai-violet)",
-              opacity: 0.6,
-              pointerEvents: "none",
+              position: "sticky",
+              top: 0,
+              left: 0,
+              width: 0,
+              height: 0,
               zIndex: 5,
             }}
-          />
+          >
+            <div
+              data-testid="freeze-divider-v"
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: 0,
+                left: HEADER_COL_WIDTH + freezeXPx - 1,
+                width: 2,
+                height: viewport.height,
+                background: "var(--ai-violet)",
+                opacity: 0.6,
+                pointerEvents: "none",
+              }}
+            />
+          </div>
         ) : null}
         {dvPicker && dvIndex
           ? (() => {

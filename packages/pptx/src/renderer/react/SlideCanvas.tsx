@@ -15,7 +15,7 @@ import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, pointInBox, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import {
   SVG_UNIT_PER_EMU,
-  slideAspectRatio,
+  computeStageLayout,
   slideStageViewBox,
 } from "../layout/slide.js";
 import {
@@ -120,28 +120,17 @@ function useStageLayout(slideSize: SlideSize, zoom: number): {
     return () => ro.disconnect();
   }, []);
   const layout = React.useMemo<StageLayout | null>(() => {
-    if (!size || size.w <= 0 || size.h <= 0) return null;
-    const slideAspect = slideAspectRatio(slideSize);
-    const fitW = Math.min(size.w, size.h * slideAspect);
-    const slidePxW = fitW * zoom;
-    const slidePxH = (fitW / slideAspect) * zoom;
-    const slidePxLeft = (size.w - slidePxW) / 2;
-    const slidePxTop = (size.h - slidePxH) / 2;
-    const slideWUser = slideSize.cxEmu * SVG_UNIT_PER_EMU;
-    const userPerPx = slideWUser / slidePxW;
-    const vbX = -slidePxLeft * userPerPx;
-    const vbY = -slidePxTop * userPerPx;
-    const vbW = size.w * userPerPx;
-    const vbH = size.h * userPerPx;
-    const r2 = (v: number) => Math.round(v * 100) / 100;
+    if (!size) return null;
+    const dyn = computeStageLayout(slideSize, size.w, size.h, zoom);
+    if (!dyn) return null;
     return {
       stageW: size.w,
       stageH: size.h,
-      slidePxLeft,
-      slidePxTop,
-      slidePxW,
-      slidePxH,
-      stageViewBox: `${r2(vbX)} ${r2(vbY)} ${r2(vbW)} ${r2(vbH)}`,
+      slidePxLeft: dyn.slidePxLeft,
+      slidePxTop: dyn.slidePxTop,
+      slidePxW: dyn.slidePxW,
+      slidePxH: dyn.slidePxH,
+      stageViewBox: dyn.stageViewBox,
     };
   }, [size, slideSize, zoom]);
   return { containerRef, layout };
@@ -1393,7 +1382,8 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             dpi,
             slide.layoutPartPath ? snap.root.layouts.get(slide.layoutPartPath) : undefined,
             finishEditing,
-            onTextSelectionChange
+            onTextSelectionChange,
+            editCommitRef
           )
         : null}
       {isToolMode ? <ConnectorToolBanner type={props.connectorTool!.type} /> : null}
@@ -3473,7 +3463,8 @@ function renderEditingOverlay(
     }>,
     plain: string
   ) => void,
-  onTextSelectionChange: ((sel: PptxTextSelection | null) => void) | undefined
+  onTextSelectionChange: ((sel: PptxTextSelection | null) => void) | undefined,
+  commitRef: React.MutableRefObject<(() => void) | null>
 ): React.ReactElement | null {
   const shape = findShape(slide.shapes, shapeId);
   if (!shape || shape.kind !== "text") return null;
@@ -3494,6 +3485,7 @@ function renderEditingOverlay(
       layout={layout}
       onCommit={(paragraphs, plain) => onCommit(shape as TextShape, paragraphs, plain)}
       onSelectionChange={onTextSelectionChange}
+      commitRef={commitRef}
     />
   );
 }
@@ -3567,24 +3559,46 @@ function TextEditOverlay({
   // overlay text appears noticeably larger than the underlying
   // rendered shape (and the user perceives it as "the font changed
   // when I clicked to edit").
-  const [scale, setScale] = React.useState(1);
+  //
+  // We also need the slide-card's pixel offset within the parent
+  // stage — the stage now fills the full viewport, so positioning the
+  // overlay with simple percentages of the parent would put it in the
+  // scratch margin instead of on the slide. `useLayoutEffect` (vs
+  // `useEffect`) commits the measurement BEFORE the first paint so
+  // the overlay never flashes at the wrong scale or offset.
+  const [metrics, setMetrics] = React.useState<{
+    readonly scale: number;
+    readonly slideLeft: number;
+    readonly slideTop: number;
+  }>({ scale: 1, slideLeft: 0, slideTop: 0 });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
     const parent = node.parentElement as HTMLDivElement | null;
     containerRef.current = parent;
-    if (!parent || typeof ResizeObserver === "undefined") return;
+    if (!parent) return;
+    const slideCard = parent.querySelector<HTMLDivElement>("[data-testid='pptx-slide-card']");
+    const target = slideCard ?? parent;
     const slideNativeWidth = slideSize.cxEmu / EMU_PER_PX_AT_96DPI;
-    const update = (): void => {
-      const w = parent.getBoundingClientRect().width;
-      if (w > 0 && slideNativeWidth > 0) setScale(w / slideNativeWidth);
+    const measure = () => {
+      const cardRect = target.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      const w = cardRect.width;
+      return {
+        scale: w > 0 && slideNativeWidth > 0 ? w / slideNativeWidth : 1,
+        slideLeft: cardRect.left - parentRect.left,
+        slideTop: cardRect.top - parentRect.top,
+      };
     };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(parent);
+    setMetrics(measure());
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setMetrics(measure()));
+    ro.observe(target);
+    if (slideCard && slideCard !== parent) ro.observe(parent);
     return () => ro.disconnect();
   }, [slideSize.cxEmu]);
+  const scale = metrics.scale;
 
   React.useEffect(() => {
     const node = ref.current;
@@ -3641,10 +3655,15 @@ function TextEditOverlay({
     return () => document.removeEventListener("selectionchange", handler);
   }, [onSelectionChange, shape.id]);
 
-  const leftPct = (box.x / slideSize.cxEmu) * 100;
-  const topPct = (box.y / slideSize.cyEmu) * 100;
-  const widthPct = (box.cx / slideSize.cxEmu) * 100;
-  const heightPct = (box.cy / slideSize.cyEmu) * 100;
+  // Position the overlay in absolute pixels relative to the stage
+  // div: stage now fills the entire viewport, so percentage-of-parent
+  // would drift into the scratch margin. The slide card's offset +
+  // EMU→px scale uniquely places the overlay on top of the rendered
+  // shape, no matter how big the surrounding canvas grows.
+  const overlayLeft = metrics.slideLeft + (box.x / EMU_PER_PX_AT_96DPI) * scale;
+  const overlayTop = metrics.slideTop + (box.y / EMU_PER_PX_AT_96DPI) * scale;
+  const overlayWidth = (box.cx / EMU_PER_PX_AT_96DPI) * scale;
+  const overlayHeight = (box.cy / EMU_PER_PX_AT_96DPI) * scale;
   const insetsEmu = readBodyInsetsFromShape(shape);
   const baseFontPx = (defaults.fontSizePt * dpi) / 72;
   // Pick the same default font the SVG renderer uses so the text
@@ -3661,6 +3680,45 @@ function TextEditOverlay({
   const padBottom = (insetsEmu.b / EMU_PER_PX_AT_96DPI) * scale;
   const padLeft = (insetsEmu.l / EMU_PER_PX_AT_96DPI) * scale;
 
+  // PowerPoint shows a ghost prompt ("Click to add title", etc.) for
+  // empty placeholder shapes that vanishes on the first keystroke.
+  // The SVG renderer paints this hint when the overlay isn't open;
+  // while editing, we reproduce it as a contentEditable=false sibling
+  // node so the user sees the same prompt instead of a blank box.
+  const isEffectivelyEmpty = React.useMemo(
+    () => initialPlain.trim().length === 0,
+    [initialPlain]
+  );
+  const [hasInput, setHasInput] = React.useState(false);
+  const placeholderType = shape.placeholder?.type;
+  const showPrompt = isEffectivelyEmpty && !hasInput && !!placeholderType;
+  const promptText = placeholderType ? placeholderPromptLabel(placeholderType) : "";
+
+  // `commitEdit` is the single canonical exit path for the overlay.
+  // It's also exposed via `commitRef` so the canvas can drive a
+  // synchronous commit from `onPointerDown` BEFORE selection mutates,
+  // eliminating the cross-frame "B selected + A still editing" flash.
+  // Guarded by a ref so a pointerdown-driven commit followed by the
+  // browser's natural blur doesn't fire `onCommit` twice.
+  const committedRef = React.useRef(false);
+  const commitEdit = React.useCallback(() => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const node = ref.current;
+    const paragraphs = node ? extractParagraphsFromOverlay(node) : [];
+    const plain = node?.innerText ?? "";
+    onCommit(paragraphs, plain);
+    onSelectionChange?.(null);
+  }, [onCommit, onSelectionChange]);
+
+  React.useEffect(() => {
+    if (!commitRef) return;
+    commitRef.current = commitEdit;
+    return () => {
+      if (commitRef.current === commitEdit) commitRef.current = null;
+    };
+  }, [commitRef, commitEdit]);
+
   return (
     <div
       ref={ref}
@@ -3669,10 +3727,10 @@ function TextEditOverlay({
       data-testid="pptx-text-overlay"
       style={{
         position: "absolute",
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        width: `${widthPct}%`,
-        height: `${heightPct}%`,
+        left: `${overlayLeft}px`,
+        top: `${overlayTop}px`,
+        width: `${overlayWidth}px`,
+        height: `${overlayHeight}px`,
         boxSizing: "border-box",
         // Match the visual idiom of the dashed selection rectangle
         // shown in shape-select mode — never the heavy solid frame
@@ -3696,6 +3754,9 @@ function TextEditOverlay({
         flexDirection: "column",
         justifyContent,
       }}
+      onInput={() => {
+        if (!hasInput) setHasInput(true);
+      }}
       onBlur={(e) => {
         // Don't commit when focus moves to a sibling we explicitly
         // marked as "keep editing focus" (the format toolbar). The
@@ -3704,23 +3765,45 @@ function TextEditOverlay({
         // clicked a button that opted in via data-pptx-keep-edit.
         const next = e.relatedTarget as HTMLElement | null;
         if (next?.closest?.("[data-pptx-keep-edit]")) return;
-        const node = ref.current;
-        const paragraphs = node ? extractParagraphsFromOverlay(node) : [];
-        const plain = node?.innerText ?? "";
-        onCommit(paragraphs, plain);
-        onSelectionChange?.(null);
+        commitEdit();
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           ref.current?.blur();
         } else if (e.key === "Escape") {
+          // Esc reverts text and exits edit mode but keeps the shape
+          // selected — the parent's `setSelectedIds` is untouched, so
+          // when blur fires the shape stays in the selection set.
           e.preventDefault();
           if (ref.current) ref.current.innerText = initialPlain;
           ref.current?.blur();
         }
       }}
     >
+      {showPrompt ? (
+        <div
+          contentEditable={false}
+          aria-hidden
+          data-testid="pptx-text-overlay-prompt"
+          style={{
+            position: "absolute",
+            inset: 0,
+            paddingTop: padTop,
+            paddingRight: padRight,
+            paddingBottom: padBottom,
+            paddingLeft: padLeft,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent,
+            color: "#9ca3af",
+            pointerEvents: "none",
+            userSelect: "none",
+          }}
+        >
+          {promptText}
+        </div>
+      ) : null}
       {shape.txBody.paragraphs.map((p, pi) => (
         <div key={pi} data-paragraph={pi} style={paragraphStyle(p)}>
           {paragraphToReact(p, pi, scale, dpi)}
@@ -3728,6 +3811,33 @@ function TextEditOverlay({
       ))}
     </div>
   );
+}
+
+/**
+ * Mirror of the SVG renderer's `placeholderHintLabel` so the HTML
+ * overlay shows the same ghost prompt text PowerPoint does. Kept in
+ * sync with `packages/pptx/src/renderer/svg/shapes.ts`.
+ */
+function placeholderPromptLabel(type: string): string {
+  switch (type) {
+    case "title":
+    case "ctrTitle":
+      return "Click to add title";
+    case "subTitle":
+      return "Click to add subtitle";
+    case "body":
+      return "Click to add text";
+    case "ftr":
+      return "Footer";
+    case "hdr":
+      return "Header";
+    case "dt":
+      return "Date";
+    case "sldNum":
+      return "Slide number";
+    default:
+      return "Click to add text";
+  }
 }
 
 /**
