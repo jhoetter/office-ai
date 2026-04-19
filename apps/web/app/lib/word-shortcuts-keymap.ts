@@ -2,6 +2,7 @@ import { Plugin } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import type { DocxAgent, DocxSnapshot } from "@officeai/docx";
 import {
+  activeMarks,
   currentParagraphId,
   currentParagraphIndex,
   discoverNumId,
@@ -25,8 +26,13 @@ import {
  *     Mod-U                  → toggle underline
  *     Mod-Shift-X            → toggle strikethrough
  *
- *   Paragraph alignment:
- *     Mod-L / Mod-E / Mod-R / Mod-J → left / center / right / justify
+ *   Paragraph alignment (Google-Docs parity — `Mod+Shift+L/E/R/J`
+ *   instead of Word's `Mod+L/E/R/J` so the bare modifier chords stay
+ *   with the browser: `Cmd+R` reloads the tab, `Cmd+L` focuses the
+ *   address bar, etc. Word's bare-modifier alignment was a frequent
+ *   "the page won't refresh!" complaint):
+ *     Mod-Shift-L / Mod-Shift-E / Mod-Shift-R / Mod-Shift-J →
+ *       left / center / right / justify
  *
  *   Line spacing:
  *     Mod-1 / Mod-5 / Mod-2  → single / 1.5 / double
@@ -35,12 +41,15 @@ import {
  *     Mod-M                  → +360 twips (¼")
  *     Mod-Shift-M            → −360 twips
  *
- *   Lists:
- *     Mod-Shift-L            → toggle bullet
+ *   Lists (Google-Docs parity — bullet on Shift+8, numbered on
+ *   Shift+7, matching the digit's typewriter glyph):
+ *     Mod-Shift-8            → toggle bullet
  *     Mod-Shift-7            → toggle numbered
  *
  *   View:
- *     Mod-Shift-8            → toggle "Show formatting marks" (¶)
+ *     Mod-Shift-P            → toggle "Show formatting marks" (¶)
+ *                              (moved off Mod-Shift-8 so bullet list
+ *                              can take the Google-Docs slot)
  *
  *   Document structure:
  *     Mod-Enter              → page break  (handled by page-keymap.ts)
@@ -117,17 +126,30 @@ export function dispatchShortcut(view: EditorView, event: KeyboardEvent, agent: 
   }
 
   // Alignment ---------------------------------------------------------
-  if ((key === "l" || key === "L") && !shift && !alt) {
-    return setAlignment(view, agent, "left");
-  }
-  if ((key === "e" || key === "E") && !shift && !alt) {
-    return setAlignment(view, agent, "center");
-  }
-  if ((key === "r" || key === "R") && !shift && !alt) {
-    return setAlignment(view, agent, "right");
-  }
-  if ((key === "j" || key === "J") && !shift && !alt) {
-    return setAlignment(view, agent, "justify");
+  // Google-Docs chord set: `Mod+Shift+L/E/R/J`. We deliberately do
+  // NOT bind the bare-modifier variants Word uses, so that on every
+  // major browser:
+  //   - `Cmd/Ctrl+R` keeps reloading the page (the most-missed one),
+  //   - `Cmd/Ctrl+L` keeps focusing the address bar,
+  //   - `Cmd/Ctrl+E` keeps doing the browser's own thing,
+  //   - `Cmd/Ctrl+J` keeps opening the downloads pane.
+  // Resolved via `event.code` (`KeyL/E/R/J`) so the lookup stays
+  // layout-independent — `event.key` is the Shift-mapped character
+  // on most keyboards (e.g. `L` instead of `l`) and depending on
+  // the layout we'd otherwise need both branches.
+  if (shift && !alt) {
+    if (code === "KeyL") {
+      return setAlignment(view, agent, "left");
+    }
+    if (code === "KeyE") {
+      return setAlignment(view, agent, "center");
+    }
+    if (code === "KeyR") {
+      return setAlignment(view, agent, "right");
+    }
+    if (code === "KeyJ") {
+      return setAlignment(view, agent, "justify");
+    }
   }
 
   // Line spacing ------------------------------------------------------
@@ -148,8 +170,11 @@ export function dispatchShortcut(view: EditorView, event: KeyboardEvent, agent: 
   }
 
   // Lists -------------------------------------------------------------
+  // Google-Docs convention: bullet = Shift+8 (the * glyph), numbered
+  // = Shift+7 (digit). Bullet list moved off `Mod+Shift+L` so the
+  // alignment block above can take that slot.
   if (shift && !alt) {
-    if (code === "KeyL") {
+    if (code === "Digit8") {
       return toggleList(view, agent, "bullet");
     }
     if (code === "Digit7") {
@@ -158,10 +183,12 @@ export function dispatchShortcut(view: EditorView, event: KeyboardEvent, agent: 
   }
 
   // View: pilcrow / "show formatting marks" -----------------------
-  // Word's documented shortcut. Routed through a CustomEvent so the
-  // React host can flip the plugin state and refresh its toolbar
-  // pressed-state in one place.
-  if (shift && !alt && code === "Digit8") {
+  // Was on Mod+Shift+8 (Word's documented chord) but that slot now
+  // belongs to bullet list (Google-Docs parity). Re-homed onto
+  // Mod+Shift+P, which is unbound by every other surface in the
+  // app. The toolbar pilcrow button is unchanged so users who
+  // never learn the new chord still have a one-click affordance.
+  if (shift && !alt && code === "KeyP") {
     return requestToggleFormattingMarks(view);
   }
 
@@ -183,16 +210,28 @@ export function dispatchShortcut(view: EditorView, event: KeyboardEvent, agent: 
 
 type ToggleableMark = "bold" | "italic" | "underline" | "strike";
 
+/**
+ * Map our `format-range` payload mark names onto the PM mark
+ * type names used by `activeMarks`. The schema spells
+ * strikethrough as `strikethrough`, but the OOXML payload field is
+ * `strike`; the rest line up directly.
+ */
+function pmMarkName(mark: ToggleableMark): string {
+  return mark === "strike" ? "strikethrough" : mark;
+}
+
 function toggleMark(view: EditorView, agent: DocxAgent, mark: ToggleableMark): boolean {
   if (view.state.selection.empty) return false;
   const range = pmSelectionToRange(view.state);
-  // Best-effort "toggle": probe the run at the selection start; if the
-  // mark is already on, turn it off, else on. We don't need a perfect
-  // cross-run read here because the format-range handler is idempotent
-  // and the toolbar's pressed-state derivation will refresh on
-  // subscribe regardless.
-  const snap = agent.getSnapshot();
-  const currentlyOn = isMarkActiveAt(snap, range.start.paragraph, range.start.offset, mark);
+  // Use PM's mark set for the selection (Word-style "any text in the
+  // selection has the mark" → toggle off; otherwise → toggle on).
+  // Probing the snapshot by `(paragraph, offset)` would mis-read the
+  // boundary case where the selection start sits exactly between an
+  // unmarked and a marked run — `activeMarks` only inspects text
+  // nodes that fall *within* the selection, so it doesn't suffer
+  // from that off-by-one.
+  const marks = activeMarks(view.state);
+  const currentlyOn = marks.has(pmMarkName(mark));
   void agent.applyCommand({
     type: "docx:format-range",
     payload: {
@@ -314,58 +353,6 @@ function requestComment(view: EditorView): boolean {
 function requestToggleFormattingMarks(view: EditorView): boolean {
   view.dom.dispatchEvent(new CustomEvent(SHORTCUT_TOGGLE_FORMATTING_MARKS_EVENT, { bubbles: true }));
   return true;
-}
-
-/**
- * Probe whether the run that contains the given paragraph offset
- * already carries the requested mark. Conservative: when we can't
- * resolve the run cleanly (e.g. offset past the end), we report
- * "not active" so the toggle turns the mark on.
- */
-function isMarkActiveAt(
-  snap: DocxSnapshot,
-  paragraphIndex: number,
-  offset: number,
-  mark: ToggleableMark
-): boolean {
-  const blocks = snap.root.body;
-  let pIdx = -1;
-  for (const b of blocks) {
-    if (b.kind !== "paragraph") continue;
-    pIdx++;
-    if (pIdx !== paragraphIndex) continue;
-    let cursor = 0;
-    for (const child of b.children) {
-      if (child.kind !== "run") continue;
-      const text = runText(child);
-      const next = cursor + text.length;
-      if (offset >= cursor && offset <= next) {
-        const rpr = child.properties ?? {};
-        switch (mark) {
-          case "bold":
-            return Boolean(rpr.bold);
-          case "italic":
-            return Boolean(rpr.italic);
-          case "underline":
-            // `underline` is `boolean | string` in the model — both
-            // truthy variants count as "on" for toggle purposes.
-            return rpr.underline !== undefined && rpr.underline !== false;
-          case "strike":
-            return Boolean(rpr.strike);
-        }
-      }
-      cursor = next;
-    }
-  }
-  return false;
-}
-
-function runText(run: { children: ReadonlyArray<{ kind: string; text?: string }> }): string {
-  let s = "";
-  for (const c of run.children) {
-    if (c.kind === "text" && typeof c.text === "string") s += c.text;
-  }
-  return s;
 }
 
 function findParagraphById(

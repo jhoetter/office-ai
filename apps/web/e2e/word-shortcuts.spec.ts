@@ -24,6 +24,55 @@ test.describe("editor: Word keyboard shortcuts", () => {
     await expect(strongs.first()).toBeVisible();
   });
 
+  /**
+   * End-to-end regression for the user-reported "Cmd+B does nothing"
+   * symptom (post-undo/redo unification). The lighter test above
+   * proves the chord wraps a selection at all; this one pins the
+   * full muscle-memory contract:
+   *
+   *   1. After the splash detaches, the PM surface accepts focus.
+   *   2. Selecting a paragraph + Cmd+B immediately marks it bold AND
+   *      flips the toolbar Bold button to `aria-pressed=true` (the
+   *      from-bus projection mustn't clobber selection or pressed
+   *      state).
+   *   3. A SECOND Cmd+B toggles bold off — that's where the previous
+   *      bug lived (wrong `(paragraph, offset)` probe re-applied
+   *      `bold:true` instead of clearing). If the toolbar `aria-
+   *      pressed` and the DOM `<strong>` count agree on the off
+   *      state, the round-trip is healthy.
+   */
+  test("Cmd+B applies AND a second press toggles it back off", async ({ page }) => {
+    await gotoEditor(page);
+    // Splash uses `data-testid="loading-screen"`; wait for it to be
+    // gone before we rely on focus reaching the PM surface. The
+    // `gotoEditor` helper already waits on the sample text, but
+    // the splash can still be in its fade-out frame so we belt-
+    // and-braces it.
+    await page.waitForSelector('[data-testid="loading-screen"]', { state: "detached" });
+    await selectParagraphContaining(page, "Welcome to officeAI");
+
+    const boldBtn = page.getByTitle("Bold");
+    const strongs = page.locator(".ProseMirror strong");
+
+    // Apply.
+    await page.keyboard.press("ControlOrMeta+b");
+    await expect(strongs.first()).toBeVisible();
+    await expect(boldBtn).toHaveAttribute("aria-pressed", "true");
+
+    // Re-select the same paragraph (the from-bus projection clamps
+    // selection to the previous from/to, but a triple-click is the
+    // most faithful "user repeats the gesture" simulation).
+    await selectParagraphContaining(page, "Welcome to officeAI");
+
+    // Toggle off.
+    await page.keyboard.press("ControlOrMeta+b");
+    await expect(boldBtn).toHaveAttribute("aria-pressed", "false");
+    // Bold has been cleared — the title paragraph should now have
+    // zero <strong> wrappers. (Other paragraphs in the sample doc
+    // don't carry bold, so this is a global zero-count assertion.)
+    await expect(strongs).toHaveCount(0);
+  });
+
   test("Mod+I on a selection wraps it in <em> (italic)", async ({ page }) => {
     await gotoEditor(page);
     await selectAll(page);
@@ -55,11 +104,11 @@ test.describe("editor: Word keyboard shortcuts", () => {
     await expect(strikes.first()).toBeVisible();
   });
 
-  test("Mod+E centres the paragraph containing the caret", async ({ page }) => {
+  test("Mod+Shift+E centres the paragraph containing the caret", async ({ page }) => {
     await gotoEditor(page);
     await selectParagraphContaining(page, "Welcome to officeAI");
 
-    await page.keyboard.press("ControlOrMeta+e");
+    await page.keyboard.press("ControlOrMeta+Shift+e");
 
     // The Align-center toolbar button reflects the active alignment
     // via aria-pressed; this is the most stable signal regardless
@@ -68,14 +117,64 @@ test.describe("editor: Word keyboard shortcuts", () => {
     await expect(centerBtn).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("Mod+L re-aligns left after a centre toggle", async ({ page }) => {
+  test("Mod+Shift+L re-aligns left after a centre toggle", async ({ page }) => {
     await gotoEditor(page);
     await selectParagraphContaining(page, "Welcome to officeAI");
-    await page.keyboard.press("ControlOrMeta+e");
+    await page.keyboard.press("ControlOrMeta+Shift+e");
     await expect(page.getByTitle("Align center")).toHaveAttribute("aria-pressed", "true");
 
-    await page.keyboard.press("ControlOrMeta+l");
+    await page.keyboard.press("ControlOrMeta+Shift+l");
     await expect(page.getByTitle("Align left")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
+   * The bare `Cmd+R` chord must NOT trigger right-alignment — that
+   * was the pre-Google-Docs-parity bug where the Word-style binding
+   * stole the browser's reload shortcut. The aligned paragraph
+   * stays as it was; we assert via the toolbar's `aria-pressed`
+   * which mirrors `currentParagraphAlignment`.
+   *
+   * We can't actually let `Cmd+R` reload the page mid-test (that
+   * tears down Playwright's state), so we dispatch the keystroke
+   * via PM's `handleKeyDown` slot directly to verify the binding
+   * is gone.
+   */
+  test("Mod+R alone does NOT right-align (browser keeps the reload chord)", async ({ page }) => {
+    await gotoEditor(page);
+    await selectParagraphContaining(page, "Welcome to officeAI");
+
+    // Sanity: paragraph starts left-aligned (the default).
+    await expect(page.getByTitle("Align right")).toHaveAttribute("aria-pressed", "false");
+
+    // Dispatch directly into PM so we don't actually reload the
+    // page. If the bare Mod+R binding were still in place, this
+    // would flip the toolbar to `aria-pressed=true`.
+    await page.evaluate(() => {
+      const editor = document.querySelector(".ProseMirror");
+      if (!editor) return;
+      const ev = new KeyboardEvent("keydown", {
+        key: "r",
+        code: "KeyR",
+        metaKey: true,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(ev);
+    });
+
+    // Give the bus a microtask to settle, then assert no change.
+    await page.waitForTimeout(50);
+    await expect(page.getByTitle("Align right")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  test("Mod+Shift+R right-aligns the paragraph (the new chord)", async ({ page }) => {
+    await gotoEditor(page);
+    await selectParagraphContaining(page, "Welcome to officeAI");
+
+    await page.keyboard.press("ControlOrMeta+Shift+r");
+
+    await expect(page.getByTitle("Align right")).toHaveAttribute("aria-pressed", "true");
   });
 
   test("Mod+M increases the indent readout", async ({ page }) => {
