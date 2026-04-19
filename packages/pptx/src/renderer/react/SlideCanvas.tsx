@@ -6,20 +6,146 @@ import type {
   ConnectorType,
   Shape,
   Slide,
+  SlideLayout,
   SlideSize,
   TextShape,
 } from "../../model/types.js";
 import { resolveEndpoint } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, pointInBox, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
-import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
+import {
+  SVG_UNIT_PER_EMU,
+  slideAspectRatio,
+  slideStageViewBox,
+} from "../layout/slide.js";
+import {
+  findLayoutPlaceholder,
+  resolvePlaceholderTextDefaults,
+  resolvedShapeBoundingBox,
+} from "../layout/placeholder-defaults.js";
 import { computeSnap, type SnapGuide } from "../layout/snap.js";
 import { anchorsFor, snapToAnchor, type AnchorSide, type ShapeAnchor } from "../layout/anchors.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
 import { buildShapesByCNvPrId, resolveSlideBackgroundColor } from "../svg/slide.js";
+import {
+  collectObstacles,
+  routeConnector as routeConnectorShared,
+  type RouterObstacle,
+} from "../connector-router/index.js";
 import { useAgentSnapshot } from "./use-agent-snapshot.js";
+
+/**
+ * Dynamic stage viewBox for the editor canvas.
+ *
+ * The outer stage div fills the entire visible slide section so that
+ * pointer events anywhere in the user's viewport (clicks → deselect,
+ * drags → marquee) are live, regardless of where the slide card sits
+ * inside it. This is what makes the "scratch canvas" feel like a real
+ * artboard instead of a small sticker pasted on the page-backdrop.
+ *
+ * The slide card is positioned with absolute pixels (computed from a
+ * ResizeObserver on the stage div, see {@link useStageLayout}). We
+ * then publish a viewBox whose user units pin (0..slideW, 0..slideH)
+ * to the slide card's pixel rect. With the SVG's
+ * `preserveAspectRatio="xMidYMid meet"` and a viewBox aspect ratio
+ * that exactly matches the stage div's, no letterboxing happens and
+ * every overlay's `(0, 0) = top-left of slide` invariant survives.
+ *
+ * `null` means "fall back to {@link slideStageViewBox}" — used by
+ * tests / Storybook that mount overlays in isolation without a parent
+ * stage div, so this Context never breaks them.
+ */
+const StageViewBoxContext = React.createContext<string | null>(null);
+
+/**
+ * Read the active stage viewBox, falling back to the static
+ * `slideStageViewBox(slideSize)` when no provider is mounted (tests,
+ * isolated previews). Lets every overlay paint with the correct
+ * coordinate frame without prop-drilling a `stageViewBox` prop
+ * through a dozen function components.
+ */
+function useStageViewBox(slideSize: SlideSize): string {
+  const ctx = React.useContext(StageViewBoxContext);
+  return ctx ?? slideStageViewBox(slideSize);
+}
+
+/**
+ * Pixel rect of the slide card within the outer stage div, plus the
+ * dynamic viewBox that pins SVG user-units to that rect. Derived from
+ * a ResizeObserver on the stage div so we recompute exactly when
+ * needed (mount, parent resize, sidebar toggle, zoom change, …).
+ */
+interface StageLayout {
+  readonly stageW: number;
+  readonly stageH: number;
+  readonly slidePxLeft: number;
+  readonly slidePxTop: number;
+  readonly slidePxW: number;
+  readonly slidePxH: number;
+  readonly stageViewBox: string;
+}
+
+/**
+ * Measure the stage div with a ResizeObserver and derive the slide
+ * card's pixel rect + a matching SVG viewBox.
+ *
+ * The slide card preserves the slide aspect ratio and fits inside the
+ * stage with `min(stageW / slideAspect, stageH) * zoom` so changing
+ * the zoom multiplier scales the slide visually without distorting
+ * it. The viewBox is sized so 1 user unit per slide pixel, with a
+ * negative origin equal to the slide card's pixel offset — that way
+ * coordinate (0, 0) in the SVG remains the top-left of the slide and
+ * shapes positioned in the scratch margin (negative EMU) sit in the
+ * surrounding gray area exactly where the user dropped them.
+ */
+function useStageLayout(slideSize: SlideSize, zoom: number): {
+  readonly containerRef: React.RefObject<HTMLDivElement | null>;
+  readonly layout: StageLayout | null;
+} {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [size, setSize] = React.useState<{ w: number; h: number } | null>(null);
+  React.useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setSize({ w: r.width, h: r.height });
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const layout = React.useMemo<StageLayout | null>(() => {
+    if (!size || size.w <= 0 || size.h <= 0) return null;
+    const slideAspect = slideAspectRatio(slideSize);
+    const fitW = Math.min(size.w, size.h * slideAspect);
+    const slidePxW = fitW * zoom;
+    const slidePxH = (fitW / slideAspect) * zoom;
+    const slidePxLeft = (size.w - slidePxW) / 2;
+    const slidePxTop = (size.h - slidePxH) / 2;
+    const slideWUser = slideSize.cxEmu * SVG_UNIT_PER_EMU;
+    const userPerPx = slideWUser / slidePxW;
+    const vbX = -slidePxLeft * userPerPx;
+    const vbY = -slidePxTop * userPerPx;
+    const vbW = size.w * userPerPx;
+    const vbH = size.h * userPerPx;
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    return {
+      stageW: size.w,
+      stageH: size.h,
+      slidePxLeft,
+      slidePxTop,
+      slidePxW,
+      slidePxH,
+      stageViewBox: `${r2(vbX)} ${r2(vbY)} ${r2(vbW)} ${r2(vbH)}`,
+    };
+  }, [size, slideSize, zoom]);
+  return { containerRef, layout };
+}
 
 /**
  * Live caret/selection inside the text edit overlay.
@@ -239,6 +365,13 @@ interface EndpointEditDraft {
    */
   readonly otherPoint: { readonly x: number; readonly y: number };
   readonly otherSide: AnchorSide | null;
+  /**
+   * The `cNvPrId` of the shape the OTHER (un-dragged) endpoint is
+   * anchored to, or null when that endpoint is free. Used by the live
+   * preview overlay to exclude that shape from the obstacle list so
+   * the route doesn't try to detour around its own anchor target.
+   */
+  readonly otherEndpointCNvPrId: number | null;
   readonly connectorType: ConnectorType;
 }
 
@@ -263,11 +396,28 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const snap = useAgentSnapshot(props.agent);
   const slide: Slide | undefined = snap.root.slides[props.slideIndex];
   const slideSize: SlideSize = snap.root.slideSize;
-  const containerRef = React.useRef<HTMLDivElement>(null);
+  const zoomEarly = clampZoom(props.zoom ?? 1);
+  const { containerRef, layout: stageLayout } = useStageLayout(slideSize, zoomEarly);
+  /**
+   * Bounding rect of the inner white slide card, used to convert client
+   * coordinates to slide-EMU. We measure the slide rect (not the outer
+   * stage rect) so points inside the surrounding scratch area produce
+   * the negative / over-slide EMU values that off-slide shapes live in.
+   */
+  const slideRectRef = React.useRef<HTMLDivElement>(null);
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const [preview, setPreview] = React.useState<DragPreview | null>(null);
   const [marquee, setMarquee] = React.useState<MarqueeState | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  /**
+   * Callable handle the active `TextEditOverlay` registers on mount,
+   * so the canvas can commit + tear down the overlay synchronously
+   * from `onPointerDown` BEFORE mutating `selectedIds`. Without this
+   * the user briefly sees "B selected + A still in edit chrome"
+   * because the editable's `onBlur` only fires after the click event
+   * is fully dispatched (and thus after `setSelectedIds` has run).
+   */
+  const editCommitRef = React.useRef<(() => void) | null>(null);
   const [hoveredShapeId, setHoveredShapeId] = React.useState<string | null>(null);
   const [connectorDraft, setConnectorDraft] = React.useState<ConnectorDraft | null>(null);
   const [endpointDraft, setEndpointDraft] = React.useState<EndpointEditDraft | null>(null);
@@ -361,7 +511,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
 
   const onPointerDown = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!slide || !containerRef.current) return;
+      if (!slide || !containerRef.current || !slideRectRef.current) return;
       if (e.button !== 0) return;
       const target = e.target as Element | null;
       const portEl = target?.closest("[data-port]") as HTMLElement | null;
@@ -369,7 +519,22 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       const shapeEl = target?.closest("[data-shape-id]") as SVGGElement | null;
       const shapeId =
         portEl?.dataset.portShapeId ?? handleEl?.dataset.shapeId ?? shapeEl?.dataset.shapeId ?? null;
-      const rect = containerRef.current.getBoundingClientRect();
+      // If a text-edit overlay is open and the click is going to
+      // change selection (different shape or empty workspace), commit
+      // the edit synchronously NOW so the next render is consistent
+      // (no half-frame "B selected + A still editing" flash). Clicks
+      // inside the overlay itself are skipped — those should keep
+      // editing.
+      const insideOverlay = !!target?.closest("[data-testid='pptx-text-overlay']");
+      if (editingId && !insideOverlay && editingId !== shapeId) {
+        editCommitRef.current?.();
+      }
+      // Pointer math is anchored to the slide rect (not the surrounding
+      // stage) so client → EMU conversion stays consistent regardless of
+      // how much scratch padding the layout chooses, and clicks in the
+      // scratch margin produce negative / over-slide EMU coordinates
+      // that off-slide shapes naturally live in.
+      const rect = slideRectRef.current.getBoundingClientRect();
       const emuPerPx = slideSize.cxEmu / rect.width;
       const shiftHeld = e.shiftKey || e.metaKey || e.ctrlKey;
 
@@ -389,6 +554,8 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             const cur = resolveEndpoint(ep, shapesByCNvPrId) ?? fallbackEndpoint(sh, which);
             const otherPt = resolveEndpoint(otherEp, shapesByCNvPrId) ?? fallbackEndpoint(sh, which === "start" ? "end" : "start");
             const otherSide = otherEp.kind === "anchored" ? otherEp.side : null;
+            const otherEndpointCNvPrId =
+              otherEp.kind === "anchored" ? otherEp.targetCNvPrId : null;
             setEndpointDraft({
               shapeId: cShapeId,
               which,
@@ -400,6 +567,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
               nearby: [],
               otherPoint: otherPt,
               otherSide,
+              otherEndpointCNvPrId,
               connectorType: sh.connectorType,
             });
             setSelectedIds([cShapeId]);
@@ -556,15 +724,13 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         // Connectors no longer expose 8 generic resize handles —
         // their selection chrome paints two endpoint dots and zero or
         // more waypoint sliders, all routed through dedicated commands.
-        // The body itself only translates when BOTH endpoints are free
-        // (anchored endpoints are pinned to their target shape, so a
-        // body drag would have to detach them, which would surprise
-        // the user). When either endpoint is anchored we skip the drag
-        // so the click only updates selection.
-        if (sh.kind === "connector") {
-          if (isResize) continue;
-          if (sh.start.kind === "anchored" || sh.end.kind === "anchored") continue;
-        }
+        // Body drags translate the whole connector by the cursor delta;
+        // if either endpoint was anchored we detach it on commit (set
+        // it to a free endpoint at the translated coords). This matches
+        // PowerPoint/Slides where dragging a connected line's body
+        // moves it as a unit and breaks the connections — the user can
+        // then re-snap each endpoint by dragging the dots.
+        if (sh.kind === "connector" && isResize) continue;
         targets.push({ id, origin: box });
       }
       if (targets.length === 0) {
@@ -611,7 +777,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const onPointerMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (connectorDraft) {
-        const rect = containerRef.current?.getBoundingClientRect();
+        const rect = slideRectRef.current?.getBoundingClientRect();
         if (!rect || !slide) return;
         const cursorEmuX = (e.clientX - rect.left) * connectorDraft.emuPerPx;
         const cursorEmuY = (e.clientY - rect.top) * connectorDraft.emuPerPx;
@@ -630,7 +796,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         return;
       }
       if (endpointDraft) {
-        const rect = containerRef.current?.getBoundingClientRect();
+        const rect = slideRectRef.current?.getBoundingClientRect();
         if (!rect || !slide) return;
         const cursorEmuX = (e.clientX - rect.left) * endpointDraft.emuPerPx;
         const cursorEmuY = (e.clientY - rect.top) * endpointDraft.emuPerPx;
@@ -799,7 +965,11 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         return;
       }
       if (marquee && slide) {
-        const rect = containerRef.current?.getBoundingClientRect();
+        // Convert marquee start/end to EMU against the slide rect (not
+        // the stage rect) so a drag that begins or ends in the scratch
+        // margin produces negative / over-slide coordinates that still
+        // intersect off-slide shapes correctly.
+        const rect = slideRectRef.current?.getBoundingClientRect();
         if (rect) {
           const x0 = Math.min(marquee.startX, e.clientX) - rect.left;
           const y0 = Math.min(marquee.startY, e.clientY) - rect.top;
@@ -871,10 +1041,16 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           // Connectors no longer participate in the generic resize
           // path — endpoint and waypoint drags route through their
           // dedicated drafts. A connector still appearing here is a
-          // pure body translate (both endpoints free), which we
-          // commit with set-connector-endpoint per endpoint so the
-          // model stays consistent and an undo cleanly reverts both
-          // ends in one step.
+          // pure body translate, which we commit per endpoint with
+          // `set-connector-endpoint` so the model stays consistent and
+          // an undo cleanly reverts both ends in one step. Anchored
+          // endpoints get DETACHED on body drag: we resolve their live
+          // coords (via the same shape map the renderer uses), apply
+          // the cursor delta, and write them back as `free`. This
+          // matches PowerPoint/Slides where dragging the body of a
+          // connected line moves it as a unit and breaks the snap —
+          // the user can then re-snap each endpoint by dragging the
+          // dots in the selection chrome.
           if (draggedShape?.kind === "connector") {
             if (mode !== "move") continue;
             const dx = box.x - t.origin.x;
@@ -882,30 +1058,36 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             if (dx === 0 && dy === 0) continue;
             const startEp = draggedShape.start;
             const endEp = draggedShape.end;
-            if (startEp.kind === "free") {
-              await props.agent.applyCommand({
-                type: "pptx:set-connector-endpoint",
-                source: "human",
-                payload: {
-                  slideIndex: props.slideIndex,
-                  shapeId: t.id,
-                  which: "start",
-                  endpoint: { kind: "free", xEmu: startEp.xEmu + dx, yEmu: startEp.yEmu + dy },
-                },
-              });
-            }
-            if (endEp.kind === "free") {
-              await props.agent.applyCommand({
-                type: "pptx:set-connector-endpoint",
-                source: "human",
-                payload: {
-                  slideIndex: props.slideIndex,
-                  shapeId: t.id,
-                  which: "end",
-                  endpoint: { kind: "free", xEmu: endEp.xEmu + dx, yEmu: endEp.yEmu + dy },
-                },
-              });
-            }
+            const startPt =
+              startEp.kind === "free"
+                ? { x: startEp.xEmu, y: startEp.yEmu }
+                : (resolveEndpoint(startEp, shapesByCNvPrId) ??
+                  fallbackEndpoint(draggedShape, "start"));
+            const endPt =
+              endEp.kind === "free"
+                ? { x: endEp.xEmu, y: endEp.yEmu }
+                : (resolveEndpoint(endEp, shapesByCNvPrId) ??
+                  fallbackEndpoint(draggedShape, "end"));
+            await props.agent.applyCommand({
+              type: "pptx:set-connector-endpoint",
+              source: "human",
+              payload: {
+                slideIndex: props.slideIndex,
+                shapeId: t.id,
+                which: "start",
+                endpoint: { kind: "free", xEmu: startPt.x + dx, yEmu: startPt.y + dy },
+              },
+            });
+            await props.agent.applyCommand({
+              type: "pptx:set-connector-endpoint",
+              source: "human",
+              payload: {
+                slideIndex: props.slideIndex,
+                shapeId: t.id,
+                which: "end",
+                endpoint: { kind: "free", xEmu: endPt.x + dx, yEmu: endPt.y + dy },
+              },
+            });
             continue;
           }
           if (mode === "move") {
@@ -1026,12 +1208,25 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   if (!slide) {
     return null;
   }
-  const aspect = slideAspectRatio(slideSize);
-  const zoom = clampZoom(props.zoom ?? 1);
+  const zoom = zoomEarly;
   const dpi = props.dpi ?? DEFAULT_DPI;
   const isToolMode = !!props.connectorTool;
+  const slideWUser = px(slideSize.cxEmu);
+  const slideHUser = px(slideSize.cyEmu);
+  // Pixel rect of the slide card inside the stage div. While the
+  // ResizeObserver hasn't reported a size yet (first render of a
+  // newly-mounted canvas), fall back to absolute "fill the parent"
+  // values so the layout-effect's measurement still produces a
+  // sensible viewBox on the very next pass without flashing a wrong
+  // aspect.
+  const slidePxLeft = stageLayout?.slidePxLeft ?? 0;
+  const slidePxTop = stageLayout?.slidePxTop ?? 0;
+  const slidePxW = stageLayout?.slidePxW ?? 0;
+  const slidePxH = stageLayout?.slidePxH ?? 0;
+  const stageViewBox = stageLayout?.stageViewBox ?? slideStageViewBox(slideSize);
 
   return (
+    <StageViewBoxContext.Provider value={stageViewBox}>
     <div
       ref={containerRef}
       data-testid="pptx-slide-canvas"
@@ -1040,16 +1235,24 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       className="officeai-pptx-canvas"
       style={{
         position: "relative",
-        width: `${zoom * 100}%`,
-        aspectRatio: String(aspect),
-        background: "white",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        width: "100%",
+        height: "100%",
+        // The slide rests on the shared "grey desk" backdrop used by
+        // every editor surface (var(--page-backdrop), defined in
+        // apps/web/app/globals.css). The fallback hex keeps the look
+        // sensible when the canvas is rendered outside the app shell
+        // (e.g. Storybook, isolated tests, embedded preview).
+        background: "var(--page-backdrop, #ecebe8)",
         userSelect: "none",
         cursor: drag
           ? cursorForDrag(drag.mode)
-          : isToolMode || connectorDraft
-            ? "crosshair"
-            : "default",
+          : connectorDraft && connectorDraft.snapped
+            ? "copy"
+            : endpointDraft && endpointDraft.snapped
+              ? "copy"
+              : isToolMode || connectorDraft || endpointDraft
+                ? "crosshair"
+                : "default",
         touchAction: "none",
       }}
       onPointerDown={onPointerDown}
@@ -1076,13 +1279,34 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         startEditing(id);
       }}
     >
+      {/* Visual slide card sized to the slide rectangle; pointer events
+          fall through to the stage div so a click on the white area
+          still reaches `onPointerDown`. The SVG below paints the real
+          slide background fill on top of this card. Positioned in
+          absolute pixels (vs % of an aspect-locked stage) because the
+          stage now fills the user's entire viewport — see
+          `useStageLayout`. */}
+      <div
+        ref={slideRectRef}
+        data-testid="pptx-slide-card"
+        style={{
+          position: "absolute",
+          left: `${slidePxLeft}px`,
+          top: `${slidePxTop}px`,
+          width: `${slidePxW}px`,
+          height: `${slidePxH}px`,
+          background: "white",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          pointerEvents: "none",
+        }}
+      />
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        viewBox={slideViewBox(slideSize)}
+        viewBox={stageViewBox}
         preserveAspectRatio="xMidYMid meet"
-        style={{ width: "100%", height: "100%", display: "block" }}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
         dangerouslySetInnerHTML={{
-          __html: `<rect width="100%" height="100%" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
+          __html: `<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
         }}
       />
       {drag && preview ? (
@@ -1128,6 +1352,24 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           while the connector tool is armed (the user came here
           specifically to draw something), and the live target halo
           stays visible during draft / endpoint-edit gestures. */}
+      {/* Slide-wide "you can connect to any of these" hint: shown
+          whenever the user has armed the connector tool (about to
+          start a brand-new connector) or is mid-drag of an existing
+          connector endpoint. Skipped during slide-shape body drags
+          and marquee selection because those gestures aren't about
+          establishing new attachments. */}
+      {!drag && !marquee && (isToolMode || connectorDraft || endpointDraft) ? (
+        <ConnectableShapesOverlay
+          slide={slide}
+          slideSize={slideSize}
+          skipId={endpointDraft?.shapeId ?? null}
+          emphasisedId={
+            connectorDraft?.snapped?.shapeId ??
+            endpointDraft?.snapped?.shapeId ??
+            hoveredShapeId
+          }
+        />
+      ) : null}
       {!drag && !marquee && !connectorDraft && !endpointDraft && hoveredShapeId
         ? renderPortHoverOverlay(slide, slideSize, hoveredShapeId, isToolMode)
         : null}
@@ -1137,15 +1379,26 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       {endpointDraft && endpointDraft.snapped ? (
         <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={endpointDraft.snapped.shapeId} />
       ) : null}
-      {connectorDraft ? <ConnectorDraftOverlay slideSize={slideSize} draft={connectorDraft} /> : null}
+      {connectorDraft ? (
+        <ConnectorDraftOverlay slide={slide} slideSize={slideSize} draft={connectorDraft} />
+      ) : null}
       {endpointDraft ? (
-        <EndpointDraftOverlay slideSize={slideSize} draft={endpointDraft} />
+        <EndpointDraftOverlay slide={slide} slideSize={slideSize} draft={endpointDraft} />
       ) : null}
       {editingId
-        ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing, onTextSelectionChange)
+        ? renderEditingOverlay(
+            slide,
+            editingId,
+            slideSize,
+            dpi,
+            slide.layoutPartPath ? snap.root.layouts.get(slide.layoutPartPath) : undefined,
+            finishEditing,
+            onTextSelectionChange
+          )
         : null}
       {isToolMode ? <ConnectorToolBanner type={props.connectorTool!.type} /> : null}
     </div>
+    </StageViewBoxContext.Provider>
   );
 }
 
@@ -1743,6 +1996,7 @@ interface DragGhostLayerProps {
  * is negligible compared to the visual quality win.
  */
 function DragGhostLayer({ slideSize, ghosts, preview, ctx }: DragGhostLayerProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
   const inner = ghosts
     .map((g) => {
       const box = preview.boxes.get(g.id);
@@ -1768,7 +2022,7 @@ function DragGhostLayer({ slideSize, ghosts, preview, ctx }: DragGhostLayerProps
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{
@@ -1822,6 +2076,7 @@ function SelectionOverlaySvg({
   endpointDraft,
   waypointDraft,
 }: SelectionOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
   if (selectedIds.length === 0) return null;
   // Suppress chrome (outline + handles + move zone) for the shape being
   // text-edited. The TextEditOverlay paints a dashed border itself and
@@ -1908,7 +2163,7 @@ function SelectionOverlaySvg({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       // The overlay <svg> must not absorb clicks itself — otherwise a
       // shift-click on a non-selected shape stacked underneath the selected
@@ -2045,6 +2300,7 @@ function ConnectorSelectionChrome({
   endpointDraft,
   waypointDraft,
 }: ConnectorSelectionChromeProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
   const shapesByCNvPrId = React.useMemo(
     () => buildShapesByCNvPrId(slide.shapes),
     [slide.shapes]
@@ -2065,13 +2321,18 @@ function ConnectorSelectionChrome({
     arr[waypointDraft.segmentIndex] = waypointDraft.currentValueEmu;
     return arr;
   })();
+  const obstacles = React.useMemo(
+    () => collectObstaclesExcluding(slide.shapes, connector),
+    [slide.shapes, connector]
+  );
   const points = computeRoutePoints(
     connector.connectorType,
     startPt,
     endPt,
     startSide,
     endSide,
-    liveWaypoints
+    liveWaypoints,
+    obstacles
   );
   const editingStart = endpointDraft?.shapeId === connector.id && endpointDraft.which === "start";
   const editingEnd = endpointDraft?.shapeId === connector.id && endpointDraft.which === "end";
@@ -2082,7 +2343,7 @@ function ConnectorSelectionChrome({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -2272,10 +2533,30 @@ function renderWaypointSliders(
 }
 
 /**
+ * Slide-wide obstacle list with the connector's own anchored target
+ * shapes excluded so the router doesn't try to route around the very
+ * shapes the connector is anchored to. Free endpoints contribute no
+ * exclusion.
+ */
+function collectObstaclesExcluding(
+  shapes: ReadonlyArray<Shape>,
+  connector: ConnectorShape
+): RouterObstacle[] {
+  const exclude = new Set<number>();
+  if (connector.start.kind === "anchored") exclude.add(connector.start.targetCNvPrId);
+  if (connector.end.kind === "anchored") exclude.add(connector.end.targetCNvPrId);
+  return collectObstacles(shapes, exclude);
+}
+
+/**
  * Build the visible route polyline for a connector for use by the
- * selection chrome and the waypoint preview. Mirrors `routeElbow` /
- * the connector renderer so what the user clicks on lines up exactly
- * with what they see.
+ * selection chrome and the waypoint preview. Delegates to the shared
+ * `routeConnector` engine in `connector-router/` so what the user
+ * clicks on lines up byte-for-byte with what the SVG renderer paints.
+ *
+ * `obstacles` is optional — chrome callers that don't have a slide
+ * handy (e.g. the draft preview before the connector is committed)
+ * can omit it and still get a sane heuristic route.
  */
 function computeRoutePoints(
   type: ConnectorType,
@@ -2283,27 +2564,24 @@ function computeRoutePoints(
   ep: { x: number; y: number },
   startSide: AnchorSide | null,
   endSide: AnchorSide | null,
-  waypoints: ReadonlyArray<number> | undefined
+  waypoints: ReadonlyArray<number> | undefined,
+  obstacles?: ReadonlyArray<RouterObstacle>
 ): ReadonlyArray<{ x: number; y: number }> {
-  if (type === "straight") return [sp, ep];
-  if (type === "curved") {
-    // We don't need a real bezier subdivision for chrome — the
-    // selection halo accepts the same control polygon and renders
-    // close enough. The endpoint dots are positioned exactly on sp/ep
-    // anyway.
-    const dx = ep.x - sp.x;
-    const dy = ep.y - sp.y;
-    const ctrl = { x: sp.x + dx / 2, y: sp.y + dy / 2 };
-    return [sp, ctrl, ep];
-  }
-  return routeElbowPointsWithWaypoints(sp, ep, startSide, endSide, waypoints);
+  return routeConnectorShared(type, sp, ep, startSide, endSide, {
+    waypoints,
+    obstacles,
+  }).points;
 }
 
 function curvedPath(points: ReadonlyArray<{ x: number; y: number }>): string {
-  if (points.length < 3) {
-    if (points.length === 0) return "";
-    if (points.length === 1) return `M ${px(points[0].x)} ${px(points[0].y)}`;
+  if (points.length === 0) return "";
+  if (points.length === 1) return `M ${px(points[0].x)} ${px(points[0].y)}`;
+  if (points.length === 2) {
     return `M ${px(points[0].x)} ${px(points[0].y)} L ${px(points[1].x)} ${px(points[1].y)}`;
+  }
+  if (points.length >= 4) {
+    const [a, c1, c2, b] = points;
+    return `M ${px(a.x)} ${px(a.y)} C ${px(c1.x)} ${px(c1.y)} ${px(c2.x)} ${px(c2.y)} ${px(b.x)} ${px(b.y)}`;
   }
   const [a, c, b] = [points[0], points[1], points[points.length - 1]];
   return `M ${px(a.x)} ${px(a.y)} Q ${px(c.x)} ${px(c.y)} ${px(b.x)} ${px(b.y)}`;
@@ -2322,10 +2600,11 @@ interface SmartGuidesOverlayProps {
  * non-scaling stroke so the line stays 1px regardless of zoom.
  */
 function SmartGuidesOverlay({ slideSize, guides }: SmartGuidesOverlayProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -2383,11 +2662,12 @@ interface AnchorOverlayProps {
  * consistency.
  */
 function AnchorOverlay({ slideSize, candidates, snapped }: AnchorOverlayProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
   const r = 80_000; // ≈ 8.4 px @ 96 DPI; readable but not invasive
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -2439,6 +2719,7 @@ function PortHoverOverlay({
   box,
   emphasised,
 }: PortHoverOverlayProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
   const sides: AnchorSide[] = ["n", "s", "e", "w"];
   // We use the cardinal midpoints (t=0.5) for hover ports — the
   // quarter-points exist in the model but cluttering the four-cardinal
@@ -2456,7 +2737,7 @@ function PortHoverOverlay({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
     >
@@ -2507,6 +2788,7 @@ function TargetHaloOverlay({
   slideSize,
   shapeId,
 }: TargetHaloOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
   const located = findShapeWithOffset(slide.shapes, shapeId);
   if (!located) return null;
   const local = shapeBoundingBox(located.shape);
@@ -2523,7 +2805,7 @@ function TargetHaloOverlay({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -2546,7 +2828,100 @@ function TargetHaloOverlay({
   );
 }
 
+interface ConnectableShapesOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  /**
+   * Optional ID to skip — typically the connector currently being
+   * edited so it doesn't paint a halo around itself. Connectors are
+   * already excluded from the snap walker, but we accept any ID for
+   * symmetry with the dragger / draft state.
+   */
+  readonly skipId?: string | null;
+  /**
+   * Optional ID to suppress because another, more emphatic halo is
+   * already painted on top of it (the live target halo, or a port
+   * hover overlay). Suppressing prevents visual double-painting.
+   */
+  readonly emphasisedId?: string | null;
+}
+
+/**
+ * Faint dashed outline drawn around every shape on the slide that a
+ * connector endpoint can snap to. Surfaced whenever the connector
+ * tool is armed or the user is mid-drag of an existing endpoint, so
+ * the answer to "where can I land this?" is visible at a glance
+ * across the whole slide rather than only on the shape currently
+ * under the cursor. Deliberately lightweight (1px, low opacity, no
+ * fill) so it never competes with the live target halo or with the
+ * shape contents themselves.
+ */
+function ConnectableShapesOverlay({
+  slide,
+  slideSize,
+  skipId,
+  emphasisedId,
+}: ConnectableShapesOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
+  const exclude = new Set<string>();
+  if (skipId) exclude.add(skipId);
+  const boxes = collectAllConnectableBoxes(slide.shapes, exclude);
+  if (boxes.length === 0) return null;
+  // Pad just outside the shape's bounding box so the hint outline
+  // never touches the shape stroke. Smaller pad than the active
+  // target halo so it visually subordinates to it when both are on.
+  const pad = 24_000;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={stageViewBox}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      data-testid="pptx-connector-affordance-overlay"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      {boxes.map(({ id, box }) => {
+        // The shape that's about to receive the snap is already
+        // outlined by the brighter `TargetHaloOverlay`; suppress the
+        // hint here so we don't double-paint it with two strokes.
+        if (id === emphasisedId) return null;
+        // Four cardinal port dots — n / e / s / w midpoints. These
+        // give the user an "I can land here" affordance without them
+        // having to hover over the shape body first. Quarter-points
+        // stay reachable via the snap engine; we deliberately don't
+        // surface them here to avoid pegboard clutter.
+        const cx = box.x + box.cx / 2;
+        const cy = box.y + box.cy / 2;
+        const portR = 30_000; // ≈ 3 px @ 96 DPI — small but visible
+        return (
+          <g key={id}>
+            <rect
+              x={px(box.x - pad)}
+              y={px(box.y - pad)}
+              width={px(box.cx + pad * 2)}
+              height={px(box.cy + pad * 2)}
+              rx={px(28_000)}
+              ry={px(28_000)}
+              fill="none"
+              stroke="#0ea5e9"
+              strokeOpacity={0.35}
+              strokeWidth={1}
+              strokeDasharray="4 4"
+              vectorEffect="non-scaling-stroke"
+            />
+            <circle cx={px(cx)} cy={px(box.y)} r={px(portR)} fill="#0ea5e9" fillOpacity={0.55} />
+            <circle cx={px(box.x + box.cx)} cy={px(cy)} r={px(portR)} fill="#0ea5e9" fillOpacity={0.55} />
+            <circle cx={px(cx)} cy={px(box.y + box.cy)} r={px(portR)} fill="#0ea5e9" fillOpacity={0.55} />
+            <circle cx={px(box.x)} cy={px(cy)} r={px(portR)} fill="#0ea5e9" fillOpacity={0.55} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 interface ConnectorDraftOverlayProps {
+  readonly slide: Slide;
   readonly slideSize: SlideSize;
   readonly draft: ConnectorDraft;
 }
@@ -2557,26 +2932,48 @@ interface ConnectorDraftOverlayProps {
  * pointer position. When a candidate destination anchor is in range
  * we paint it as a solid sky-blue dot to confirm the snap target so
  * the user knows the destination will be anchored (not free).
+ *
+ * Obstacles for routing exclude the source anchor's shape and any
+ * snap target's shape so the preview never tries to "go around" the
+ * very shapes the route is intended to land on.
  */
-function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps): React.ReactElement {
+function ConnectorDraftOverlay({ slide, slideSize, draft }: ConnectorDraftOverlayProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
   const sx = draft.source.x;
   const sy = draft.source.y;
   const ex = draft.snapped ? draft.snapped.x : draft.currentX;
   const ey = draft.snapped ? draft.snapped.y : draft.currentY;
   const startSide = draft.source.kind === "anchored" ? draft.source.side : null;
   const endSide = draft.snapped?.side ?? null;
+  const obstacles = React.useMemo(() => {
+    const exclude = new Set<number>();
+    if (draft.source.kind === "anchored") {
+      const sourceShape = findShape(slide.shapes, draft.source.shapeId);
+      if (sourceShape && sourceShape.cNvPrId > 0) exclude.add(sourceShape.cNvPrId);
+    }
+    if (draft.snapped) {
+      const snapShape = findShape(slide.shapes, draft.snapped.shapeId);
+      if (snapShape && snapShape.cNvPrId > 0) exclude.add(snapShape.cNvPrId);
+    }
+    return collectObstacles(slide.shapes, exclude);
+  }, [slide.shapes, draft.source, draft.snapped]);
   const draftPath = routeForType(
     draft.connectorType,
     { x: sx, y: sy },
     { x: ex, y: ey },
     startSide,
-    endSide
+    endSide,
+    obstacles
   );
-  const r = 80_000;
+  // Magnetic snap radius interpolates by approach distance: when the
+  // pointer is right on a port the dot doubles in size; far away it
+  // stays at the baseline. Pure visual cue, no model effect.
+  const baseR = 80_000;
+  const r = baseR;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -2610,12 +3007,19 @@ function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps)
           a.shapeId === draft.snapped.shapeId &&
           a.side === draft.snapped.side &&
           Math.abs(a.t - draft.snapped.t) < 1e-3;
+        const dist = Math.hypot(a.x - draft.currentX, a.y - draft.currentY);
+        // Magnetic snap: dot radius interpolates with how close the
+        // cursor is. At the port itself the dot is full size; at the
+        // edge of the threshold it shrinks to half. Pure visual cue;
+        // the snap decision still happens in `snapToAnchor`.
+        const t = Math.max(0, Math.min(1, 1 - dist / ANCHOR_THRESHOLD_EMU));
+        const magnetR = baseR * (0.5 + t * 0.5);
         return (
           <circle
             key={`${a.shapeId}-${a.side}-${a.t}-${i}`}
             cx={px(a.x)}
             cy={px(a.y)}
-            r={px(isSnap ? r : r * 0.7)}
+            r={px(isSnap ? Math.max(magnetR, baseR) : magnetR)}
             fill={isSnap ? "#0ea5e9" : "white"}
             stroke="#0ea5e9"
             strokeWidth={1.5}
@@ -2628,6 +3032,7 @@ function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps)
 }
 
 interface EndpointDraftOverlayProps {
+  readonly slide: Slide;
   readonly slideSize: SlideSize;
   readonly draft: EndpointEditDraft;
 }
@@ -2642,28 +3047,46 @@ interface EndpointDraftOverlayProps {
  * free one.
  */
 function EndpointDraftOverlay({
+  slide,
   slideSize,
   draft,
 }: EndpointDraftOverlayProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
   const sx = draft.otherPoint.x;
   const sy = draft.otherPoint.y;
   const ex = draft.snapped ? draft.snapped.x : draft.currentX;
   const ey = draft.snapped ? draft.snapped.y : draft.currentY;
   const startSide = draft.otherSide;
   const endSide = draft.snapped?.side ?? null;
+  const obstacles = React.useMemo(() => {
+    const exclude = new Set<number>();
+    // The connector being edited usually has its other endpoint
+    // anchored to a shape; that shape isn't an obstacle for the
+    // routing of this very connector. We also exclude any snap-target
+    // shape so the preview doesn't try to detour around the shape it
+    // is about to land on.
+    const otherCNvPrId = draft.otherEndpointCNvPrId;
+    if (otherCNvPrId !== null && otherCNvPrId > 0) exclude.add(otherCNvPrId);
+    if (draft.snapped) {
+      const snapShape = findShape(slide.shapes, draft.snapped.shapeId);
+      if (snapShape && snapShape.cNvPrId > 0) exclude.add(snapShape.cNvPrId);
+    }
+    return collectObstacles(slide.shapes, exclude);
+  }, [slide.shapes, draft.otherEndpointCNvPrId, draft.snapped]);
   const path = routeForType(
     draft.connectorType,
     { x: sx, y: sy },
     { x: ex, y: ey },
     startSide,
-    endSide
+    endSide,
+    obstacles
   );
   const detached = draft.wasAnchored && draft.snapped === null;
   const r = 80_000;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -2706,28 +3129,32 @@ function EndpointDraftOverlay({
 
 /**
  * Picks the right SVG element for a draft preview given the connector
- * type. Straight = single line, elbow = polyline (mirrors `routeElbow`
- * from the SVG renderer), curved = quadratic bezier through a midpoint
- * (matches what the SVG renderer does for curved connectors). Stroke
- * style is the same dashed sky-blue across all three so the user has
- * a consistent visual signal that they're in "drawing" mode.
+ * type. Routes through the shared `routeConnector` engine so the
+ * dashed preview is byte-for-byte identical to the route that gets
+ * committed — including obstacle detours when the caller supplies an
+ * `obstacles` list. Stroke style is the same dashed sky-blue across
+ * all three types so the user has a consistent visual signal that
+ * they're in "drawing" mode.
  */
 function routeForType(
   type: ConnectorType,
   sp: { x: number; y: number },
   ep: { x: number; y: number },
   startSide: AnchorSide | null,
-  endSide: AnchorSide | null
+  endSide: AnchorSide | null,
+  obstacles?: ReadonlyArray<RouterObstacle>
 ): React.ReactElement {
   const stroke = "#0ea5e9";
   const dash = "6 4";
-  if (type === "straight") {
+  const route = routeConnectorShared(type, sp, ep, startSide, endSide, { obstacles });
+  if (type === "straight" || (route.kind === "polyline" && route.points.length === 2)) {
+    const [a, b] = route.points;
     return (
       <line
-        x1={px(sp.x)}
-        y1={px(sp.y)}
-        x2={px(ep.x)}
-        y2={px(ep.y)}
+        x1={px(a.x)}
+        y1={px(a.y)}
+        x2={px(b.x)}
+        y2={px(b.y)}
         stroke={stroke}
         strokeWidth={2}
         strokeDasharray={dash}
@@ -2735,13 +3162,11 @@ function routeForType(
       />
     );
   }
-  if (type === "curved") {
-    const dx = ep.x - sp.x;
-    const dy = ep.y - sp.y;
-    const ctrl = { x: sp.x + dx / 2, y: sp.y + dy / 2 };
+  if (route.kind === "cubic") {
+    const [a, c1, c2, b] = route.points;
     return (
       <path
-        d={`M ${px(sp.x)} ${px(sp.y)} Q ${px(ctrl.x)} ${px(ctrl.y)} ${px(ep.x)} ${px(ep.y)}`}
+        d={`M ${px(a.x)} ${px(a.y)} C ${px(c1.x)} ${px(c1.y)} ${px(c2.x)} ${px(c2.y)} ${px(b.x)} ${px(b.y)}`}
         fill="none"
         stroke={stroke}
         strokeWidth={2}
@@ -2750,8 +3175,7 @@ function routeForType(
       />
     );
   }
-  const points = routeElbowPoints(sp, ep, startSide, endSide);
-  const pts = points.map((p) => `${px(p.x)},${px(p.y)}`).join(" ");
+  const pts = route.points.map((p) => `${px(p.x)},${px(p.y)}`).join(" ");
   return (
     <polyline
       points={pts}
@@ -2799,98 +3223,6 @@ function ConnectorToolBanner({ type }: ConnectorToolBannerProps): React.ReactEle
       {label} — click &amp; drag from a shape, port, or empty space. Esc to cancel.
     </div>
   );
-}
-
-/**
- * Local mirror of `routeElbow` from `renderer/svg/shapes.ts` so the
- * draft preview matches the committed connector's path exactly. We
- * avoid importing the SVG-string version because that one returns
- * pre-stringified markup; here we just need the raw points.
- */
-function routeElbowPoints(
-  sp: { x: number; y: number },
-  ep: { x: number; y: number },
-  startSide: AnchorSide | null,
-  endSide: AnchorSide | null
-): ReadonlyArray<{ x: number; y: number }> {
-  return routeElbowPointsWithWaypoints(sp, ep, startSide, endSide, undefined);
-}
-
-/**
- * Waypoint-aware version of the elbow router. When the user has
- * grabbed and slid a perpendicular handle on an interior segment, we
- * apply the recorded offset to the corresponding mid coordinate so
- * the preview / chrome reflect the live drag exactly.
- */
-function routeElbowPointsWithWaypoints(
-  sp: { x: number; y: number },
-  ep: { x: number; y: number },
-  startSide: AnchorSide | null,
-  endSide: AnchorSide | null,
-  waypoints: ReadonlyArray<number> | undefined
-): ReadonlyArray<{ x: number; y: number }> {
-  const dx = ep.x - sp.x;
-  const dy = ep.y - sp.y;
-  const LEAD = 228_600;
-  const leadX = Math.min(LEAD, Math.max(0, Math.abs(dx) / 2));
-  const leadY = Math.min(LEAD, Math.max(0, Math.abs(dy) / 2));
-  const sV = sideUnit(startSide);
-  const eV = sideUnit(endSide);
-  const w0 = waypointAt(waypoints, 0);
-  const w1 = waypointAt(waypoints, 1);
-  if (sV.x === 0 && sV.y === 0 && eV.x === 0 && eV.y === 0) {
-    const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
-    if (horizontalFirst) {
-      const midX = w0 ?? sp.x + dx / 2;
-      return [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep];
-    }
-    const midY = w0 ?? sp.y + dy / 2;
-    return [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
-  }
-  const p1 = { x: sp.x + sV.x * leadX, y: sp.y + sV.y * leadY };
-  const p2 = { x: ep.x + eV.x * leadX, y: ep.y + eV.y * leadY };
-  const sIsHoriz = sV.x !== 0;
-  const eIsHoriz = eV.x !== 0;
-  if (sIsHoriz && eIsHoriz) {
-    const midX = w0 ?? (p1.x + p2.x) / 2;
-    return [sp, p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2, ep];
-  }
-  if (!sIsHoriz && !eIsHoriz) {
-    const midY = w0 ?? (p1.y + p2.y) / 2;
-    return [sp, p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2, ep];
-  }
-  const corner = sIsHoriz ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
-  // The single-corner elbow has no interior segment to slide, so
-  // waypoints[0]/[1] don't apply here. Returning the standard route
-  // keeps the chrome's segment-counting consistent with the SVG
-  // renderer's output.
-  void w1;
-  return [sp, p1, corner, p2, ep];
-}
-
-function waypointAt(
-  waypoints: ReadonlyArray<number> | undefined,
-  index: number
-): number | undefined {
-  if (!waypoints || index < 0 || index >= waypoints.length) return undefined;
-  const v = waypoints[index];
-  return Number.isFinite(v) ? v : undefined;
-}
-
-function sideUnit(side: AnchorSide | null): { x: number; y: number } {
-  switch (side) {
-    case "n":
-      return { x: 0, y: -1 };
-    case "s":
-      return { x: 0, y: 1 };
-    case "e":
-      return { x: 1, y: 0 };
-    case "w":
-      return { x: -1, y: 0 };
-    case "center":
-    case null:
-      return { x: 0, y: 0 };
-  }
 }
 
 interface MarqueeOverlayProps {
@@ -3002,6 +3334,7 @@ function CommentMarkerOverlay({
   slideSize,
   shapeIds,
 }: CommentMarkerOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
   const boxes: { id: string; box: BoundingBox }[] = [];
   for (const id of shapeIds) {
     const sh = findShape(slide.shapes, id);
@@ -3015,7 +3348,7 @@ function CommentMarkerOverlay({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -3075,6 +3408,7 @@ function CommentFlashOverlay({
   slideSize,
   target,
 }: CommentFlashOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
   let box: BoundingBox | null = null;
   if (target.kind === "shape") {
     const sh = findShape(slide.shapes, target.shapeId);
@@ -3098,7 +3432,7 @@ function CommentFlashOverlay({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={slideViewBox(slideSize)}
+      viewBox={stageViewBox}
       preserveAspectRatio="xMidYMid meet"
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
@@ -3127,6 +3461,7 @@ function renderEditingOverlay(
   shapeId: string,
   slideSize: SlideSize,
   dpi: number,
+  layout: SlideLayout | undefined,
   onCommit: (
     shape: TextShape,
     paragraphs: ReadonlyArray<{
@@ -3142,7 +3477,12 @@ function renderEditingOverlay(
 ): React.ReactElement | null {
   const shape = findShape(slide.shapes, shapeId);
   if (!shape || shape.kind !== "text") return null;
-  const box = shapeBoundingBox(shape);
+  // Fall back to the layout placeholder's geometry when the shape
+  // itself doesn't carry an `<a:xfrm>` (PowerPoint placeholders that
+  // inherit from the layout). Without this, clicking a freshly-
+  // inserted layout-only placeholder silently refused to open the
+  // overlay because `shapeBoundingBox` returned null.
+  const box = resolvedShapeBoundingBox(shape, layout);
   if (!box) return null;
   return (
     <TextEditOverlay
@@ -3151,6 +3491,7 @@ function renderEditingOverlay(
       box={box}
       slideSize={slideSize}
       dpi={dpi}
+      layout={layout}
       onCommit={(paragraphs, plain) => onCommit(shape as TextShape, paragraphs, plain)}
       onSelectionChange={onTextSelectionChange}
     />
@@ -3162,6 +3503,8 @@ interface TextEditOverlayProps {
   readonly box: BoundingBox;
   readonly slideSize: SlideSize;
   readonly dpi: number;
+  /** Slide layout for placeholder geometry / typography inheritance. */
+  readonly layout: SlideLayout | undefined;
   readonly onCommit: (
     paragraphs: ReadonlyArray<{
       readonly runs: ReadonlyArray<{
@@ -3173,6 +3516,14 @@ interface TextEditOverlayProps {
     plain: string
   ) => void;
   readonly onSelectionChange?: (sel: PptxTextSelection | null) => void;
+  /**
+   * Mutable handle the overlay populates with a `commit()` function
+   * the canvas can drive synchronously from `onPointerDown`. Lets a
+   * click outside the editable update `editingId` BEFORE the parent
+   * selection mutates, eliminating the cross-frame "two states open
+   * at once" flash.
+   */
+  readonly commitRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /**
@@ -3195,9 +3546,17 @@ function TextEditOverlay({
   box,
   slideSize,
   dpi,
+  layout,
   onCommit,
   onSelectionChange,
+  commitRef,
 }: TextEditOverlayProps): React.ReactElement {
+  // Resolve the placeholder defaults once per shape change so the
+  // overlay's typography matches the SVG hint (and the master/layout
+  // inheritance chain). Without this, an empty title placeholder
+  // opens at Calibri 18pt while the SVG hint paints it at 36pt — the
+  // user sees a one-frame "font shrink" on click.
+  const defaults = React.useMemo(() => resolvePlaceholderTextDefaults(shape, layout), [shape, layout]);
   const ref = React.useRef<HTMLDivElement>(null);
   const initialPlain = React.useMemo(() => textShapePlain(shape), [shape]);
 
@@ -3287,16 +3646,16 @@ function TextEditOverlay({
   const widthPct = (box.cx / slideSize.cxEmu) * 100;
   const heightPct = (box.cy / slideSize.cyEmu) * 100;
   const insetsEmu = readBodyInsetsFromShape(shape);
-  const anchor = readBodyAnchorFromShape(shape);
-  const baseFontPx = (estimateFontPtFromShape(shape) * dpi) / 72;
+  const baseFontPx = (defaults.fontSizePt * dpi) / 72;
   // Pick the same default font the SVG renderer uses so the text
   // doesn't visibly switch to the system sans-serif when the caret
-  // enters the shape. We prefer an explicit run-level font (the most
-  // accurate signal), then fall back to PowerPoint's default body
-  // typeface (Calibri) — only finally to "sans-serif" if a browser
-  // doesn't have Calibri installed.
-  const baseFontFamily = estimateFontFamilyFromShape(shape);
-  const justifyContent = anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
+  // enters the shape. The placeholder-defaults resolver walks
+  // shape → layout → master/theme so an empty title placeholder
+  // opens at the right family/size instead of the Calibri-18pt
+  // fallback that used to make the prompt visibly resize on click.
+  const baseFontFamily = defaults.fontFamily;
+  const justifyContent =
+    defaults.anchor === "middle" ? "center" : defaults.anchor === "bottom" ? "flex-end" : "flex-start";
   const padTop = (insetsEmu.t / EMU_PER_PX_AT_96DPI) * scale;
   const padRight = (insetsEmu.r / EMU_PER_PX_AT_96DPI) * scale;
   const padBottom = (insetsEmu.b / EMU_PER_PX_AT_96DPI) * scale;
@@ -3500,14 +3859,6 @@ function runStyle(
   return out;
 }
 
-function readBodyAnchorFromShape(shape: TextShape): "t" | "ctr" | "b" {
-  const bodyPr = shape.txBody.bodyPrRaw;
-  const v = bodyPr?.attrs?.anchor ?? bodyPr?.rawAttrs?.["@_anchor"];
-  if (v === "ctr") return "ctr";
-  if (v === "b") return "b";
-  return "t";
-}
-
 function readBodyInsetsFromShape(shape: TextShape): { l: number; r: number; t: number; b: number } {
   const bodyPr = shape.txBody.bodyPrRaw;
   const get = (key: string, dflt: number): number => {
@@ -3522,24 +3873,6 @@ function readBodyInsetsFromShape(shape: TextShape): { l: number; r: number; t: n
     t: get("tIns", 45720),
     b: get("bIns", 45720),
   };
-}
-
-function estimateFontPtFromShape(shape: TextShape): number {
-  const r = shape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak);
-  if (r?.properties.fontSizeHundredths !== undefined) {
-    return r.properties.fontSizeHundredths / 100;
-  }
-  return 18;
-}
-
-function estimateFontFamilyFromShape(shape: TextShape): string {
-  for (const para of shape.txBody.paragraphs) {
-    for (const r of para.runs) {
-      if (r.isLineBreak) continue;
-      if (r.properties.fontFamily) return `${r.properties.fontFamily}, sans-serif`;
-    }
-  }
-  return "Calibri, sans-serif";
 }
 
 function domPointToCharOffset(

@@ -644,7 +644,7 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
     // so re-saved files diff cleanly against authentic PowerPoint
     // output.
     lnChildren.push(
-      makeEntry("a:prstDash", [], { val: shape.stroke.dash === "dotted" ? "dot" : "dash" })
+      makeEntry("a:prstDash", [], { val: prstDashValue(shape.stroke.dash) })
     );
   }
   if (shape.headEnd) {
@@ -654,6 +654,25 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
     lnChildren.push(makeEntry("a:tailEnd", [], { type: shape.tailEnd }));
   }
   return makeEntry("a:ln", lnChildren, lnAttrs);
+}
+
+function prstDashValue(
+  dash: "dashed" | "dotted" | "longDash" | "dashDot"
+): string {
+  // OOXML preset names live in `ST_PresetLineDashVal`. We pick the
+  // closest match for each editor-exposed style; `mapPrstDash` in the
+  // parser maps these back to the same enum on re-load so a save→load
+  // round-trip is stable.
+  switch (dash) {
+    case "dashed":
+      return "dash";
+    case "dotted":
+      return "dot";
+    case "longDash":
+      return "lgDash";
+    case "dashDot":
+      return "dashDot";
+  }
 }
 
 function tableShapeToEntry(shape: TableShape): Record<string, unknown> {

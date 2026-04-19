@@ -119,6 +119,45 @@ test.describe("pptx-editor route", () => {
     await expect(trigger).toHaveAttribute("data-active-type", "");
   });
 
+  test("arming the connector tool reveals the connectable-shapes overlay", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    // Overlay is hidden by default — only mounts while the tool is
+    // armed (or while an existing endpoint is being edited).
+    await expect(page.getByTestId("pptx-connector-affordance-overlay")).toHaveCount(0);
+
+    await page.getByTestId("pptx-connector-menu-trigger").click();
+    await page.getByTestId("pptx-connector-elbow").click();
+
+    await expect(page.getByTestId("pptx-connector-affordance-overlay")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("pptx-connector-affordance-overlay")).toHaveCount(0);
+  });
+
+  test("the connector menu exposes the three connector types", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    await page.getByTestId("pptx-connector-menu-trigger").click();
+    await expect(page.getByTestId("pptx-connector-straight")).toBeVisible();
+    await expect(page.getByTestId("pptx-connector-elbow")).toBeVisible();
+    await expect(page.getByTestId("pptx-connector-curved")).toBeVisible();
+  });
+
+  test("switching connector type from the menu updates the active type", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    const trigger = page.getByTestId("pptx-connector-menu-trigger");
+
+    await trigger.click();
+    await page.getByTestId("pptx-connector-straight").click();
+    await expect(trigger).toHaveAttribute("data-active-type", "straight");
+
+    await trigger.click();
+    await page.getByTestId("pptx-connector-curved").click();
+    await expect(trigger).toHaveAttribute("data-active-type", "curved");
+  });
+
   test("zoom controls rescale the slide canvas and reset to 100%", async ({ page }) => {
     await gotoPptxEditor(page);
 

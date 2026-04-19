@@ -456,7 +456,7 @@ export type ConnectorType = "straight" | "elbow" | "curved" | "unsupported";
 
 export type ConnectorEndShape = "none" | "arrow" | "triangle" | "oval";
 
-export type ConnectorDashStyle = "solid" | "dashed" | "dotted";
+export type ConnectorDashStyle = "solid" | "dashed" | "dotted" | "longDash" | "dashDot";
 
 export interface ConnectorStroke {
   /** 6-character RRGGBB hex (no `#`). */

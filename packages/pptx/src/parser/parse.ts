@@ -832,7 +832,7 @@ function parseCxnSp(entry: Record<string, unknown>, mintNodeId: IdMinter): Conne
         let widthEmu = 0;
         if (widthAttr && /^\d+$/.test(widthAttr)) widthEmu = Number(widthAttr);
         let color: string | undefined;
-        let dash: "solid" | "dashed" | "dotted" | undefined;
+        let dash: "solid" | "dashed" | "dotted" | "longDash" | "dashDot" | undefined;
         for (const ln of elementEntries((c["a:ln"] as unknown[] | undefined) ?? [])) {
           const lnTag = ooxml.getTag(ln);
           if (lnTag === "a:solidFill") {
@@ -893,13 +893,21 @@ function mapPrstToConnectorType(prst: string): ConnectorType {
   return "unsupported";
 }
 
-function mapPrstDash(v: string): "solid" | "dashed" | "dotted" {
-  // PowerPoint exposes ~10 dash presets; we collapse them to the
-  // three the editor exposes. Anything unrecognised falls through to
+function mapPrstDash(
+  v: string
+): "solid" | "dashed" | "dotted" | "longDash" | "dashDot" {
+  // PowerPoint exposes ~10 dash presets; we collapse them to the five
+  // the editor exposes. Mapping mirrors `serialize.ts` so a round-trip
+  // doesn't drift between presets. Unknown presets fall through to
   // solid, which is the no-op default.
   const k = v.toLowerCase();
   if (k === "solid") return "solid";
   if (k === "dot" || k === "sysdot") return "dotted";
+  if (k === "lgdash" || k === "syslgdash" || k === "lgdashdot" || k === "lgdashdotdot") {
+    return "longDash";
+  }
+  if (k === "dashdot" || k === "sysdashdot" || k === "sysdashdotdot") return "dashDot";
+  // dash, sysdash, dashlongdash, etc.
   return "dashed";
 }
 

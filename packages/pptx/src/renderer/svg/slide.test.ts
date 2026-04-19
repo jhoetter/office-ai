@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parsePptx } from "../../parser/parse.js";
 import { shapeToSvg } from "./shapes.js";
 import { slideToSvgString } from "./slide.js";
-import type { TextShape } from "../../model/types.js";
+import type { ConnectorShape, TextShape } from "../../model/types.js";
 
 const FIXTURES_DIR = new URL("../../../../../fixtures/pptx/synthetic/", import.meta.url);
 
@@ -21,6 +21,23 @@ describe("slideToSvgString", () => {
     expect(svg.endsWith("</svg>")).toBe(true);
     expect(svg).toContain('viewBox="0 0 ');
     expect(svg).toContain('fill="white"');
+  });
+
+  it("present/export SVG keeps the slide-only viewBox (off-slide content is cropped)", async () => {
+    // The interactive editor canvas uses `slideStageViewBox` so the user
+    // can see shapes that live in the scratch margin, but the artefact
+    // we hand to present mode and the .pptx writer must still crop to
+    // the slide bounds — exactly like real PowerPoint, where the
+    // delivered slideshow never shows scratch-area objects.
+    const snap = await load("01-blank.pptx");
+    const slide = snap.root.slides[0];
+    const svg = slideToSvgString(slide, { slideSize: snap.root.slideSize });
+    const match = /viewBox="(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?) /.exec(svg);
+    expect(match).not.toBeNull();
+    const x = Number(match?.[1]);
+    const y = Number(match?.[2]);
+    expect(x).toBe(0);
+    expect(y).toBe(0);
   });
 
   it("renders text shapes via foreignObject HTML so the browser word-wraps long runs", async () => {
@@ -326,5 +343,112 @@ describe("slideToSvgString", () => {
     expect(svg).toContain(longText);
     expect(svg).toContain("white-space:pre-wrap");
     expect(svg).toContain("word-wrap:break-word");
+  });
+
+  it("renders a curved connector as a cubic Bezier with offset control points (not a degenerate straight line)", () => {
+    const shape: ConnectorShape = {
+      id: "cxn-1",
+      kind: "connector",
+      cNvPrId: 10,
+      name: "Curved 1",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 4_000_000, cyEmu: 0 },
+      nvCxnSpPrTail: [],
+      spPrTail: [],
+      connectorType: "curved",
+      start: { kind: "free", xEmu: 0, yEmu: 0 },
+      end: { kind: "free", xEmu: 4_000_000, yEmu: 0 },
+    };
+    const svg = shapeToSvg(shape, { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 } });
+    // Cubic Bezier path is required — a quadratic with control on the
+    // chord midpoint (the previous bug) renders identically to a
+    // straight line, so users couldn't tell "curved" from "straight".
+    expect(svg).toMatch(/<path d="M 0 0 C \S+ \S+ \S+ \S+ /);
+    // Endpoints must remain exactly on sp/ep so anchored markers and
+    // selection dots line up with the visible tip.
+    expect(svg).toContain(" 419.95 0\"");
+  });
+
+  it("emits the four connector end-shape markers in <defs> exactly once per slide", async () => {
+    const snap = await load("01-blank.pptx");
+    const slide = snap.root.slides[0];
+    const svg = slideToSvgString(slide, { slideSize: snap.root.slideSize });
+    // Each marker definition should appear exactly once — duplicate
+    // <marker id="…"> entries would make some browsers ignore later
+    // references with a console warning.
+    expect((svg.match(/id="cxn-arrow"/g) ?? []).length).toBe(1);
+    expect((svg.match(/id="cxn-triangle"/g) ?? []).length).toBe(1);
+    expect((svg.match(/id="cxn-oval"/g) ?? []).length).toBe(1);
+    expect((svg.match(/id="cxn-none"/g) ?? []).length).toBe(1);
+  });
+
+  it("selects per-end markers based on headEnd / tailEnd on the connector", () => {
+    const shape: ConnectorShape = {
+      id: "cxn-marker",
+      kind: "connector",
+      cNvPrId: 12,
+      name: "Marker 1",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 1_000_000, cyEmu: 0 },
+      nvCxnSpPrTail: [],
+      spPrTail: [],
+      connectorType: "straight",
+      start: { kind: "free", xEmu: 0, yEmu: 0 },
+      end: { kind: "free", xEmu: 1_000_000, yEmu: 0 },
+      headEnd: "triangle",
+      tailEnd: "oval",
+    };
+    const svg = shapeToSvg(shape, { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 } });
+    // headEnd → marker-end, tailEnd → marker-start. Mismatching either
+    // side would visually swap the arrowhead.
+    expect(svg).toContain('marker-end="url(#cxn-triangle)"');
+    expect(svg).toContain('marker-start="url(#cxn-oval)"');
+  });
+
+  it("omits marker references when an end is set to 'none'", () => {
+    const shape: ConnectorShape = {
+      id: "cxn-marker-none",
+      kind: "connector",
+      cNvPrId: 13,
+      name: "Marker 2",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 1_000_000, cyEmu: 0 },
+      nvCxnSpPrTail: [],
+      spPrTail: [],
+      connectorType: "straight",
+      start: { kind: "free", xEmu: 0, yEmu: 0 },
+      end: { kind: "free", xEmu: 1_000_000, yEmu: 0 },
+      headEnd: "none",
+      tailEnd: "none",
+    };
+    const svg = shapeToSvg(shape, { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 } });
+    expect(svg).not.toContain("marker-end=");
+    expect(svg).not.toContain("marker-start=");
+  });
+
+  it("renders an elbow connector with rounded corners (smooth path, not raw polyline)", () => {
+    const shape: ConnectorShape = {
+      id: "cxn-2",
+      kind: "connector",
+      cNvPrId: 11,
+      name: "Elbow 1",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 2_000_000, cyEmu: 2_000_000 },
+      nvCxnSpPrTail: [],
+      spPrTail: [],
+      connectorType: "elbow",
+      start: { kind: "free", xEmu: 0, yEmu: 0 },
+      end: { kind: "free", xEmu: 2_000_000, yEmu: 2_000_000 },
+    };
+    const svg = shapeToSvg(shape, { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 } });
+    // Visible layer is now a `<path>` with quadratic rounds, not a
+    // raw `<polyline>`. The hit-testing layer remains a polyline so
+    // we should see exactly one polyline (hit) and one path (visible).
+    const polylineCount = (svg.match(/<polyline/g) ?? []).length;
+    const pathCount = (svg.match(/<path/g) ?? []).length;
+    expect(polylineCount).toBe(1);
+    expect(pathCount).toBeGreaterThanOrEqual(1);
+    // Rounded corners produce `Q` commands inside the visible path.
+    expect(svg).toMatch(/<path d="M [^"]*Q /);
   });
 });

@@ -34,9 +34,11 @@ import {
 } from "./animation-commands.js";
 import {
   addConnectorHandler,
+  rerouteConnectorHandler,
   setConnectorEndpointHandler,
   setConnectorStyleHandler,
   setConnectorWaypointHandler,
+  swapConnectorDirectionHandler,
 } from "./connector-commands.js";
 import { setSlideLayoutHandler } from "./set-slide-layout.js";
 import { setSlideNotesHandler } from "./set-slide-notes.js";
@@ -83,9 +85,11 @@ export {
 } from "./animation-commands.js";
 export {
   addConnectorHandler,
+  rerouteConnectorHandler,
   setConnectorEndpointHandler,
   setConnectorStyleHandler,
   setConnectorWaypointHandler,
+  swapConnectorDirectionHandler,
 } from "./connector-commands.js";
 export { setSlideLayoutHandler } from "./set-slide-layout.js";
 export { setSlideNotesHandler } from "./set-slide-notes.js";
@@ -134,6 +138,8 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setConnectorEndpointHandler,
   setConnectorStyleHandler,
   setConnectorWaypointHandler,
+  rerouteConnectorHandler,
+  swapConnectorDirectionHandler,
   setSlideLayoutHandler,
   setSlideNotesHandler,
   addCommentHandler,

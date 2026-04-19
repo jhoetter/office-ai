@@ -11,10 +11,23 @@ import {
   type SlideContextAction,
 } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
-import type { LayoutKindPayload, Picture, PptxSnapshot, Shape, ShapePreset, TextShape } from "@officeai/pptx";
+import {
+  resolveConnectorEndpoint,
+  type ConnectorShape,
+  type LayoutKindPayload,
+  type Picture,
+  type PptxSnapshot,
+  type Shape,
+  type ShapePreset,
+  type TextShape,
+} from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
-import { ConnectorContextBar, type ConnectorStylePatch } from "./ConnectorContextBar";
+import {
+  ConnectorContextBar,
+  type ConnectorAction,
+  type ConnectorStylePatch,
+} from "./ConnectorContextBar";
 import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
 import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
@@ -993,6 +1006,64 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, onError]
   );
 
+  // Translate a connector mini-bar action tag into the appropriate
+  // command(s). `reroute` and `swap` are 1:1 with their commands;
+  // `detach` walks the slide once to resolve each anchored endpoint to
+  // its current slide-coordinate point and rewrites it as a free
+  // endpoint there, so the visual position survives the disconnect.
+  const applyConnectorAction = useCallback(
+    async (shapeId: string, action: ConnectorAction) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        if (action === "reroute") {
+          await a.applyCommand({
+            type: "pptx:reroute-connector",
+            source: "human",
+            payload: { slideIndex: activeIndex, shapeId },
+          });
+          return;
+        }
+        if (action === "swap") {
+          await a.applyCommand({
+            type: "pptx:swap-connector-direction",
+            source: "human",
+            payload: { slideIndex: activeIndex, shapeId },
+          });
+          return;
+        }
+        if (action === "detach") {
+          const slide = a.getSnapshot().root.slides[activeIndex];
+          if (!slide) return;
+          const target = findShape(slide.shapes, shapeId);
+          if (!target || target.kind !== "connector") return;
+          const map = new Map<number, Shape>();
+          for (const s of slide.shapes) collectShapesByCNvPrIdLocal(s, map);
+          const connector = target as ConnectorShape;
+          for (const which of ["start", "end"] as const) {
+            const ep = which === "start" ? connector.start : connector.end;
+            if (ep.kind !== "anchored") continue;
+            const pt = resolveConnectorEndpoint(ep, map);
+            if (!pt) continue;
+            await a.applyCommand({
+              type: "pptx:set-connector-endpoint",
+              source: "human",
+              payload: {
+                slideIndex: activeIndex,
+                shapeId,
+                which,
+                endpoint: { kind: "free", xEmu: pt.x, yEmu: pt.y },
+              },
+            });
+          }
+        }
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError]
+  );
+
   const insertImage = useCallback(
     async (file: File) => {
       const a = agentRef.current;
@@ -1932,10 +2003,10 @@ export function PptxEditor(): React.ReactNode {
                     ref={slideSurfaceRef as React.RefObject<HTMLElement>}
                     tabIndex={-1}
                     data-testid="pptx-slide-surface"
-                    className="relative flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-divider p-4"
+                    className="relative flex min-h-0 flex-1 overflow-hidden rounded-md border border-divider"
                     style={{ backgroundColor: "var(--page-backdrop)" }}
                   >
-                    <div className="w-full max-w-[1100px]" style={{ alignSelf: "flex-start" }}>
+                    <div className="relative min-h-0 w-full flex-1">
                       <SlideCanvas
                         agent={agent}
                         slideIndex={activeIndex}
@@ -1956,11 +2027,12 @@ export function PptxEditor(): React.ReactNode {
                           <ConnectorContextBar
                             connector={selectedShape}
                             onPatch={(patch) => void applyConnectorStylePatch(selectedShape.id, patch)}
+                            onAction={(action) => void applyConnectorAction(selectedShape.id, action)}
                           />
                         </div>
                       ) : null}
                     </div>
-                    {!ready ? <LoadingScreen variant="splash" product="pptx" /> : null}
+                    <LoadingScreen variant="splash" product="pptx" show={!ready} />
                   </section>
                 </div>
                 {snap && notesOpen ? (
@@ -2076,6 +2148,13 @@ function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
     }
   }
   return null;
+}
+
+function collectShapesByCNvPrIdLocal(shape: Shape, out: Map<number, Shape>): void {
+  if (shape.cNvPrId > 0) out.set(shape.cNvPrId, shape);
+  if (shape.kind === "group") {
+    for (const c of shape.children) collectShapesByCNvPrIdLocal(c, out);
+  }
 }
 
 /** Walks `spPrTail` for the first `<a:solidFill><a:srgbClr val="…"/></a:solidFill>`. */

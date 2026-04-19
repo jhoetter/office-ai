@@ -477,7 +477,12 @@ export type ConnectorTypePayload = "straight" | "elbow" | "curved";
 
 export type ConnectorEndShapePayload = "none" | "arrow" | "triangle" | "oval";
 
-export type ConnectorDashStylePayload = "solid" | "dashed" | "dotted";
+export type ConnectorDashStylePayload =
+  | "solid"
+  | "dashed"
+  | "dotted"
+  | "longDash"
+  | "dashDot";
 
 export interface AddConnectorPayload {
   readonly slideIndex: number;
@@ -522,6 +527,27 @@ export interface SetConnectorWaypointPayload {
   readonly shapeId: NodeId;
   readonly segmentIndex: number;
   readonly valueEmu: number | null;
+}
+
+/**
+ * Drop all user-supplied waypoints and let the auto-router pick the
+ * polyline from scratch. Useful after a layout change makes a
+ * previously-tweaked elbow look strange. No-op for non-elbow types.
+ */
+export interface RerouteConnectorPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+}
+
+/**
+ * Reverse a connector's direction: start ↔ end and head ↔ tail. The
+ * route reverses with the endpoints, so a connector that pointed
+ * left-to-right now points right-to-left without any other change to
+ * the model.
+ */
+export interface SwapConnectorDirectionPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
 }
 
 // ─── F4 (Animations) payloads ─────────────────────────────────────────────
@@ -591,6 +617,9 @@ export const PPTX_COMMAND_TYPES = {
   addConnector: "pptx:add-connector",
   setConnectorEndpoint: "pptx:set-connector-endpoint",
   setConnectorStyle: "pptx:set-connector-style",
+  setConnectorWaypoint: "pptx:set-connector-waypoint",
+  rerouteConnector: "pptx:reroute-connector",
+  swapConnectorDirection: "pptx:swap-connector-direction",
   setSlideLayout: "pptx:set-slide-layout",
   setSlideNotes: "pptx:set-slide-notes",
   addComment: "pptx:add-comment",

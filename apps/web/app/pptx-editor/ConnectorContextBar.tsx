@@ -1,7 +1,18 @@
 "use client";
 
 import * as React from "react";
-import { ArrowRight, Circle, Minus, MoreHorizontal, Spline, Triangle, X } from "lucide-react";
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Circle,
+  Minus,
+  MoreHorizontal,
+  RotateCcw,
+  Spline,
+  Triangle,
+  Unlink,
+  X,
+} from "lucide-react";
 import type {
   ConnectorDashStyle,
   ConnectorEndShape,
@@ -38,9 +49,19 @@ export interface ConnectorContextBarProps {
    * channel.
    */
   readonly onPatch: (patch: ConnectorStylePatch) => void;
+  /**
+   * Trigger a connector-level action that doesn't fit the style-patch
+   * shape (reroute drops user waypoints, swap reverses direction, detach
+   * converts anchored endpoints into free endpoints at their current
+   * resolved positions). The editor is responsible for translating the
+   * action tag into the appropriate command(s).
+   */
+  readonly onAction?: (action: ConnectorAction) => void;
   /** Optional positioning style applied to the wrapper. */
   readonly style?: React.CSSProperties;
 }
+
+export type ConnectorAction = "reroute" | "swap" | "detach";
 
 export interface ConnectorStylePatch {
   readonly connectorType?: ConnectorType;
@@ -61,7 +82,24 @@ const DASH_OPTIONS: ReadonlyArray<{ dash: ConnectorDashStyle; label: string }> =
   { dash: "solid", label: "Solid" },
   { dash: "dashed", label: "Dashed" },
   { dash: "dotted", label: "Dotted" },
+  { dash: "longDash", label: "Long dash" },
+  { dash: "dashDot", label: "Dash dot" },
 ];
+
+function dashStrokeArray(dash: ConnectorDashStyle): string | undefined {
+  switch (dash) {
+    case "solid":
+      return undefined;
+    case "dashed":
+      return "4 3";
+    case "dotted":
+      return "1 2";
+    case "longDash":
+      return "8 3";
+    case "dashDot":
+      return "5 2 1 2";
+  }
+}
 
 const WIDTH_OPTIONS: ReadonlyArray<{ widthEmu: number; label: string; previewPx: number }> = [
   { widthEmu: 6_350, label: "0.5 pt", previewPx: 1 },
@@ -98,6 +136,7 @@ const COLOR_PALETTE: ReadonlyArray<string> = [
 export function ConnectorContextBar({
   connector,
   onPatch,
+  onAction,
   style,
 }: ConnectorContextBarProps): React.ReactElement {
   const stroke = connector.stroke;
@@ -106,6 +145,10 @@ export function ConnectorContextBar({
   const currentDash: ConnectorDashStyle = stroke?.dash ?? "solid";
   const currentHead = connector.headEnd ?? "none";
   const currentTail = connector.tailEnd ?? "none";
+  const hasAnchoredEndpoint =
+    connector.start.kind === "anchored" || connector.end.kind === "anchored";
+  const canReroute =
+    connector.connectorType === "elbow" && (connector.waypoints?.length ?? 0) > 0;
 
   return (
     <div
@@ -138,7 +181,65 @@ export function ConnectorContextBar({
       />
       <Sep />
       <ColorPicker value={currentColor} onChange={(c) => onPatch({ strokeColor: c })} />
+      {onAction ? (
+        <>
+          <Sep />
+          <ActionButton
+            testId="pptx-connector-bar-reroute"
+            label="Reset routing"
+            disabled={!canReroute}
+            onClick={() => onAction("reroute")}
+          >
+            <RotateCcw size={13} />
+          </ActionButton>
+          <ActionButton
+            testId="pptx-connector-bar-swap"
+            label="Reverse direction"
+            onClick={() => onAction("swap")}
+          >
+            <ArrowLeftRight size={13} />
+          </ActionButton>
+          <ActionButton
+            testId="pptx-connector-bar-detach"
+            label="Detach from shapes"
+            disabled={!hasAnchoredEndpoint}
+            onClick={() => onAction("detach")}
+          >
+            <Unlink size={13} />
+          </ActionButton>
+        </>
+      ) : null}
     </div>
+  );
+}
+
+interface ActionButtonProps {
+  readonly testId: string;
+  readonly label: string;
+  readonly disabled?: boolean;
+  readonly onClick: () => void;
+  readonly children: React.ReactNode;
+}
+
+function ActionButton({
+  testId,
+  label,
+  disabled,
+  onClick,
+  children,
+}: ActionButtonProps): React.ReactElement {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex h-6 w-7 items-center justify-center rounded text-foreground hover:bg-hover ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -250,10 +351,7 @@ function DashPicker({ value, onChange }: DashPickerProps): React.ReactElement {
     <div className="flex items-center gap-0.5 rounded bg-background/40 p-0.5">
       {DASH_OPTIONS.map((opt) => {
         const active = value === opt.dash;
-        // Render a tiny line preview matching the dash style so the
-        // picker is recognisable without a tooltip on every hover.
-        const dashStyle =
-          opt.dash === "dashed" ? "4 3" : opt.dash === "dotted" ? "1 2" : undefined;
+        const dashStyle = dashStrokeArray(opt.dash);
         return (
           <button
             key={opt.dash}

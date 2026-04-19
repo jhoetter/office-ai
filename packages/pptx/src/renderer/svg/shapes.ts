@@ -18,6 +18,11 @@ import { DEFAULT_THEME, type ThemeColorScheme } from "../layout/color.js";
 import { shapeBoundingBox } from "../layout/shape.js";
 import { SVG_UNIT_PER_EMU } from "../layout/slide.js";
 import { escXml } from "./escape.js";
+import {
+  curvedPathD as curvedPathDShared,
+  routeConnector as routeConnectorShared,
+  type RouterObstacle,
+} from "../connector-router/index.js";
 
 /**
  * Convert an EMU value to the renderer's user-unit space (1 unit ≈ 1px @ 96 DPI).
@@ -50,6 +55,18 @@ export interface SvgRenderCtx {
    * back to their stored bounding box corners.
    */
   readonly shapesByCNvPrId?: ReadonlyMap<number, Shape>;
+  /**
+   * Inflated obstacle boxes (other shapes on the slide) the connector
+   * router should avoid. Populated by `slideToSvgString` from the
+   * slide's full shape tree. Optional: when omitted the router falls
+   * back to its heuristic-only path, which still produces sensible
+   * routes — only the obstacle-avoiding A* fallback is unavailable.
+   *
+   * Per-connector exemption (the connector's own anchored endpoints'
+   * shapes) is handled at the call site; obstacles passed here should
+   * already EXCLUDE every shape the connector touches.
+   */
+  readonly connectorObstacles?: ReadonlyArray<RouterObstacle>;
   /**
    * When true (the default), text shapes that are empty *and* carry a
    * `placeholder` field render a dashed outline + ghost prompt label
@@ -111,144 +128,188 @@ function connectorToSvg(shape: ConnectorShape, ctx: SvgRenderCtx): string {
   const widthEmu = shape.stroke?.widthEmu && shape.stroke.widthEmu > 0 ? shape.stroke.widthEmu : 9525; // ≈ 0.75pt
   const dashAttr = dashArrayAttr(shape.stroke?.dash, widthEmu);
   const strokeAttrs = ` stroke="#${stroke}" stroke-width="${u(widthEmu)}" fill="none" stroke-linecap="round" stroke-linejoin="round"${dashAttr}`;
-  const headAttr = shape.headEnd && shape.headEnd !== "none" ? ` marker-end="url(#cxn-arrow)"` : "";
-  const tailAttr = shape.tailEnd && shape.tailEnd !== "none" ? ` marker-start="url(#cxn-arrow)"` : "";
-  let pathSvg: string;
-  switch (shape.connectorType) {
-    case "elbow": {
-      const startSide = shape.start.kind === "anchored" ? shape.start.side : null;
-      const endSide = shape.end.kind === "anchored" ? shape.end.side : null;
-      const points = routeElbow(sp, ep, startSide, endSide, shape.waypoints);
-      const pts = points.map((p) => `${u(p.x)},${u(p.y)}`).join(" ");
-      pathSvg = `<polyline points="${pts}"${strokeAttrs}${headAttr}${tailAttr}/>`;
-      break;
-    }
-    case "curved": {
-      const cx = (sp.x + ep.x) / 2;
-      const cy = (sp.y + ep.y) / 2;
-      pathSvg = `<path d="M ${u(sp.x)} ${u(sp.y)} Q ${u(cx)} ${u(cy)} ${u(ep.x)} ${u(ep.y)}"${strokeAttrs}${headAttr}${tailAttr}/>`;
-      break;
-    }
-    case "straight":
-    case "unsupported":
-    default:
-      pathSvg = `<line x1="${u(sp.x)}" y1="${u(sp.y)}" x2="${u(ep.x)}" y2="${u(ep.y)}"${strokeAttrs}${headAttr}${tailAttr}/>`;
-      break;
+  const headAttr = endShapeMarkerAttr("end", shape.headEnd);
+  const tailAttr = endShapeMarkerAttr("start", shape.tailEnd);
+  // A separate transparent stroke painted UNDER the visible one so the
+  // hit area is always at least ~14 px wide regardless of the line's
+  // actual stroke width. Without this a 1px line is essentially un-
+  // clickable — the user has to land exactly on the pixel-thin path,
+  // which doesn't match how PowerPoint/Slides feel. We deliberately
+  // omit arrowheads + dashes here since this layer is invisible and
+  // exists only for hit detection.
+  const HIT_STROKE_EMU = 130_000; // ≈ 13.6 px @ 96 DPI
+  const hitWidthEmu = Math.max(HIT_STROKE_EMU, widthEmu * 4);
+  // `pointer-events="stroke"` is required because the default
+  // `visiblePainted` excludes strokes painted with opacity 0; without
+  // this attribute the wide hit-band wouldn't actually catch clicks.
+  const hitAttrs = ` stroke="#000" stroke-opacity="0" stroke-width="${u(hitWidthEmu)}" fill="none" stroke-linecap="round" stroke-linejoin="round" pointer-events="stroke"`;
+  // Delegate routing to the shared engine. Both the SVG renderer and
+  // the React chrome call into the same `routeConnector` so the
+  // preview the user sees while drawing matches what gets committed.
+  // We forward obstacles minus this connector's own anchored target
+  // shapes — otherwise the router would try to detour around the very
+  // shapes it's anchored to.
+  const startSide = shape.start.kind === "anchored" ? shape.start.side : null;
+  const endSide = shape.end.kind === "anchored" ? shape.end.side : null;
+  const obstacles = filterConnectorObstacles(ctx.connectorObstacles, shape, map);
+  const route = routeConnectorShared(shape.connectorType, sp, ep, startSide, endSide, {
+    waypoints: shape.waypoints,
+    obstacles,
+  });
+  let visibleSvg: string;
+  let hitSvg: string;
+  if (route.kind === "cubic") {
+    const d = curvedPathDShared(route.points, u);
+    hitSvg = `<path d="${d}"${hitAttrs}/>`;
+    visibleSvg = `<path d="${d}"${strokeAttrs}${headAttr}${tailAttr}/>`;
+  } else if (route.points.length === 2) {
+    const [p0, p1] = route.points;
+    const lineCoords = `x1="${u(p0.x)}" y1="${u(p0.y)}" x2="${u(p1.x)}" y2="${u(p1.y)}"`;
+    hitSvg = `<line ${lineCoords}${hitAttrs}/>`;
+    visibleSvg = `<line ${lineCoords}${strokeAttrs}${headAttr}${tailAttr}/>`;
+  } else {
+    // Visible path uses rounded corners — sharp 90° joins on a thin
+    // stroke read as harsh ticks at typical zoom levels. The hit area
+    // can stay as a polyline (it's invisible, and the polyline catches
+    // anything inside its wider stroke envelope anyway).
+    const visD = roundedPolylinePath(route.points, ELBOW_CORNER_RADIUS_EMU);
+    const pts = route.points.map((p) => `${u(p.x)},${u(p.y)}`).join(" ");
+    hitSvg = `<polyline points="${pts}"${hitAttrs}/>`;
+    visibleSvg = `<path d="${visD}"${strokeAttrs}${headAttr}${tailAttr}/>`;
   }
-  return `${groupOpen("connector", shape.id)}${pathSvg}${groupClose()}`;
+  return `${groupOpen("connector", shape.id)}${hitSvg}${visibleSvg}${groupClose()}`;
 }
 
 /**
- * Compute the polyline points for a `connectorType: "elbow"` connector.
+ * Drop the connector's own anchored target shapes from the obstacle
+ * list so the router doesn't try to route around the very things
+ * it's anchored to. Free endpoints contribute no exemption.
  *
- * When a side is known (the endpoint is anchored to a shape), the path
- * exits perpendicular to that side via a short "lead" segment, then
- * meets the other endpoint with at most one Manhattan bend. This
- * matches PowerPoint's `bentConnector` routing where lines visibly
- * leave the shape at the anchor's normal direction instead of cutting
- * across the bounding box. When neither side is known we fall back to
- * the previous axis-dominant midpoint pivot so free connectors still
- * look reasonable.
+ * The slide-wide obstacle list lives on `ctx.connectorObstacles` and
+ * was assembled before we knew which connector we're rendering — we
+ * couldn't bake per-connector exemptions into it then. We do it here
+ * by mapping each anchored endpoint's `cNvPrId` back to its shape
+ * (via the same `shapesByCNvPrId` map used for endpoint resolution)
+ * and dropping any obstacle whose `id` matches a target shape's `id`.
  */
-function routeElbow(
-  sp: { readonly x: number; readonly y: number },
-  ep: { readonly x: number; readonly y: number },
-  startSide: "n" | "s" | "e" | "w" | "center" | null,
-  endSide: "n" | "s" | "e" | "w" | "center" | null,
-  waypoints?: ReadonlyArray<number>
-): ReadonlyArray<{ readonly x: number; readonly y: number }> {
-  const dx = ep.x - sp.x;
-  const dy = ep.y - sp.y;
-  // Lead distance for the perpendicular exit segment. Capped at half
-  // the displacement on the same axis so a tiny gap doesn't produce a
-  // segment longer than the connector itself.
-  const LEAD_EMU = 228_600; // ≈ 0.25 inch — visually close to PowerPoint's default
-  const leadX = Math.min(LEAD_EMU, Math.max(0, Math.abs(dx) / 2));
-  const leadY = Math.min(LEAD_EMU, Math.max(0, Math.abs(dy) / 2));
+function filterConnectorObstacles(
+  obstacles: ReadonlyArray<RouterObstacle> | undefined,
+  shape: ConnectorShape,
+  shapesByCNvPrId: ReadonlyMap<number, Shape>
+): ReadonlyArray<RouterObstacle> {
+  if (!obstacles || obstacles.length === 0) return [];
+  const exemptShapeIds = new Set<string>();
+  for (const ep of [shape.start, shape.end]) {
+    if (ep.kind !== "anchored") continue;
+    const target = shapesByCNvPrId.get(ep.targetCNvPrId);
+    if (target) exemptShapeIds.add(target.id);
+  }
+  if (exemptShapeIds.size === 0) return obstacles;
+  return obstacles.filter((o) => !exemptShapeIds.has(o.id));
+}
 
-  // Map side → outward unit vector. `center` and `null` collapse to
-  // (0, 0) so the lead segment becomes degenerate, which is what we
-  // want for endpoints without a meaningful normal.
-  const sV = sideVector(startSide);
-  const eV = sideVector(endSide);
+/**
+ * Corner-rounding radius for the elbow connector's visible path. Small
+ * enough that diagonals through tight bridge segments still read as a
+ * Manhattan route, large enough that 90° corners don't look like sharp
+ * ticks on a thin stroke. Auto-clamped to half the shorter incident
+ * segment by `roundedPolylinePath` so it never overshoots.
+ */
+const ELBOW_CORNER_RADIUS_EMU = 60_000; // ≈ 6.3 px @ 96 DPI
 
-  // No information either side → fall back to the legacy single-bend
-  // routing so we don't regress visually for free connectors. The
-  // single waypoint slot (segment 0) shifts the inner Z's pivot.
-  if (sV.x === 0 && sV.y === 0 && eV.x === 0 && eV.y === 0) {
-    const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
-    const w0 = waypointAt(waypoints, 0);
-    if (horizontalFirst) {
-      const midX = sp.x + dx / 2 + w0;
-      return [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep];
+/**
+ * Convert a polyline (≥ 2 points) into an SVG path string with each
+ * interior corner replaced by a quadratic round of `r` EMU. The path
+ * still passes through the start and end points exactly, so anchored
+ * endpoints / arrowheads remain pixel-aligned with the model.
+ */
+function roundedPolylinePath(
+  pts: ReadonlyArray<{ readonly x: number; readonly y: number }>,
+  r: number
+): string {
+  if (pts.length === 0) return "";
+  if (pts.length === 1) return `M ${u(pts[0].x)} ${u(pts[0].y)}`;
+  if (pts.length === 2) {
+    return `M ${u(pts[0].x)} ${u(pts[0].y)} L ${u(pts[1].x)} ${u(pts[1].y)}`;
+  }
+  const out: string[] = [`M ${u(pts[0].x)} ${u(pts[0].y)}`];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1];
+    const curr = pts[i];
+    const next = pts[i + 1];
+    const dIn = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+    const dOut = Math.hypot(next.x - curr.x, next.y - curr.y);
+    const radius = Math.min(r, dIn / 2, dOut / 2);
+    if (!(radius > 0) || dIn === 0 || dOut === 0) {
+      out.push(`L ${u(curr.x)} ${u(curr.y)}`);
+      continue;
     }
-    const midY = sp.y + dy / 2 + w0;
-    return [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
+    const inT = radius / dIn;
+    const inX = curr.x - (curr.x - prev.x) * inT;
+    const inY = curr.y - (curr.y - prev.y) * inT;
+    const outT = radius / dOut;
+    const outX = curr.x + (next.x - curr.x) * outT;
+    const outY = curr.y + (next.y - curr.y) * outT;
+    out.push(`L ${u(inX)} ${u(inY)}`);
+    out.push(`Q ${u(curr.x)} ${u(curr.y)} ${u(outX)} ${u(outY)}`);
   }
-
-  const p1 = { x: sp.x + sV.x * leadX, y: sp.y + sV.y * leadY };
-  const p2 = { x: ep.x + eV.x * leadX, y: ep.y + eV.y * leadY };
-
-  // Sides are horizontal-vs-vertical: the elbow needs an L-shaped
-  // bridge between the two perpendicular leads. We choose which axis
-  // to bend on so neither lead doubles back on itself.
-  const sIsHoriz = sV.x !== 0;
-  const eIsHoriz = eV.x !== 0;
-
-  if (sIsHoriz && eIsHoriz) {
-    // Both leads go horizontally — bridge with a vertical segment in
-    // the middle so we get a Z-shape (5 points). Waypoint 0 shifts
-    // the bridge's x-coordinate.
-    const midX = (p1.x + p2.x) / 2 + waypointAt(waypoints, 0);
-    return [sp, p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2, ep];
-  }
-  if (!sIsHoriz && !eIsHoriz) {
-    // Both leads go vertically — bridge horizontally. Waypoint 0
-    // shifts the bridge's y-coordinate.
-    const midY = (p1.y + p2.y) / 2 + waypointAt(waypoints, 0);
-    return [sp, p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2, ep];
-  }
-  // Mixed orientations — the corner of the L falls at the intersection
-  // of the two perpendicular axes (4 points total). No waypoint slot:
-  // the bend is fully determined by the two lead directions.
-  const corner = sIsHoriz ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
-  return [sp, p1, corner, p2, ep];
+  const last = pts[pts.length - 1];
+  out.push(`L ${u(last.x)} ${u(last.y)}`);
+  return out.join(" ");
 }
 
-function waypointAt(waypoints: ReadonlyArray<number> | undefined, index: number): number {
-  if (!waypoints) return 0;
-  const v = waypoints[index];
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+/**
+ * Map a `ConnectorEndShape` to the marker URL the renderer should
+ * reference. We always emit ALL four markers via `slide.ts` (`cxn-
+ * arrow`, `cxn-triangle`, `cxn-oval`, `cxn-none`); this helper just
+ * picks the right one. Returns an empty string for `none` /
+ * `undefined` so the SVG attribute is omitted entirely (omitting is
+ * cheaper than referencing the no-op marker for the common case).
+ */
+function endShapeMarkerAttr(
+  position: "start" | "end",
+  endShape: "none" | "arrow" | "triangle" | "oval" | undefined
+): string {
+  if (!endShape || endShape === "none") return "";
+  const attr = position === "end" ? "marker-end" : "marker-start";
+  switch (endShape) {
+    case "arrow":
+      return ` ${attr}="url(#cxn-arrow)"`;
+    case "triangle":
+      return ` ${attr}="url(#cxn-triangle)"`;
+    case "oval":
+      return ` ${attr}="url(#cxn-oval)"`;
+    default: {
+      const _exhaustive: never = endShape;
+      void _exhaustive;
+      return "";
+    }
+  }
 }
 
-function dashArrayAttr(dash: "solid" | "dashed" | "dotted" | undefined, widthEmu: number): string {
+function dashArrayAttr(
+  dash: "solid" | "dashed" | "dotted" | "longDash" | "dashDot" | undefined,
+  widthEmu: number
+): string {
   if (!dash || dash === "solid") return "";
   // Patterns scale with stroke width so the dashes feel consistent
   // when users bump the weight. The values mimic PowerPoint's
-  // `prstDash` "dash" / "dot" presets at the default ~1pt width.
+  // `prstDash` presets at the default ~1pt width.
   const w = u(widthEmu);
-  if (dash === "dashed") {
-    return ` stroke-dasharray="${(w * 4).toFixed(2)} ${(w * 3).toFixed(2)}"`;
-  }
-  return ` stroke-dasharray="${(w * 1).toFixed(2)} ${(w * 2).toFixed(2)}"`;
-}
-
-function sideVector(side: "n" | "s" | "e" | "w" | "center" | null): {
-  readonly x: number;
-  readonly y: number;
-} {
-  switch (side) {
-    case "n":
-      return { x: 0, y: -1 };
-    case "s":
-      return { x: 0, y: 1 };
-    case "e":
-      return { x: 1, y: 0 };
-    case "w":
-      return { x: -1, y: 0 };
-    case "center":
-    case null:
-      return { x: 0, y: 0 };
+  switch (dash) {
+    case "dashed":
+      return ` stroke-dasharray="${(w * 4).toFixed(2)} ${(w * 3).toFixed(2)}"`;
+    case "longDash":
+      return ` stroke-dasharray="${(w * 8).toFixed(2)} ${(w * 3).toFixed(2)}"`;
+    case "dashDot":
+      return ` stroke-dasharray="${(w * 4).toFixed(2)} ${(w * 3).toFixed(2)} ${(w * 1).toFixed(2)} ${(w * 3).toFixed(2)}"`;
+    case "dotted":
+      return ` stroke-dasharray="${(w * 1).toFixed(2)} ${(w * 2).toFixed(2)}"`;
+    default: {
+      const _exhaustive: never = dash;
+      void _exhaustive;
+      return "";
+    }
   }
 }
 
@@ -304,11 +365,18 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
 
 /**
  * Renderer-only ghost UI for an empty placeholder. Produces a dashed
- * outline that fills the placeholder's bounding box plus a centered
- * label (and an image-icon glyph for `pic` placeholders). The wrapper
- * `<g>` carries `pointer-events="none"` so clicks fall through to the
- * underlying `data-shape-id` group — the user can still select / drag
- * / resize the placeholder, and double-click still enters edit mode.
+ * outline that fills the placeholder's bounding box plus a label (and
+ * an image-icon glyph for `pic` placeholders) styled to roughly match
+ * how the user's first run of text would appear once they start typing
+ * — title placeholders render large, body placeholders render smaller
+ * and left-aligned, ctrTitle stays centered, etc. Without this match
+ * the hints all read as "generic centered prompt" which makes the
+ * eventual typed text feel like it jumps around when it appears.
+ *
+ * The wrapper `<g>` carries `pointer-events="none"` so clicks fall
+ * through to the underlying `data-shape-id` group — the user can still
+ * select / drag / resize the placeholder, and double-click still
+ * enters edit mode.
  */
 function renderPlaceholderHint(
   placeholder: { type?: string; idx?: number },
@@ -322,8 +390,20 @@ function renderPlaceholderHint(
   const labelColor = "#9ca3af"; // tailwind gray-400
   const outlineColor = "#cbd5e1"; // tailwind slate-300
   const dash = `${u(60_000)},${u(40_000)}`;
-  const labelSize = u(estimatePlaceholderLabelSizeEmu(cxEmu, cyEmu));
-  const label = placeholderHintLabel(type);
+  const style = placeholderHintStyle(type);
+  // Convert PowerPoint point sizes to user units. Min cap so micro
+  // placeholders (footer, slide#) still surface a readable label.
+  const ptToUserUnits = u(12_700); // 1pt = 12_700 EMU
+  const baseFontSize = Math.max(10, style.fontPt * ptToUserUnits);
+  // Auto-shrink for tiny placeholder boxes so the hint never overflows
+  // — preserves the "what you'd see typed" feel without breaking the
+  // dashed bounding box.
+  const fitFontSize = Math.min(baseFontSize, h * 0.55, w / Math.max(1, style.label?.length ?? 1) * 1.6);
+  const label = style.label ?? placeholderHintLabel(type);
+  // Inset the label so it doesn't kiss the dashed outline (real
+  // placeholders carry `lIns`/`tIns` defaults of ~0.1" / 0.05").
+  const padX = u(91_440); // 0.1"
+  const padY = u(45_720); // 0.05"
   const parts: string[] = [];
   parts.push(
     `<g class="placeholder-hint" pointer-events="none">`,
@@ -336,18 +416,128 @@ function renderPlaceholderHint(
     // thumbnails. Stacks above the label.
     const iconSize = Math.min(w, h) * 0.28;
     const iconX = (w - iconSize) / 2;
-    const iconY = (h - iconSize) / 2 - labelSize * 1.4;
+    const iconY = (h - iconSize) / 2 - fitFontSize * 1.4;
     parts.push(renderPictureIcon(iconX, iconY, iconSize, labelColor));
     parts.push(
-      `<text x="${w / 2}" y="${h / 2 + iconSize / 2 + labelSize * 0.6}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${labelSize}" fill="${labelColor}">${escXml(label)}</text>`
+      `<text x="${w / 2}" y="${h / 2 + iconSize / 2 + fitFontSize * 0.6}" text-anchor="middle" dominant-baseline="middle" font-family="${style.fontFamily}" font-weight="${style.fontWeight}" font-size="${fitFontSize}" fill="${labelColor}">${escXml(label)}</text>`
     );
   } else {
+    const x = horizontalAnchorX(style.align, w, padX);
+    const y = verticalAnchorY(style.anchor, h, padY, fitFontSize);
     parts.push(
-      `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${labelSize}" fill="${labelColor}">${escXml(label)}</text>`
+      `<text x="${x}" y="${y}" text-anchor="${svgTextAnchor(style.align)}" dominant-baseline="${svgDominantBaseline(style.anchor)}" font-family="${style.fontFamily}" font-weight="${style.fontWeight}" font-size="${fitFontSize}" fill="${labelColor}">${escXml(label)}</text>`
     );
   }
   parts.push(`</g>`);
   return parts.join("");
+}
+
+/**
+ * Per-placeholder-type rendering defaults that approximate the
+ * built-in PowerPoint placeholder styles. Sizes / alignments are the
+ * ones the user would see if they started typing into an empty
+ * placeholder of the given type, so the ghost prompt previews the
+ * eventual layout instead of always centring everything.
+ */
+interface PlaceholderHintStyle {
+  readonly fontPt: number;
+  readonly fontFamily: string;
+  readonly fontWeight: number;
+  readonly align: "left" | "center" | "right";
+  readonly anchor: "top" | "middle" | "bottom";
+  readonly label?: string;
+}
+
+function placeholderHintStyle(type: string): PlaceholderHintStyle {
+  // PowerPoint defaults — Calibri across the board so the hint
+  // matches what a freshly-typed run would render as. Colour stays
+  // gray-400 (set at the call site) regardless of type.
+  const FAMILY = "Calibri, 'Segoe UI', sans-serif";
+  switch (type) {
+    case "ctrTitle":
+      // Title-Slide layout: large, fully centered both axes.
+      return { fontPt: 40, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle" };
+    case "title":
+      // Title bar at the top of content layouts: large, left-aligned,
+      // bottom-anchored so the baseline sits where typed text would.
+      return { fontPt: 36, fontFamily: FAMILY, fontWeight: 400, align: "left", anchor: "middle" };
+    case "subTitle":
+      // Subtitle under ctrTitle: medium, centered, top-anchored.
+      return { fontPt: 24, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle" };
+    case "body":
+      // Body / content: smaller, left-aligned, top-anchored — matches
+      // a bullet at outline level 1.
+      return { fontPt: 18, fontFamily: FAMILY, fontWeight: 400, align: "left", anchor: "top" };
+    case "ftr":
+      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle", label: "Footer" };
+    case "hdr":
+      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle", label: "Header" };
+    case "dt":
+      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "left", anchor: "middle", label: "Date" };
+    case "sldNum":
+      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "right", anchor: "middle", label: "‹#›" };
+    case "chart":
+    case "tbl":
+    case "dgm":
+    case "media":
+    case "pic":
+      // Asset placeholders: the icon dominates, hint sits centered as a
+      // caption below it. Rendered specially in `renderPlaceholderHint`.
+      return { fontPt: 14, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle" };
+    default:
+      return { fontPt: 18, fontFamily: FAMILY, fontWeight: 400, align: "left", anchor: "top" };
+  }
+}
+
+function horizontalAnchorX(align: "left" | "center" | "right", w: number, padX: number): number {
+  switch (align) {
+    case "left":
+      return padX;
+    case "center":
+      return w / 2;
+    case "right":
+      return w - padX;
+  }
+}
+
+function verticalAnchorY(
+  anchor: "top" | "middle" | "bottom",
+  h: number,
+  padY: number,
+  fontSize: number
+): number {
+  switch (anchor) {
+    case "top":
+      // Baseline near the top — push down by ~80% of the cap height
+      // so the glyph tops sit visually flush with the top inset.
+      return padY + fontSize * 0.8;
+    case "middle":
+      return h / 2;
+    case "bottom":
+      return h - padY;
+  }
+}
+
+function svgTextAnchor(align: "left" | "center" | "right"): string {
+  switch (align) {
+    case "left":
+      return "start";
+    case "center":
+      return "middle";
+    case "right":
+      return "end";
+  }
+}
+
+function svgDominantBaseline(anchor: "top" | "middle" | "bottom"): string {
+  switch (anchor) {
+    case "top":
+      return "alphabetic";
+    case "middle":
+      return "middle";
+    case "bottom":
+      return "alphabetic";
+  }
 }
 
 /**
@@ -405,12 +595,6 @@ function renderPictureIcon(x: number, y: number, size: number, color: string): s
     `<circle cx="${sunCx}" cy="${sunCy}" r="${sunR}" ${stroke}/>`,
     `<polyline points="${left + size * 0.12},${mountainBase} ${left + size * 0.42},${top + size * 0.55} ${left + size * 0.62},${top + size * 0.72} ${left + size * 0.78},${top + size * 0.5} ${right - size * 0.06},${mountainBase}" ${stroke}/>`,
   ].join("");
-}
-
-function estimatePlaceholderLabelSizeEmu(cx: number, cy: number): number {
-  // Aim at ~14–22 px on a typical slide. Floor at 80k EMU (≈ 8.4 px)
-  // so micro-placeholders still get readable text without dominating.
-  return Math.max(80_000, Math.min(220_000, Math.floor(Math.min(cx, cy) / 12)));
 }
 
 /**

@@ -66,28 +66,55 @@ export interface AnchorSnapResult {
  * Pick the closest anchor across the given shapes that's within the
  * threshold (Euclidean distance in EMU). Used while dragging a line
  * endpoint to snap it onto another shape.
+ *
+ * Edge anchors (n/s/e/w) take strict priority over the centre anchor:
+ * if any edge candidate is in range we never return centre, even when
+ * centre is geometrically closer. This matches PowerPoint/Slides where
+ * dragging towards a shape body lands on the nearest edge, not the
+ * centroid — landing on the centroid produces routes that visibly cut
+ * through the shape and the user almost never wants that.
  */
 export function snapToAnchor(
   point: { x: number; y: number },
   shapes: ReadonlyArray<{ id: string; box: BoundingBox }>,
   thresholdEmu: number
 ): AnchorSnapResult {
-  let best: ShapeAnchor | null = null;
-  let bestDist = Infinity;
-  const nearby: ShapeAnchor[] = [];
+  let bestEdge: ShapeAnchor | null = null;
+  let bestEdgeDist = Infinity;
+  let bestCenter: ShapeAnchor | null = null;
+  let bestCenterDist = Infinity;
+  const nearbyEdges: ShapeAnchor[] = [];
+  const nearbyCenters: ShapeAnchor[] = [];
   for (const s of shapes) {
     for (const a of anchorsFor(s.id, s.box)) {
       const dx = a.x - point.x;
       const dy = a.y - point.y;
       const d = Math.hypot(dx, dy);
       if (d > thresholdEmu) continue;
-      nearby.push(a);
-      if (d < bestDist) {
-        best = a;
-        bestDist = d;
+      if (a.side === "center") {
+        nearbyCenters.push(a);
+        if (d < bestCenterDist) {
+          bestCenter = a;
+          bestCenterDist = d;
+        }
+      } else {
+        nearbyEdges.push(a);
+        if (d < bestEdgeDist) {
+          bestEdge = a;
+          bestEdgeDist = d;
+        }
       }
     }
   }
+  // Edges win whenever any edge anchor is in range. Centre is a
+  // fallback used only when the cursor is deep inside a shape with
+  // no edge in snap range (rare unless the threshold is very small
+  // relative to the shape).
+  const best = bestEdge ?? bestCenter;
+  // Surface the edge candidates as the "live snap dots" the canvas
+  // paints; suppress centre dots entirely so the visible affordance
+  // matches the snap behaviour.
+  const nearby = bestEdge ? nearbyEdges : [...nearbyEdges, ...nearbyCenters];
   if (!best) return { dx: 0, dy: 0, anchor: null, nearby };
   return { dx: best.x - point.x, dy: best.y - point.y, anchor: best, nearby };
 }

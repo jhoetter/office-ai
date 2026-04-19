@@ -42,6 +42,7 @@ export type {
   TextFormatPayload,
 } from "./commands/payloads.js";
 export { BUILTIN_LAYOUTS, type BuiltinLayout } from "./layouts/builtin.js";
+export { resolveEndpoint as resolveConnectorEndpoint } from "./model/connector-geometry.js";
 export { PPTX_COMMAND_TYPES, type PptxCommandType } from "./commands/payloads.js";
 export {
   PptxAgent,

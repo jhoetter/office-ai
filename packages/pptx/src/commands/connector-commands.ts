@@ -28,9 +28,11 @@ import type {
   AddConnectorPayload,
   ConnectorDashStylePayload,
   ConnectorEndpointPayload,
+  RerouteConnectorPayload,
   SetConnectorEndpointPayload,
   SetConnectorStylePayload,
   SetConnectorWaypointPayload,
+  SwapConnectorDirectionPayload,
 } from "./payloads.js";
 
 const DEFAULT_STROKE_COLOR = "374151"; // slate-700
@@ -263,6 +265,94 @@ export const setConnectorWaypointHandler: CommandHandler<SetConnectorWaypointPay
   },
 };
 
+// ─── reroute-connector ────────────────────────────────────────────────────
+
+/**
+ * Drop every user-supplied waypoint on a connector and let the auto-
+ * router pick the polyline from scratch. No-op (still emits a diff)
+ * when the connector has no waypoints — keeps the agent's idempotent
+ * "force a clean route" semantics.
+ */
+export const rerouteConnectorHandler: CommandHandler<RerouteConnectorPayload, PptxSnapshot> = {
+  type: "pptx:reroute-connector",
+  apply(snapshot, payload) {
+    const { slide, index: sIdx } = findSlide(snapshot, payload.slideIndex);
+    const found = findShapeInSlide(slide, payload.shapeId);
+    const connector = found.shape;
+    if (!isConnectorShape(connector)) {
+      throw makeError("invalid-target", `shape ${payload.shapeId} is not a connector`);
+    }
+    const updated: ConnectorShape = { ...connector, waypoints: undefined };
+    const nextShapes = replaceShape(slide.shapes, found.path, updated);
+    const newSlide: Slide = { ...slide, shapes: nextShapes };
+    const root = {
+      ...snapshot.root,
+      slides: snapshot.root.slides.map((s, i) => (i === sIdx ? newSlide : s)),
+    };
+    const next = evolveSnapshot(snapshot, root, { slides: [slide.partPath] });
+    return {
+      next,
+      diff: buildDiff(snapshot.revision, next.revision, {
+        kind: "node-updated",
+        nodeId: updated.id,
+        path: ["slides", sIdx, "shapes", ...found.path],
+        field: "waypoints",
+        summary: "connector-reroute",
+      }),
+    };
+  },
+};
+
+// ─── swap-connector-direction ─────────────────────────────────────────────
+
+/**
+ * Reverse a connector's direction by swapping `start` ↔ `end` and
+ * `headEnd` ↔ `tailEnd`. Waypoints are kept as-is — the routing
+ * engine treats them as absolute coordinates so they apply equally
+ * well in either direction. The bounding box doesn't change because
+ * `bboxFromEndpoints` is order-independent, but we still recompute it
+ * for symmetry with the endpoint command.
+ */
+export const swapConnectorDirectionHandler: CommandHandler<SwapConnectorDirectionPayload, PptxSnapshot> = {
+  type: "pptx:swap-connector-direction",
+  apply(snapshot, payload) {
+    const { slide, index: sIdx } = findSlide(snapshot, payload.slideIndex);
+    const found = findShapeInSlide(slide, payload.shapeId);
+    const connector = found.shape;
+    if (!isConnectorShape(connector)) {
+      throw makeError("invalid-target", `shape ${payload.shapeId} is not a connector`);
+    }
+    const swapped: ConnectorShape = {
+      ...connector,
+      start: connector.end,
+      end: connector.start,
+      ...(connector.headEnd !== undefined || connector.tailEnd !== undefined
+        ? { headEnd: connector.tailEnd, tailEnd: connector.headEnd }
+        : {}),
+    };
+    const map = new Map<number, Shape>();
+    for (const s of slide.shapes) collectShapesByCNvPrId(s, map);
+    const reflowed = recomputeConnectorBox(swapped, map);
+    const nextShapes = replaceShape(slide.shapes, found.path, reflowed);
+    const newSlide: Slide = { ...slide, shapes: nextShapes };
+    const root = {
+      ...snapshot.root,
+      slides: snapshot.root.slides.map((s, i) => (i === sIdx ? newSlide : s)),
+    };
+    const next = evolveSnapshot(snapshot, root, { slides: [slide.partPath] });
+    return {
+      next,
+      diff: buildDiff(snapshot.revision, next.revision, {
+        kind: "node-updated",
+        nodeId: reflowed.id,
+        path: ["slides", sIdx, "shapes", ...found.path],
+        field: "direction",
+        summary: "connector-swap",
+      }),
+    };
+  },
+};
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 function isKnownType(t: string): t is ConnectorType {
@@ -274,7 +364,15 @@ function isKnownSide(s: string): s is ConnectorSide {
 }
 
 function validateDash(d: ConnectorDashStylePayload): ConnectorDashStyle {
-  if (d === "solid" || d === "dashed" || d === "dotted") return d;
+  if (
+    d === "solid" ||
+    d === "dashed" ||
+    d === "dotted" ||
+    d === "longDash" ||
+    d === "dashDot"
+  ) {
+    return d;
+  }
   throw makeError("invalid-payload", `unknown dash style: ${d}`);
 }
 
