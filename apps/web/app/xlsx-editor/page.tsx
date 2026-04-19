@@ -26,11 +26,7 @@ function XlsxEditorPageInner(): React.ReactNode {
   const [ready, setReady] = useState(false);
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden">
-      <XlsxEditor
-        onBootstrapReady={setReady}
-        initialSource={initialSource}
-        initialBlank={initialBlank}
-      />
+      <XlsxEditor onBootstrapReady={setReady} initialSource={initialSource} initialBlank={initialBlank} />
       <LoadingScreen variant="splash" product="xlsx" show={!ready} />
     </main>
   );

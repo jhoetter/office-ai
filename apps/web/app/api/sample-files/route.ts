@@ -47,10 +47,7 @@ export async function GET(): Promise<NextResponse> {
     if (code === "ENOENT") {
       return NextResponse.json({ files: [] satisfies SampleFileEntry[] });
     }
-    return NextResponse.json(
-      { message: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 
   const files: SampleFileEntry[] = [];

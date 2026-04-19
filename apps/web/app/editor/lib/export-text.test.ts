@@ -1,20 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type {
-  BlockNode,
-  DocxSnapshot,
-  InlineNode,
-  Paragraph,
-  Run,
-  RunChild,
-} from "@officeai/docx";
+import type { BlockNode, DocxSnapshot, InlineNode, Paragraph, Run, RunChild } from "@officeai/docx";
 import { docxToMarkdown, docxToText } from "./export-text";
 
 /* ── tiny snapshot factories ─────────────────────────────────────── */
 
-function run(
-  text: string,
-  props: { bold?: boolean; italic?: boolean; strike?: boolean } = {}
-): Run {
+function run(text: string, props: { bold?: boolean; italic?: boolean; strike?: boolean } = {}): Run {
   return {
     kind: "run",
     properties: props,
@@ -33,10 +23,7 @@ function runWithChildren(
   } as unknown as Run;
 }
 
-function paragraph(
-  children: ReadonlyArray<InlineNode>,
-  properties: Paragraph["properties"] = {}
-): Paragraph {
+function paragraph(children: ReadonlyArray<InlineNode>, properties: Paragraph["properties"] = {}): Paragraph {
   return {
     kind: "paragraph",
     properties,
@@ -57,10 +44,7 @@ describe("docxToText", () => {
   });
 
   it("joins paragraphs with newlines", () => {
-    const snap = snapshot([
-      paragraph([run("first")]),
-      paragraph([run("second")]),
-    ]);
+    const snap = snapshot([paragraph([run("first")]), paragraph([run("second")])]);
     expect(docxToText(snap)).toBe("first\nsecond\n");
   });
 
@@ -134,9 +118,7 @@ describe("docxToMarkdown", () => {
   });
 
   it("clamps heading levels above 6", () => {
-    const snap = snapshot([
-      paragraph([run("Deep")], { styleId: "Heading9" } as Paragraph["properties"]),
-    ]);
+    const snap = snapshot([paragraph([run("Deep")], { styleId: "Heading9" } as Paragraph["properties"])]);
     expect(docxToMarkdown(snap)).toBe("###### Deep\n");
   });
 

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Cell, Sheet, XlsxSnapshot } from "@officeai/xlsx";
-import {
-  computeSheetBounds,
-  sheetToCsv,
-  sheetToTsv,
-  workbookToJson,
-} from "./export-data";
+import { computeSheetBounds, sheetToCsv, sheetToTsv, workbookToJson } from "./export-data";
 
 /* ── tiny snapshot factories ─────────────────────────────────────── */
 
@@ -154,10 +149,7 @@ describe("workbookToJson", () => {
       ),
       makeSheet("Second", [{ row: 0, col: 0, value: true }], 1),
     ]);
-    const parsed = JSON.parse(workbookToJson(wb)) as Record<
-      string,
-      Array<Record<string, unknown>>
-    >;
+    const parsed = JSON.parse(workbookToJson(wb)) as Record<string, Array<Record<string, unknown>>>;
     expect(Object.keys(parsed)).toEqual(["First", "Second"]);
     expect(parsed.First).toEqual([
       { A: "id", B: "qty" },
@@ -173,10 +165,7 @@ describe("workbookToJson", () => {
       { row: 0, col: 27, value: "ab" },
     ]);
     const wb = makeWorkbook([sheet]);
-    const parsed = JSON.parse(workbookToJson(wb)) as Record<
-      string,
-      Array<Record<string, unknown>>
-    >;
+    const parsed = JSON.parse(workbookToJson(wb)) as Record<string, Array<Record<string, unknown>>>;
     expect(parsed.S[0]).toEqual({ Z: "z", AA: "aa", AB: "ab" });
   });
 
@@ -185,10 +174,7 @@ describe("workbookToJson", () => {
       { row: 0, col: 0, value: { kind: "error", code: "#DIV/0!" } as Cell["value"] },
     ]);
     const wb = makeWorkbook([sheet]);
-    const parsed = JSON.parse(workbookToJson(wb)) as Record<
-      string,
-      Array<Record<string, unknown>>
-    >;
+    const parsed = JSON.parse(workbookToJson(wb)) as Record<string, Array<Record<string, unknown>>>;
     expect(parsed.S[0]).toEqual({ A: { error: "#DIV/0!" } });
   });
 
@@ -198,10 +184,7 @@ describe("workbookToJson", () => {
       { row: 2, col: 0, value: "y" },
     ]);
     const wb = makeWorkbook([sheet]);
-    const parsed = JSON.parse(workbookToJson(wb)) as Record<
-      string,
-      Array<Record<string, unknown>>
-    >;
+    const parsed = JSON.parse(workbookToJson(wb)) as Record<string, Array<Record<string, unknown>>>;
     expect(parsed.S).toEqual([{ A: "x" }, { A: "y" }]);
   });
 });

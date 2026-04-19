@@ -377,9 +377,9 @@ describe("pptx:set-connector-style strokeDash", () => {
     const xml = c.readText(slide.partPath);
     expect(xml).toContain("<a:prstDash");
     const reloaded = await PptxAgent.fromBuffer(buf);
-    const cxn = reloaded
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.kind === "connector") as ConnectorShape | undefined;
+    const cxn = reloaded.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "connector") as
+      | ConnectorShape
+      | undefined;
     expect(cxn?.stroke?.dash).toBe("dotted");
   });
 
@@ -393,9 +393,9 @@ describe("pptx:set-connector-style strokeDash", () => {
       });
       const buf = await agent.exportFile();
       const reloaded = await PptxAgent.fromBuffer(buf);
-      const cxn = reloaded
-        .getSnapshot()
-        .root.slides[0].shapes.find((s) => s.kind === "connector") as ConnectorShape | undefined;
+      const cxn = reloaded.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "connector") as
+        | ConnectorShape
+        | undefined;
       expect(cxn?.stroke?.dash).toBe(dash);
     }
   });
@@ -409,9 +409,9 @@ describe("pptx:set-connector-style strokeDash", () => {
     });
     const buf = await agent.exportFile();
     const reloaded = await PptxAgent.fromBuffer(buf);
-    const cxn = reloaded
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.kind === "connector") as ConnectorShape | undefined;
+    const cxn = reloaded.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "connector") as
+      | ConnectorShape
+      | undefined;
     expect(cxn?.headEnd).toBe("triangle");
     expect(cxn?.tailEnd).toBe("oval");
   });
@@ -464,9 +464,7 @@ describe("pptx:reroute-connector", () => {
       source: "human",
     });
     expect(m.status).toBe("approved");
-    const c = agent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    const c = agent.getSnapshot().root.slides[0].shapes.find((s) => s.id === connector.id) as ConnectorShape;
     expect(c.waypoints).toBeUndefined();
   });
 
@@ -490,9 +488,7 @@ describe("pptx:swap-connector-direction", () => {
       payload: { slideIndex: 0, shapeId: connector.id },
       source: "human",
     });
-    const c = agent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    const c = agent.getSnapshot().root.slides[0].shapes.find((s) => s.id === connector.id) as ConnectorShape;
     expect(c.start).toMatchObject({ kind: "anchored", targetCNvPrId: rect2.cNvPrId, side: "w" });
     expect(c.end).toMatchObject({ kind: "anchored", targetCNvPrId: rect1.cNvPrId, side: "e" });
   });
@@ -509,9 +505,7 @@ describe("pptx:swap-connector-direction", () => {
       payload: { slideIndex: 0, shapeId: connector.id },
       source: "human",
     });
-    const c = agent
-      .getSnapshot()
-      .root.slides[0].shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    const c = agent.getSnapshot().root.slides[0].shapes.find((s) => s.id === connector.id) as ConnectorShape;
     expect(c.headEnd).toBe("oval");
     expect(c.tailEnd).toBe("triangle");
   });
@@ -572,12 +566,26 @@ describe("connector edge cases", () => {
     const agent = await loadAgent("01-blank.pptx");
     await agent.applyCommand({
       type: "pptx:add-shape",
-      payload: { slideIndex: 0, preset: "rect", x: 1_000_000, y: 1_000_000, width: 2_000_000, height: 1_000_000 },
+      payload: {
+        slideIndex: 0,
+        preset: "rect",
+        x: 1_000_000,
+        y: 1_000_000,
+        width: 2_000_000,
+        height: 1_000_000,
+      },
       source: "human",
     });
     await agent.applyCommand({
       type: "pptx:add-shape",
-      payload: { slideIndex: 0, preset: "rect", x: 4_000_000, y: 1_000_000, width: 2_000_000, height: 1_000_000 },
+      payload: {
+        slideIndex: 0,
+        preset: "rect",
+        x: 4_000_000,
+        y: 1_000_000,
+        width: 2_000_000,
+        height: 1_000_000,
+      },
       source: "human",
     });
     const before = agent.getSnapshot().root.slides[0];
@@ -636,7 +644,14 @@ describe("connector edge cases", () => {
     const agent = await loadAgent("01-blank.pptx");
     await agent.applyCommand({
       type: "pptx:add-shape",
-      payload: { slideIndex: 0, preset: "rect", x: 2_000_000, y: 2_000_000, width: 2_000_000, height: 1_000_000 },
+      payload: {
+        slideIndex: 0,
+        preset: "rect",
+        x: 2_000_000,
+        y: 2_000_000,
+        width: 2_000_000,
+        height: 1_000_000,
+      },
       source: "human",
     });
     const slide0 = agent.getSnapshot().root.slides[0];

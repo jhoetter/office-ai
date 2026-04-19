@@ -45,9 +45,7 @@ function makeShape(opts: {
     name: "ph",
     kind: "text",
     placeholder:
-      opts.type !== undefined || opts.idx !== undefined
-        ? { type: opts.type, idx: opts.idx }
-        : undefined,
+      opts.type !== undefined || opts.idx !== undefined ? { type: opts.type, idx: opts.idx } : undefined,
     position: opts.position,
     size: opts.size,
     txBody: opts.body ?? emptyTextBody(),

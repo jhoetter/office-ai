@@ -45,13 +45,7 @@ import {
 } from "lucide-react";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import type {
-  AlignMode,
-  LayoutKindPayload,
-  ReorderShapeMode,
-  ShapePreset,
-  TextAnchor,
-} from "@officeai/pptx";
+import type { AlignMode, LayoutKindPayload, ReorderShapeMode, ShapePreset, TextAnchor } from "@officeai/pptx";
 
 export type TextAlignment = "left" | "center" | "right" | "justify";
 import { LayoutTemplate } from "lucide-react";
@@ -234,11 +228,7 @@ export function PptxToolbar(props: PptxToolbarProps) {
         disabled={disabled}
       />
       <ShapeMenu disabled={disabled} onPick={props.onAddShape} />
-      <ConnectorMenu
-        disabled={disabled}
-        onPick={props.onAddConnector}
-        activeType={props.connectorToolType}
-      />
+      <ConnectorMenu disabled={disabled} onPick={props.onAddConnector} activeType={props.connectorToolType} />
       <ToolbarButton
         onClick={() => imageInputRef.current?.click()}
         icon={<ImageIcon size={14} />}
@@ -501,14 +491,7 @@ interface TextAlignToggleProps {
  * group, and renders an active ring when its alignment / anchor
  * matches the currently focused shape.
  */
-function TextAlignToggle({
-  label,
-  icon,
-  active,
-  disabled,
-  onClick,
-  testId,
-}: TextAlignToggleProps) {
+function TextAlignToggle({ label, icon, active, disabled, onClick, testId }: TextAlignToggleProps) {
   return (
     <button
       type="button"

@@ -222,7 +222,7 @@ describe("slideToSvgString", () => {
       slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
     });
     expect(svg).toContain('class="placeholder-hint"');
-    expect(svg).toContain('stroke-dasharray=');
+    expect(svg).toContain("stroke-dasharray=");
     expect(svg).toContain("Click to add text");
     // The hint must never absorb pointer events — selection / drag /
     // resize hit-testing depends on the underlying transparent rect
@@ -366,7 +366,7 @@ describe("slideToSvgString", () => {
     expect(svg).toMatch(/<path d="M 0 0 C \S+ \S+ \S+ \S+ /);
     // Endpoints must remain exactly on sp/ep so anchored markers and
     // selection dots line up with the visible tip.
-    expect(svg).toContain(" 419.95 0\"");
+    expect(svg).toContain(' 419.95 0"');
   });
 
   it("emits the four connector end-shape markers in <defs> exactly once per slide", async () => {

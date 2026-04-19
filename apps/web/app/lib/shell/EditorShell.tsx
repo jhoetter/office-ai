@@ -32,6 +32,13 @@ export interface EditorShellProps {
   readonly dropExtension?: string;
   /** Filename rename callback wired to the top bar. */
   readonly onRenameFilename?: (next: string) => void;
+  /**
+   * Optional slot rendered in the top bar (between the save-state
+   * pill and the file ops). Currently used for the realtime
+   * `PresenceStack`; product-agnostic so other "ambient" UI can
+   * land here later (e.g. a sync status pill for cloud docs).
+   */
+  readonly topBarExtras?: ReactNode;
 }
 
 /**
@@ -67,6 +74,7 @@ export function EditorShell({
   onFileDrop,
   dropExtension,
   onRenameFilename,
+  topBarExtras,
 }: EditorShellProps): ReactNode {
   const rail = useRightRailController(adapter);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -158,6 +166,7 @@ export function EditorShell({
         }}
         railOpen={rail.open}
         onRenameFilename={onRenameFilename}
+        extras={topBarExtras}
       />
 
       {/*
@@ -169,9 +178,7 @@ export function EditorShell({
         changes never push it down by a row.
       */}
       {toolbar ? (
-        <div className="h-10 min-h-10 max-h-10 shrink-0 border-b border-divider bg-background">
-          {toolbar}
-        </div>
+        <div className="h-10 min-h-10 max-h-10 shrink-0 border-b border-divider bg-background">{toolbar}</div>
       ) : null}
 
       <div className="relative flex min-h-0 min-w-0 flex-1">

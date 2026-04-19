@@ -24,11 +24,7 @@ import {
 } from "@officeai/pptx";
 import { buildBlankPptx, buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
-import {
-  ConnectorContextBar,
-  type ConnectorAction,
-  type ConnectorStylePatch,
-} from "./ConnectorContextBar";
+import { ConnectorContextBar, type ConnectorAction, type ConnectorStylePatch } from "./ConnectorContextBar";
 import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
 import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
@@ -36,6 +32,13 @@ import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { handleUndoRedo, isFormField } from "@/lib/undo-redo";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
+import {
+  PresenceSlot,
+  roomIdForSource,
+  useCommandBroadcast,
+  useRealtimeRoom,
+  useStableTabId,
+} from "@/lib/realtime";
 import {
   EditorShell,
   EmptyState,
@@ -48,12 +51,7 @@ import {
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
-import {
-  PRODUCT_FILE_TYPES,
-  downloadBlob,
-  openFile,
-  saveFile,
-} from "@/lib/files/file-service";
+import { PRODUCT_FILE_TYPES, downloadBlob, openFile, saveFile } from "@/lib/files/file-service";
 import { convertViaServer } from "@/lib/files/convert-client";
 import {
   parseSlideRange,
@@ -405,10 +403,7 @@ export function PptxEditor({
       // A pending agent mutation that no longer applies after
       // an undo gets flipped to `rejected` with the
       // `rebase-failed` code; previously it just disappeared.
-      if (
-        mutation.status === "rejected" &&
-        mutation.rejection?.code === "rebase-failed"
-      ) {
+      if (mutation.status === "rejected" && mutation.rejection?.code === "rebase-failed") {
         pushToastRef.current?.(
           "warn",
           `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
@@ -596,12 +591,7 @@ export function PptxEditor({
         switch (format.id) {
           case "pptx": {
             const buf = await a.exportFile();
-            await saveFile(
-              new Uint8Array(buf),
-              downloadName,
-              format.mime,
-              undefined
-            );
+            await saveFile(new Uint8Array(buf), downloadName, format.mime, undefined);
             break;
           }
           case "pdf":
@@ -744,9 +734,7 @@ export function PptxEditor({
     return null;
   }, [slide, textSelection, selectedShape, tick]);
 
-  const activeTextAlignment = useMemo<
-    "left" | "center" | "right" | "justify" | null
-  >(() => {
+  const activeTextAlignment = useMemo<"left" | "center" | "right" | "justify" | null>(() => {
     if (!activeTextShape) return null;
     const paraIdx = textSelection?.paragraph ?? 0;
     const para = activeTextShape.txBody.paragraphs[paraIdx];
@@ -1046,12 +1034,9 @@ export function PptxEditor({
   // from inside the canvas once the user finishes their drag — that's
   // what makes the experience feel like a real drawing tool instead
   // of a "click button → guess where the line landed" form.
-  const startConnectorTool = useCallback(
-    (connectorType: "straight" | "elbow" | "curved") => {
-      setConnectorTool((prev) => (prev?.type === connectorType ? null : { type: connectorType }));
-    },
-    []
-  );
+  const startConnectorTool = useCallback((connectorType: "straight" | "elbow" | "curved") => {
+    setConnectorTool((prev) => (prev?.type === connectorType ? null : { type: connectorType }));
+  }, []);
   const exitConnectorTool = useCallback(() => setConnectorTool(null), []);
 
   // Apply a partial style patch from the floating connector mini-bar.
@@ -1993,6 +1978,25 @@ export function PptxEditor({
     ungroupSelectedShape,
   ]);
 
+  const tabFallback = useStableTabId("pptx");
+  const realtimeRoomId = useMemo<string | null>(() => {
+    if (!ready) return null;
+    if (!tabFallback && !initialSource) return null;
+    return roomIdForSource({
+      product: "pptx",
+      src: initialSource?.url,
+      tabFallback,
+    });
+  }, [ready, initialSource, tabFallback]);
+  const realtimeRoom = useRealtimeRoom({
+    roomId: realtimeRoomId,
+    product: "pptx",
+  });
+  useCommandBroadcast({
+    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    room: realtimeRoom.room,
+  });
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "pptx",
@@ -2066,6 +2070,7 @@ export function PptxEditor({
     <>
       <EditorShell
         adapter={adapter}
+        topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           <PptxToolbar
             disabled={!ready}
@@ -2197,7 +2202,9 @@ export function PptxEditor({
                         connectorTool={connectorTool}
                         onConnectorToolExit={exitConnectorTool}
                       />
-                      {selectedShape && selectedShape.kind === "connector" && selectedShapeIds.length === 1 ? (
+                      {selectedShape &&
+                      selectedShape.kind === "connector" &&
+                      selectedShapeIds.length === 1 ? (
                         <div className="pointer-events-auto absolute left-1/2 top-2 z-20 -translate-x-1/2">
                           <ConnectorContextBar
                             connector={selectedShape}

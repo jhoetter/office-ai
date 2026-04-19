@@ -94,11 +94,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
   const state = EditorState.create({
     schema: docxSchema,
     doc: initialDoc,
-    plugins: [
-      keymap(busUndoRedoKeymap(agent)),
-      keymap(baseKeymap),
-      ...(opts.extraPlugins ?? []),
-    ],
+    plugins: [keymap(busUndoRedoKeymap(agent)), keymap(baseKeymap), ...(opts.extraPlugins ?? [])],
   });
 
   // Counts mutations that the funnel has dispatched into the bus and is
@@ -301,10 +297,9 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
  * silently letting the browser pop up its own undo on the live
  * document surface.
  */
-function busUndoRedoKeymap(agent: DocxAgent): Record<
-  string,
-  (state: EditorState, dispatch?: (tr: Transaction) => void, view?: EditorView) => boolean
-> {
+function busUndoRedoKeymap(
+  agent: DocxAgent
+): Record<string, (state: EditorState, dispatch?: (tr: Transaction) => void, view?: EditorView) => boolean> {
   const undo = (): boolean => {
     if (agent.canUndo()) agent.undo();
     return true;

@@ -114,7 +114,9 @@ test.describe("export dialog — PPTX", () => {
     await expect(page.getByTestId("shell-export-option-slideRange")).toBeVisible();
   });
 
-  test("Current slide JPEG dialog exposes scale + quality (and downloads with -slideN suffix)", async ({ page }) => {
+  test("Current slide JPEG dialog exposes scale + quality (and downloads with -slideN suffix)", async ({
+    page,
+  }) => {
     await gotoPptxEditor(page);
 
     await page.getByTestId("shell-export").click();

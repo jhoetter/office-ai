@@ -567,14 +567,8 @@ export function Grid(props: GridProps): ReactNode {
   // invalidated by every scroll event. (See the wrappers in the
   // render block below.) `topFor` / `leftFor` now collapse to the
   // same scroll-free formula for every cell regardless of freeze.
-  const topFor = useCallback(
-    (r: number): number => HEADER_ROW_HEIGHT + (rowYs[r] ?? 0),
-    [rowYs]
-  );
-  const leftFor = useCallback(
-    (c: number): number => HEADER_COL_WIDTH + (colXs[c] ?? 0),
-    [colXs]
-  );
+  const topFor = useCallback((r: number): number => HEADER_ROW_HEIGHT + (rowYs[r] ?? 0), [rowYs]);
+  const leftFor = useCallback((c: number): number => HEADER_COL_WIDTH + (colXs[c] ?? 0), [colXs]);
 
   // Global mouse handlers for the fill-handle drag. Lives here (after
   // colXs / rowYs are computed) so the cursor → cell hit-test sees

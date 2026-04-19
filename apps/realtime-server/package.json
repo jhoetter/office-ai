@@ -1,0 +1,25 @@
+{
+  "name": "@officeai/realtime-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tiny y-websocket server bundled with the workspace. Started by `make dev` alongside next dev so the editor host can drive multi-user collaboration on localhost without an external service.",
+  "type": "module",
+  "main": "./src/server.ts",
+  "scripts": {
+    "dev": "node --experimental-strip-types src/server.ts",
+    "start": "node --experimental-strip-types src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.{ts,tsx}\""
+  },
+  "dependencies": {
+    "yjs": "^13.6.20",
+    "y-protocols": "^1.0.6",
+    "lib0": "^0.2.117",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5"
+  }
+}

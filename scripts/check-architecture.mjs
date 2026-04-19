@@ -46,10 +46,12 @@ const ALLOWED_INTERNAL_DEPS = {
   "@officeai/design-tokens": [],
   "@officeai/text-formatting": [],
   "@officeai/comments": [],
+  "@officeai/realtime": ["@officeai/core"],
   "@officeai/ui": [
     "@officeai/design-tokens",
     "@officeai/text-formatting",
     "@officeai/comments",
+    "@officeai/realtime",
   ],
   "@officeai/docx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
   "@officeai/xlsx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
@@ -60,6 +62,7 @@ const ALLOWED_INTERNAL_DEPS = {
     "@officeai/xlsx",
     "@officeai/pptx",
   ],
+  "@officeai/realtime-server": [],
   "@officeai/integration-tests": [
     "@officeai/core",
     "@officeai/docx",
@@ -77,6 +80,7 @@ const ALLOWED_INTERNAL_DEPS = {
     "@officeai/design-tokens",
     "@officeai/text-formatting",
     "@officeai/comments",
+    "@officeai/realtime",
   ],
 };
 
@@ -94,6 +98,7 @@ const FORBIDDEN_EXTERNAL_DEPS = {
   "@officeai/agent": ["react", "react-dom", "next"],
   "@officeai/design-tokens": ["react", "react-dom", "next"],
   "@officeai/text-formatting": ["react", "react-dom", "next"],
+  "@officeai/realtime": ["react", "react-dom", "next"],
 };
 
 function tryReadPkg(pkgDir) {

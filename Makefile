@@ -86,7 +86,10 @@ install:
 # — Next.js HMR will pick up the new dist on next request.
 dev:
 	pnpm build
-	pnpm --filter @officeai/web dev
+	pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev
+
+dev-realtime:
+	pnpm --filter @officeai/realtime-server dev
 
 build:
 	pnpm build

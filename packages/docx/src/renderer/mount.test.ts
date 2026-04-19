@@ -48,8 +48,7 @@ afterEach(() => {
  * so we mirror PM's own platform check and set only the right
  * one.
  */
-const isMacPlatform =
-  typeof navigator !== "undefined" && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
+const isMacPlatform = typeof navigator !== "undefined" && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 function modKey(key: string, opts: { shift?: boolean } = {}): KeyboardEvent {
   return new KeyboardEvent("keydown", {
     key,
@@ -79,9 +78,7 @@ describe("mountDocxEditor — undo / redo keymap routes through the bus", () => 
       expect(agent.canUndo()).toBe(true);
 
       const undo = vi.spyOn(agent, "undo");
-      const handled = mount.view.someProp("handleKeyDown", (fn) =>
-        fn(mount.view, modKey("z"))
-      );
+      const handled = mount.view.someProp("handleKeyDown", (fn) => fn(mount.view, modKey("z")));
       expect(handled).toBe(true);
       expect(undo).toHaveBeenCalledTimes(1);
     } finally {
@@ -118,9 +115,7 @@ describe("mountDocxEditor — undo / redo keymap routes through the bus", () => 
     try {
       expect(agent.canUndo()).toBe(false);
       const undo = vi.spyOn(agent, "undo");
-      const handled = mount.view.someProp("handleKeyDown", (fn) =>
-        fn(mount.view, modKey("z"))
-      );
+      const handled = mount.view.someProp("handleKeyDown", (fn) => fn(mount.view, modKey("z")));
       // The PM keymap consumes the event (returns true) so the
       // browser doesn't fire its own contenteditable undo on the
       // editor surface — that was a known phantom-edit source.

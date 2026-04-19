@@ -29,11 +29,7 @@ function EditorPageInner() {
   const [ready, setReady] = useState(false);
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden">
-      <DocxEditor
-        onBootstrapReady={setReady}
-        initialSource={initialSource}
-        initialBlank={initialBlank}
-      />
+      <DocxEditor onBootstrapReady={setReady} initialSource={initialSource} initialBlank={initialBlank} />
       <LoadingScreen variant="splash" product="docx" show={!ready} />
     </main>
   );

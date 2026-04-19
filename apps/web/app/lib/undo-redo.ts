@@ -102,10 +102,7 @@ export function isRedoChord(e: KeyChord): boolean {
  * the wrapping div. To handle that, we let callers pass an
  * `editorSurface` element to opt that subtree out of the guard.
  */
-export function isFormField(
-  target: EventTarget | null,
-  editorSurface?: Element | null
-): boolean {
+export function isFormField(target: EventTarget | null, editorSurface?: Element | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (editorSurface && editorSurface.contains(target)) return false;
   const tag = target.tagName;

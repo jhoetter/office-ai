@@ -1,21 +1,7 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import {
-  FileCode,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileType2,
-  Presentation,
-  X,
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FileCode, FileImage, FileSpreadsheet, FileText, FileType2, Presentation, X } from "lucide-react";
 import { cn } from "@officeai/ui";
 import { InlineSpinner } from "./InlineSpinner";
 import type {
@@ -42,10 +28,7 @@ export interface ExportDialogProps {
   /** Fired when the user clicks Export. The dialog stays open until
    * the promise resolves so the product can show progress; closes on
    * success, surfaces the error otherwise. */
-  readonly onExport: (
-    format: ExportFormat,
-    options: ExportOptionValues
-  ) => Promise<void> | void;
+  readonly onExport: (format: ExportFormat, options: ExportOptionValues) => Promise<void> | void;
 }
 
 const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
@@ -96,12 +79,10 @@ export function ExportDialog({
   onExport,
 }: ExportDialogProps): ReactNode {
   const grouped = useMemo(() => groupFormats(formats), [formats]);
-  const [selectedId, setSelectedId] = useState<string | undefined>(
-    initialFormatId ?? formats[0]?.id
+  const [selectedId, setSelectedId] = useState<string | undefined>(initialFormatId ?? formats[0]?.id);
+  const [optionState, setOptionState] = useState<Record<string, ExportOptionValues>>(() =>
+    seedOptionState(formats)
   );
-  const [optionState, setOptionState] = useState<
-    Record<string, ExportOptionValues>
-  >(() => seedOptionState(formats));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -182,11 +163,7 @@ export function ExportDialog({
 
         {/* Body: format list + options */}
         <div className="flex min-h-0 flex-1">
-          <FormatList
-            grouped={grouped}
-            selectedId={selected.id}
-            onSelect={setSelectedId}
-          />
+          <FormatList grouped={grouped} selectedId={selected.id} onSelect={setSelectedId} />
           <OptionsPane
             format={selected}
             fields={fields}
@@ -315,9 +292,7 @@ function OptionsPane({
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
       <div className="mb-3">
         <div className="text-base font-medium text-foreground">{format.label}</div>
-        {format.description ? (
-          <p className="mt-1 text-xs text-secondary">{format.description}</p>
-        ) : null}
+        {format.description ? <p className="mt-1 text-xs text-secondary">{format.description}</p> : null}
       </div>
       {fields.length === 0 ? (
         <p className="text-xs text-tertiary">No options for this format.</p>
@@ -373,8 +348,7 @@ function OptionField({
       );
     }
     case "toggle": {
-      const current =
-        typeof value === "boolean" ? value : field.control.defaultValue;
+      const current = typeof value === "boolean" ? value : field.control.defaultValue;
       return (
         <label className="flex items-center gap-2 text-sm text-foreground">
           <input
@@ -390,8 +364,7 @@ function OptionField({
       );
     }
     case "text": {
-      const current =
-        typeof value === "string" ? value : field.control.defaultValue ?? "";
+      const current = typeof value === "string" ? value : (field.control.defaultValue ?? "");
       return (
         <label className="flex flex-col gap-1 text-sm text-foreground">
           <span id={labelId} className="text-xs font-medium text-secondary">
@@ -505,9 +478,7 @@ function guessIcon(format: ExportFormat): ExportFormatIcon {
   }
 }
 
-function groupFormats(
-  formats: ReadonlyArray<ExportFormat>
-): ReadonlyArray<{
+function groupFormats(formats: ReadonlyArray<ExportFormat>): ReadonlyArray<{
   readonly group: ExportFormatGroup;
   readonly items: ReadonlyArray<ExportFormat>;
 }> {
@@ -544,9 +515,7 @@ function defaultGroup(format: ExportFormat): ExportFormatGroup {
   }
 }
 
-function seedOptionState(
-  formats: ReadonlyArray<ExportFormat>
-): Record<string, ExportOptionValues> {
+function seedOptionState(formats: ReadonlyArray<ExportFormat>): Record<string, ExportOptionValues> {
   const out: Record<string, ExportOptionValues> = {};
   for (const fmt of formats) {
     if (!fmt.optionFields || fmt.optionFields.length === 0) continue;

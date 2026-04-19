@@ -364,13 +364,7 @@ function isKnownSide(s: string): s is ConnectorSide {
 }
 
 function validateDash(d: ConnectorDashStylePayload): ConnectorDashStyle {
-  if (
-    d === "solid" ||
-    d === "dashed" ||
-    d === "dotted" ||
-    d === "longDash" ||
-    d === "dashDot"
-  ) {
+  if (d === "solid" || d === "dashed" || d === "dotted" || d === "longDash" || d === "dashDot") {
     return d;
   }
   throw makeError("invalid-payload", `unknown dash style: ${d}`);

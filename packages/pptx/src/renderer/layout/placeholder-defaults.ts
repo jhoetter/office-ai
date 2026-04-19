@@ -207,10 +207,7 @@ export function findLayoutPlaceholder(
  * (the user perceives it as "the placeholder has no clickable
  * area").
  */
-export function resolvedShapeBoundingBox(
-  shape: Shape,
-  layout: SlideLayout | undefined
-): BoundingBox | null {
+export function resolvedShapeBoundingBox(shape: Shape, layout: SlideLayout | undefined): BoundingBox | null {
   if (shape.position && shape.size) {
     return {
       x: shape.position.xEmu,

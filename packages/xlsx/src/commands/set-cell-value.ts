@@ -91,8 +91,7 @@ export const setCellValueHandler: CommandHandler<SetCellValuePayload, XlsxSnapsh
         for (const [sName, map] of sheetUpdates) {
           const ws = nextWorkbook.sheets.find((s) => s.name === sName);
           if (!ws) continue;
-          const updated: Sheet =
-            sName === sheet.name ? { ...nextSheet, cells: map } : { ...ws, cells: map };
+          const updated: Sheet = sName === sheet.name ? { ...nextSheet, cells: map } : { ...ws, cells: map };
           nextWorkbook = replaceSheet(nextWorkbook, updated);
           if (sName === sheet.name) nextSheet = updated;
         }
@@ -137,4 +136,3 @@ function cellValuesEqual(a: CellValue, b: CellValue): boolean {
   }
   return false;
 }
-

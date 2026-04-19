@@ -25,12 +25,7 @@ import {
   saveFile as saveFileViaService,
 } from "@/lib/files/file-service";
 import { convertViaServer } from "@/lib/files/convert-client";
-import {
-  sheetToCsv,
-  sheetToTsv,
-  workbookToCsvZip,
-  workbookToJson,
-} from "./lib/export-data";
+import { sheetToCsv, sheetToTsv, workbookToCsvZip, workbookToJson } from "./lib/export-data";
 import {
   XlsxAgent,
   assignRefColors,
@@ -93,6 +88,13 @@ import { InsertChartDialog } from "./InsertChartDialog";
 import type { ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
+import {
+  PresenceSlot,
+  roomIdForSource,
+  useCommandBroadcast,
+  useRealtimeRoom,
+  useStableTabId,
+} from "@/lib/realtime";
 import { TextToColumnsPopover } from "./TextToColumnsPopover";
 import { FilterDropdown } from "./FilterDropdown";
 import { sniffDelimiter } from "@officeai/xlsx";
@@ -412,10 +414,7 @@ export function XlsxEditor({
         // Without this toast a pending agent mutation that
         // becomes inconsistent after an undo just vanishes —
         // the user has no way to know what happened.
-        if (
-          mutation.status === "rejected" &&
-          mutation.rejection?.code === "rebase-failed"
-        ) {
+        if (mutation.status === "rejected" && mutation.rejection?.code === "rebase-failed") {
           pushToast(
             "warn",
             `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
@@ -585,9 +584,7 @@ export function XlsxEditor({
   // surfaced, the EmptyState is the recovery UI the user should see
   // — the splash's job is done.
   useEffect(() => {
-    const ready = initialLoadFailed
-      ? true
-      : Boolean(agent && activeSheet && snapshot);
+    const ready = initialLoadFailed ? true : Boolean(agent && activeSheet && snapshot);
     onBootstrapReady?.(ready);
   }, [agent, activeSheet, snapshot, initialLoadFailed, onBootstrapReady]);
 
@@ -1357,9 +1354,7 @@ export function XlsxEditor({
         const allSheets = snapshotRef.current?.root.sheets ?? [];
         // Skip hidden / very-hidden sheets so the chord matches what
         // the tab strip actually shows the user.
-        const visible = allSheets.filter(
-          (s) => s.state !== "hidden" && s.state !== "veryHidden"
-        );
+        const visible = allSheets.filter((s) => s.state !== "hidden" && s.state !== "veryHidden");
         if (visible.length === 0) return;
         e.preventDefault();
         const idx = Math.max(
@@ -1394,9 +1389,7 @@ export function XlsxEditor({
         const a = agentRef.current;
         if (!a) return;
         const r = selectionToRange(selection);
-        const anchorCell = activeSheet.cells.get(
-          cellKey(selection.anchor.row, selection.anchor.col)
-        );
+        const anchorCell = activeSheet.cells.get(cellKey(selection.anchor.row, selection.anchor.col));
         const anchorFormula = anchorCell?.formula?.text ?? null;
         const anchorValue: CellValue = anchorCell?.value ?? null;
         for (let row = r.start.row; row <= r.end.row; row++) {
@@ -1404,21 +1397,19 @@ export function XlsxEditor({
             if (row === selection.anchor.row && col === selection.anchor.col) continue;
             const ref = formatA1({ row, col });
             const cmd = anchorFormula
-              ? ({
+              ? {
                   type: "xlsx:set-cell-formula" as const,
                   payload: { sheet: activeSheet.name, ref, formula: anchorFormula },
                   source: "human" as const,
-                })
-              : ({
+                }
+              : {
                   type: "xlsx:set-cell-value" as const,
                   payload: { sheet: activeSheet.name, ref, value: anchorValue },
                   source: "human" as const,
-                });
+                };
             void a
               .applyCommand(cmd)
-              .catch((err: unknown) =>
-                pushToast("error", err instanceof Error ? err.message : String(err))
-              );
+              .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
           }
         }
         return;
@@ -1661,9 +1652,7 @@ export function XlsxEditor({
             payload: { sheet: activeSheet.name, ref, value: serial },
             source: "human",
           })
-          .catch((err: unknown) =>
-            pushToast("error", err instanceof Error ? err.message : String(err))
-          );
+          .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
         // Built-in numFmtIds: 14 = m/d/yyyy, 19 = h:mm:ss AM/PM.
         // Pushed through `onApplyFormat` so multi-area selections
         // (Ctrl-clicked extras) also pick up the format.
@@ -1934,10 +1923,7 @@ export function XlsxEditor({
         switch (format.id) {
           case "xlsx": {
             const buf = await a.exportFile();
-            downloadBlob(
-              new Blob([buf as BlobPart], { type: format.mime }),
-              downloadName
-            );
+            downloadBlob(new Blob([buf as BlobPart], { type: format.mime }), downloadName);
             break;
           }
           case "pdf":
@@ -3850,6 +3836,25 @@ export function XlsxEditor({
     dispatchOrToast,
   ]);
 
+  const tabFallback = useStableTabId("xlsx");
+  const realtimeRoomId = useMemo<string | null>(() => {
+    if (!agent) return null;
+    if (!tabFallback && !initialSource) return null;
+    return roomIdForSource({
+      product: "xlsx",
+      src: initialSource?.url,
+      tabFallback,
+    });
+  }, [agent, initialSource, tabFallback]);
+  const realtimeRoom = useRealtimeRoom({
+    roomId: realtimeRoomId,
+    product: "xlsx",
+  });
+  useCommandBroadcast({
+    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    room: realtimeRoom.room,
+  });
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "xlsx",
@@ -3905,6 +3910,7 @@ export function XlsxEditor({
     <>
       <EditorShell
         adapter={adapter}
+        topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           snapshot ? (
             <Toolbar

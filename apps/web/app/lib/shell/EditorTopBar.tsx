@@ -24,13 +24,7 @@ import {
 import { ThemeToggle, cn } from "@officeai/ui";
 import { ExportDialog } from "./ExportDialog";
 import { InlineSpinner } from "./InlineSpinner";
-import type {
-  ExportFormat,
-  ExportFormatGroup,
-  ExportFormatIcon,
-  ProductAdapter,
-  SaveState,
-} from "./types";
+import type { ExportFormat, ExportFormatGroup, ExportFormatIcon, ProductAdapter, SaveState } from "./types";
 
 export interface EditorTopBarProps {
   readonly adapter: ProductAdapter;
@@ -40,6 +34,12 @@ export interface EditorTopBarProps {
   readonly railOpen: boolean;
   /** Editing the filename triggers this. */
   readonly onRenameFilename?: (next: string) => void;
+  /**
+   * Optional ambient slot rendered just left of the file ops. Used
+   * by the realtime layer to hang a `PresenceStack` on every editor
+   * without each one re-implementing the placement.
+   */
+  readonly extras?: React.ReactNode;
 }
 
 /**
@@ -63,6 +63,7 @@ export function EditorTopBar({
   onToggleRail,
   railOpen,
   onRenameFilename,
+  extras,
 }: EditorTopBarProps): React.ReactNode {
   return (
     <header className="flex h-11 items-center gap-2 border-b border-divider bg-background px-3" role="banner">
@@ -84,6 +85,13 @@ export function EditorTopBar({
       <SaveStatePill state={adapter.saveState} />
 
       <div className="flex-1" />
+
+      {extras ? (
+        <>
+          <div className="mr-1 inline-flex items-center">{extras}</div>
+          <Sep />
+        </>
+      ) : null}
 
       {/* Primary file ops */}
       <ToolbarIcon
@@ -287,10 +295,7 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
   const [dialogInitialId, setDialogInitialId] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLDivElement | null>(null);
 
-  const groups = useMemo(
-    () => groupFormats(adapter.exportFormats),
-    [adapter.exportFormats]
-  );
+  const groups = useMemo(() => groupFormats(adapter.exportFormats), [adapter.exportFormats]);
 
   useEffect(() => {
     if (!open) return;
@@ -402,11 +407,7 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
                       </span>
                       <span className="min-w-0 flex-1 truncate">{fmt.label}</span>
                       {dialogish ? (
-                        <span
-                          className="text-tertiary"
-                          aria-label="Has options"
-                          title="Has options"
-                        >
+                        <span className="text-tertiary" aria-label="Has options" title="Has options">
                           <Sliders size={11} />
                         </span>
                       ) : null}
@@ -516,9 +517,7 @@ function defaultGroup(format: ExportFormat): ExportFormatGroup {
   }
 }
 
-function groupFormats(
-  formats: ReadonlyArray<ExportFormat>
-): ReadonlyArray<{
+function groupFormats(formats: ReadonlyArray<ExportFormat>): ReadonlyArray<{
   readonly group: ExportFormatGroup;
   readonly items: ReadonlyArray<ExportFormat>;
 }> {

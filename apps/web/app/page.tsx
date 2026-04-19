@@ -2,15 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  FileSpreadsheet,
-  FileText,
-  FolderOpen,
-  Loader2,
-  Plus,
-  Presentation,
-  Sparkles,
-} from "lucide-react";
+import { FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 
 type Kind = "docx" | "xlsx" | "pptx";
@@ -65,26 +57,27 @@ const NEW_ACTIONS: ReadonlyArray<NewAction> = [
   },
 ];
 
-const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; label: string; accent: string }> = {
-  docx: {
-    editorPath: "/editor",
-    icon: FileText,
-    label: "Word document",
-    accent: "text-[var(--office-blue)]",
-  },
-  xlsx: {
-    editorPath: "/xlsx-editor",
-    icon: FileSpreadsheet,
-    label: "Excel workbook",
-    accent: "text-emerald-600 dark:text-emerald-400",
-  },
-  pptx: {
-    editorPath: "/pptx-editor",
-    icon: Presentation,
-    label: "PowerPoint deck",
-    accent: "text-orange-600 dark:text-orange-400",
-  },
-};
+const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; label: string; accent: string }> =
+  {
+    docx: {
+      editorPath: "/editor",
+      icon: FileText,
+      label: "Word document",
+      accent: "text-[var(--office-blue)]",
+    },
+    xlsx: {
+      editorPath: "/xlsx-editor",
+      icon: FileSpreadsheet,
+      label: "Excel workbook",
+      accent: "text-emerald-600 dark:text-emerald-400",
+    },
+    pptx: {
+      editorPath: "/pptx-editor",
+      icon: Presentation,
+      label: "PowerPoint deck",
+      accent: "text-orange-600 dark:text-orange-400",
+    },
+  };
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -144,8 +137,8 @@ export default function HomePage() {
           Start a new file or open a sample.
         </h1>
         <p className="max-w-prose text-sm text-secondary">
-          Word-, Excel- and PowerPoint-compatible editors built around an OOXML-faithful core. Every
-          change — human or AI — flows through the same typed command bus.
+          Word-, Excel- and PowerPoint-compatible editors built around an OOXML-faithful core. Every change —
+          human or AI — flows through the same typed command bus.
         </p>
       </section>
 
@@ -167,10 +160,7 @@ export default function HomePage() {
                   <span className="text-sm font-medium text-foreground">{action.title}</span>
                   <span className="text-xs text-secondary">{action.subtitle}</span>
                 </div>
-                <Plus
-                  size={16}
-                  className="text-tertiary transition group-hover:text-[var(--office-blue)]"
-                />
+                <Plus size={16} className="text-tertiary transition group-hover:text-[var(--office-blue)]" />
               </Link>
             );
           })}
@@ -211,8 +201,8 @@ export default function HomePage() {
 
       <footer className="mt-12 flex flex-wrap items-center gap-3 border-t border-divider pt-6 text-xs text-tertiary">
         <span>
-          OOXML round-trip · typed command bus · headless{" "}
-          <code className="font-mono">office-agent</code> CLI for server-side AI workflows.
+          OOXML round-trip · typed command bus · headless <code className="font-mono">office-agent</code> CLI
+          for server-side AI workflows.
         </span>
       </footer>
     </main>

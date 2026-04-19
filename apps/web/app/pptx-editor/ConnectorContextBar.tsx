@@ -13,12 +13,7 @@ import {
   Unlink,
   X,
 } from "lucide-react";
-import type {
-  ConnectorDashStyle,
-  ConnectorEndShape,
-  ConnectorShape,
-  ConnectorType,
-} from "@officeai/pptx";
+import type { ConnectorDashStyle, ConnectorEndShape, ConnectorShape, ConnectorType } from "@officeai/pptx";
 
 /**
  * Floating "format" mini-bar shown when a single connector is
@@ -145,10 +140,8 @@ export function ConnectorContextBar({
   const currentDash: ConnectorDashStyle = stroke?.dash ?? "solid";
   const currentHead = connector.headEnd ?? "none";
   const currentTail = connector.tailEnd ?? "none";
-  const hasAnchoredEndpoint =
-    connector.start.kind === "anchored" || connector.end.kind === "anchored";
-  const canReroute =
-    connector.connectorType === "elbow" && (connector.waypoints?.length ?? 0) > 0;
+  const hasAnchoredEndpoint = connector.start.kind === "anchored" || connector.end.kind === "anchored";
+  const canReroute = connector.connectorType === "elbow" && (connector.waypoints?.length ?? 0) > 0;
 
   return (
     <div
@@ -161,24 +154,13 @@ export function ConnectorContextBar({
         e.stopPropagation();
       }}
     >
-      <SegmentedTypePicker
-        value={connector.connectorType}
-        onChange={(t) => onPatch({ connectorType: t })}
-      />
+      <SegmentedTypePicker value={connector.connectorType} onChange={(t) => onPatch({ connectorType: t })} />
       <Sep />
       <WidthPicker valueEmu={currentWidth} onChange={(w) => onPatch({ strokeWidthEmu: w })} />
       <DashPicker value={currentDash} onChange={(d) => onPatch({ strokeDash: d })} />
       <Sep />
-      <EndPicker
-        kind="tail"
-        value={currentTail}
-        onChange={(e) => onPatch({ tailEnd: e })}
-      />
-      <EndPicker
-        kind="head"
-        value={currentHead}
-        onChange={(e) => onPatch({ headEnd: e })}
-      />
+      <EndPicker kind="tail" value={currentTail} onChange={(e) => onPatch({ tailEnd: e })} />
+      <EndPicker kind="head" value={currentHead} onChange={(e) => onPatch({ headEnd: e })} />
       <Sep />
       <ColorPicker value={currentColor} onChange={(c) => onPatch({ strokeColor: c })} />
       {onAction ? (
@@ -221,13 +203,7 @@ interface ActionButtonProps {
   readonly children: React.ReactNode;
 }
 
-function ActionButton({
-  testId,
-  label,
-  disabled,
-  onClick,
-  children,
-}: ActionButtonProps): React.ReactElement {
+function ActionButton({ testId, label, disabled, onClick, children }: ActionButtonProps): React.ReactElement {
   return (
     <button
       type="button"

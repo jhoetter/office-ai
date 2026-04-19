@@ -145,7 +145,7 @@ describe("office-agent pptx subcommand group", () => {
     expect(movedAgent.getSnapshot().root.slides.length).toBe(baseLen + 1);
   });
 
-  it("pptx set-paragraph-alignment writes algn=\"ctr\" into the slide XML", async () => {
+  it('pptx set-paragraph-alignment writes algn="ctr" into the slide XML', async () => {
     const baseAgent = await loadDeterministic(SINGLE);
     const textShape = baseAgent.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "text");
     if (!textShape) throw new Error("expected text shape");
@@ -174,9 +174,9 @@ describe("office-agent pptx subcommand group", () => {
     );
     expect(code).toBe(0);
     const after = await loadDeterministic(out);
-    const ts = after.getSnapshot().root.slides[0].shapes.find(
-      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
-    );
+    const ts = after
+      .getSnapshot()
+      .root.slides[0].shapes.find((s): s is import("@officeai/pptx").TextShape => s.id === textShape.id);
     expect(ts?.txBody.paragraphs[0].properties.alignment).toBe("center");
   });
 
@@ -227,9 +227,9 @@ describe("office-agent pptx subcommand group", () => {
     );
     expect(code).toBe(0);
     const after = await loadDeterministic(cleared);
-    const ts = after.getSnapshot().root.slides[0].shapes.find(
-      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
-    );
+    const ts = after
+      .getSnapshot()
+      .root.slides[0].shapes.find((s): s is import("@officeai/pptx").TextShape => s.id === textShape.id);
     for (const p of ts?.txBody.paragraphs ?? []) {
       expect(p.properties.alignment).toBeUndefined();
     }
@@ -264,9 +264,9 @@ describe("office-agent pptx subcommand group", () => {
     );
     expect(code).toBe(0);
     const after = await loadDeterministic(out);
-    const ts = after.getSnapshot().root.slides[0].shapes.find(
-      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
-    );
+    const ts = after
+      .getSnapshot()
+      .root.slides[0].shapes.find((s): s is import("@officeai/pptx").TextShape => s.id === textShape.id);
     expect(ts?.txBody.bodyPrRaw?.attrs.anchor).toBe("ctr");
 
     code = await runCli(
@@ -287,9 +287,9 @@ describe("office-agent pptx subcommand group", () => {
     );
     expect(code).toBe(0);
     const cleanedAgent = await loadDeterministic(cleared);
-    const ts2 = cleanedAgent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is import("@officeai/pptx").TextShape => s.id === textShape.id
-    );
+    const ts2 = cleanedAgent
+      .getSnapshot()
+      .root.slides[0].shapes.find((s): s is import("@officeai/pptx").TextShape => s.id === textShape.id);
     expect(ts2?.txBody.bodyPrRaw?.attrs.anchor).toBeUndefined();
   });
 

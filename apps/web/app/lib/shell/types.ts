@@ -41,13 +41,7 @@ export type ExportFormatKind = "instant" | "dialog";
  *  - `data`    — CSV/TSV/JSON/MD;
  *  - `images`  — PNG/SVG/JPEG bundles;
  *  - `current` — exports of the current page / slide / sheet. */
-export type ExportFormatGroup =
-  | "deck"
-  | "native"
-  | "pdf-web"
-  | "data"
-  | "images"
-  | "current";
+export type ExportFormatGroup = "deck" | "native" | "pdf-web" | "data" | "images" | "current";
 
 /** Lucide icon family used for the format row. The shell maps these
  * to concrete icons (kept here so adapters don't import lucide). */

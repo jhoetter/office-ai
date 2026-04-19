@@ -24,7 +24,7 @@ describe("pptx:set-text-anchor", () => {
     ["top", "t"],
     ["middle", "ctr"],
     ["bottom", "b"],
-  ] as const)("sets anchor=%s and re-emits anchor=\"%s\"", async (anchor, expected) => {
+  ] as const)('sets anchor=%s and re-emits anchor="%s"', async (anchor, expected) => {
     const agent = await loadAgent("04-multi-shape.pptx");
     const slide = agent.getSnapshot().root.slides[0];
     const ts = findFirstTextShape(slide.shapes);
@@ -37,9 +37,7 @@ describe("pptx:set-text-anchor", () => {
     });
     expect(m.status).toBe("approved");
 
-    const updated = agent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is TextShape => s.id === ts.id
-    )!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     expect(updated.txBody.bodyPrRaw?.attrs.anchor).toBe(expected);
 
     const out = await agent.exportFile();
@@ -65,9 +63,7 @@ describe("pptx:set-text-anchor", () => {
       source: "system",
     });
 
-    const updated = agent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is TextShape => s.id === ts.id
-    )!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     expect(updated.txBody.bodyPrRaw?.attrs.anchor).toBeUndefined();
     expect(updated.txBody.bodyPrRaw?.rawAttrs["@_anchor"]).toBeUndefined();
   });
@@ -128,9 +124,7 @@ describe("pptx:set-text-anchor", () => {
       source: "system",
     });
 
-    const updated = agent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is TextShape => s.id === ts.id
-    )!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     expect(updated.txBody.bodyPrRaw).toBeDefined();
     expect(updated.txBody.bodyPrRaw?.attrs.anchor).toBe("ctr");
   });

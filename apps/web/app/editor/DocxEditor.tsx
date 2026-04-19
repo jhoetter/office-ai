@@ -89,6 +89,13 @@ import { CommentComposer } from "./CommentComposer";
 import { collectRevisions } from "@/lib/format-helpers";
 import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
+import {
+  PresenceSlot,
+  roomIdForSource,
+  useCommandBroadcast,
+  useRealtimeRoom,
+  useStableTabId,
+} from "@/lib/realtime";
 
 const DOCX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
   {
@@ -343,10 +350,7 @@ export function DocxEditor({
         // one notify per rejected mutation with the
         // `rebase-failed` code. The user sees a toast instead
         // of the suggestion silently disappearing.
-        if (
-          mutation.status === "rejected" &&
-          mutation.rejection?.code === "rebase-failed"
-        ) {
+        if (mutation.status === "rejected" && mutation.rejection?.code === "rebase-failed") {
           pushToast(
             "warn",
             `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
@@ -520,10 +524,7 @@ export function DocxEditor({
         switch (format.id) {
           case "docx": {
             const buf = await agent.exportFile();
-            downloadBlob(
-              new Blob([buf as BlobPart], { type: format.mime }),
-              downloadName
-            );
+            downloadBlob(new Blob([buf as BlobPart], { type: format.mime }), downloadName);
             break;
           }
           case "pdf":
@@ -533,9 +534,7 @@ export function DocxEditor({
             // trim whitespace defensively because the dialog's text
             // input can carry leading/trailing spaces from copy-paste.
             const pageRange =
-              format.id === "pdf" && typeof options?.pageRange === "string"
-                ? options.pageRange.trim()
-                : "";
+              format.id === "pdf" && typeof options?.pageRange === "string" ? options.pageRange.trim() : "";
             const out = await convertViaServer({
               bytes: new Uint8Array(buf),
               sourceExt: "docx",
@@ -1567,6 +1566,25 @@ export function DocxEditor({
     return para ? `${para} · ${stats}` : stats;
   }, [activeParagraphIndex, docInfo]);
 
+  const tabFallback = useStableTabId("docx");
+  const realtimeRoomId = useMemo<string | null>(() => {
+    if (!agentReady) return null;
+    if (!tabFallback && !initialSource) return null;
+    return roomIdForSource({
+      product: "docx",
+      src: initialSource?.url,
+      tabFallback,
+    });
+  }, [agentReady, initialSource, tabFallback]);
+  const realtimeRoom = useRealtimeRoom({
+    roomId: realtimeRoomId,
+    product: "docx",
+  });
+  useCommandBroadcast({
+    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    room: realtimeRoom.room,
+  });
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "docx",
@@ -1622,6 +1640,7 @@ export function DocxEditor({
     <>
       <EditorShell
         adapter={adapter}
+        topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           <Toolbar
             agentReady={agentReady}

@@ -25,6 +25,9 @@ export { TextFormatBar, type TextFormatBarProps } from "./primitives/text-format
 export { CommentsSidebar, type CommentsSidebarProps } from "./primitives/comments-sidebar";
 export { CommentComposer, type CommentComposerProps } from "./primitives/comment-composer";
 
+/* Realtime presence */
+export { PresenceStack, type PresenceStackProps, type PresencePeer } from "./primitives/presence-stack";
+
 /* Hooks */
 export { useFocusTrap } from "./hooks/use-focus-trap";
 

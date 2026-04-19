@@ -92,22 +92,13 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ message: "Missing `file` field." }, { status: 400 });
   }
   if (!isSourceExt(sourceExtRaw)) {
-    return NextResponse.json(
-      { message: `Unsupported sourceExt "${sourceExtRaw}".` },
-      { status: 400 }
-    );
+    return NextResponse.json({ message: `Unsupported sourceExt "${sourceExtRaw}".` }, { status: 400 });
   }
   if (!isTargetExt(targetExtRaw)) {
-    return NextResponse.json(
-      { message: `Unsupported targetExt "${targetExtRaw}".` },
-      { status: 400 }
-    );
+    return NextResponse.json({ message: `Unsupported targetExt "${targetExtRaw}".` }, { status: 400 });
   }
   if (file.size > MAX_INPUT_BYTES) {
-    return NextResponse.json(
-      { message: `Input exceeds ${MAX_INPUT_BYTES} bytes.` },
-      { status: 413 }
-    );
+    return NextResponse.json({ message: `Input exceeds ${MAX_INPUT_BYTES} bytes.` }, { status: 413 });
   }
 
   const sourceExt = sourceExtRaw;
@@ -123,10 +114,7 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
     if (!PAGE_RANGE_RE.test(pageRangeRaw)) {
-      return NextResponse.json(
-        { message: `Invalid pageRange "${pageRangeRaw}".` },
-        { status: 400 }
-      );
+      return NextResponse.json({ message: `Invalid pageRange "${pageRangeRaw}".` }, { status: 400 });
     }
     pageRange = pageRangeRaw.replace(/\s+/g, "");
   }
@@ -246,10 +234,7 @@ function runSoffice(args: {
         return;
       }
       reject(
-        new ConvertError(
-          `LibreOffice exited with code ${code}.${stderr ? ` ${stderr.trim()}` : ""}`,
-          500
-        )
+        new ConvertError(`LibreOffice exited with code ${code}.${stderr ? ` ${stderr.trim()}` : ""}`, 500)
       );
     });
   });

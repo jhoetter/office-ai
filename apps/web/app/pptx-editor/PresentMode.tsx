@@ -298,7 +298,9 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
       const w = containerAspect > props.aspectRatio ? rect.height * props.aspectRatio : rect.width;
       const h = containerAspect > props.aspectRatio ? rect.height : rect.width / props.aspectRatio;
       setSize((prev) =>
-        prev && Math.abs(prev.width - w) < 0.5 && Math.abs(prev.height - h) < 0.5 ? prev : { width: w, height: h }
+        prev && Math.abs(prev.width - w) < 0.5 && Math.abs(prev.height - h) < 0.5
+          ? prev
+          : { width: w, height: h }
       );
     };
     update();
@@ -308,10 +310,7 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
     return () => ro.disconnect();
   }, [props.aspectRatio]);
   return (
-    <div
-      ref={fitRef}
-      className="flex h-full w-full items-center justify-center"
-    >
+    <div ref={fitRef} className="flex h-full w-full items-center justify-center">
       {size ? (
         <div
           className="bg-white shadow-2xl"
