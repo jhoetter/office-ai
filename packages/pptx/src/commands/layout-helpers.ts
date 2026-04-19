@@ -61,12 +61,39 @@ export interface AddedLayout {
  * Find a layout in the deck matching `kind`, or produce a synthesised
  * built-in layout part the caller can attach. Returns the resolved layout
  * + (when synthesised) all the side-effects needed to install it.
+ *
+ * When the deck already carries a layout of the requested kind but it has
+ * NO placeholder slots (e.g. minimal sample decks ship a `type="title"`
+ * layout with an empty `<p:spTree>`), we still want the user-visible
+ * placeholder hints ("Click to add title", …) to appear when the user
+ * picks that layout from the menu. We layer the built-in template's
+ * placeholder specs onto the existing layout in-memory so cloning stamps
+ * them onto the slide; the on-disk layout part is left untouched, which
+ * keeps the deck's other layout-specific data (theme, colour map,
+ * relationships) intact.
  */
 export function resolveLayoutForKind(snapshot: PptxSnapshot, kind: LayoutKindPayload): LayoutResolution {
   for (const l of snapshot.root.layouts.values()) {
-    if (l.kind === (kind as LayoutKind)) return { layout: l };
+    if (l.kind !== (kind as LayoutKind)) continue;
+    if (l.placeholders.length > 0) return { layout: l };
+    const enriched = builtinPlaceholdersFor(kind);
+    if (enriched.length === 0) return { layout: l };
+    return { layout: { ...l, placeholders: enriched } };
   }
   return synthesiseBuiltinLayout(snapshot, kind);
+}
+
+/**
+ * Parse the built-in template for `kind` purely to recover its
+ * placeholder specs. The synthesised layout is discarded — only the
+ * placeholders are returned, so callers can stamp them onto a slide
+ * without installing a duplicate layout part.
+ */
+function builtinPlaceholdersFor(kind: LayoutKindPayload): ReadonlyArray<PlaceholderSpec> {
+  const tmpl = BUILTIN_LAYOUTS[kind];
+  if (!tmpl) return [];
+  const layout = parseSlideLayoutFromXml(`${LAYOUT_DIR}__builtin_${kind}.xml`, tmpl.xml);
+  return layout.placeholders;
 }
 
 function synthesiseBuiltinLayout(snapshot: PptxSnapshot, kind: LayoutKindPayload): LayoutResolution {

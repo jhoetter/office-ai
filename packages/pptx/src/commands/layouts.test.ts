@@ -115,6 +115,50 @@ describe("pptx:set-slide-layout", () => {
     expect(text).toBe("Hello");
   });
 
+  it("falls back to built-in placeholders when the deck's matching layout has none", async () => {
+    // Construct a deck whose `title` layout is intentionally placeholder-
+    // less (mirrors `apps/web/app/lib/sample-pptx.ts` and other minimal
+    // decks). Picking "Title Slide" from the menu must still stamp the
+    // built-in `ctrTitle` + `subTitle` placeholders so the user sees the
+    // ghost-hint UI on the new slide.
+    const agent = await loadAgent("01-blank.pptx");
+    const snap = agent.getSnapshot();
+    const titleLayout = [...snap.root.layouts.values()].find((l) => l.kind === "title");
+    if (!titleLayout) {
+      // Stub a title layout into the deck so the test stays meaningful
+      // even if the fixture stops shipping one.
+      const partPath = "ppt/slideLayouts/__empty_title.xml";
+      const enriched = new Map(snap.root.layouts);
+      enriched.set(partPath, {
+        partPath,
+        kind: "title",
+        name: "Title Slide",
+        placeholders: [],
+        raw: { tag: "p:sldLayout", attrs: {}, rawAttrs: {}, subtree: [] },
+      });
+      // @ts-expect-error – test-only mutation to seed the scenario
+      snap.root.layouts = enriched;
+    } else {
+      // Force the existing title layout to have zero placeholders.
+      // @ts-expect-error – test-only mutation to seed the scenario
+      titleLayout.placeholders = [];
+    }
+    await agent.applyCommand({
+      type: "pptx:add-slide",
+      payload: { layoutKind: "title" },
+      source: "human",
+    });
+    const after = agent.getSnapshot();
+    const newSlide = after.root.slides[after.root.slides.length - 1];
+    const placeholderShapes = newSlide.shapes.filter(
+      (s) => s.kind === "text" && (s as TextShape).placeholder
+    ) as TextShape[];
+    expect(placeholderShapes.length).toBeGreaterThan(0);
+    const types = new Set(placeholderShapes.map((s) => s.placeholder?.type));
+    expect(types.has("ctrTitle")).toBe(true);
+    expect(types.has("subTitle")).toBe(true);
+  });
+
   it("rejects when neither layoutPartPath nor layoutKind is supplied", async () => {
     const agent = await loadAgent("01-blank.pptx");
     const m = await agent.applyCommand({
