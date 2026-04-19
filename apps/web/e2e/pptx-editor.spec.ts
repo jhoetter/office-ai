@@ -81,27 +81,59 @@ test.describe("pptx-editor route", () => {
     await expect(errorToasts).toHaveCount(0);
   });
 
-  test("zoom slider rescales the slide canvas and resets to 100%", async ({ page }) => {
+  test("connector menu arms the tool, surfaces a banner, and Esc exits", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    const trigger = page.getByTestId("pptx-connector-menu-trigger");
+    await expect(trigger).toHaveAttribute("data-active-type", "");
+
+    await trigger.click();
+    await page.getByTestId("pptx-connector-elbow").click();
+
+    // The trigger now reports the armed type and the canvas shows the
+    // tool banner. We deliberately don't synthesise a draw gesture
+    // here — the snap walker depends on real layout boxes which jsdom
+    // / Playwright headless can't faithfully reproduce. The banner
+    // presence is the single most reliable observable signal that
+    // the tool entered armed mode.
+    await expect(trigger).toHaveAttribute("data-active-type", "elbow");
+    await expect(page.getByTestId("pptx-connector-tool-banner")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(trigger).toHaveAttribute("data-active-type", "");
+    await expect(page.getByTestId("pptx-connector-tool-banner")).toHaveCount(0);
+  });
+
+  test("re-clicking the active connector type exits the tool", async ({ page }) => {
+    await gotoPptxEditor(page);
+
+    const trigger = page.getByTestId("pptx-connector-menu-trigger");
+    await trigger.click();
+    await page.getByTestId("pptx-connector-straight").click();
+    await expect(trigger).toHaveAttribute("data-active-type", "straight");
+
+    await trigger.click();
+    const item = page.getByTestId("pptx-connector-straight");
+    await expect(item).toHaveAttribute("aria-pressed", "true");
+    await item.click();
+    await expect(trigger).toHaveAttribute("data-active-type", "");
+  });
+
+  test("zoom controls rescale the slide canvas and reset to 100%", async ({ page }) => {
     await gotoPptxEditor(page);
 
     const canvas = page.getByTestId("pptx-slide-canvas");
     await expect(canvas).toBeVisible();
     await expect(canvas).toHaveAttribute("data-zoom", "1.00");
 
-    const slider = page.getByTestId("pptx-zoom-slider");
-    // React intercepts native value setters on `<input>` to track changes;
-    // calling the prototype setter directly is the supported way to drive
-    // a controlled range input from outside the React event system.
-    await slider.evaluate((el) => {
-      const input = el as HTMLInputElement;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, "1.5");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    // The shared `ZoomControl` lives in the status bar across all
+    // products: minus button, percent label (click = reset to 100 %),
+    // plus button. Five plus-clicks = 1.0 → 1.5.
+    const zoomIn = page.getByTestId("zoom-in");
+    for (let i = 0; i < 5; i++) await zoomIn.click();
     await expect(canvas).toHaveAttribute("data-zoom", "1.50");
 
-    await page.getByTestId("pptx-zoom-reset").click();
+    await page.getByTestId("zoom-percent").click();
     await expect(canvas).toHaveAttribute("data-zoom", "1.00");
   });
 });

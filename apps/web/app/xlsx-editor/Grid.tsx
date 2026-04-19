@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
 import { ImageOverlay, type AnchorFromPx } from "./ImageOverlay";
@@ -277,6 +277,20 @@ export function Grid(props: GridProps): ReactNode {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
+  // Wrappers around the col-header band, row-header band, and corner cell.
+  // We pin the headers to the viewport edge by writing `transform` directly
+  // on these refs from the scroll handler — bypassing React's setState
+  // round-trip that visibly lags the headers during fast scrolls (e.g.
+  // racing horizontally from column AA back to A: the row-number column
+  // would drift, then snap, every few frames). React state still updates
+  // (rAF-coalesced below) so anything that genuinely needs to re-render
+  // on scroll change (selection overlays, freeze dividers, frozen-cell
+  // pinning) sees the new position; the headers just no longer wait for it.
+  const colHeadersWrapperRef = useRef<HTMLDivElement | null>(null);
+  const rowHeadersWrapperRef = useRef<HTMLDivElement | null>(null);
+  const cornerRef = useRef<HTMLDivElement | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const latestScrollRef = useRef({ top: 0, left: 0 });
   // Transient yellow pulse painted over a cell after the comments
   // sidebar issues a "scroll to me" request. Cleared by a timer so
   // the highlight fades on its own.
@@ -284,12 +298,30 @@ export function Grid(props: GridProps): ReactNode {
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   // C11 — Open data-validation list popover for the named cell.
   const [dvPicker, setDvPicker] = useState<{ row: number; col: number } | null>(null);
-  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  // Seed with the window's inner dimensions (or zero on the server)
+  // so the very first synchronous render has a non-zero visible
+  // window. With { 0, 0 } the first paint resolves to a single
+  // overscanned cell, which the user sees as a blank surface for
+  // one frame before the layout effect commits the real measurement
+  // and triggers a second render. The overestimate doesn't hurt:
+  // MAX_VISIBLE_COLS / MAX_VISIBLE_ROWS still cap the materialised
+  // window at ≤256×200 cells regardless of viewport size, and the
+  // ResizeObserver below reconciles immediately on mount.
+  const [viewport, setViewport] = useState(() =>
+    typeof window === "undefined"
+      ? { width: 0, height: 0 }
+      : { width: window.innerWidth, height: window.innerHeight }
+  );
   // True while the user holds the primary mouse button after a
   // mousedown on a body cell — drag-extends the selection.
   const draggingRef = useRef(false);
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the very first paint already
+  // has a non-zero `viewport`. With useEffect the initial paint
+  // measured 0×0 — combined with the 25M-px inner spacer that's
+  // enough for the browser to spend a long layout slice on the very
+  // first frame, which the user perceives as "the page is frozen".
+  useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onResize = () => setViewport({ width: el.clientWidth, height: el.clientHeight });
@@ -388,7 +420,41 @@ export function Grid(props: GridProps): ReactNode {
 
   const onScroll = useCallback((ev: React.UIEvent<HTMLDivElement>) => {
     const el = ev.currentTarget;
-    setScroll({ top: el.scrollTop, left: el.scrollLeft });
+    const top = el.scrollTop;
+    const left = el.scrollLeft;
+    latestScrollRef.current = { top, left };
+    // Synchronous, sub-frame pin: write the transforms before React
+    // even hears about the scroll event. Keeps the row / col headers
+    // and the corner cell perfectly locked to the viewport edge even
+    // when the user flings the scrollbar from column AA back to A —
+    // without this, the headers visibly drift behind the body until
+    // React commits the next setScroll.
+    if (rowHeadersWrapperRef.current) {
+      rowHeadersWrapperRef.current.style.transform = `translateX(${left}px)`;
+    }
+    if (colHeadersWrapperRef.current) {
+      colHeadersWrapperRef.current.style.transform = `translateY(${top}px)`;
+    }
+    if (cornerRef.current) {
+      cornerRef.current.style.transform = `translate(${left}px, ${top}px)`;
+    }
+    // Coalesce the React state update to one per animation frame so
+    // a flick-scroll fires ~60 setScroll calls/sec instead of one per
+    // wheel event (which can be 120+ Hz on trackpads).
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      setScroll(latestScrollRef.current);
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
   }, []);
 
   // C1 — Real Excel bounds (1,048,576 × 16,384) demand an
@@ -468,9 +534,29 @@ export function Grid(props: GridProps): ReactNode {
   // ≤ the given pixel position, exactly what the old prefix-array
   // binary search returned.
   const startRow = Math.max(0, dims.rowAtY(scroll.top) - OVERSCAN);
-  const endRow = Math.min(TOTAL_ROWS - 1, dims.rowAtY(scroll.top + visibleH) + OVERSCAN);
   const startCol = Math.max(0, dims.colAtX(scroll.left) - OVERSCAN);
-  const endCol = Math.min(TOTAL_COLS - 1, dims.colAtX(scroll.left + visibleW) + OVERSCAN);
+  // Hard cap on the visible window. The geometric formula
+  // `dims.colAtX(scroll.left + visibleW)` is correct only when the
+  // scroll container's `clientWidth` reflects the actual viewport; if
+  // a parent flex item misses `min-w-0` it can balloon to the inner
+  // spacer's width (millions of px), which would have us materialise
+  // ~16k column DOM nodes per render and freeze the page. Even a 4K
+  // monitor at the smallest col width (24px) shows ≤180 cols / ≤90
+  // rows, so 256 / 200 is a generous safety net that turns this class
+  // of layout regression from "tab is unusable" into "viewport looks
+  // slightly clipped until the bug is fixed".
+  const MAX_VISIBLE_COLS = 256;
+  const MAX_VISIBLE_ROWS = 200;
+  const endRow = Math.min(
+    TOTAL_ROWS - 1,
+    startRow + MAX_VISIBLE_ROWS,
+    dims.rowAtY(scroll.top + visibleH) + OVERSCAN
+  );
+  const endCol = Math.min(
+    TOTAL_COLS - 1,
+    startCol + MAX_VISIBLE_COLS,
+    dims.colAtX(scroll.left + visibleW) + OVERSCAN
+  );
 
   // C3 — Freeze panes. The first `freezeRows` rows / `freezeCols`
   // columns stay pinned to the viewport edge as the user scrolls,
@@ -575,10 +661,25 @@ export function Grid(props: GridProps): ReactNode {
     };
   }, [fillDrag, dims, onFill]);
 
+  // Cap the inner spacer at a size the compositor handles without
+  // jank. The "real" virtual sheet is 1,048,576 × 16,384 cells,
+  // which at our default 24 × 88 px metrics works out to roughly
+  // 25 M × 1.4 M pixels. Chrome can technically lay out scroll
+  // containers up to ~33 M px, but allocating a 25 M-tall scroll
+  // thumb on every layout pass is enough to trip the browser's
+  // "page unresponsive" prompt on slower machines.
+  //
+  // ~5 M px ≈ 200 K rows of headroom — well past anything a user
+  // would scroll to manually. Far cells are still reachable via
+  // the name box, Ctrl+End, or Find: each one calls `el.scrollTo`
+  // which is bounded by the spacer, but also recenters the visible
+  // window so the unreachable rows still resolve via the lazy
+  // `dims.rowAtY` math.
+  const MAX_SPACER_PX = 5_000_000;
   const innerStyle: CSSProperties = {
     position: "relative",
-    width: HEADER_COL_WIDTH + totalWidth,
-    height: HEADER_ROW_HEIGHT + totalHeight,
+    width: Math.min(HEADER_COL_WIDTH + totalWidth, MAX_SPACER_PX),
+    height: Math.min(HEADER_ROW_HEIGHT + totalHeight, MAX_SPACER_PX),
   };
 
   // Index merged regions by top-left and by "covered" cells. The
@@ -625,6 +726,15 @@ export function Grid(props: GridProps): ReactNode {
     for (const r of rowsToRender) {
       if (sheet.hiddenRows.has(r)) continue;
       const rFrozen = r < freezeRows;
+      // Bucket each row's cells under a small wrapper so React's
+      // commit phase doesn't run an O(N²) `getHostSibling` walk
+      // over a single 600-sibling parent. The wrapper is a
+      // zero-size, absolutely-positioned div: cells inside still
+      // position themselves with their original `top` / `left`
+      // (relative to this wrapper, which is anchored at 0,0 so
+      // the math is unchanged). On dev builds this turns a
+      // multi-second initial mount into ~tens of milliseconds.
+      const rowChildren: ReactNode[] = [];
       for (const c of colsToRender) {
         const cFrozen = c < freezeCols;
         const cellFrozen = rFrozen || cFrozen;
@@ -647,11 +757,12 @@ export function Grid(props: GridProps): ReactNode {
         // editor owns the cell's contents while it's open.
         const isLiveDrafting =
           !isEditing && !!liveEditDraft && liveEditDraft.row === r && liveEditDraft.col === c;
-        out.push(
+        rowChildren.push(
           <div
             key={`c-${r}-${c}`}
             data-testid={`cell-${colToLetter(c)}${r + 1}`}
             role="gridcell"
+            className="xlsx-grid-cell"
             aria-selected={inSel || undefined}
             onMouseDown={(e) => {
               if (isEditing) return;
@@ -695,19 +806,10 @@ export function Grid(props: GridProps): ReactNode {
               onContextMenu({ kind: "cell", row: r, col: c }, { x: e.clientX, y: e.clientY });
             }}
             style={{
-              position: "absolute",
               top: topFor(r),
               left: leftFor(c),
               width: colXs[c + widthCells]! - colXs[c]!,
               height: rowYs[r + heightCells]! - rowYs[r]!,
-              boxSizing: "border-box",
-              borderRight: "1px solid var(--divider)",
-              borderBottom: "1px solid var(--divider)",
-              padding: "0 6px",
-              display: "flex",
-              alignItems: "center",
-              fontSize: 12,
-              lineHeight: `${ROW_HEIGHT - 2}px`,
               // The bounding-box marquee draws the outline; per-cell
               // background only differentiates the anchor cell from the
               // rest of the selection (Excel-like white anchor).
@@ -716,12 +818,6 @@ export function Grid(props: GridProps): ReactNode {
                   ? "var(--background)"
                   : "var(--ai-violet-light)"
                 : "var(--background)",
-              color: "var(--foreground)",
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-              textOverflow: "ellipsis",
-              cursor: "cell",
-              userSelect: "none",
               // Frozen cells sit above scrolled cells so their opaque
               // background hides the scrolled rows/cols underneath. The
               // anchor cell stays one tier above its row's z-index so
@@ -850,6 +946,25 @@ export function Grid(props: GridProps): ReactNode {
           </div>
         );
       }
+      if (rowChildren.length === 0) continue;
+      out.push(
+        <div
+          key={`rg-${r}`}
+          // Sibling-bucket wrapper — see note above. Zero-size +
+          // `position: absolute` so it doesn't influence layout
+          // and absolute children inside resolve to the same
+          // pixel position they always have.
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 0,
+            height: 0,
+          }}
+        >
+          {rowChildren}
+        </div>
+      );
     }
     return out;
   }, [
@@ -1267,7 +1382,12 @@ export function Grid(props: GridProps): ReactNode {
         }}
         style={{
           position: "absolute",
-          top: scroll.top,
+          // Vertical pinning lives on the wrapper transform now (see
+          // colHeadersWrapperRef in onScroll). Horizontal pinning for
+          // frozen columns still needs to react to scroll.left because
+          // each frozen column has its own pinned X position relative
+          // to the rest of the band.
+          top: 0,
           left: HEADER_COL_WIDTH + colXs[c]! + (cFrozen ? scroll.left : 0),
           width: colWidth,
           height: HEADER_ROW_HEIGHT,
@@ -1384,7 +1504,12 @@ export function Grid(props: GridProps): ReactNode {
         style={{
           position: "absolute",
           top: HEADER_ROW_HEIGHT + rowYs[r]! + (rFrozen ? scroll.top : 0),
-          left: scroll.left,
+          // Horizontal pinning lives on the wrapper transform now (see
+          // rowHeadersWrapperRef in onScroll). Vertical pinning for
+          // frozen rows still needs to react to scroll.top because each
+          // frozen row has its own pinned Y position relative to the
+          // rest of the band.
+          left: 0,
           width: HEADER_COL_WIDTH,
           height: rowHeight,
           boxSizing: "border-box",
@@ -1449,22 +1574,63 @@ export function Grid(props: GridProps): ReactNode {
       }}
     >
       <div style={innerStyle}>
-        {/* Top-left corner — anchored to the viewport edge. */}
+        {/* Top-left corner — anchored to the viewport edge via the
+            imperative `cornerRef.style.transform` write in `onScroll`.
+            The base position is (0, 0); the translate keeps it
+            pixel-locked to the viewport corner during fast scrolls
+            without waiting for a React re-render. */}
         <div
+          ref={cornerRef}
           style={{
             position: "absolute",
-            top: scroll.top,
-            left: scroll.left,
+            top: 0,
+            left: 0,
             width: HEADER_COL_WIDTH,
             height: HEADER_ROW_HEIGHT,
             background: "var(--surface)",
             borderRight: "1px solid var(--divider)",
             borderBottom: "1px solid var(--divider)",
             zIndex: 3,
+            willChange: "transform",
+            transform: `translate(${scroll.left}px, ${scroll.top}px)`,
           }}
         />
-        {colHeaders}
-        {rowHeaders}
+        {/* Column header band — wrapped so the whole band can be
+            translateY'd in one synchronous DOM write per scroll
+            event. Individual headers position themselves with `top: 0`
+            and use `left: HEADER_COL_WIDTH + colXs[c]` (their natural
+            X within the spacer); the wrapper provides the vertical
+            pin to the viewport top edge. */}
+        <div
+          ref={colHeadersWrapperRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 0,
+            height: 0,
+            willChange: "transform",
+            transform: `translateY(${scroll.top}px)`,
+          }}
+        >
+          {colHeaders}
+        </div>
+        {/* Row header band — wrapped for the same reason as the column
+            header band, but pinned horizontally instead. */}
+        <div
+          ref={rowHeadersWrapperRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 0,
+            height: 0,
+            willChange: "transform",
+            transform: `translateX(${scroll.left}px)`,
+          }}
+        >
+          {rowHeaders}
+        </div>
         {cellList}
         {sheet.charts.map((chart) => {
           const a = chart.anchor;

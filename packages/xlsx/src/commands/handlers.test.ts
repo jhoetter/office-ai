@@ -92,6 +92,33 @@ describe("xlsx:set-cell-value", () => {
     expect(m.rejection?.code).toBe("invalid-ref");
   });
 
+  it("recomputes dependent formulas when an input value changes", async () => {
+    const { bus } = await makeBus("01-single-sheet-numbers.xlsx");
+    // Seed: B2 := 42, E8 := =B2 (cached value 42 by recalc inside set-cell-formula)
+    await bus.dispatch({
+      type: "xlsx:set-cell-value",
+      payload: { sheet: "Inventory", ref: "B2", value: 42 },
+    });
+    await bus.dispatch({
+      type: "xlsx:set-cell-formula",
+      payload: { sheet: "Inventory", ref: "E8", formula: "=B2" },
+    });
+    const seeded = bus.getWorking().root.sheets[0];
+    expect(seeded.cells.get(cellKey(7, 4))?.value).toBe(42);
+
+    // Now bump B2 → 44 via set-cell-value. E8 must follow.
+    const m = await bus.dispatch({
+      type: "xlsx:set-cell-value",
+      payload: { sheet: "Inventory", ref: "B2", value: 44 },
+    });
+    expect(m.status).toBe("approved");
+    const after = bus.getWorking().root.sheets[0];
+    expect(after.cells.get(cellKey(1, 1))?.value).toBe(44);
+    expect(after.cells.get(cellKey(7, 4))?.value).toBe(44);
+    // The dependent's formula text must be preserved.
+    expect(after.cells.get(cellKey(7, 4))?.formula?.text).toBe("B2");
+  });
+
   it("rejects formula-shaped string values", async () => {
     const { bus } = await makeBus("01-single-sheet-numbers.xlsx");
     const m = await bus.dispatch({

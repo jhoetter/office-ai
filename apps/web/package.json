@@ -9,6 +9,8 @@
     "lint": "eslint . && node scripts/check-editor-shell.mjs",
     "check:shell": "node scripts/check-editor-shell.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium"
   },
@@ -41,6 +43,7 @@
     "eslint-config-next": "^16",
     "postcss": "^8",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

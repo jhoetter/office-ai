@@ -19,7 +19,48 @@ export type ProductKind = "docx" | "xlsx" | "pptx";
  * render it. `unknown` is the no-document-open fallback. */
 export type SaveState = "saved" | "modified" | "saving" | "error" | "unknown";
 
-/** A single export choice in the `Export ▾` menu. */
+/** Whether selecting a format runs immediately ("instant") or first
+ * opens the rich Export dialog so the user can pick options
+ * ("dialog"). The shell branches on this from the dropdown. */
+export type ExportFormatKind = "instant" | "dialog";
+
+/** Visual grouping in the Export dialog left rail. The shell uses
+ * the order Native → PDF & web → Data → Images. */
+export type ExportFormatGroup = "native" | "pdf-web" | "data" | "images";
+
+/** Lucide icon family used for the format row. The shell maps these
+ * to concrete icons (kept here so adapters don't import lucide). */
+export type ExportFormatIcon = "doc" | "sheet" | "slides" | "pdf" | "image" | "code" | "text";
+
+/** Declarative description of a single option control rendered in
+ * the rich Export dialog. The shell renders these without knowing
+ * what the option does — the product reads the values back from the
+ * `ExportOptionValues` map in its `onExport` handler. */
+export interface ExportFormatOptionField {
+  readonly id: string;
+  readonly label: string;
+  /** Optional helper text shown beneath the control. */
+  readonly hint?: string;
+  readonly control:
+    | {
+        readonly type: "select";
+        readonly options: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+        readonly defaultId: string;
+      }
+    | { readonly type: "toggle"; readonly defaultValue: boolean }
+    | { readonly type: "text"; readonly placeholder?: string; readonly defaultValue?: string }
+    | {
+        readonly type: "multiSelect";
+        readonly options: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+        readonly defaultIds: ReadonlyArray<string>;
+      };
+}
+
+/** Values collected from the dialog and forwarded to `onExport`. */
+export type ExportOptionValue = string | boolean | ReadonlyArray<string>;
+export type ExportOptionValues = Readonly<Record<string, ExportOptionValue>>;
+
+/** A single export choice surfaced in the Export dropdown / dialog. */
 export interface ExportFormat {
   readonly id: string;
   /** Human label, e.g. "Word document (.docx)". */
@@ -29,6 +70,22 @@ export interface ExportFormat {
   readonly extension: string;
   /** MIME type for the Blob. */
   readonly mime: string;
+  /** "instant" runs `onExport` straight from the dropdown; "dialog"
+   * routes through the rich Export dialog so the user can configure
+   * options first. Optional for legacy adapters; defaults to
+   * "instant". */
+  readonly kind?: ExportFormatKind;
+  /** Visual grouping in the dialog left rail. Defaults to "native"
+   * for the primary format and "pdf-web" otherwise. */
+  readonly group?: ExportFormatGroup;
+  /** Icon hint for the dropdown / dialog. */
+  readonly icon?: ExportFormatIcon;
+  /** Optional one-line description shown in the dialog under the
+   * format label. */
+  readonly description?: string;
+  /** Declarative form fields surfaced in the dialog options pane.
+   * Omit for formats that have nothing to configure. */
+  readonly optionFields?: ReadonlyArray<ExportFormatOptionField>;
 }
 
 /** A single command exposed in the command palette. The `id` is used
@@ -132,7 +189,7 @@ export interface ProductAdapter {
   readonly exportFormats: ReadonlyArray<ExportFormat>;
   readonly onOpenFile: () => void;
   readonly onSave: () => Promise<void> | void;
-  readonly onExport: (format: ExportFormat) => Promise<void> | void;
+  readonly onExport: (format: ExportFormat, options?: ExportOptionValues) => Promise<void> | void;
 
   // ── History ──
   readonly canUndo: boolean;

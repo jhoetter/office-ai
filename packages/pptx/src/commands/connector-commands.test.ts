@@ -225,6 +225,180 @@ describe("connector reflow on shape edits", () => {
   });
 });
 
+describe("pptx:set-connector-endpoint quarter-point t", () => {
+  it("persists a clamped + 3-decimal-rounded t when supplied for an edge anchor", async () => {
+    const { agent, rect2, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-endpoint",
+      payload: {
+        slideIndex: 0,
+        shapeId: connector.id,
+        which: "end",
+        endpoint: {
+          kind: "anchored",
+          targetCNvPrId: rect2.cNvPrId,
+          side: "n",
+          t: 0.7777,
+        },
+      },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    expect(c.end.kind).toBe("anchored");
+    if (c.end.kind === "anchored") {
+      expect(c.end.t).toBe(0.778);
+    }
+  });
+
+  it("clamps an out-of-range t into [0, 1]", async () => {
+    const { agent, rect2, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-endpoint",
+      payload: {
+        slideIndex: 0,
+        shapeId: connector.id,
+        which: "end",
+        endpoint: { kind: "anchored", targetCNvPrId: rect2.cNvPrId, side: "n", t: 1.5 },
+      },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    if (c.end.kind === "anchored") expect(c.end.t).toBe(1);
+  });
+
+  it("drops t for the center anchor (it has no edge to interpolate along)", async () => {
+    const { agent, rect2, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-endpoint",
+      payload: {
+        slideIndex: 0,
+        shapeId: connector.id,
+        which: "end",
+        endpoint: { kind: "anchored", targetCNvPrId: rect2.cNvPrId, side: "center", t: 0.4 },
+      },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    if (c.end.kind === "anchored") expect(c.end.t).toBeUndefined();
+  });
+});
+
+describe("pptx:set-connector-waypoint", () => {
+  it("stores a finite waypoint at the requested segment index", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-waypoint",
+      payload: { slideIndex: 0, shapeId: connector.id, segmentIndex: 0, valueEmu: 250_000 },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    expect(c.waypoints).toEqual([250_000]);
+  });
+
+  it("pads earlier slots with 0 when writing past the current end", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-waypoint",
+      payload: { slideIndex: 0, shapeId: connector.id, segmentIndex: 2, valueEmu: 500_000 },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    expect(c.waypoints).toEqual([0, 0, 500_000]);
+  });
+
+  it("clears a waypoint by passing valueEmu: null", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-waypoint",
+      payload: { slideIndex: 0, shapeId: connector.id, segmentIndex: 0, valueEmu: 250_000 },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "pptx:set-connector-waypoint",
+      payload: { slideIndex: 0, shapeId: connector.id, segmentIndex: 0, valueEmu: null },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    expect(c.waypoints).toBeUndefined();
+  });
+
+  it("rejects non-integer segmentIndex", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    const m = await agent.applyCommand({
+      type: "pptx:set-connector-waypoint",
+      payload: { slideIndex: 0, shapeId: connector.id, segmentIndex: 1.5, valueEmu: 100 },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("invalid-payload");
+  });
+
+  it("rejects when the target shape is not a connector", async () => {
+    const { agent, rect1 } = await setupTwoShapesAndConnector();
+    const m = await agent.applyCommand({
+      type: "pptx:set-connector-waypoint",
+      payload: { slideIndex: 0, shapeId: rect1.id, segmentIndex: 0, valueEmu: 100 },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("invalid-target");
+  });
+});
+
+describe("pptx:set-connector-style strokeDash", () => {
+  it("persists a dashed stroke style", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-style",
+      payload: { slideIndex: 0, shapeId: connector.id, strokeDash: "dashed" },
+      source: "human",
+    });
+    const slide = agent.getSnapshot().root.slides[0];
+    const c = slide.shapes.find((s) => s.id === connector.id) as ConnectorShape;
+    expect(c.stroke?.dash).toBe("dashed");
+  });
+
+  it("emits <a:prstDash> in OOXML and survives a round-trip", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    await agent.applyCommand({
+      type: "pptx:set-connector-style",
+      payload: { slideIndex: 0, shapeId: connector.id, strokeDash: "dotted" },
+      source: "human",
+    });
+    const buf = await agent.exportFile();
+    const c = await ooxml.OoxmlContainer.load(buf);
+    const slide = agent.getSnapshot().root.slides[0];
+    const xml = c.readText(slide.partPath);
+    expect(xml).toContain("<a:prstDash");
+    const reloaded = await PptxAgent.fromBuffer(buf);
+    const cxn = reloaded
+      .getSnapshot()
+      .root.slides[0].shapes.find((s) => s.kind === "connector") as ConnectorShape | undefined;
+    expect(cxn?.stroke?.dash).toBe("dotted");
+  });
+
+  it("rejects an unknown dash style", async () => {
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    const m = await agent.applyCommand({
+      type: "pptx:set-connector-style",
+      payload: {
+        slideIndex: 0,
+        shapeId: connector.id,
+        strokeDash: "wiggly" as unknown as "solid",
+      },
+      source: "human",
+    });
+    expect(m.status).toBe("rejected");
+    expect(m.rejection?.code).toBe("invalid-payload");
+  });
+});
+
 describe("connector OOXML round-trip", () => {
   it("survives serialise → re-parse with anchors and style intact", async () => {
     const { agent, rect1, rect2 } = await setupTwoShapesAndConnector();

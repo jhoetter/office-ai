@@ -832,6 +832,7 @@ function parseCxnSp(entry: Record<string, unknown>, mintNodeId: IdMinter): Conne
         let widthEmu = 0;
         if (widthAttr && /^\d+$/.test(widthAttr)) widthEmu = Number(widthAttr);
         let color: string | undefined;
+        let dash: "solid" | "dashed" | "dotted" | undefined;
         for (const ln of elementEntries((c["a:ln"] as unknown[] | undefined) ?? [])) {
           const lnTag = ooxml.getTag(ln);
           if (lnTag === "a:solidFill") {
@@ -846,10 +847,13 @@ function parseCxnSp(entry: Record<string, unknown>, mintNodeId: IdMinter): Conne
           } else if (lnTag === "a:tailEnd") {
             const t = attrOf(ln, "type");
             if (t) tailEnd = mapEndShape(t);
+          } else if (lnTag === "a:prstDash") {
+            const v = attrOf(ln, "val");
+            if (v) dash = mapPrstDash(v);
           }
         }
-        if (color !== undefined || widthEmu > 0) {
-          stroke = { color: color ?? "000000", widthEmu };
+        if (color !== undefined || widthEmu > 0 || dash !== undefined) {
+          stroke = { color: color ?? "000000", widthEmu, ...(dash !== undefined ? { dash } : {}) };
         }
       }
       spPrTail.push(captureOpaque(c));
@@ -887,6 +891,16 @@ function mapPrstToConnectorType(prst: string): ConnectorType {
   if (prst.startsWith("bentConnector")) return "elbow";
   if (prst.startsWith("curvedConnector")) return "curved";
   return "unsupported";
+}
+
+function mapPrstDash(v: string): "solid" | "dashed" | "dotted" {
+  // PowerPoint exposes ~10 dash presets; we collapse them to the
+  // three the editor exposes. Anything unrecognised falls through to
+  // solid, which is the no-op default.
+  const k = v.toLowerCase();
+  if (k === "solid") return "solid";
+  if (k === "dot" || k === "sysdot") return "dotted";
+  return "dashed";
 }
 
 function mapEndShape(t: string): ConnectorEndShape {

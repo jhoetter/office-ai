@@ -28,6 +28,7 @@ import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx
 import { flattenCellXf } from "@officeai/xlsx";
 import { NUMBER_FORMAT_PRESETS, type NumberFormatPresetId } from "./styles";
 import type { Selection } from "./selection";
+import { ToolbarRow } from "../lib/shell";
 
 export interface ToolbarProps {
   readonly disabled: boolean;
@@ -229,10 +230,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
   );
 
   return (
-    <div
-      data-testid="xlsx-toolbar"
-      className="flex flex-wrap items-center gap-1 rounded-md border border-divider bg-surface px-2 py-1.5"
-    >
+    <ToolbarRow ariaLabel="Spreadsheet toolbar" testId="xlsx-toolbar">
       <ActionBtn
         icon={<Undo2 size={14} />}
         label="Undo (⌘Z)"
@@ -393,7 +391,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
           </option>
         ))}
       </select>
-    </div>
+    </ToolbarRow>
   );
 }
 

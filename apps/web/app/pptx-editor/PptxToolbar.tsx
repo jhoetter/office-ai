@@ -34,13 +34,12 @@ import {
   Triangle,
   Type,
   Ungroup,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import type { AlignMode, LayoutKindPayload, ReorderShapeMode, ShapePreset } from "@officeai/pptx";
 import { LayoutTemplate } from "lucide-react";
+import { ToolbarRow } from "../lib/shell";
 
 export interface PptxToolbarProps {
   readonly disabled: boolean;
@@ -59,6 +58,13 @@ export interface PptxToolbarProps {
   readonly onAddTextBox: () => void;
   readonly onAddShape: (preset: ShapePreset) => void;
   readonly onAddConnector: (connectorType: "straight" | "elbow" | "curved") => void;
+  /**
+   * Currently armed connector tool, if any. Drives the menu trigger's
+   * "active" styling so the user gets a clear toggle indicator while
+   * the tool is engaged (matches Figma / Slides where a pressed
+   * shape-tool button signals "click on the canvas to draw").
+   */
+  readonly connectorToolType: "straight" | "elbow" | "curved" | null;
   readonly onInsertImage: (file: File) => void;
   /**
    * D9 — replace the picture's bitmap behind the currently-selected
@@ -85,16 +91,12 @@ export interface PptxToolbarProps {
    * on the slide otherwise.
    */
   readonly onAddComment: () => void;
-  readonly zoom: number;
-  readonly minZoom: number;
-  readonly maxZoom: number;
-  readonly onZoomChange: (zoom: number) => void;
-  readonly onZoomReset: () => void;
   /**
    * D10 — kick off Present mode. The button is rightmost in the
-   * toolbar (next to Zoom) so users can scan the toolbar left-to-
-   * right edit-then-present, mirroring the PowerPoint ribbon's
-   * Slide Show tab placement.
+   * toolbar so users can scan the toolbar left-to-right edit-then-
+   * present, mirroring the PowerPoint ribbon's Slide Show tab
+   * placement. Zoom now lives in the shared status-bar `ZoomControl`
+   * so it sits in the same place across DOCX / XLSX / PPTX.
    */
   readonly onPresent: () => void;
   readonly canPresent: boolean;
@@ -117,27 +119,30 @@ const SHAPE_OPTIONS: ReadonlyArray<ShapeOption> = [
 ];
 
 export function PptxToolbar(props: PptxToolbarProps) {
-  const {
-    disabled,
-    hasSelection,
-    selectionCount,
-    currentFill,
-    textFormatProvider,
-    textFormatActive,
-    zoom,
-    minZoom,
-    maxZoom,
-    onZoomChange,
-    onZoomReset,
-  } = props;
+  const { disabled, hasSelection, selectionCount, currentFill, textFormatProvider, textFormatActive } = props;
   const [alignRelativeTo, setAlignRelativeTo] = React.useState<"selection" | "slide">("selection");
   const minAlignSelection = alignRelativeTo === "slide" ? 1 : 2;
   const canAlign = !disabled && selectionCount >= minAlignSelection;
   const canDistribute = !disabled && selectionCount >= 3;
-  const zoomPct = Math.round(zoom * 100);
   const imageInputRef = React.useRef<HTMLInputElement | null>(null);
   return (
-    <div className="flex flex-wrap items-center gap-1 px-3 py-1.5">
+    <ToolbarRow
+      ariaLabel="Slide toolbar"
+      testId="pptx-toolbar"
+      trailing={
+        <button
+          type="button"
+          onClick={props.onPresent}
+          disabled={!props.canPresent}
+          title="Start presentation (F5)"
+          data-testid="pptx-present"
+          className="inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Play size={14} />
+          <span className="hidden sm:inline">Present</span>
+        </button>
+      }
+    >
       <ToolbarButton
         onClick={props.onAddSlide}
         icon={<Plus size={14} />}
@@ -170,7 +175,11 @@ export function PptxToolbar(props: PptxToolbarProps) {
         disabled={disabled}
       />
       <ShapeMenu disabled={disabled} onPick={props.onAddShape} />
-      <ConnectorMenu disabled={disabled} onPick={props.onAddConnector} />
+      <ConnectorMenu
+        disabled={disabled}
+        onPick={props.onAddConnector}
+        activeType={props.connectorToolType}
+      />
       <ToolbarButton
         onClick={() => imageInputRef.current?.click()}
         icon={<ImageIcon size={14} />}
@@ -188,7 +197,10 @@ export function PptxToolbar(props: PptxToolbarProps) {
           e.target.value = "";
         }}
       />
-      {props.selectedIsPicture ? <PictureReplaceButton onReplace={props.onReplacePicture} /> : null}
+      <PictureReplaceButton
+        onReplace={props.onReplacePicture}
+        disabled={disabled || !props.selectedIsPicture}
+      />
       <ToolbarButton
         onClick={props.onDeleteShape}
         icon={<Trash2 size={14} />}
@@ -283,59 +295,12 @@ export function PptxToolbar(props: PptxToolbarProps) {
       <ToolbarButton
         onClick={props.onAddComment}
         icon={<MessageSquarePlus size={14} />}
-        label={hasSelection ? "Comment on selected shape" : "Add comment to slide"}
+        label="Comment"
+        title={hasSelection ? "Comment on selected shape" : "Add comment to slide"}
         disabled={disabled}
         testId="pptx-add-comment"
       />
-      <Sep />
-      <div className="ml-auto flex items-center gap-2 text-xs text-secondary">
-        <button
-          type="button"
-          onClick={props.onPresent}
-          disabled={!props.canPresent}
-          title="Start presentation (F5)"
-          data-testid="pptx-present"
-          className="inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Play size={14} />
-          <span className="hidden sm:inline">Present</span>
-        </button>
-        <ToolbarButton
-          onClick={() => onZoomChange(Math.max(minZoom, zoom - 0.1))}
-          icon={<ZoomOut size={14} />}
-          label="Zoom out"
-          disabled={disabled || zoom <= minZoom + 1e-6}
-        />
-        <input
-          type="range"
-          aria-label="Zoom"
-          data-testid="pptx-zoom-slider"
-          min={minZoom}
-          max={maxZoom}
-          step={0.05}
-          value={zoom}
-          disabled={disabled}
-          onChange={(e) => onZoomChange(Number(e.target.value))}
-          className="h-1 w-28 accent-[var(--accent)]"
-        />
-        <ToolbarButton
-          onClick={() => onZoomChange(Math.min(maxZoom, zoom + 0.1))}
-          icon={<ZoomIn size={14} />}
-          label="Zoom in"
-          disabled={disabled || zoom >= maxZoom - 1e-6}
-        />
-        <button
-          type="button"
-          onClick={onZoomReset}
-          disabled={disabled}
-          title="Reset zoom"
-          data-testid="pptx-zoom-reset"
-          className="min-w-[44px] rounded px-1.5 py-0.5 text-xs tabular-nums text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {zoomPct}%
-        </button>
-      </div>
-    </div>
+    </ToolbarRow>
   );
 }
 
@@ -347,19 +312,23 @@ interface ToolbarButtonProps {
   readonly onClick: () => void;
   readonly icon: React.ReactNode;
   readonly label: string;
+  /** Optional tooltip override; defaults to `label`. Use this when the
+   * tooltip wording depends on selection state but the visible label
+   * must stay fixed-width to keep the toolbar layout stable. */
+  readonly title?: string;
   readonly disabled?: boolean;
   readonly testId?: string;
 }
 
-function ToolbarButton({ onClick, icon, label, disabled, testId }: ToolbarButtonProps) {
+function ToolbarButton({ onClick, icon, label, title, disabled, testId }: ToolbarButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      title={label}
+      title={title ?? label}
       data-testid={testId}
-      className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
@@ -509,9 +478,10 @@ const CONNECTOR_OPTIONS: ReadonlyArray<ConnectorOption> = [
 interface ConnectorMenuProps {
   readonly disabled: boolean;
   readonly onPick: (type: "straight" | "elbow" | "curved") => void;
+  readonly activeType: "straight" | "elbow" | "curved" | null;
 }
 
-function ConnectorMenu({ disabled, onPick }: ConnectorMenuProps) {
+function ConnectorMenu({ disabled, onPick, activeType }: ConnectorMenuProps) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -523,15 +493,22 @@ function ConnectorMenu({ disabled, onPick }: ConnectorMenuProps) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
+  // Trigger reads "armed" when the connector tool is currently
+  // engaged. We use a tinted background instead of a heavy outline so
+  // the toolbar still feels tidy while clearly signalling the active
+  // tool — re-clicking the trigger then exits the tool, matching
+  // Slides/Figma's toggle pattern.
+  const armedClass = activeType ? "bg-hover ring-1 ring-purple-500/60" : "";
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        title="Connector"
+        title={activeType ? `Drawing ${activeType} connector — Esc to cancel` : "Connector"}
         data-testid="pptx-connector-menu-trigger"
-        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+        data-active-type={activeType ?? ""}
+        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${armedClass}`}
       >
         <Spline size={14} />
         <span className="hidden sm:inline">Connector</span>
@@ -543,22 +520,27 @@ function ConnectorMenu({ disabled, onPick }: ConnectorMenuProps) {
           data-testid="pptx-connector-menu"
           className="absolute left-0 top-full z-30 mt-1 grid w-40 grid-cols-1 gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-lg"
         >
-          {CONNECTOR_OPTIONS.map((opt) => (
-            <button
-              key={opt.type}
-              type="button"
-              role="menuitem"
-              data-testid={`pptx-connector-${opt.type}`}
-              onClick={() => {
-                setOpen(false);
-                onPick(opt.type);
-              }}
-              className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
-            >
-              {opt.icon}
-              <span>{opt.label}</span>
-            </button>
-          ))}
+          {CONNECTOR_OPTIONS.map((opt) => {
+            const isActive = activeType === opt.type;
+            return (
+              <button
+                key={opt.type}
+                type="button"
+                role="menuitem"
+                data-testid={`pptx-connector-${opt.type}`}
+                aria-pressed={isActive}
+                onClick={() => {
+                  setOpen(false);
+                  onPick(opt.type);
+                }}
+                className={`flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover ${isActive ? "bg-hover" : ""}`}
+              >
+                {opt.icon}
+                <span>{opt.label}</span>
+                {isActive ? <span className="ml-auto text-[10px] text-purple-500">●</span> : null}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -635,8 +617,12 @@ interface ColorWellProps {
 }
 
 function ColorWell({ label, value, disabled, showClear, onChange, onClear }: ColorWellProps) {
+  // The clear ("×") affordance is always rendered and uses
+  // `visibility: hidden` when irrelevant. That way the toolbar's
+  // width doesn't change between "no fill" and "has fill" states
+  // (which would push every right-of-here button by ~14 px).
   return (
-    <span className="ml-1 inline-flex items-center gap-1" title={label}>
+    <span className="ml-1 inline-flex shrink-0 items-center gap-1" title={label}>
       <label className="sr-only">{label}</label>
       <input
         type="color"
@@ -646,16 +632,17 @@ function ColorWell({ label, value, disabled, showClear, onChange, onClear }: Col
         data-testid={`pptx-color-${label.toLowerCase().replace(/\s+/g, "-")}`}
         className="h-6 w-7 cursor-pointer rounded border border-divider bg-surface p-0 disabled:cursor-not-allowed disabled:opacity-40"
       />
-      {showClear ? (
-        <button
-          type="button"
-          onClick={onClear}
-          title={`Clear ${label.toLowerCase()}`}
-          className="rounded px-1 text-[10px] text-secondary hover:bg-hover"
-        >
-          ×
-        </button>
-      ) : null}
+      <button
+        type="button"
+        onClick={onClear}
+        aria-hidden={!showClear}
+        tabIndex={showClear ? 0 : -1}
+        title={`Clear ${label.toLowerCase()}`}
+        className="rounded px-1 text-[10px] text-secondary hover:bg-hover"
+        style={{ visibility: showClear ? "visible" : "hidden" }}
+      >
+        ×
+      </button>
     </span>
   );
 }
@@ -829,26 +816,31 @@ function AlignTargetToggle({ value, onChange, disabled }: AlignTargetToggleProps
 
 interface PictureReplaceButtonProps {
   readonly onReplace: (file: File) => void;
+  readonly disabled: boolean;
 }
 
 /**
  * D9 — contextual "Replace image…" button shown next to the generic
  * Image insert button when a `Picture` shape is selected. Pops the
  * native file picker and forwards the chosen file to the editor,
- * which dispatches `pptx:replace-picture-media`. The button stays
- * hidden when nothing or a non-picture shape is selected to avoid
- * cluttering the toolbar.
+ * which dispatches `pptx:replace-picture-media`.
+ *
+ * Always rendered (with `disabled={true}` when no picture is
+ * selected) so the toolbar's width never changes when selection
+ * flips between picture and non-picture shapes — that previously
+ * shifted every button to its right by ~70 px on each click.
  */
-function PictureReplaceButton({ onReplace }: PictureReplaceButtonProps): React.ReactElement {
+function PictureReplaceButton({ onReplace, disabled }: PictureReplaceButtonProps): React.ReactElement {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   return (
     <>
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
+        disabled={disabled}
         title="Replace image"
         data-testid="pptx-replace-image"
-        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover"
+        className="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
       >
         <ImageIcon size={14} />
         <span className="hidden sm:inline">Replace</span>

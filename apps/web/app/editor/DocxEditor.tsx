@@ -6,7 +6,10 @@ import { Button, cn } from "@officeai/ui";
 import {
   EditorShell,
   EmptyState,
+  ZoomControl,
   createToastId,
+  type ExportFormat,
+  type ExportOptionValues,
   type FindAdapter,
   type FindMatch,
   type FindOptions,
@@ -22,6 +25,8 @@ import {
   openFile as openFileViaService,
   saveFile as saveFileViaService,
 } from "@/lib/files/file-service";
+import { convertViaServer } from "@/lib/files/convert-client";
+import { docxToMarkdown, docxToText } from "./lib/export-text";
 import {
   DocxAgent,
   chunkIntoPages,
@@ -85,6 +90,85 @@ import { CommentComposer } from "./CommentComposer";
 import { collectRevisions } from "@/lib/format-helpers";
 import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
+
+const DOCX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
+  {
+    id: "docx",
+    label: "Word document (.docx)",
+    description: "Round-trip native OOXML — what Word, Pages and LibreOffice open by default.",
+    extension: "docx",
+    mime: PRODUCT_FILE_TYPES.docx.primaryMime,
+    kind: "instant",
+    group: "native",
+    icon: "doc",
+  },
+  {
+    id: "pdf",
+    label: "PDF document (.pdf)",
+    description: "Server-side conversion via LibreOffice. Highest layout fidelity for sharing.",
+    extension: "pdf",
+    mime: "application/pdf",
+    kind: "dialog",
+    group: "pdf-web",
+    icon: "pdf",
+    optionFields: [
+      {
+        id: "pageSize",
+        label: "Page size",
+        control: {
+          type: "select",
+          defaultId: "source",
+          options: [
+            { id: "source", label: "Use document setting" },
+            { id: "a4", label: "A4 (210 × 297 mm)" },
+            { id: "letter", label: "Letter (8.5 × 11 in)" },
+          ],
+        },
+        hint: "LibreOffice prints with the document's page setup unless overridden.",
+      },
+      {
+        id: "embedFonts",
+        label: "Embed fonts",
+        control: { type: "toggle", defaultValue: true },
+        hint: "Keeps the look intact on systems missing your fonts.",
+      },
+    ],
+  },
+  {
+    id: "html",
+    label: "Web page (.html)",
+    description: "Server-side HTML export. Useful for previews, intranets, and email.",
+    extension: "html",
+    mime: "text/html",
+    kind: "instant",
+    group: "pdf-web",
+    icon: "code",
+  },
+  {
+    id: "txt",
+    label: "Plain text (.txt)",
+    description: "Body text only — paragraphs, headings and lists. No formatting.",
+    extension: "txt",
+    mime: "text/plain;charset=utf-8",
+    kind: "instant",
+    group: "data",
+    icon: "text",
+  },
+  {
+    id: "md",
+    label: "Markdown (.md)",
+    description: "GitHub-flavoured Markdown. Headings, emphasis, lists and tables.",
+    extension: "md",
+    mime: "text/markdown;charset=utf-8",
+    kind: "instant",
+    group: "data",
+    icon: "text",
+  },
+];
+
+function stripDocxExtension(name: string): string {
+  return name.replace(/\.docx$/i, "");
+}
 
 export interface DocxEditorProps {}
 
@@ -351,20 +435,56 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
     }
   }, [docName, pushToast]);
 
-  const handleExport = useCallback(async () => {
-    const agent = agentRef.current;
-    if (!agent) return;
-    try {
-      const buf = await agent.exportFile();
-      const blob = new Blob([buf as BlobPart], {
-        type: PRODUCT_FILE_TYPES.docx.primaryMime,
-      });
-      downloadBlob(blob, docName);
-      pushToast("success", `Exported ${docName}`);
-    } catch (err) {
-      pushToast("error", err instanceof Error ? err.message : String(err));
-    }
-  }, [docName, pushToast]);
+  const handleExport = useCallback(
+    async (format: ExportFormat, options?: ExportOptionValues) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      const baseName = stripDocxExtension(docName);
+      const downloadName = `${baseName}.${format.extension}`;
+      try {
+        switch (format.id) {
+          case "docx": {
+            const buf = await agent.exportFile();
+            downloadBlob(
+              new Blob([buf as BlobPart], { type: format.mime }),
+              downloadName
+            );
+            break;
+          }
+          case "pdf":
+          case "html": {
+            const buf = await agent.exportFile();
+            const out = await convertViaServer({
+              bytes: new Uint8Array(buf),
+              sourceExt: "docx",
+              targetExt: format.id,
+              filename: baseName,
+            });
+            downloadBlob(out, downloadName);
+            break;
+          }
+          case "txt": {
+            const text = docxToText(agent.getSnapshot());
+            downloadBlob(new Blob([text], { type: format.mime }), downloadName);
+            break;
+          }
+          case "md": {
+            const md = docxToMarkdown(agent.getSnapshot());
+            downloadBlob(new Blob([md], { type: format.mime }), downloadName);
+            break;
+          }
+          default:
+            throw new Error(`Unsupported export format: ${format.id}`);
+        }
+        pushToast("success", `Exported ${downloadName}`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+      void options;
+    },
+    [docName, pushToast]
+  );
 
   const applyPageSetup = useCallback(
     async (next: PageSetupValues) => {
@@ -1376,17 +1496,10 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
       canOpen: true,
       canSave: agentReady,
       canExport: agentReady,
-      exportFormats: [
-        {
-          id: "docx",
-          label: "Word document (.docx)",
-          extension: "docx",
-          mime: PRODUCT_FILE_TYPES.docx.primaryMime,
-        },
-      ],
+      exportFormats: DOCX_EXPORT_FORMATS,
       onOpenFile: () => void handleOpenFile(),
       onSave: () => handleSave(),
-      onExport: () => handleExport(),
+      onExport: (format, options) => handleExport(format, options),
       canUndo: agent?.canUndo() ?? false,
       canRedo: agent?.canRedo() ?? false,
       onUndo: () => {
@@ -1458,7 +1571,7 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
           />
         }
         body={
-          <div className="docx-editor flex h-full min-h-0 flex-col gap-3 p-3">
+          <div className="docx-editor flex min-h-0 flex-1 flex-col gap-3 p-3">
             <input
               ref={imageInputRef}
               data-testid="image-file-input"
@@ -1493,11 +1606,19 @@ export function DocxEditor(_props: DocxEditorProps = {}): React.ReactNode {
                 // page-block decoration overrides them per chunk via inline
                 // `--pm-page-margin-left` / `--pm-page-margin-right` in
                 // `page-decorations.ts`.
+                // Initial-frame fallback is DIN A4 (11906 × 16838 twips =
+                // 210 × 297 mm) with Word's German-locale default 2.5 cm
+                // margins (1417 twips). A4 covers ~99% of installs outside
+                // the US; using US-Letter as the fallback made the editor
+                // briefly render as a wider letter-shaped card before the
+                // real snapshot landed and snapped it back to A4. Once the
+                // snapshot resolves, `documentMaxPageGeometry` takes over
+                // and respects whatever the doc actually declares.
                 const wrapperGeometry = snapshot
                   ? documentMaxPageGeometry(snapshot)
                   : {
-                      pgSz: { w: 12240, h: 15840 },
-                      pgMar: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 720 },
+                      pgSz: { w: 11906, h: 16838 },
+                      pgMar: { top: 1417, right: 1417, bottom: 1417, left: 1417, header: 708, footer: 708 },
                     };
                 const firstSectionGeometry = snapshot ? documentPageGeometry(snapshot) : wrapperGeometry;
                 const pageWidthCssPx = wrapperGeometry.pgSz.w / TWIPS_PER_CSS_PX;
@@ -1811,34 +1932,7 @@ function PageStatusBar(props: {
           Page {currentPage} of {totalPages}
         </button>
       )}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onZoomChange(Math.max(0.5, Math.round((zoom - 0.1) * 10) / 10))}
-          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
-          aria-label="Zoom out"
-        >
-          −
-        </button>
-        <span className="tabular-nums" data-testid="zoom-percent">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button
-          type="button"
-          onClick={() => onZoomChange(Math.min(2, Math.round((zoom + 0.1) * 10) / 10))}
-          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
-          aria-label="Zoom in"
-        >
-          +
-        </button>
-        <button
-          type="button"
-          onClick={() => onZoomChange(1)}
-          className="rounded border border-divider px-1.5 py-0.5 hover:bg-hover"
-        >
-          Reset
-        </button>
-      </div>
+      <ZoomControl value={zoom} onChange={onZoomChange} />
     </div>
   );
 }

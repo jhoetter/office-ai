@@ -1,21 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
   ChevronDown,
   Download,
+  FileCode,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
   FolderOpen,
   Keyboard,
   MessageSquare,
+  Presentation,
   Redo2,
   Save,
   Search,
+  Sliders,
   Undo2,
 } from "lucide-react";
 import { ThemeToggle, cn } from "@officeai/ui";
-import type { ProductAdapter, SaveState } from "./types";
+import { ExportDialog } from "./ExportDialog";
+import type {
+  ExportFormat,
+  ExportFormatGroup,
+  ExportFormatIcon,
+  ProductAdapter,
+  SaveState,
+} from "./types";
 
 export interface EditorTopBarProps {
   readonly adapter: ProductAdapter;
@@ -114,15 +128,11 @@ export function EditorTopBar({
 
       <Sep />
 
-      <ToolbarIcon
-        label="Find"
-        shortcut="Cmd+F"
-        onClick={onOpenFindReplace}
-        disabled={!adapter.findAdapter}
-        testId="shell-find"
-      >
-        <Search size={15} />
-      </ToolbarIcon>
+      {adapter.findAdapter ? (
+        <ToolbarIcon label="Find" shortcut="Cmd+F" onClick={onOpenFindReplace} testId="shell-find">
+          <Search size={15} />
+        </ToolbarIcon>
+      ) : null}
       <ToolbarIcon
         label="Command palette"
         shortcut="Cmd+K"
@@ -252,9 +262,29 @@ function SaveStatePill({ state }: { readonly state: SaveState }): React.ReactNod
   );
 }
 
+const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
+  "native",
+  "pdf-web",
+  "data",
+  "images",
+];
+const GROUP_LABEL: Record<ExportFormatGroup, string> = {
+  native: "Native",
+  "pdf-web": "PDF & web",
+  data: "Data",
+  images: "Images",
+};
+
 function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.ReactNode {
   const [open, setOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogInitialId, setDialogInitialId] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLDivElement | null>(null);
+
+  const groups = useMemo(
+    () => groupFormats(adapter.exportFormats),
+    [adapter.exportFormats]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -274,58 +304,235 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
 
   if (!adapter.canExport || adapter.exportFormats.length === 0) return null;
 
-  // Single-format products skip the dropdown — Export is a button.
+  const baseFilename = stripExtension(adapter.filename);
+
+  // Single-format products skip the dropdown — Export is still a
+  // single icon-only button (no chevron). Preserves the original
+  // top-bar density when only one format is on offer.
   if (adapter.exportFormats.length === 1) {
     const fmt = adapter.exportFormats[0]!;
+    const needsDialog = fmt.kind === "dialog" || (fmt.optionFields && fmt.optionFields.length > 0);
     return (
-      <ToolbarIcon
-        label={`Export ${fmt.label}`}
-        onClick={() => void adapter.onExport(fmt)}
-        testId="shell-export"
-      >
-        <Download size={15} />
-      </ToolbarIcon>
+      <>
+        <ToolbarIcon
+          label={`Export ${fmt.label}`}
+          onClick={() => {
+            if (needsDialog) {
+              setDialogInitialId(fmt.id);
+              setDialogOpen(true);
+            } else {
+              void adapter.onExport(fmt);
+            }
+          }}
+          testId="shell-export"
+        >
+          <Download size={15} />
+        </ToolbarIcon>
+        <ExportDialog
+          open={dialogOpen}
+          onClose={() => setDialogOpen(false)}
+          formats={adapter.exportFormats}
+          initialFormatId={dialogInitialId}
+          baseFilename={baseFilename}
+          onExport={(format, options) => adapter.onExport(format, options)}
+        />
+      </>
     );
   }
 
+  const openDialog = (id?: string) => {
+    setOpen(false);
+    setDialogInitialId(id);
+    setDialogOpen(true);
+  };
+
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-sm text-foreground hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="Export"
-        data-testid="shell-export"
-      >
-        <Download size={15} />
-        <ChevronDown size={12} />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-30 mt-1 min-w-[200px] rounded-md border border-divider bg-surface p-1 shadow-md"
+    <>
+      <div className="relative" ref={ref}>
+        <button
+          type="button"
+          className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-secondary transition-colors hover:bg-hover hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40"
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title="Export"
+          data-testid="shell-export"
         >
-          {adapter.exportFormats.map((fmt) => (
+          <Download size={15} />
+          <ChevronDown size={12} />
+        </button>
+        {open && (
+          <div
+            role="menu"
+            className="absolute right-0 top-full z-30 mt-1 min-w-[260px] rounded-md border border-divider bg-surface p-1 shadow-md"
+          >
+            {groups.map(({ group, items }, gi) => (
+              <div key={group}>
+                {gi > 0 ? <div className="my-1 h-px bg-divider" aria-hidden /> : null}
+                <div className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-tertiary">
+                  {GROUP_LABEL[group]}
+                </div>
+                {items.map((fmt) => {
+                  const dialogish =
+                    fmt.kind === "dialog" || (fmt.optionFields && fmt.optionFields.length > 0);
+                  return (
+                    <button
+                      key={fmt.id}
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-foreground hover:bg-hover"
+                      onClick={() => {
+                        if (dialogish) {
+                          openDialog(fmt.id);
+                        } else {
+                          setOpen(false);
+                          void adapter.onExport(fmt);
+                        }
+                      }}
+                      data-testid={`shell-export-${fmt.id}`}
+                    >
+                      <span className="text-secondary">
+                        <FormatIcon icon={fmt.icon ?? guessIcon(fmt)} />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{fmt.label}</span>
+                      {dialogish ? (
+                        <span
+                          className="text-tertiary"
+                          aria-label="Has options"
+                          title="Has options"
+                        >
+                          <Sliders size={11} />
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            <div className="my-1 h-px bg-divider" aria-hidden />
             <button
-              key={fmt.id}
               type="button"
               role="menuitem"
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-foreground hover:bg-hover"
-              onClick={() => {
-                setOpen(false);
-                void adapter.onExport(fmt);
-              }}
-              data-testid={`shell-export-${fmt.id}`}
+              onClick={() => openDialog(undefined)}
+              data-testid="shell-export-open-dialog"
             >
-              {fmt.label}
+              <span className="text-secondary">
+                <Sliders size={12} />
+              </span>
+              <span>More options…</span>
             </button>
-          ))}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </div>
+      <ExportDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        formats={adapter.exportFormats}
+        initialFormatId={dialogInitialId}
+        baseFilename={baseFilename}
+        onExport={(format, options) => adapter.onExport(format, options)}
+      />
+    </>
   );
+}
+
+function FormatIcon({ icon }: { readonly icon: ExportFormatIcon }): React.ReactNode {
+  switch (icon) {
+    case "doc":
+      return <FileText size={13} />;
+    case "sheet":
+      return <FileSpreadsheet size={13} />;
+    case "slides":
+      return <Presentation size={13} />;
+    case "pdf":
+      return <FileType2 size={13} />;
+    case "image":
+      return <FileImage size={13} />;
+    case "code":
+      return <FileCode size={13} />;
+    case "text":
+      return <FileText size={13} />;
+    default: {
+      const _exhaustive: never = icon;
+      void _exhaustive;
+      return <FileText size={13} />;
+    }
+  }
+}
+
+function guessIcon(format: ExportFormat): ExportFormatIcon {
+  switch (format.extension) {
+    case "docx":
+      return "doc";
+    case "xlsx":
+      return "sheet";
+    case "pptx":
+      return "slides";
+    case "pdf":
+      return "pdf";
+    case "html":
+    case "json":
+      return "code";
+    case "csv":
+    case "tsv":
+    case "txt":
+    case "md":
+      return "text";
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "svg":
+    case "zip":
+      return "image";
+    default:
+      return "doc";
+  }
+}
+
+function defaultGroup(format: ExportFormat): ExportFormatGroup {
+  switch (format.extension) {
+    case "docx":
+    case "xlsx":
+    case "pptx":
+      return "native";
+    case "pdf":
+    case "html":
+      return "pdf-web";
+    case "csv":
+    case "tsv":
+    case "json":
+    case "txt":
+    case "md":
+      return "data";
+    default:
+      return "images";
+  }
+}
+
+function groupFormats(
+  formats: ReadonlyArray<ExportFormat>
+): ReadonlyArray<{
+  readonly group: ExportFormatGroup;
+  readonly items: ReadonlyArray<ExportFormat>;
+}> {
+  const buckets = new Map<ExportFormatGroup, ExportFormat[]>();
+  for (const fmt of formats) {
+    const g = fmt.group ?? defaultGroup(fmt);
+    const list = buckets.get(g) ?? [];
+    list.push(fmt);
+    buckets.set(g, list);
+  }
+  return GROUP_ORDER.filter((g) => (buckets.get(g)?.length ?? 0) > 0).map((g) => ({
+    group: g,
+    items: buckets.get(g) ?? [],
+  }));
+}
+
+function stripExtension(name: string): string {
+  const idx = name.lastIndexOf(".");
+  if (idx <= 0) return name;
+  return name.slice(0, idx);
 }
 
 function ToolbarIcon({

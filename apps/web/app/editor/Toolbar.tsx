@@ -25,6 +25,7 @@ import {
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
+import { ToolbarRow } from "../lib/shell";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -145,10 +146,26 @@ export type EditModeValue = "edit" | "suggest" | "view";
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
   return (
-    <div
-      role="toolbar"
-      aria-label="Document toolbar"
-      className="editor-toolbar flex flex-wrap items-center gap-1 border-b border-divider pb-3"
+    <ToolbarRow
+      ariaLabel="Document toolbar"
+      testId="docx-toolbar"
+      leadingClassName="editor-toolbar"
+      trailing={
+        <div className="flex items-center gap-3 text-xs text-secondary">
+          {props.docInfo && (
+            <span className="hidden whitespace-nowrap md:inline">
+              {props.docInfo.paragraphs} paragraphs · rev {props.docInfo.revision} ·{" "}
+              {props.docInfo.commentThreads} comment{props.docInfo.commentThreads === 1 ? "" : "s"}
+            </span>
+          )}
+          <ReviewMenu
+            count={props.trackedChangesCount}
+            onAcceptAll={props.onAcceptAllChanges}
+            onRejectAll={props.onRejectAllChanges}
+          />
+          <EditModePicker value={props.editMode} onChange={props.onSetEditMode} />
+        </div>
+      }
     >
       {/* Paragraph style — derived from snapshot.root.body. */}
       <ParagraphStylePicker
@@ -205,12 +222,21 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <ToolbarBtn label="Increase indent" onClick={() => props.onAdjustIndent(360)}>
         <Indent size={14} />
       </ToolbarBtn>
-      {props.activeIndentLeft !== null && props.activeIndentLeft > 0 && (
-        <span className="px-1 text-[11px] tabular-nums text-secondary" title="Left indent">
-          {twipsToInches(props.activeIndentLeft)}
-          {'"'}
-        </span>
-      )}
+      {/*
+        Left-indent readout. Reserves a fixed-width slot regardless of
+        whether the active paragraph has any indent, so toggling
+        between indented and non-indented selections never reflows
+        the toolbar.
+      */}
+      <span
+        className="inline-block min-w-[3.25rem] px-1 text-[11px] tabular-nums text-secondary"
+        title="Left indent"
+        aria-hidden={props.activeIndentLeft === null || props.activeIndentLeft <= 0}
+      >
+        {props.activeIndentLeft !== null && props.activeIndentLeft > 0
+          ? `${twipsToInches(props.activeIndentLeft)}"`
+          : ""}
+      </span>
 
       <Divider />
 
@@ -256,22 +282,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <ToolbarBtn label="Add comment" onClick={props.onAddComment}>
         <MessageSquarePlus size={14} />
       </ToolbarBtn>
-
-      <div className="ml-auto flex items-center gap-3 text-xs text-secondary">
-        {props.docInfo && (
-          <span className="hidden whitespace-nowrap md:inline">
-            {props.docInfo.paragraphs} paragraphs · rev {props.docInfo.revision} ·{" "}
-            {props.docInfo.commentThreads} comment{props.docInfo.commentThreads === 1 ? "" : "s"}
-          </span>
-        )}
-        <ReviewMenu
-          count={props.trackedChangesCount}
-          onAcceptAll={props.onAcceptAllChanges}
-          onRejectAll={props.onRejectAllChanges}
-        />
-        <EditModePicker value={props.editMode} onChange={props.onSetEditMode} />
-      </div>
-    </div>
+    </ToolbarRow>
   );
 }
 

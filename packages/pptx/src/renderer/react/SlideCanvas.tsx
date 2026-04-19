@@ -1,8 +1,17 @@
 import * as React from "react";
 import type { PptxAgent } from "../../agent/agent.js";
-import type { Shape, Slide, SlideSize, TextShape } from "../../model/types.js";
+import type {
+  ConnectorEndpoint,
+  ConnectorShape,
+  ConnectorType,
+  Shape,
+  Slide,
+  SlideSize,
+  TextShape,
+} from "../../model/types.js";
+import { resolveEndpoint } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME } from "../layout/color.js";
-import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
+import { boxesIntersect, pointInBox, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { slideAspectRatio, slideViewBox } from "../layout/slide.js";
 import { computeSnap, type SnapGuide } from "../layout/snap.js";
 import { anchorsFor, snapToAnchor, type AnchorSide, type ShapeAnchor } from "../layout/anchors.js";
@@ -83,6 +92,40 @@ export interface SlideCanvasProps {
     | { readonly kind: "shape"; readonly shapeId: string; readonly nonce: number }
     | { readonly kind: "pin"; readonly xEmu: number; readonly yEmu: number; readonly nonce: number }
     | null;
+  /**
+   * Fired when the user "activates" an empty layout placeholder — e.g.
+   * double-clicks the dashed ghost box for a `pic` placeholder. The
+   * parent decides what to do (typically: open a file picker for `pic`,
+   * a chart wizard for `chart`, etc.) and dispatches the appropriate
+   * commands. Returning without doing anything is fine; the canvas
+   * will simply keep the placeholder selected.
+   *
+   * Activation deliberately does NOT fall through to text-edit mode
+   * for placeholder types where typing isn't the natural action
+   * (`pic`, `chart`, `tbl`, `dgm`, `media`). Title / body / subTitle
+   * placeholders still open the text overlay on activate so the
+   * "click to add text" hint remains directly editable.
+   */
+  readonly onPlaceholderActivate?: (info: {
+    readonly shapeId: string;
+    readonly placeholder: { readonly type?: string; readonly idx?: number };
+  }) => void;
+  /**
+   * When non-null, the canvas is in "draw a connector" tool mode: any
+   * shape under the pointer surfaces ports (regardless of selection),
+   * the cursor becomes a crosshair, and a press-drag gesture starts a
+   * draft of the requested type — even from empty space. Set by the
+   * editor when the user picks a connector type from the toolbar or
+   * command palette; cleared when the draft commits, on Esc, or when
+   * the user re-clicks the same toolbar item.
+   */
+  readonly connectorTool?: { readonly type: ConnectorType } | null;
+  /**
+   * Fired when the canvas exits tool mode on its own (Esc, draft
+   * commit). The editor mirrors the state so the toolbar's pressed
+   * indicator stays in sync.
+   */
+  readonly onConnectorToolExit?: () => void;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
@@ -139,23 +182,33 @@ interface MarqueeState {
 }
 
 /**
- * Live state while the user is drawing a brand-new connector by
- * dragging from one of a shape's port dots. The source endpoint is
- * always anchored (you can only start a connector by clicking a port);
- * the destination endpoint becomes anchored if the pointer ends near
- * another shape's port, otherwise it lands as a free EMU coordinate.
+ * Live state while the user is drawing a brand-new connector. The
+ * source can be anchored (drag started on a port) or free (drag
+ * started on empty space while in tool mode). The destination tracks
+ * the pointer and becomes anchored when it snaps onto another shape's
+ * port, free otherwise.
  *
  * Scoped purely to the canvas — committed to the agent on pointerup
  * via `pptx:add-connector`, then reset.
  */
 interface ConnectorDraft {
-  readonly source: {
-    readonly shapeId: string;
-    readonly cNvPrId: number;
-    readonly side: "n" | "s" | "e" | "w" | "center";
-    readonly x: number;
-    readonly y: number;
-  };
+  readonly source:
+    | {
+        readonly kind: "anchored";
+        readonly shapeId: string;
+        readonly cNvPrId: number;
+        readonly side: "n" | "s" | "e" | "w" | "center";
+        readonly t: number;
+        readonly x: number;
+        readonly y: number;
+      }
+    | {
+        readonly kind: "free";
+        readonly x: number;
+        readonly y: number;
+      };
+  /** Connector type to commit; kept in state so Esc/replace mid-draft works. */
+  readonly connectorType: ConnectorType;
   /** Live cursor position in slide EMU coordinates. */
   readonly currentX: number;
   readonly currentY: number;
@@ -163,6 +216,47 @@ interface ConnectorDraft {
   /** Anchor we'd snap the destination endpoint onto if released now. */
   readonly snapped: ShapeAnchor | null;
   readonly nearby: ReadonlyArray<ShapeAnchor>;
+}
+
+/**
+ * Live state while the user is dragging one endpoint of an
+ * already-existing connector. The endpoint behaves like a brand-new
+ * draft destination: snap, optionally re-anchor on release.
+ */
+interface EndpointEditDraft {
+  readonly shapeId: string;
+  readonly which: "start" | "end";
+  /** Whether this endpoint started the gesture as anchored. */
+  readonly wasAnchored: boolean;
+  readonly currentX: number;
+  readonly currentY: number;
+  readonly emuPerPx: number;
+  readonly snapped: ShapeAnchor | null;
+  readonly nearby: ReadonlyArray<ShapeAnchor>;
+  /**
+   * The other (un-dragged) endpoint, resolved to slide coords once at
+   * gesture start so the live overlay can re-route an elbow preview.
+   */
+  readonly otherPoint: { readonly x: number; readonly y: number };
+  readonly otherSide: AnchorSide | null;
+  readonly connectorType: ConnectorType;
+}
+
+/**
+ * Live state while the user is dragging a perpendicular slider on an
+ * elbow connector's interior segment.
+ */
+interface WaypointDraft {
+  readonly shapeId: string;
+  readonly segmentIndex: number;
+  /** "horizontal" segments slide vertically, "vertical" segments slide horizontally. */
+  readonly axis: "horizontal" | "vertical";
+  readonly originValueEmu: number;
+  readonly startClientX: number;
+  readonly startClientY: number;
+  readonly emuPerPx: number;
+  /** Live offset value (originValue + cursor delta), held for preview. */
+  readonly currentValueEmu: number;
 }
 
 export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null {
@@ -176,6 +270,8 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [hoveredShapeId, setHoveredShapeId] = React.useState<string | null>(null);
   const [connectorDraft, setConnectorDraft] = React.useState<ConnectorDraft | null>(null);
+  const [endpointDraft, setEndpointDraft] = React.useState<EndpointEditDraft | null>(null);
+  const [waypointDraft, setWaypointDraft] = React.useState<WaypointDraft | null>(null);
   const [selectedIds, setSelectedIdsState] = React.useState<ReadonlyArray<string>>([]);
   const onSelectionChange = props.onSelectionChange;
   const setSelectedIds = React.useCallback(
@@ -277,22 +373,102 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       const emuPerPx = slideSize.cxEmu / rect.width;
       const shiftHeld = e.shiftKey || e.metaKey || e.ctrlKey;
 
+      // Connector chrome handles (endpoint or waypoint) take precedence
+      // over the regular shape gesture path. We pick them up before
+      // anything else so a connector's selection chrome can sit ON TOP
+      // of the shape rect without losing the click.
+      const connectorEndpointEl = target?.closest("[data-connector-endpoint]") as HTMLElement | null;
+      if (connectorEndpointEl) {
+        const cShapeId = connectorEndpointEl.dataset.connectorShapeId ?? null;
+        const which = connectorEndpointEl.dataset.connectorEndpoint as "start" | "end" | undefined;
+        if (cShapeId && which) {
+          const sh = findShape(slide.shapes, cShapeId);
+          if (sh && sh.kind === "connector") {
+            const ep = which === "start" ? sh.start : sh.end;
+            const otherEp = which === "start" ? sh.end : sh.start;
+            const cur = resolveEndpoint(ep, shapesByCNvPrId) ?? fallbackEndpoint(sh, which);
+            const otherPt = resolveEndpoint(otherEp, shapesByCNvPrId) ?? fallbackEndpoint(sh, which === "start" ? "end" : "start");
+            const otherSide = otherEp.kind === "anchored" ? otherEp.side : null;
+            setEndpointDraft({
+              shapeId: cShapeId,
+              which,
+              wasAnchored: ep.kind === "anchored",
+              currentX: cur.x,
+              currentY: cur.y,
+              emuPerPx,
+              snapped: null,
+              nearby: [],
+              otherPoint: otherPt,
+              otherSide,
+              connectorType: sh.connectorType,
+            });
+            setSelectedIds([cShapeId]);
+            containerRef.current.setPointerCapture?.(e.pointerId);
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+        }
+      }
+      const waypointEl = target?.closest("[data-connector-waypoint]") as HTMLElement | null;
+      if (waypointEl) {
+        const cShapeId = waypointEl.dataset.connectorShapeId ?? null;
+        const segIdxStr = waypointEl.dataset.connectorWaypoint;
+        const axis = waypointEl.dataset.connectorAxis as "horizontal" | "vertical" | undefined;
+        const originStr = waypointEl.dataset.connectorOrigin;
+        const segmentIndex = segIdxStr ? Number(segIdxStr) : NaN;
+        const origin = originStr ? Number(originStr) : NaN;
+        if (cShapeId && axis && Number.isFinite(segmentIndex) && Number.isFinite(origin)) {
+          setWaypointDraft({
+            shapeId: cShapeId,
+            segmentIndex,
+            axis,
+            originValueEmu: origin,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            emuPerPx,
+            currentValueEmu: origin,
+          });
+          setSelectedIds([cShapeId]);
+          containerRef.current.setPointerCapture?.(e.pointerId);
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+
       // Port click: start a brand-new connector. This takes precedence
       // over the regular select/move/resize gesture so a hovered shape
       // surface stays draggable everywhere except the four port dots.
       if (portEl && shapeId) {
         const side = portEl.dataset.port as "n" | "s" | "e" | "w" | "center" | undefined;
-        const sourceShape = findShape(slide.shapes, shapeId);
-        if (side && sourceShape) {
-          const box = shapeBoundingBox(sourceShape);
+        const located = findShapeWithOffset(slide.shapes, shapeId);
+        if (side && located) {
+          const sourceShape = located.shape;
+          const localBox = shapeBoundingBox(sourceShape);
           const cNvPrId = sourceShape.cNvPrId;
-          if (box && cNvPrId > 0) {
+          if (localBox && cNvPrId > 0) {
+            const box: BoundingBox = {
+              x: localBox.x + located.offsetX,
+              y: localBox.y + located.offsetY,
+              cx: localBox.cx,
+              cy: localBox.cy,
+            };
             const ap = anchorPointFor(box, side);
             const cursorEmuX = (e.clientX - rect.left) * emuPerPx;
             const cursorEmuY = (e.clientY - rect.top) * emuPerPx;
             setHoveredShapeId(null);
             setConnectorDraft({
-              source: { shapeId, cNvPrId, side, x: ap.x, y: ap.y },
+              source: {
+                kind: "anchored",
+                shapeId,
+                cNvPrId,
+                side,
+                t: 0.5,
+                x: ap.x,
+                y: ap.y,
+              },
+              connectorType: props.connectorTool?.type ?? "elbow",
               currentX: cursorEmuX,
               currentY: cursorEmuY,
               emuPerPx,
@@ -305,6 +481,30 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             return;
           }
         }
+      }
+
+      // Tool mode: a click anywhere on the canvas (port, shape body, or
+      // empty space) starts a draft. Port clicks were handled above and
+      // produce an anchored source; everything else produces a free
+      // source so the user can draw "in mid-air" the way Google Slides
+      // and PowerPoint allow.
+      if (props.connectorTool) {
+        const cursorEmuX = (e.clientX - rect.left) * emuPerPx;
+        const cursorEmuY = (e.clientY - rect.top) * emuPerPx;
+        setHoveredShapeId(null);
+        setConnectorDraft({
+          source: { kind: "free", x: cursorEmuX, y: cursorEmuY },
+          connectorType: props.connectorTool.type,
+          currentX: cursorEmuX,
+          currentY: cursorEmuY,
+          emuPerPx,
+          snapped: null,
+          nearby: [],
+        });
+        containerRef.current.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
       }
 
       if (!shapeId) {
@@ -353,9 +553,27 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         if (!sh) continue;
         const box = shapeBoundingBox(sh);
         if (!box) continue;
+        // Connectors no longer expose 8 generic resize handles —
+        // their selection chrome paints two endpoint dots and zero or
+        // more waypoint sliders, all routed through dedicated commands.
+        // The body itself only translates when BOTH endpoints are free
+        // (anchored endpoints are pinned to their target shape, so a
+        // body drag would have to detach them, which would surprise
+        // the user). When either endpoint is anchored we skip the drag
+        // so the click only updates selection.
+        if (sh.kind === "connector") {
+          if (isResize) continue;
+          if (sh.start.kind === "anchored" || sh.end.kind === "anchored") continue;
+        }
         targets.push({ id, origin: box });
       }
-      if (targets.length === 0) return;
+      if (targets.length === 0) {
+        // The selection update already ran; nothing else to do (e.g.
+        // user clicked a connector body but both endpoints are
+        // anchored, so no body drag is allowed).
+        e.preventDefault();
+        return;
+      }
 
       const mode: DragMode = isResize ? { resize: handle as ResizeHandle } : "move";
       const primaryShape = findShape(slide.shapes, targets[0].id);
@@ -387,7 +605,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       containerRef.current.setPointerCapture?.(e.pointerId);
       e.preventDefault();
     },
-    [slide, slideSize, setSelectedIds, selectedIds, editingId]
+    [slide, slideSize, setSelectedIds, selectedIds, editingId, props.connectorTool]
   );
 
   const onPointerMove = React.useCallback(
@@ -397,7 +615,10 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         if (!rect || !slide) return;
         const cursorEmuX = (e.clientX - rect.left) * connectorDraft.emuPerPx;
         const cursorEmuY = (e.clientY - rect.top) * connectorDraft.emuPerPx;
-        const others = collectOtherBoxes(slide.shapes, new Set([connectorDraft.source.shapeId]));
+        const excludeIds = new Set<string>(
+          connectorDraft.source.kind === "anchored" ? [connectorDraft.source.shapeId] : []
+        );
+        const others = collectAllConnectableBoxes(slide.shapes, excludeIds);
         const snap = snapToAnchor({ x: cursorEmuX, y: cursorEmuY }, others, ANCHOR_THRESHOLD_EMU);
         setConnectorDraft({
           ...connectorDraft,
@@ -405,6 +626,34 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           currentY: cursorEmuY,
           snapped: snap.anchor,
           nearby: snap.nearby,
+        });
+        return;
+      }
+      if (endpointDraft) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect || !slide) return;
+        const cursorEmuX = (e.clientX - rect.left) * endpointDraft.emuPerPx;
+        const cursorEmuY = (e.clientY - rect.top) * endpointDraft.emuPerPx;
+        const others = collectAllConnectableBoxes(slide.shapes, new Set([endpointDraft.shapeId]));
+        const snap = snapToAnchor({ x: cursorEmuX, y: cursorEmuY }, others, ANCHOR_THRESHOLD_EMU);
+        setEndpointDraft({
+          ...endpointDraft,
+          currentX: cursorEmuX,
+          currentY: cursorEmuY,
+          snapped: snap.anchor,
+          nearby: snap.nearby,
+        });
+        return;
+      }
+      if (waypointDraft) {
+        const deltaPx =
+          waypointDraft.axis === "horizontal"
+            ? e.clientY - waypointDraft.startClientY
+            : e.clientX - waypointDraft.startClientX;
+        const deltaEmu = Math.round(deltaPx * waypointDraft.emuPerPx);
+        setWaypointDraft({
+          ...waypointDraft,
+          currentValueEmu: waypointDraft.originValueEmu + deltaEmu,
         });
         return;
       }
@@ -438,7 +687,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       }
       setHoveredShapeId(id);
     },
-    [connectorDraft, drag, marquee, slide, slideSize, hoveredShapeId]
+    [connectorDraft, endpointDraft, waypointDraft, drag, marquee, slide, slideSize, hoveredShapeId]
   );
 
   const onPointerUp = React.useCallback(
@@ -447,22 +696,41 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       if (connectorDraft && slide) {
         const draft = connectorDraft;
         setConnectorDraft(null);
-        const startEndDistEmu = Math.hypot(draft.currentX - draft.source.x, draft.currentY - draft.source.y);
+        // The "kept tool mode active" decision lives in the parent —
+        // we always notify on commit/cancel and let the editor decide
+        // whether to reset the tool state.
+        const sourcePt =
+          draft.source.kind === "anchored"
+            ? { x: draft.source.x, y: draft.source.y }
+            : { x: draft.source.x, y: draft.source.y };
+        const startEndDistEmu = Math.hypot(draft.currentX - sourcePt.x, draft.currentY - sourcePt.y);
         // Tiny drags (< ~6 px) are treated as accidental clicks and
         // discarded so the user doesn't end up with a pile of zero-
-        // length connectors when they merely tap a port.
+        // length connectors when they merely tap a port. We still
+        // exit tool mode so the next click selects normally.
         if (startEndDistEmu < 6 * draft.emuPerPx) {
+          props.onConnectorToolExit?.();
           return;
         }
         try {
           const targetCNvPrId =
             draft.snapped !== null ? findCNvPrIdByShapeId(slide.shapes, draft.snapped.shapeId) : null;
+          const startPayload =
+            draft.source.kind === "anchored"
+              ? {
+                  kind: "anchored" as const,
+                  targetCNvPrId: draft.source.cNvPrId,
+                  side: draft.source.side,
+                  t: draft.source.t,
+                }
+              : { kind: "free" as const, xEmu: draft.source.x, yEmu: draft.source.y };
           const endPayload =
             draft.snapped !== null && targetCNvPrId !== null
               ? {
                   kind: "anchored" as const,
                   targetCNvPrId,
                   side: draft.snapped.side,
+                  t: draft.snapped.t,
                 }
               : { kind: "free" as const, xEmu: draft.currentX, yEmu: draft.currentY };
           await props.agent.applyCommand({
@@ -470,13 +738,59 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             source: "human",
             payload: {
               slideIndex: props.slideIndex,
-              connectorType: "elbow",
-              start: {
-                kind: "anchored",
-                targetCNvPrId: draft.source.cNvPrId,
-                side: draft.source.side,
-              },
+              connectorType: draft.connectorType,
+              start: startPayload,
               end: endPayload,
+            },
+          });
+        } catch (err) {
+          props.onError?.(err as Error);
+        }
+        props.onConnectorToolExit?.();
+        return;
+      }
+      if (endpointDraft && slide) {
+        const draft = endpointDraft;
+        setEndpointDraft(null);
+        try {
+          const targetCNvPrId =
+            draft.snapped !== null ? findCNvPrIdByShapeId(slide.shapes, draft.snapped.shapeId) : null;
+          const endpointPayload =
+            draft.snapped !== null && targetCNvPrId !== null
+              ? {
+                  kind: "anchored" as const,
+                  targetCNvPrId,
+                  side: draft.snapped.side,
+                  t: draft.snapped.t,
+                }
+              : { kind: "free" as const, xEmu: draft.currentX, yEmu: draft.currentY };
+          await props.agent.applyCommand({
+            type: "pptx:set-connector-endpoint",
+            source: "human",
+            payload: {
+              slideIndex: props.slideIndex,
+              shapeId: draft.shapeId,
+              which: draft.which,
+              endpoint: endpointPayload,
+            },
+          });
+        } catch (err) {
+          props.onError?.(err as Error);
+        }
+        return;
+      }
+      if (waypointDraft && slide) {
+        const draft = waypointDraft;
+        setWaypointDraft(null);
+        try {
+          await props.agent.applyCommand({
+            type: "pptx:set-connector-waypoint",
+            source: "human",
+            payload: {
+              slideIndex: props.slideIndex,
+              shapeId: draft.shapeId,
+              segmentIndex: draft.segmentIndex,
+              valueEmu: draft.currentValueEmu,
             },
           });
         } catch (err) {
@@ -532,9 +846,20 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         // PowerPoint-style "second click enters edit": if the gesture
         // started on the only-selected text shape and the user didn't
         // actually drag, open the editing overlay so the user doesn't
-        // have to hunt for a double-click target.
+        // have to hunt for a double-click target. For empty non-text
+        // placeholders (pic / chart / …) we forward to the activation
+        // callback instead — the placeholder needs media or a wizard,
+        // not a caret.
         if (mayEnterEditOnClick && targets[0]) {
-          setEditingId(targets[0].id);
+          const id = targets[0].id;
+          const sh = slide ? findShape(slide.shapes, id) : null;
+          const placeholderActivation =
+            sh?.kind === "text" ? activatableEmptyPlaceholder(sh) : null;
+          if (placeholderActivation) {
+            props.onPlaceholderActivate?.({ shapeId: id, placeholder: placeholderActivation });
+          } else {
+            setEditingId(id);
+          }
         }
         return;
       }
@@ -542,41 +867,45 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         for (const t of targets) {
           const box = final.boxes.get(t.id);
           if (!box) continue;
-          // Connector resize hits a different command path: dragging a
-          // corner handle moves one endpoint, and the snap result tells
-          // us whether to record an anchored or free endpoint. The
-          // serialised set-position/set-size commands wouldn't capture
-          // the new anchor relationship.
           const draggedShape = slide ? findShape(slide.shapes, t.id) : null;
-          const resizeHandle =
-            mode !== "move" && typeof mode === "object" && "resize" in mode
-              ? (mode as { resize: ResizeHandle }).resize
-              : null;
-          if (draggedShape?.kind === "connector" && resizeHandle && isCornerHandle(resizeHandle) && slide) {
-            const which = endpointForHandleSide(resizeHandle);
-            const snappedAnchor = final.anchorSnap;
-            const targetCNvPrId = snappedAnchor
-              ? findCNvPrIdByShapeId(slide.shapes, snappedAnchor.shapeId)
-              : null;
-            const endpointPt = endpointForHandle(resizeHandle, box);
-            const endpointPayload =
-              snappedAnchor && targetCNvPrId !== null
-                ? {
-                    kind: "anchored" as const,
-                    targetCNvPrId,
-                    side: snappedAnchor.side,
-                  }
-                : { kind: "free" as const, xEmu: endpointPt.x, yEmu: endpointPt.y };
-            await props.agent.applyCommand({
-              type: "pptx:set-connector-endpoint",
-              source: "human",
-              payload: {
-                slideIndex: props.slideIndex,
-                shapeId: t.id,
-                which,
-                endpoint: endpointPayload,
-              },
-            });
+          // Connectors no longer participate in the generic resize
+          // path — endpoint and waypoint drags route through their
+          // dedicated drafts. A connector still appearing here is a
+          // pure body translate (both endpoints free), which we
+          // commit with set-connector-endpoint per endpoint so the
+          // model stays consistent and an undo cleanly reverts both
+          // ends in one step.
+          if (draggedShape?.kind === "connector") {
+            if (mode !== "move") continue;
+            const dx = box.x - t.origin.x;
+            const dy = box.y - t.origin.y;
+            if (dx === 0 && dy === 0) continue;
+            const startEp = draggedShape.start;
+            const endEp = draggedShape.end;
+            if (startEp.kind === "free") {
+              await props.agent.applyCommand({
+                type: "pptx:set-connector-endpoint",
+                source: "human",
+                payload: {
+                  slideIndex: props.slideIndex,
+                  shapeId: t.id,
+                  which: "start",
+                  endpoint: { kind: "free", xEmu: startEp.xEmu + dx, yEmu: startEp.yEmu + dy },
+                },
+              });
+            }
+            if (endEp.kind === "free") {
+              await props.agent.applyCommand({
+                type: "pptx:set-connector-endpoint",
+                source: "human",
+                payload: {
+                  slideIndex: props.slideIndex,
+                  shapeId: t.id,
+                  which: "end",
+                  endpoint: { kind: "free", xEmu: endEp.xEmu + dx, yEmu: endEp.yEmu + dy },
+                },
+              });
+            }
             continue;
           }
           if (mode === "move") {
@@ -618,7 +947,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         props.onError?.(err as Error);
       }
     },
-    [connectorDraft, drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
+    [connectorDraft, endpointDraft, waypointDraft, drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
   );
 
   const onTextSelectionChange = props.onTextSelectionChange;
@@ -664,12 +993,43 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     [props, onTextSelectionChange]
   );
 
+  // Esc cancels any in-flight connector gesture (draft draw, endpoint
+  // re-attach, waypoint slide) AND exits connector tool mode. PowerPoint
+  // / Slides users reach for Esc instinctively whenever they realise
+  // they picked the wrong tool, and we want every escape route to land
+  // back in the default selection mode without any committed change.
+  const onConnectorToolExit = props.onConnectorToolExit;
+  React.useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (connectorDraft) {
+        setConnectorDraft(null);
+        onConnectorToolExit?.();
+        return;
+      }
+      if (endpointDraft) {
+        setEndpointDraft(null);
+        return;
+      }
+      if (waypointDraft) {
+        setWaypointDraft(null);
+        return;
+      }
+      if (props.connectorTool) {
+        onConnectorToolExit?.();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [connectorDraft, endpointDraft, waypointDraft, props.connectorTool, onConnectorToolExit]);
+
   if (!slide) {
     return null;
   }
   const aspect = slideAspectRatio(slideSize);
   const zoom = clampZoom(props.zoom ?? 1);
   const dpi = props.dpi ?? DEFAULT_DPI;
+  const isToolMode = !!props.connectorTool;
 
   return (
     <div
@@ -685,7 +1045,11 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         background: "white",
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         userSelect: "none",
-        cursor: drag ? cursorForDrag(drag.mode) : "default",
+        cursor: drag
+          ? cursorForDrag(drag.mode)
+          : isToolMode || connectorDraft
+            ? "crosshair"
+            : "default",
         touchAction: "none",
       }}
       onPointerDown={onPointerDown}
@@ -698,7 +1062,18 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         const id = shapeEl?.dataset.shapeId;
         if (!id) return;
         const sh = findShape(slide.shapes, id);
-        if (sh?.kind === "text") startEditing(id);
+        if (sh?.kind !== "text") return;
+        // Empty non-text placeholder (pic / chart / tbl / dgm / media):
+        // hand the activation to the parent instead of opening the
+        // text-edit overlay. Typing into a picture placeholder would
+        // produce real `<a:t>` runs and silently turn it into a text
+        // box on save, which is exactly the wrong default.
+        const placeholderActivation = activatableEmptyPlaceholder(sh as TextShape);
+        if (placeholderActivation) {
+          props.onPlaceholderActivate?.({ shapeId: id, placeholder: placeholderActivation });
+          return;
+        }
+        startEditing(id);
       }}
     >
       <svg
@@ -741,31 +1116,56 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         previewBoxes={preview?.boxes ?? null}
         dragMode={drag?.mode ?? null}
         editingId={editingId}
+        endpointDraft={endpointDraft}
+        waypointDraft={waypointDraft}
       />
       {marquee && containerRef.current ? (
         <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
       ) : null}
       {/* Port-hover layer — surfaced when the user is idling over a
           non-connector shape, so the four cardinal anchor dots become
-          drag-from sources for new connectors. Suppressed during any
-          active drag/marquee/draft to keep the canvas calm. */}
-      {!drag && !marquee && !connectorDraft && hoveredShapeId
-        ? renderPortHoverOverlay(slide, slideSize, hoveredShapeId)
+          drag-from sources for new connectors. We always show ports
+          while the connector tool is armed (the user came here
+          specifically to draw something), and the live target halo
+          stays visible during draft / endpoint-edit gestures. */}
+      {!drag && !marquee && !connectorDraft && !endpointDraft && hoveredShapeId
+        ? renderPortHoverOverlay(slide, slideSize, hoveredShapeId, isToolMode)
         : null}
+      {connectorDraft && connectorDraft.snapped ? (
+        <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={connectorDraft.snapped.shapeId} />
+      ) : null}
+      {endpointDraft && endpointDraft.snapped ? (
+        <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={endpointDraft.snapped.shapeId} />
+      ) : null}
       {connectorDraft ? <ConnectorDraftOverlay slideSize={slideSize} draft={connectorDraft} /> : null}
+      {endpointDraft ? (
+        <EndpointDraftOverlay slideSize={slideSize} draft={endpointDraft} />
+      ) : null}
       {editingId
         ? renderEditingOverlay(slide, editingId, slideSize, dpi, finishEditing, onTextSelectionChange)
         : null}
+      {isToolMode ? <ConnectorToolBanner type={props.connectorTool!.type} /> : null}
     </div>
   );
 }
 
-function renderPortHoverOverlay(slide: Slide, slideSize: SlideSize, shapeId: string): React.ReactNode {
-  const sh = findShape(slide.shapes, shapeId);
-  if (!sh) return null;
-  const box = shapeBoundingBox(sh);
-  if (!box) return null;
-  return <PortHoverOverlay slideSize={slideSize} shapeId={shapeId} box={box} />;
+function renderPortHoverOverlay(
+  slide: Slide,
+  slideSize: SlideSize,
+  shapeId: string,
+  emphasised: boolean
+): React.ReactNode {
+  const located = findShapeWithOffset(slide.shapes, shapeId);
+  if (!located) return null;
+  const local = shapeBoundingBox(located.shape);
+  if (!local) return null;
+  const box: BoundingBox = {
+    x: local.x + located.offsetX,
+    y: local.y + located.offsetY,
+    cx: local.cx,
+    cy: local.cy,
+  };
+  return <PortHoverOverlay slideSize={slideSize} shapeId={shapeId} box={box} emphasised={emphasised} />;
 }
 
 function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
@@ -792,6 +1192,74 @@ function collectOtherBoxes(
     out.push({ id: sh.id, box: b });
   }
   return out;
+}
+
+/**
+ * Recursive group-aware variant used by the connector snap path. Each
+ * `<p:grpSp>` translates its children by `position`, so a top-level
+ * snap walker that returned local boxes for grouped shapes would land
+ * the connector somewhere off-screen. We compute the cumulative
+ * translate down each group spine and emit absolute slide-coordinate
+ * boxes for every connectable child (text shapes, pictures, charts,
+ * tables, opaque shapes). Connectors themselves and group containers
+ * are intentionally NOT exposed as snap targets — connectors carry no
+ * useful "shape body" to attach to, and snapping to a group's bbox
+ * would feel arbitrary when the user clearly meant one of the visible
+ * children.
+ */
+function collectAllConnectableBoxes(
+  shapes: ReadonlyArray<Shape>,
+  excludeIds: ReadonlySet<string>,
+  offsetX: number = 0,
+  offsetY: number = 0
+): { id: string; box: BoundingBox }[] {
+  const out: { id: string; box: BoundingBox }[] = [];
+  for (const sh of shapes) {
+    if (sh.kind === "group") {
+      const childOffsetX = offsetX + (sh.position?.xEmu ?? 0);
+      const childOffsetY = offsetY + (sh.position?.yEmu ?? 0);
+      out.push(...collectAllConnectableBoxes(sh.children, excludeIds, childOffsetX, childOffsetY));
+      continue;
+    }
+    if (excludeIds.has(sh.id)) continue;
+    if (sh.kind === "connector") continue;
+    if (sh.cNvPrId <= 0) continue;
+    const local = shapeBoundingBox(sh);
+    if (!local) continue;
+    out.push({
+      id: sh.id,
+      box: { x: local.x + offsetX, y: local.y + offsetY, cx: local.cx, cy: local.cy },
+    });
+  }
+  return out;
+}
+
+/**
+ * Locate a shape by id along with the cumulative translate of every
+ * group ancestor. Returns `null` when the shape isn't on the slide.
+ * The translate matters for port surfacing on grouped children — without
+ * it the four port dots would render at the child's local origin
+ * instead of where it actually appears on the slide.
+ */
+function findShapeWithOffset(
+  shapes: ReadonlyArray<Shape>,
+  id: string,
+  offsetX: number = 0,
+  offsetY: number = 0
+): { shape: Shape; offsetX: number; offsetY: number } | null {
+  for (const s of shapes) {
+    if (s.id === id) return { shape: s, offsetX, offsetY };
+    if (s.kind === "group") {
+      const inner = findShapeWithOffset(
+        s.children,
+        id,
+        offsetX + (s.position?.xEmu ?? 0),
+        offsetY + (s.position?.yEmu ?? 0)
+      );
+      if (inner) return inner;
+    }
+  }
+  return null;
 }
 
 /**
@@ -827,6 +1295,23 @@ function endpointForHandleSide(h: ResizeHandle): "start" | "end" {
   }
 }
 
+/**
+ * Last-resort coordinate when an anchored endpoint's target shape has
+ * been deleted out from under the connector. We fall back to the
+ * connector's own bounding-box corner so the chrome still renders
+ * something the user can grab to reconnect, instead of teleporting
+ * the dot to (0, 0). `start` = top-left, `end` = bottom-right when
+ * `flipH/flipV` are absent — which mirrors how the parser/serializer
+ * place the endpoints on a connector's `<a:xfrm>`.
+ */
+function fallbackEndpoint(connector: ConnectorShape, which: "start" | "end"): { x: number; y: number } {
+  const x = connector.position?.xEmu ?? 0;
+  const y = connector.position?.yEmu ?? 0;
+  const cx = connector.size?.cxEmu ?? 0;
+  const cy = connector.size?.cyEmu ?? 0;
+  return which === "start" ? { x, y } : { x: x + cx, y: y + cy };
+}
+
 function findCNvPrIdByShapeId(shapes: ReadonlyArray<Shape>, id: string): number | null {
   for (const s of shapes) {
     if (s.id === id) return s.cNvPrId > 0 ? s.cNvPrId : null;
@@ -836,6 +1321,47 @@ function findCNvPrIdByShapeId(shapes: ReadonlyArray<Shape>, id: string): number 
     }
   }
   return null;
+}
+
+/**
+ * Set of placeholder types whose "click to fill" affordance is non-
+ * textual: a picture placeholder needs an image, a chart placeholder a
+ * dataset, a table placeholder a row/column count, and so on. Typing
+ * into any of these would silently produce `<a:t>` runs on save and
+ * turn the placeholder into a plain text box — exactly the surprise
+ * we want to avoid. The renderer paints these with an icon glyph
+ * (see `renderPlaceholderHint`); the canvas routes their activation
+ * (double-click or PowerPoint-style second-click) to
+ * `onPlaceholderActivate` instead of opening the text overlay.
+ */
+const NON_TEXT_PLACEHOLDER_TYPES: ReadonlySet<string> = new Set([
+  "pic",
+  "chart",
+  "tbl",
+  "dgm",
+  "media",
+]);
+
+/**
+ * Returns the `placeholder` descriptor when `shape` is an empty layout
+ * placeholder whose activation should NOT open the text edit overlay
+ * (currently: pic, chart, tbl, dgm, media). Returns `null` for any
+ * other shape, including `title`/`body`/`subTitle` placeholders (which
+ * are perfectly happy receiving caret focus) and for placeholders that
+ * already carry user-entered text (we don't want a typed-in title to
+ * suddenly fire the file picker on the next click).
+ */
+function activatableEmptyPlaceholder(
+  shape: TextShape
+): { type?: string; idx?: number } | null {
+  const ph = shape.placeholder;
+  if (!ph) return null;
+  if (!ph.type || !NON_TEXT_PLACEHOLDER_TYPES.has(ph.type)) return null;
+  const hasText = shape.txBody.paragraphs.some((p) =>
+    p.runs.some((r) => !r.isLineBreak && r.text.length > 0)
+  );
+  if (hasText) return null;
+  return { type: ph.type, idx: ph.idx };
 }
 
 function isLineShape(shape: Shape): boolean {
@@ -901,11 +1427,33 @@ interface SnapContext {
  */
 const ANCHOR_THRESHOLD_EMU = 100_000;
 
-/** Slide-coordinate location of a side anchor on a bounding box. */
-function anchorPointFor(box: BoundingBox, side: AnchorSide): { x: number; y: number } {
-  const all = anchorsFor("", box);
-  for (const a of all) if (a.side === side) return { x: a.x, y: a.y };
-  return { x: box.x + box.cx / 2, y: box.y + box.cy / 2 };
+/**
+ * Slide-coordinate location of a side anchor on a bounding box.
+ * Honours the optional `t` parameter (0..1) so the cardinal midpoint,
+ * the two quarter-points, and any future intermediate value resolve to
+ * the same coordinate the geometry/route helpers would compute.
+ */
+function anchorPointFor(box: BoundingBox, side: AnchorSide, t?: number): { x: number; y: number } {
+  const u = clampT01(t);
+  switch (side) {
+    case "n":
+      return { x: Math.round(box.x + box.cx * u), y: box.y };
+    case "s":
+      return { x: Math.round(box.x + box.cx * u), y: box.y + box.cy };
+    case "w":
+      return { x: box.x, y: Math.round(box.y + box.cy * u) };
+    case "e":
+      return { x: box.x + box.cx, y: Math.round(box.y + box.cy * u) };
+    case "center":
+      return { x: Math.round(box.x + box.cx / 2), y: Math.round(box.y + box.cy / 2) };
+  }
+}
+
+function clampT01(t: number | undefined): number {
+  if (t === undefined || !Number.isFinite(t)) return 0.5;
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t;
 }
 
 function makeSnapContext(
@@ -1249,6 +1797,10 @@ interface SelectionOverlayProps {
    * shape chrome while the caret is in the text body.
    */
   readonly editingId: string | null;
+  /** Active endpoint-edit gesture so the chrome can hide that endpoint dot. */
+  readonly endpointDraft: EndpointEditDraft | null;
+  /** Active waypoint-slide gesture so the elbow preview uses live offsets. */
+  readonly waypointDraft: WaypointDraft | null;
 }
 
 /**
@@ -1267,6 +1819,8 @@ function SelectionOverlaySvg({
   previewBoxes,
   dragMode,
   editingId,
+  endpointDraft,
+  waypointDraft,
 }: SelectionOverlayProps): React.ReactElement | null {
   if (selectedIds.length === 0) return null;
   // Suppress chrome (outline + handles + move zone) for the shape being
@@ -1276,6 +1830,30 @@ function SelectionOverlaySvg({
   // from the caret.
   const visibleIds = editingId ? selectedIds.filter((id) => id !== editingId) : selectedIds;
   if (visibleIds.length === 0) return null;
+
+  // Single-connector selection gets its own dedicated chrome layer:
+  // two endpoint dots and (for elbow) one perpendicular slider per
+  // interior segment. We render this BEFORE the generic bbox/8-handle
+  // path because connectors don't want either of those — a connector's
+  // bounding box is mostly empty space, the eight handles distort the
+  // route, and PowerPoint/Slides agree that endpoint + segment
+  // controls are the only sensible affordances.
+  if (visibleIds.length === 1) {
+    const onlyId = visibleIds[0];
+    const sh = findShape(slide.shapes, onlyId);
+    if (sh && sh.kind === "connector") {
+      return (
+        <ConnectorSelectionChrome
+          slide={slide}
+          slideSize={slideSize}
+          connector={sh}
+          endpointDraft={endpointDraft}
+          waypointDraft={waypointDraft}
+        />
+      );
+    }
+  }
+
   const entries: { id: string; box: BoundingBox }[] = [];
   for (const id of visibleIds) {
     const sh = findShape(slide.shapes, id);
@@ -1431,6 +2009,306 @@ function SelectionOverlaySvg({
   );
 }
 
+interface ConnectorSelectionChromeProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly connector: ConnectorShape;
+  readonly endpointDraft: EndpointEditDraft | null;
+  readonly waypointDraft: WaypointDraft | null;
+}
+
+/**
+ * Connector-specific selection chrome. We deliberately avoid drawing
+ * the dashed bbox + 8 resize handles that other shapes get — those
+ * controls are nonsensical for a 1-D primitive (the bbox is mostly
+ * empty space, and "resizing" by a corner handle would arbitrarily
+ * distort the route). Instead we paint:
+ *
+ *   - a soft outline of the route itself, so the user sees what's
+ *     actually selected;
+ *   - one large dot per endpoint, which the canvas pointerdown handler
+ *     promotes to an `EndpointEditDraft`;
+ *   - one perpendicular slider per interior elbow segment (only when
+ *     the connector is the elbow type), which becomes a
+ *     `WaypointDraft` on grab.
+ *
+ * Endpoints render in two visual variants: anchored = filled purple
+ * circle (it's "stuck" to a target), free = white-filled circle with
+ * purple ring (it's floating in space). When the user is mid-drag on
+ * one endpoint we hide that dot — the live preview overlay paints
+ * the new position with a snap halo, so doubling up would be noisy.
+ */
+function ConnectorSelectionChrome({
+  slide,
+  slideSize,
+  connector,
+  endpointDraft,
+  waypointDraft,
+}: ConnectorSelectionChromeProps): React.ReactElement | null {
+  const shapesByCNvPrId = React.useMemo(
+    () => buildShapesByCNvPrId(slide.shapes),
+    [slide.shapes]
+  );
+  const startPt =
+    resolveEndpoint(connector.start, shapesByCNvPrId) ?? fallbackEndpoint(connector, "start");
+  const endPt =
+    resolveEndpoint(connector.end, shapesByCNvPrId) ?? fallbackEndpoint(connector, "end");
+  const startSide = connector.start.kind === "anchored" ? connector.start.side : null;
+  const endSide = connector.end.kind === "anchored" ? connector.end.side : null;
+  // Live waypoint preview: substitute the dragged offset into the
+  // visible polyline so the user sees the segment slide before the
+  // command commits. Geometry mirrors `routeElbow` in the SVG renderer.
+  const liveWaypoints = (() => {
+    if (!waypointDraft || waypointDraft.shapeId !== connector.id) return connector.waypoints;
+    const arr = [...(connector.waypoints ?? [])];
+    while (arr.length <= waypointDraft.segmentIndex) arr.push(0);
+    arr[waypointDraft.segmentIndex] = waypointDraft.currentValueEmu;
+    return arr;
+  })();
+  const points = computeRoutePoints(
+    connector.connectorType,
+    startPt,
+    endPt,
+    startSide,
+    endSide,
+    liveWaypoints
+  );
+  const editingStart = endpointDraft?.shapeId === connector.id && endpointDraft.which === "start";
+  const editingEnd = endpointDraft?.shapeId === connector.id && endpointDraft.which === "end";
+  const r = 110_000; // ≈ 11.5 px @ 96 DPI; large enough to grab without zoom-in
+  const hitR = 220_000;
+  const purple = "#7c3aed";
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      {/* Route highlight — sits behind the dots so they always read
+          on top. Slightly thicker and more transparent than the actual
+          stroke so the user perceives "selected" without obscuring the
+          rendered connector. */}
+      {connector.connectorType === "curved" ? (
+        <path
+          d={curvedPath(points)}
+          fill="none"
+          stroke={purple}
+          strokeOpacity={0.35}
+          strokeWidth={6}
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : (
+        <polyline
+          points={points.map((p) => `${px(p.x)},${px(p.y)}`).join(" ")}
+          fill="none"
+          stroke={purple}
+          strokeOpacity={0.35}
+          strokeWidth={6}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+
+      {/* Endpoint dots */}
+      {!editingStart ? (
+        <ConnectorEndpointHandle
+          shapeId={connector.id}
+          which="start"
+          x={startPt.x}
+          y={startPt.y}
+          r={r}
+          hitR={hitR}
+          anchored={connector.start.kind === "anchored"}
+          color={purple}
+        />
+      ) : null}
+      {!editingEnd ? (
+        <ConnectorEndpointHandle
+          shapeId={connector.id}
+          which="end"
+          x={endPt.x}
+          y={endPt.y}
+          r={r}
+          hitR={hitR}
+          anchored={connector.end.kind === "anchored"}
+          color={purple}
+        />
+      ) : null}
+
+      {/* Waypoint sliders for elbow connectors. We expose one slider
+          per interior segment (not the lead-out stubs at either end);
+          each one slides perpendicular to the segment's axis. Skip
+          when the connector type isn't elbow — straight has no bend,
+          and curved doesn't expose explicit waypoints in our model. */}
+      {connector.connectorType === "elbow"
+        ? renderWaypointSliders(connector.id, points, purple)
+        : null}
+    </svg>
+  );
+}
+
+interface ConnectorEndpointHandleProps {
+  readonly shapeId: string;
+  readonly which: "start" | "end";
+  readonly x: number;
+  readonly y: number;
+  readonly r: number;
+  readonly hitR: number;
+  readonly anchored: boolean;
+  readonly color: string;
+}
+
+function ConnectorEndpointHandle({
+  shapeId,
+  which,
+  x,
+  y,
+  r,
+  hitR,
+  anchored,
+  color,
+}: ConnectorEndpointHandleProps): React.ReactElement {
+  return (
+    <g>
+      <circle
+        cx={px(x)}
+        cy={px(y)}
+        r={px(r)}
+        fill={anchored ? color : "white"}
+        stroke={color}
+        strokeWidth={2}
+        vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
+      />
+      <circle
+        data-connector-shape-id={escAttr(shapeId)}
+        data-connector-endpoint={which}
+        cx={px(x)}
+        cy={px(y)}
+        r={px(hitR)}
+        fill="transparent"
+        style={{ pointerEvents: "all", cursor: "grab" }}
+      />
+    </g>
+  );
+}
+
+/**
+ * Emit one perpendicular slider per interior segment of an elbow
+ * route. The route polyline always starts and ends at the endpoint
+ * dots; the segments in between are the ones the user can slide.
+ * Each slider draws as a small "pill" centered on the segment
+ * midpoint, oriented across the segment's axis.
+ */
+function renderWaypointSliders(
+  shapeId: string,
+  points: ReadonlyArray<{ x: number; y: number }>,
+  color: string
+): React.ReactNode {
+  if (points.length < 4) return null;
+  const out: React.ReactNode[] = [];
+  // The first segment (points[0]→points[1]) is the lead-out stub from
+  // the start endpoint; the last segment is the lead-in stub to the
+  // end endpoint. Skip both — only interior segments are user-
+  // draggable. Index counting matches the `waypoints` array indexing
+  // used by `set-connector-waypoint`.
+  for (let i = 1; i < points.length - 2; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const isHoriz = Math.abs(b.y - a.y) < 1;
+    const isVert = Math.abs(b.x - a.x) < 1;
+    if (!isHoriz && !isVert) continue;
+    const midX = (a.x + b.x) / 2;
+    const midY = (a.y + b.y) / 2;
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    if (segLen < 200_000) continue; // too short to grab without overlapping endpoint dots
+    const axis: "horizontal" | "vertical" = isHoriz ? "horizontal" : "vertical";
+    const w = isHoriz ? 280_000 : 90_000;
+    const h = isHoriz ? 90_000 : 280_000;
+    const segIndex = i - 1; // 0-based among interior segments
+    // Origin value = the value we'd send back if the user nudged it
+    // by 0; the canvas reads this off the data attribute on
+    // pointerdown so the live drag has a baseline. For a horizontal
+    // segment that's its y-coordinate, for a vertical segment its
+    // x-coordinate.
+    const origin = isHoriz ? a.y : a.x;
+    out.push(
+      <g key={`wp-${i}`}>
+        <rect
+          x={px(midX - w / 2)}
+          y={px(midY - h / 2)}
+          width={px(w)}
+          height={px(h)}
+          rx={px(45_000)}
+          ry={px(45_000)}
+          fill="white"
+          stroke={color}
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+          opacity={0.95}
+        />
+        <rect
+          data-connector-shape-id={escAttr(shapeId)}
+          data-connector-waypoint={String(segIndex)}
+          data-connector-axis={axis}
+          data-connector-origin={String(Math.round(origin))}
+          x={px(midX - w)}
+          y={px(midY - h)}
+          width={px(w * 2)}
+          height={px(h * 2)}
+          fill="transparent"
+          style={{
+            pointerEvents: "all",
+            cursor: isHoriz ? "ns-resize" : "ew-resize",
+          }}
+        />
+      </g>
+    );
+  }
+  return out;
+}
+
+/**
+ * Build the visible route polyline for a connector for use by the
+ * selection chrome and the waypoint preview. Mirrors `routeElbow` /
+ * the connector renderer so what the user clicks on lines up exactly
+ * with what they see.
+ */
+function computeRoutePoints(
+  type: ConnectorType,
+  sp: { x: number; y: number },
+  ep: { x: number; y: number },
+  startSide: AnchorSide | null,
+  endSide: AnchorSide | null,
+  waypoints: ReadonlyArray<number> | undefined
+): ReadonlyArray<{ x: number; y: number }> {
+  if (type === "straight") return [sp, ep];
+  if (type === "curved") {
+    // We don't need a real bezier subdivision for chrome — the
+    // selection halo accepts the same control polygon and renders
+    // close enough. The endpoint dots are positioned exactly on sp/ep
+    // anyway.
+    const dx = ep.x - sp.x;
+    const dy = ep.y - sp.y;
+    const ctrl = { x: sp.x + dx / 2, y: sp.y + dy / 2 };
+    return [sp, ctrl, ep];
+  }
+  return routeElbowPointsWithWaypoints(sp, ep, startSide, endSide, waypoints);
+}
+
+function curvedPath(points: ReadonlyArray<{ x: number; y: number }>): string {
+  if (points.length < 3) {
+    if (points.length === 0) return "";
+    if (points.length === 1) return `M ${px(points[0].x)} ${px(points[0].y)}`;
+    return `M ${px(points[0].x)} ${px(points[0].y)} L ${px(points[1].x)} ${px(points[1].y)}`;
+  }
+  const [a, c, b] = [points[0], points[1], points[points.length - 1]];
+  return `M ${px(a.x)} ${px(a.y)} Q ${px(c.x)} ${px(c.y)} ${px(b.x)} ${px(b.y)}`;
+}
+
 interface SmartGuidesOverlayProps {
   readonly slideSize: SlideSize;
   readonly guides: ReadonlyArray<SnapGuide>;
@@ -1537,6 +2415,12 @@ interface PortHoverOverlayProps {
   readonly slideSize: SlideSize;
   readonly shapeId: string;
   readonly box: BoundingBox;
+  /**
+   * When true (e.g. user has armed the connector tool, or the live
+   * draft snapped onto this shape), the dots render larger and with a
+   * tinted halo so the user clearly sees they're a snap target.
+   */
+  readonly emphasised?: boolean;
 }
 
 /**
@@ -1549,10 +2433,26 @@ interface PortHoverOverlayProps {
  * port — clicking the middle of a shape should select it, not start
  * a connector.
  */
-function PortHoverOverlay({ slideSize, shapeId, box }: PortHoverOverlayProps): React.ReactElement {
+function PortHoverOverlay({
+  slideSize,
+  shapeId,
+  box,
+  emphasised,
+}: PortHoverOverlayProps): React.ReactElement {
   const sides: AnchorSide[] = ["n", "s", "e", "w"];
-  const anchors = anchorsFor(shapeId, box).filter((a) => sides.includes(a.side));
-  const r = 65_000; // ≈ 6.8 px @ 96 DPI; visible but unobtrusive
+  // We use the cardinal midpoints (t=0.5) for hover ports — the
+  // quarter-points exist in the model but cluttering the four-cardinal
+  // affordance with eight extra dots makes the canvas look like a
+  // pegboard. Snapping during a live draft already considers all 13
+  // anchors, so the user can land a connector at a quarter-point even
+  // though only the cardinals draw a hover dot.
+  const allAnchors = anchorsFor(shapeId, box);
+  const anchors = sides
+    .map((side) => allAnchors.find((a) => a.side === side && Math.abs(a.t - 0.5) < 1e-3))
+    .filter((a): a is ShapeAnchor => !!a);
+  const r = emphasised ? 85_000 : 65_000;
+  const haloColor = emphasised ? "rgba(14,165,233,0.35)" : "rgba(14,165,233,0.15)";
+  const ringWidth = emphasised ? 2 : 1.5;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -1566,7 +2466,7 @@ function PortHoverOverlay({ slideSize, shapeId, box }: PortHoverOverlayProps): R
             cx={px(a.x)}
             cy={px(a.y)}
             r={px(r * 1.6)}
-            fill="rgba(14,165,233,0.15)"
+            fill={haloColor}
             stroke="none"
             data-port={a.side}
             data-port-shape-id={shapeId}
@@ -1578,12 +2478,70 @@ function PortHoverOverlay({ slideSize, shapeId, box }: PortHoverOverlayProps): R
             r={px(r)}
             fill="white"
             stroke="#0ea5e9"
-            strokeWidth={1.5}
+            strokeWidth={ringWidth}
             vectorEffect="non-scaling-stroke"
             pointerEvents="none"
           />
         </g>
       ))}
+    </svg>
+  );
+}
+
+interface TargetHaloOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly shapeId: string;
+}
+
+/**
+ * Soft sky-blue halo painted around whichever shape the live snap is
+ * about to attach to. Distinct from the port hover overlay — the user
+ * needs to know not just which port will catch the endpoint, but which
+ * SHAPE they're connecting to (especially in dense slides). The halo
+ * also reveals all four cardinal ports on the target so the user can
+ * see how the connector might re-route if they slide the cursor.
+ */
+function TargetHaloOverlay({
+  slide,
+  slideSize,
+  shapeId,
+}: TargetHaloOverlayProps): React.ReactElement | null {
+  const located = findShapeWithOffset(slide.shapes, shapeId);
+  if (!located) return null;
+  const local = shapeBoundingBox(located.shape);
+  if (!local) return null;
+  const box: BoundingBox = {
+    x: local.x + located.offsetX,
+    y: local.y + located.offsetY,
+    cx: local.cx,
+    cy: local.cy,
+  };
+  // Pad slightly so the halo doesn't visually merge with the shape
+  // outline at zoom levels where strokes touch.
+  const pad = 40_000;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      <rect
+        x={px(box.x - pad)}
+        y={px(box.y - pad)}
+        width={px(box.cx + pad * 2)}
+        height={px(box.cy + pad * 2)}
+        rx={px(40_000)}
+        ry={px(40_000)}
+        fill="none"
+        stroke="#0ea5e9"
+        strokeOpacity={0.6}
+        strokeWidth={2}
+        strokeDasharray="6 3"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
@@ -1605,10 +2563,15 @@ function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps)
   const sy = draft.source.y;
   const ex = draft.snapped ? draft.snapped.x : draft.currentX;
   const ey = draft.snapped ? draft.snapped.y : draft.currentY;
-  const startSide = draft.source.side;
+  const startSide = draft.source.kind === "anchored" ? draft.source.side : null;
   const endSide = draft.snapped?.side ?? null;
-  const points = routeElbowPoints({ x: sx, y: sy }, { x: ex, y: ey }, startSide, endSide);
-  const pts = points.map((p) => `${px(p.x)},${px(p.y)}`).join(" ");
+  const draftPath = routeForType(
+    draft.connectorType,
+    { x: sx, y: sy },
+    { x: ex, y: ey },
+    startSide,
+    endSide
+  );
   const r = 80_000;
   return (
     <svg
@@ -1618,32 +2581,41 @@ function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps)
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
     >
-      <polyline
-        points={pts}
-        fill="none"
-        stroke="#0ea5e9"
-        strokeWidth={2}
-        strokeDasharray="6 4"
-        vectorEffect="non-scaling-stroke"
-      />
-      <circle
-        cx={px(sx)}
-        cy={px(sy)}
-        r={px(r)}
-        fill="#0ea5e9"
-        stroke="white"
-        strokeWidth={1.5}
-        vectorEffect="non-scaling-stroke"
-      />
+      {draftPath}
+      {draft.source.kind === "anchored" ? (
+        <circle
+          cx={px(sx)}
+          cy={px(sy)}
+          r={px(r)}
+          fill="#0ea5e9"
+          stroke="white"
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : (
+        <circle
+          cx={px(sx)}
+          cy={px(sy)}
+          r={px(r * 0.6)}
+          fill="white"
+          stroke="#0ea5e9"
+          strokeWidth={1.5}
+          strokeDasharray="2 2"
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
       {draft.nearby.map((a, i) => {
         const isSnap =
-          draft.snapped !== null && a.shapeId === draft.snapped.shapeId && a.side === draft.snapped.side;
+          draft.snapped !== null &&
+          a.shapeId === draft.snapped.shapeId &&
+          a.side === draft.snapped.side &&
+          Math.abs(a.t - draft.snapped.t) < 1e-3;
         return (
           <circle
-            key={`${a.shapeId}-${a.side}-${i}`}
+            key={`${a.shapeId}-${a.side}-${a.t}-${i}`}
             cx={px(a.x)}
             cy={px(a.y)}
-            r={px(r)}
+            r={px(isSnap ? r : r * 0.7)}
             fill={isSnap ? "#0ea5e9" : "white"}
             stroke="#0ea5e9"
             strokeWidth={1.5}
@@ -1652,6 +2624,180 @@ function ConnectorDraftOverlay({ slideSize, draft }: ConnectorDraftOverlayProps)
         );
       })}
     </svg>
+  );
+}
+
+interface EndpointDraftOverlayProps {
+  readonly slideSize: SlideSize;
+  readonly draft: EndpointEditDraft;
+}
+
+/**
+ * Live preview while the user is dragging an existing connector's
+ * endpoint. Mirrors `ConnectorDraftOverlay` but routes from the
+ * un-dragged endpoint to the cursor / snap target so the overlay
+ * matches the post-commit path. We also draw a small "detached" hint
+ * (open ring) when the endpoint has left the snap range, so the user
+ * understands they're about to convert an anchored endpoint to a
+ * free one.
+ */
+function EndpointDraftOverlay({
+  slideSize,
+  draft,
+}: EndpointDraftOverlayProps): React.ReactElement {
+  const sx = draft.otherPoint.x;
+  const sy = draft.otherPoint.y;
+  const ex = draft.snapped ? draft.snapped.x : draft.currentX;
+  const ey = draft.snapped ? draft.snapped.y : draft.currentY;
+  const startSide = draft.otherSide;
+  const endSide = draft.snapped?.side ?? null;
+  const path = routeForType(
+    draft.connectorType,
+    { x: sx, y: sy },
+    { x: ex, y: ey },
+    startSide,
+    endSide
+  );
+  const detached = draft.wasAnchored && draft.snapped === null;
+  const r = 80_000;
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={slideViewBox(slideSize)}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+    >
+      {path}
+      {detached ? (
+        <circle
+          cx={px(ex)}
+          cy={px(ey)}
+          r={px(r * 0.7)}
+          fill="white"
+          stroke="#f97316"
+          strokeWidth={2}
+          strokeDasharray="3 2"
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : null}
+      {draft.nearby.map((a, i) => {
+        const isSnap =
+          draft.snapped !== null &&
+          a.shapeId === draft.snapped.shapeId &&
+          a.side === draft.snapped.side &&
+          Math.abs(a.t - draft.snapped.t) < 1e-3;
+        return (
+          <circle
+            key={`${a.shapeId}-${a.side}-${a.t}-${i}`}
+            cx={px(a.x)}
+            cy={px(a.y)}
+            r={px(isSnap ? r : r * 0.7)}
+            fill={isSnap ? "#0ea5e9" : "white"}
+            stroke="#0ea5e9"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+/**
+ * Picks the right SVG element for a draft preview given the connector
+ * type. Straight = single line, elbow = polyline (mirrors `routeElbow`
+ * from the SVG renderer), curved = quadratic bezier through a midpoint
+ * (matches what the SVG renderer does for curved connectors). Stroke
+ * style is the same dashed sky-blue across all three so the user has
+ * a consistent visual signal that they're in "drawing" mode.
+ */
+function routeForType(
+  type: ConnectorType,
+  sp: { x: number; y: number },
+  ep: { x: number; y: number },
+  startSide: AnchorSide | null,
+  endSide: AnchorSide | null
+): React.ReactElement {
+  const stroke = "#0ea5e9";
+  const dash = "6 4";
+  if (type === "straight") {
+    return (
+      <line
+        x1={px(sp.x)}
+        y1={px(sp.y)}
+        x2={px(ep.x)}
+        y2={px(ep.y)}
+        stroke={stroke}
+        strokeWidth={2}
+        strokeDasharray={dash}
+        vectorEffect="non-scaling-stroke"
+      />
+    );
+  }
+  if (type === "curved") {
+    const dx = ep.x - sp.x;
+    const dy = ep.y - sp.y;
+    const ctrl = { x: sp.x + dx / 2, y: sp.y + dy / 2 };
+    return (
+      <path
+        d={`M ${px(sp.x)} ${px(sp.y)} Q ${px(ctrl.x)} ${px(ctrl.y)} ${px(ep.x)} ${px(ep.y)}`}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={2}
+        strokeDasharray={dash}
+        vectorEffect="non-scaling-stroke"
+      />
+    );
+  }
+  const points = routeElbowPoints(sp, ep, startSide, endSide);
+  const pts = points.map((p) => `${px(p.x)},${px(p.y)}`).join(" ");
+  return (
+    <polyline
+      points={pts}
+      fill="none"
+      stroke={stroke}
+      strokeWidth={2}
+      strokeDasharray={dash}
+      vectorEffect="non-scaling-stroke"
+    />
+  );
+}
+
+interface ConnectorToolBannerProps {
+  readonly type: ConnectorType;
+}
+
+/**
+ * Tiny "[Tool] Click & drag to draw — Esc to cancel" hint pinned to
+ * the top of the canvas while the connector tool is armed. Modeled on
+ * Figma's tool-mode strip: low-contrast, never blocks shape clicks,
+ * and disappears instantly on commit / Esc / tool toggle.
+ */
+function ConnectorToolBanner({ type }: ConnectorToolBannerProps): React.ReactElement {
+  const label =
+    type === "straight" ? "Straight connector" : type === "curved" ? "Curved connector" : "Elbow connector";
+  return (
+    <div
+      data-testid="pptx-connector-tool-banner"
+      style={{
+        position: "absolute",
+        top: 8,
+        left: "50%",
+        transform: "translateX(-50%)",
+        background: "rgba(15,23,42,0.85)",
+        color: "white",
+        padding: "4px 12px",
+        borderRadius: 6,
+        fontSize: 12,
+        fontFamily: "system-ui, sans-serif",
+        pointerEvents: "none",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label} — click &amp; drag from a shape, port, or empty space. Esc to cancel.
+    </div>
   );
 }
 
@@ -1667,6 +2813,22 @@ function routeElbowPoints(
   startSide: AnchorSide | null,
   endSide: AnchorSide | null
 ): ReadonlyArray<{ x: number; y: number }> {
+  return routeElbowPointsWithWaypoints(sp, ep, startSide, endSide, undefined);
+}
+
+/**
+ * Waypoint-aware version of the elbow router. When the user has
+ * grabbed and slid a perpendicular handle on an interior segment, we
+ * apply the recorded offset to the corresponding mid coordinate so
+ * the preview / chrome reflect the live drag exactly.
+ */
+function routeElbowPointsWithWaypoints(
+  sp: { x: number; y: number },
+  ep: { x: number; y: number },
+  startSide: AnchorSide | null,
+  endSide: AnchorSide | null,
+  waypoints: ReadonlyArray<number> | undefined
+): ReadonlyArray<{ x: number; y: number }> {
   const dx = ep.x - sp.x;
   const dy = ep.y - sp.y;
   const LEAD = 228_600;
@@ -1674,28 +2836,45 @@ function routeElbowPoints(
   const leadY = Math.min(LEAD, Math.max(0, Math.abs(dy) / 2));
   const sV = sideUnit(startSide);
   const eV = sideUnit(endSide);
+  const w0 = waypointAt(waypoints, 0);
+  const w1 = waypointAt(waypoints, 1);
   if (sV.x === 0 && sV.y === 0 && eV.x === 0 && eV.y === 0) {
     const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
-    const midX = horizontalFirst ? sp.x + dx / 2 : sp.x;
-    const midY = horizontalFirst ? sp.y : sp.y + dy / 2;
-    return horizontalFirst
-      ? [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep]
-      : [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
+    if (horizontalFirst) {
+      const midX = w0 ?? sp.x + dx / 2;
+      return [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep];
+    }
+    const midY = w0 ?? sp.y + dy / 2;
+    return [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
   }
   const p1 = { x: sp.x + sV.x * leadX, y: sp.y + sV.y * leadY };
   const p2 = { x: ep.x + eV.x * leadX, y: ep.y + eV.y * leadY };
   const sIsHoriz = sV.x !== 0;
   const eIsHoriz = eV.x !== 0;
   if (sIsHoriz && eIsHoriz) {
-    const midX = (p1.x + p2.x) / 2;
+    const midX = w0 ?? (p1.x + p2.x) / 2;
     return [sp, p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2, ep];
   }
   if (!sIsHoriz && !eIsHoriz) {
-    const midY = (p1.y + p2.y) / 2;
+    const midY = w0 ?? (p1.y + p2.y) / 2;
     return [sp, p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2, ep];
   }
   const corner = sIsHoriz ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
+  // The single-corner elbow has no interior segment to slide, so
+  // waypoints[0]/[1] don't apply here. Returning the standard route
+  // keeps the chrome's segment-counting consistent with the SVG
+  // renderer's output.
+  void w1;
   return [sp, p1, corner, p2, ep];
+}
+
+function waypointAt(
+  waypoints: ReadonlyArray<number> | undefined,
+  index: number
+): number | undefined {
+  if (!waypoints || index < 0 || index >= waypoints.length) return undefined;
+  const v = waypoints[index];
+  return Number.isFinite(v) ? v : undefined;
 }
 
 function sideUnit(side: AnchorSide | null): { x: number; y: number } {

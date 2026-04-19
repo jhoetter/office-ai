@@ -5,7 +5,9 @@ test.describe("editor: open bundled sample", () => {
   test("renders the sample document and metadata", async ({ page }) => {
     await gotoEditor(page);
 
-    await expect(page.getByText("DOCX editor")).toBeVisible();
+    // Shell now displays the filename in the top bar instead of the
+    // route-level "DOCX editor" label that used to live above it.
+    await expect(page.getByTestId("shell-filename")).toBeVisible();
     await expect(page.getByText("Welcome to officeAI")).toBeVisible();
     // Metadata strip is hidden below md breakpoint; the configured
     // viewport (1280×800) keeps it visible.

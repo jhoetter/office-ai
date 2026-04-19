@@ -72,7 +72,20 @@ help:
 install:
 	pnpm install
 
+# `make dev` must build the workspace packages first, otherwise Next.js
+# loads STALE `dist/` artifacts for @officeai/{core,docx,xlsx,pptx} —
+# `next.config.ts` only transpiles `@officeai/ui` + `@officeai/design-tokens`,
+# the rest are consumed from their compiled `dist/`. A stale dist makes the
+# editor look loaded (filename / chrome render from initial state) but the
+# agent fails silently and the body is stuck on EmptyState. Turbo skips
+# packages that are already up-to-date so the cost on a warm checkout is
+# ~1s; on a fresh checkout it's a one-time ~30s build.
+#
+# Iterating on a package's source after `make dev` is running? Re-run
+# `pnpm build` (or `pnpm --filter @officeai/<pkg> build`) in another shell
+# — Next.js HMR will pick up the new dist on next request.
 dev:
+	pnpm build
 	pnpm --filter @officeai/web dev
 
 build:

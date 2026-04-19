@@ -15,6 +15,7 @@ import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import type { LayoutKindPayload, Picture, PptxSnapshot, Shape, ShapePreset, TextShape } from "@officeai/pptx";
 import { buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
+import { ConnectorContextBar, type ConnectorStylePatch } from "./ConnectorContextBar";
 import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
 import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
@@ -24,13 +25,126 @@ import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 import {
   EditorShell,
   EmptyState,
+  ZoomControl,
   createToastId,
+  type ExportFormat,
+  type ExportOptionValues,
   type PaletteCommand,
   type ProductAdapter,
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
-import { PRODUCT_FILE_TYPES, openFile, saveFile } from "@/lib/files/file-service";
+import {
+  PRODUCT_FILE_TYPES,
+  downloadBlob,
+  openFile,
+  saveFile,
+} from "@/lib/files/file-service";
+import { convertViaServer } from "@/lib/files/convert-client";
+import {
+  parseSlideRange,
+  snapshotToPngZip,
+  snapshotToSvgZip,
+} from "./lib/export-images";
+
+const PPTX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
+  {
+    id: "pptx",
+    label: "PowerPoint presentation (.pptx)",
+    description: "Round-trip native OOXML — opens in PowerPoint, Keynote and LibreOffice Impress.",
+    extension: "pptx",
+    mime: PRODUCT_FILE_TYPES.pptx.primaryMime,
+    kind: "instant",
+    group: "native",
+    icon: "slides",
+  },
+  {
+    id: "pdf",
+    label: "PDF document (.pdf)",
+    description: "Server-side conversion via LibreOffice. One slide per PDF page.",
+    extension: "pdf",
+    mime: "application/pdf",
+    kind: "dialog",
+    group: "pdf-web",
+    icon: "pdf",
+    optionFields: [
+      {
+        id: "slideRange",
+        label: "Slide range",
+        control: { type: "text", placeholder: "All slides — try 1,3-5" },
+        hint: "Leave blank for every slide. Examples: 1,3 — 2-5 — 1,4-7,10.",
+      },
+      {
+        id: "pageSize",
+        label: "Page size",
+        control: {
+          type: "select",
+          defaultId: "source",
+          options: [
+            { id: "source", label: "Use slide size" },
+            { id: "a4", label: "A4 landscape" },
+            { id: "letter", label: "Letter landscape" },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: "html",
+    label: "Web page (.html)",
+    description: "Server-side HTML export. Ships an interactive viewer with each slide.",
+    extension: "html",
+    mime: "text/html",
+    kind: "instant",
+    group: "pdf-web",
+    icon: "code",
+  },
+  {
+    id: "png-zip",
+    label: "Slide images — PNG (.zip)",
+    description: "One PNG per slide, bundled as a zip. Pick a scale for retina exports.",
+    extension: "zip",
+    mime: "application/zip",
+    kind: "dialog",
+    group: "images",
+    icon: "image",
+    optionFields: [
+      {
+        id: "scale",
+        label: "Resolution",
+        control: {
+          type: "select",
+          defaultId: "2",
+          options: [
+            { id: "1", label: "1× (standard)" },
+            { id: "2", label: "2× (retina)" },
+            { id: "3", label: "3× (high-DPI)" },
+          ],
+        },
+      },
+      {
+        id: "slideRange",
+        label: "Slide range",
+        control: { type: "text", placeholder: "All slides — try 1,3-5" },
+        hint: "Leave blank for every slide.",
+      },
+    ],
+  },
+  {
+    id: "svg-zip",
+    label: "Slide vectors — SVG (.zip)",
+    description: "Resolution-independent SVG per slide.",
+    extension: "zip",
+    mime: "application/zip",
+    kind: "instant",
+    group: "images",
+    icon: "image",
+  },
+];
+
+function stripPptxExtension(name: string): string {
+  return name.replace(/\.pptx$/i, "");
+}
 
 const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
   "image/png",
@@ -55,6 +169,17 @@ export function PptxEditor(): React.ReactNode {
   const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
   const selectedShapeId = selectedShapeIds[0] ?? null;
   const [textSelection, setTextSelection] = useState<PptxTextSelection | null>(null);
+  // Connector tool mode: when set, the canvas surfaces ports on every
+  // hovered shape and a press-drag gesture commits a brand-new
+  // connector of the chosen type. PowerPoint / Google Slides model the
+  // connector picker as a "tool" rather than an instant insert because
+  // the user almost always wants to place the line themselves; the
+  // toolbar item toggles this state, and `null` is the default
+  // selection-mode behaviour. Cleared on commit, on Esc, and when the
+  // user re-clicks the same toolbar item.
+  const [connectorTool, setConnectorTool] = useState<{
+    type: "straight" | "elbow" | "curved";
+  } | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [fileHandle, setFileHandle] = useState<FileSystemFileHandle | undefined>(undefined);
   // Mutable mirrors used by the format provider so it can read live
@@ -281,20 +406,67 @@ export function PptxEditor(): React.ReactNode {
     }
   }, [docName, fileHandle, onError, pushToast]);
 
-  const handleExport = useCallback(async () => {
-    // Export today is a synonym for "download a copy". We keep the
-    // same surface as Save when no FSA handle is wired so the user
-    // always has a way to grab the bytes.
-    const a = agentRef.current;
-    if (!a) return;
-    try {
-      const buf = await a.exportFile();
-      await saveFile(new Uint8Array(buf), docName, PRODUCT_FILE_TYPES.pptx.primaryMime, undefined);
-      pushToast("success", `Exported ${docName}`);
-    } catch (err) {
-      onError(err);
-    }
-  }, [docName, onError, pushToast]);
+  const handleExport = useCallback(
+    async (format: ExportFormat, options?: ExportOptionValues) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const baseName = stripPptxExtension(docName);
+      const downloadName = `${baseName}.${format.extension}`;
+      try {
+        switch (format.id) {
+          case "pptx": {
+            const buf = await a.exportFile();
+            await saveFile(
+              new Uint8Array(buf),
+              downloadName,
+              format.mime,
+              undefined
+            );
+            break;
+          }
+          case "pdf":
+          case "html": {
+            const buf = await a.exportFile();
+            const out = await convertViaServer({
+              bytes: new Uint8Array(buf),
+              sourceExt: "pptx",
+              targetExt: format.id,
+              filename: baseName,
+            });
+            downloadBlob(out, downloadName);
+            break;
+          }
+          case "png-zip": {
+            const snap = a.getSnapshot();
+            const total = snap.root.slides.length;
+            const rangeRaw = typeof options?.slideRange === "string" ? options.slideRange : "";
+            const indices = parseSlideRange(rangeRaw, total);
+            if (indices.length === 0) {
+              throw new Error("Slide range matched no slides.");
+            }
+            const scaleRaw = typeof options?.scale === "string" ? options.scale : "2";
+            const scale = scaleRaw === "1" ? 1 : scaleRaw === "3" ? 3 : 2;
+            const blob = await snapshotToPngZip(snap, { scale, indices });
+            downloadBlob(blob, downloadName);
+            break;
+          }
+          case "svg-zip": {
+            const snap = a.getSnapshot();
+            const blob = await snapshotToSvgZip(snap);
+            downloadBlob(blob, downloadName);
+            break;
+          }
+          default:
+            throw new Error(`Unsupported export format: ${format.id}`);
+        }
+        pushToast("success", `Exported ${downloadName}`);
+      } catch (err) {
+        onError(err);
+        throw err;
+      }
+    },
+    [docName, onError, pushToast]
+  );
 
   const snap = agent?.getSnapshot() ?? null;
   void tick;
@@ -615,29 +787,54 @@ export function PptxEditor(): React.ReactNode {
     [activeIndex, insertOffset, onError]
   );
 
-  const addConnector = useCallback(
-    async (connectorType: "straight" | "elbow" | "curved") => {
+  // Toggle connector tool mode for the requested type. Re-clicking
+  // the same type while it's already armed exits the mode (matches
+  // Figma / Slides). The actual `pptx:add-connector` command runs
+  // from inside the canvas once the user finishes their drag — that's
+  // what makes the experience feel like a real drawing tool instead
+  // of a "click button → guess where the line landed" form.
+  const startConnectorTool = useCallback(
+    (connectorType: "straight" | "elbow" | "curved") => {
+      setConnectorTool((prev) => (prev?.type === connectorType ? null : { type: connectorType }));
+    },
+    []
+  );
+  const exitConnectorTool = useCallback(() => setConnectorTool(null), []);
+
+  // Apply a partial style patch from the floating connector mini-bar.
+  // The bar passes only the fields the user actually touched; we relay
+  // them straight through to `pptx:set-connector-style` so undo/redo
+  // sees a single command per click instead of separate commands per
+  // field. The empty-patch guard mirrors the command's own validation
+  // so a no-op interaction (e.g. picker closed without a change) costs
+  // zero round-trips.
+  const applyConnectorStylePatch = useCallback(
+    async (shapeId: string, patch: ConnectorStylePatch) => {
       const a = agentRef.current;
       if (!a) return;
+      const hasField =
+        patch.connectorType !== undefined ||
+        patch.strokeColor !== undefined ||
+        patch.strokeWidthEmu !== undefined ||
+        patch.strokeDash !== undefined ||
+        patch.headEnd !== undefined ||
+        patch.tailEnd !== undefined;
+      if (!hasField) return;
       try {
-        const off = insertOffset();
         await a.applyCommand({
-          type: "pptx:add-connector",
+          type: "pptx:set-connector-style",
+          source: "human",
           payload: {
             slideIndex: activeIndex,
-            connectorType,
-            start: { kind: "free", xEmu: off.x, yEmu: off.y },
-            end: { kind: "free", xEmu: off.x + 3_000_000, yEmu: off.y + 1_000_000 },
+            shapeId,
+            ...patch,
           },
-          source: "human",
         });
-        const s = a.getSnapshot().root.slides[activeIndex];
-        setSelectedShapeIds([s.shapes[s.shapes.length - 1]!.id]);
       } catch (err) {
         onError(err);
       }
     },
-    [activeIndex, insertOffset, onError]
+    [activeIndex, onError]
   );
 
   const insertImage = useCallback(
@@ -736,6 +933,86 @@ export function PptxEditor(): React.ReactNode {
       }
     },
     [activeIndex, onError, pushToast, selectedShapeId, slide]
+  );
+
+  /**
+   * Fired by the canvas when the user activates an empty placeholder
+   * (double-click, or PowerPoint-style "click again to enter") whose
+   * type isn't text. For `pic` we open a file picker, drop the chosen
+   * image into the slot the placeholder was occupying — same x / y /
+   * cx / cy — and then remove the placeholder. The two commands are
+   * issued sequentially so each sees the previous mutation; if the
+   * insert fails we leave the placeholder untouched, which preserves
+   * the slot for a retry.
+   *
+   * Other placeholder types (chart / tbl / dgm / media) trigger a
+   * "not yet implemented" toast for now — the wiring scaffolding is
+   * here for when those wizards exist.
+   */
+  const handlePlaceholderActivate = useCallback(
+    async (info: { shapeId: string; placeholder: { type?: string; idx?: number } }) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const type = info.placeholder.type ?? "";
+      if (type !== "pic") {
+        pushToast(
+          "info",
+          `Filling "${type}" placeholders from the canvas isn't supported yet — use the toolbar.`
+        );
+        return;
+      }
+      const currentSlide = a.getSnapshot().root.slides[activeIndex];
+      const placeholderShape = currentSlide ? findShape(currentSlide.shapes, info.shapeId) : null;
+      if (!placeholderShape || !placeholderShape.position || !placeholderShape.size) {
+        return;
+      }
+      const slot = {
+        x: placeholderShape.position.xEmu,
+        y: placeholderShape.position.yEmu,
+        cx: placeholderShape.size.cxEmu,
+        cy: placeholderShape.size.cyEmu,
+      };
+      const file = await pickImageFile();
+      if (!file) return;
+      const mime = (file.type || "").toLowerCase();
+      if (!SUPPORTED_IMAGE_MIME.has(mime)) {
+        pushToast(
+          "error",
+          `Unsupported image type "${mime || "unknown"}". Use PNG, JPEG, GIF, BMP, or WEBP.`
+        );
+        return;
+      }
+      try {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        await a.applyCommand({
+          type: "pptx:insert-image",
+          payload: {
+            slideIndex: activeIndex,
+            data: bytes,
+            mimeType: mime === "image/jpg" ? "image/jpeg" : mime,
+            x: slot.x,
+            y: slot.y,
+            width: slot.cx,
+            height: slot.cy,
+            altText: file.name,
+            name: file.name,
+          },
+          source: "human",
+        });
+        await a.applyCommand({
+          type: "pptx:delete-shape",
+          payload: { slideIndex: activeIndex, shapeId: info.shapeId },
+          source: "human",
+        });
+        const updated = a.getSnapshot().root.slides[activeIndex];
+        const last = updated?.shapes[updated.shapes.length - 1];
+        if (last) setSelectedShapeIds([last.id]);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, pushToast]
   );
 
   const deleteSelectedShape = useCallback(async () => {
@@ -1266,15 +1543,21 @@ export function PptxEditor(): React.ReactNode {
       },
       {
         id: "pptx.add-connector-elbow",
-        label: "Insert elbow connector",
+        label: "Draw elbow connector",
         section: "Insert",
-        run: () => void addConnector("elbow"),
+        run: () => startConnectorTool("elbow"),
       },
       {
         id: "pptx.add-connector-straight",
-        label: "Insert straight connector",
+        label: "Draw straight connector",
         section: "Insert",
-        run: () => void addConnector("straight"),
+        run: () => startConnectorTool("straight"),
+      },
+      {
+        id: "pptx.add-connector-curved",
+        label: "Draw curved connector",
+        section: "Insert",
+        run: () => startConnectorTool("curved"),
       },
       {
         id: "pptx.add-comment",
@@ -1327,7 +1610,7 @@ export function PptxEditor(): React.ReactNode {
       },
     ];
   }, [
-    addConnector,
+    startConnectorTool,
     addShape,
     addSlide,
     addTextBox,
@@ -1354,17 +1637,10 @@ export function PptxEditor(): React.ReactNode {
       canOpen: true,
       canSave: ready,
       canExport: ready,
-      exportFormats: [
-        {
-          id: "pptx",
-          label: "PowerPoint presentation (.pptx)",
-          extension: "pptx",
-          mime: PRODUCT_FILE_TYPES.pptx.primaryMime,
-        },
-      ],
+      exportFormats: PPTX_EXPORT_FORMATS,
       onOpenFile: () => void handleOpenFile(),
       onSave: () => handleSave(),
-      onExport: () => handleExport(),
+      onExport: (format, options) => handleExport(format, options),
       canUndo: ready ? (agentRef.current?.canUndo() ?? false) : false,
       canRedo: ready ? (agentRef.current?.canRedo() ?? false) : false,
       onUndo: () => {
@@ -1440,7 +1716,8 @@ export function PptxEditor(): React.ReactNode {
             onDuplicateSlide={() => void duplicateSlide()}
             onAddTextBox={() => void addTextBox()}
             onAddShape={(p) => void addShape(p)}
-            onAddConnector={(t) => void addConnector(t)}
+            onAddConnector={(t) => startConnectorTool(t)}
+            connectorToolType={connectorTool?.type ?? null}
             onInsertImage={(f) => void insertImage(f)}
             onReplacePicture={(f) => void replaceSelectedPicture(f)}
             selectedIsPicture={selectedShape?.kind === "pic"}
@@ -1455,17 +1732,21 @@ export function PptxEditor(): React.ReactNode {
             canUngroup={selectedShapeIds.length === 1 && selectedShape?.kind === "group"}
             onChangeFill={(h) => void changeFill(h)}
             onAddComment={focusCommentComposer}
-            zoom={zoom}
-            minZoom={MIN_ZOOM}
-            maxZoom={MAX_ZOOM}
-            onZoomChange={onZoomChange}
-            onZoomReset={() => setZoom(1)}
             onPresent={() => startPresenting(true)}
             canPresent={ready && slides.length > 0}
           />
         }
+        statusBarRight={
+          <ZoomControl
+            value={zoom}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            onChange={onZoomChange}
+            disabled={!ready}
+          />
+        }
         body={
-          <div className="pptx-editor flex h-full min-h-0 flex-col gap-2 p-3">
+          <div className="pptx-editor flex min-h-0 flex-1 flex-col gap-2 p-3">
             {!agent ? (
               <EmptyState product="pptx" onOpen={() => void handleOpenFile()} />
             ) : (
@@ -1507,7 +1788,18 @@ export function PptxEditor(): React.ReactNode {
                         selectedShapeIds={selectedShapeIds}
                         commentedShapeIds={commentedShapeIds}
                         commentFlashTarget={commentFlashTarget}
+                        onPlaceholderActivate={(info) => void handlePlaceholderActivate(info)}
+                        connectorTool={connectorTool}
+                        onConnectorToolExit={exitConnectorTool}
                       />
+                      {selectedShape && selectedShape.kind === "connector" && selectedShapeIds.length === 1 ? (
+                        <div className="pointer-events-auto absolute left-1/2 top-2 z-20 -translate-x-1/2">
+                          <ConnectorContextBar
+                            connector={selectedShape}
+                            onPatch={(patch) => void applyConnectorStylePatch(selectedShape.id, patch)}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                     {!ready ? (
                       <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
@@ -1647,6 +1939,50 @@ function readSolidFill(shape: TextShape | Picture): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Open the OS file picker for raster images and resolve to the chosen
+ * `File` (or `null` if the user cancelled). We deliberately go via a
+ * one-shot detached `<input>` rather than stashing a hidden ref on
+ * the component: placeholder activation is a rare, transient flow and
+ * adding a permanent hidden input + ref to the editor surface for
+ * each new affordance would noisily accumulate over time.
+ *
+ * The MIME allowlist matches the one used by the toolbar's "Insert
+ * image" input so the canvas-driven path can't sneak in a file type
+ * that `pptx:insert-image` would reject downstream.
+ */
+function pickImageFile(): Promise<File | null> {
+  return new Promise((resolve) => {
+    if (typeof document === "undefined") {
+      resolve(null);
+      return;
+    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/webp,image/bmp";
+    let resolved = false;
+    const settle = (file: File | null): void => {
+      if (resolved) return;
+      resolved = true;
+      resolve(file);
+    };
+    input.onchange = () => settle(input.files?.[0] ?? null);
+    // Some browsers fire `cancel`; for the rest, the focus-back-to-window
+    // heuristic (next tick after a short delay) is the only way to
+    // detect a cancelled picker. We schedule a "no file picked" fallback
+    // so callers don't await forever.
+    input.oncancel = () => settle(null);
+    window.addEventListener(
+      "focus",
+      () => {
+        window.setTimeout(() => settle(null), 500);
+      },
+      { once: true }
+    );
+    input.click();
+  });
 }
 
 async function readIntrinsicSize(

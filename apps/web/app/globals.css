@@ -280,6 +280,37 @@ textarea::placeholder {
   animation: xlsx-cell-caret-blink 1s steps(1, end) infinite;
 }
 
+/*
+ * Static layout for every body cell in the XLSX grid. Pulled out of
+ * the per-cell inline `style` so React's commit phase doesn't have
+ * to call `setValueForStyle` ~12 times per cell on initial mount —
+ * with ~600 visible cells × ~12 props that's ~7 K mutations on the
+ * hot path. Keeping these as a class drops the mount cost
+ * dramatically in dev builds (where every `setProp` runs through
+ * React's prop validator).
+ *
+ * Variable per-cell properties (top, left, width, height, background,
+ * color, font weight/style, z-index) stay inline because they
+ * legitimately differ per cell — we only collapse the constants.
+ */
+.xlsx-grid-cell {
+  position: absolute;
+  box-sizing: border-box;
+  border-right: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  line-height: 22px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: cell;
+  user-select: none;
+  color: var(--foreground);
+}
+
 /* ── ProseMirror DOCX editor surface ── */
 .prose-pm .ProseMirror {
   /*
@@ -885,6 +916,22 @@ textarea::placeholder {
   background-image: none;
 }
 
+/*
+ * Stable single-row toolbar primitive (lib/shell/ToolbarRow.tsx).
+ * The row never wraps; on narrow viewports the leading slot scrolls
+ * horizontally instead. We keep the scrollbar visually inert so the
+ * toolbar height stays exactly 40px regardless of overflow state.
+ */
+.toolbar-row-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.toolbar-row-scroll::-webkit-scrollbar {
+  height: 0;
+  width: 0;
+  display: none;
+}
+
 .docx-editor .side-panel {
   font-size: 0.8125rem;
 }
@@ -923,32 +970,29 @@ textarea::placeholder {
   position: relative;
 }
 
-/* The PM editor itself is the page card — white, rounded, with a
- * subtle drop shadow so it reads as a single sheet of paper resting
- * on the desk.
- *
- * The card width is driven by a `--pm-page-width` CSS variable that
- * `DocxEditor.tsx` derives from the document's first-section
- * `pgSz.w` (US Letter ≈ 816px, DIN A4 ≈ 794px, legal ≈ 816px wide).
- * Falling back to 720px keeps the older fixed-column behaviour for
- * any consumer that doesn't set the variable. */
+/* The PM editor is a transparent column the width of one sheet of
+ * paper (driven by the `--pm-page-width` CSS variable that
+ * `DocxEditor.tsx` derives from the document's first-section `pgSz.w` —
+ * US Letter ≈ 816px, DIN A4 ≈ 794px, legal ≈ 816px wide). Fallback is
+ * A4 (794px) since that's what ~99% of installs outside the US use,
+ * and matches the initial-frame fallback geometry in DocxEditor.tsx so
+ * the column doesn't briefly render at the wrong width during the
+ * single frame between mount and the first snapshot landing. The
+ * white "sheet of paper" chrome is no longer painted on the editor
+ * itself — instead every page-piece (cap-top, body block, filler,
+ * page-edge zone, cap-bottom) carries its own white background + side
+ * border + top/bottom shadow so the desk shows THROUGH the editor
+ * between page chunks. Without this, a multi-page document looked
+ * like one super-long card with thin grey lines inside — instead of
+ * discrete sheets resting on a grey desk like Word renders. */
 .prose-pm .ProseMirror {
-  background: var(--background);
-  border-radius: 4px;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.05),
-    0 8px 24px -10px rgba(0, 0, 0, 0.1);
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
   padding: 0;
   min-height: 60vh;
-  width: var(--pm-page-width, 720px);
+  width: var(--pm-page-width, 794px);
   max-width: 100%;
-}
-
-.dark .prose-pm .ProseMirror,
-html.dark .prose-pm .ProseMirror {
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.4),
-    0 8px 24px -10px rgba(0, 0, 0, 0.5);
 }
 
 /* Every direct child of the editor — body block, section-break HR,
@@ -959,13 +1003,164 @@ html.dark .prose-pm .ProseMirror {
  *
  * The horizontal inset is `--pm-page-margin-left` /
  * `--pm-page-margin-right`, derived in `DocxEditor.tsx` from the
- * document's first-section `pgMar`. Default of 72px (≈ 1 inch)
- * matches Word's out-of-the-box left/right margin. */
+ * document's first-section `pgMar`. Default of 94px (≈ 2.5 cm = 1417
+ * twips) matches Word's out-of-the-box left/right margin for DIN A4. */
 .prose-pm .ProseMirror > * {
   margin-left: 0;
   margin-right: 0;
-  padding-left: var(--pm-page-margin-left, 72px);
-  padding-right: var(--pm-page-margin-right, 72px);
+  padding-left: var(--pm-page-margin-left, 94px);
+  padding-right: var(--pm-page-margin-right, 94px);
+}
+
+/* "Sheet of paper" surface for every direct child that belongs to a
+ * page chunk (caps, body blocks, page filler, section break,
+ * wrapper marker). Each gets the white background + 1px side border
+ * that visually closes the sheet on the left and right edges. Top /
+ * bottom corner radii + drop shadows are applied separately on the
+ * page-cap and page-edge zones below — the body blocks in the middle
+ * of a chunk inherit the side borders only and visually flow into the
+ * cap/edge above and below them.
+ *
+ * Top-level `<table>` blocks (.pm-table) opt out: they sit inside the
+ * page margin via their own `margin-left/right` rule so applying side
+ * borders directly to the table would tuck them inside the margin
+ * instead of along the sheet edge. Tables rendered as top-level body
+ * blocks therefore briefly show desk colour in the page-margin gutter
+ * to the left and right of the table; uncommon enough in real
+ * documents that the paragraph-only sheet treatment is the right
+ * priority. If this becomes a sore spot, the fix is to wrap each
+ * chunk in a `Decoration.widget` host that absolute-positions a
+ * sheet background BEHIND the chunk's blocks. */
+.prose-pm .ProseMirror > .pm-page-cap-top,
+.prose-pm .ProseMirror > .pm-page-cap-bottom,
+.prose-pm .ProseMirror > .pm-page-block:not(.pm-table),
+.prose-pm .ProseMirror > .pm-page-filler,
+.prose-pm .ProseMirror > .pm-section-break,
+.prose-pm .ProseMirror > .pm-wrapper-marker {
+  background: var(--background);
+  border-left: 1px solid var(--divider);
+  border-right: 1px solid var(--divider);
+}
+
+.dark .prose-pm .ProseMirror > .pm-page-cap-top,
+.dark .prose-pm .ProseMirror > .pm-page-cap-bottom,
+.dark .prose-pm .ProseMirror > .pm-page-block:not(.pm-table),
+.dark .prose-pm .ProseMirror > .pm-page-filler,
+.dark .prose-pm .ProseMirror > .pm-section-break,
+.dark .prose-pm .ProseMirror > .pm-wrapper-marker,
+html.dark .prose-pm .ProseMirror > .pm-page-cap-top,
+html.dark .prose-pm .ProseMirror > .pm-page-cap-bottom,
+html.dark .prose-pm .ProseMirror > .pm-page-block:not(.pm-table),
+html.dark .prose-pm .ProseMirror > .pm-page-filler,
+html.dark .prose-pm .ProseMirror > .pm-section-break,
+html.dark .prose-pm .ProseMirror > .pm-wrapper-marker {
+  border-left-color: rgba(255, 255, 255, 0.05);
+  border-right-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Inside a page chunk the sheet must read as one continuous piece of
+ * white paper — but the typographic rules higher up in this file use
+ * `margin-top` / `margin-bottom` between paragraphs and headings, and
+ * margins live OUTSIDE the block's background box. With the new
+ * per-block white background that produces visible desk-colour gaps
+ * between every consecutive paragraph (looking like the doc was
+ * shredded into one tile per block).
+ *
+ * Convert vertical margins on top-level blocks into padding so the
+ * spacing stays *inside* the white sheet. Horizontal margins are
+ * preserved (tables / lists rely on them for indentation). The
+ * `:where(...)` selector keeps specificity at 0 so per-element
+ * typography rules below still win for any per-style overrides. */
+.prose-pm .ProseMirror > .pm-page-block:is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, .pm-table-placeholder, .pm-opaque-block, .pm-opaque-wrapper-block) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Section-break HRs and wrapper-marker pills sit between blocks
+ * (some are direct .ProseMirror children without `.pm-page-block`).
+ * Strip their vertical margins too so the white sheet stays
+ * uninterrupted; preserve the dashed border-top from the existing
+ * `.pm-section-break` rule. */
+.prose-pm .ProseMirror > hr.pm-section-break,
+.prose-pm .ProseMirror > .pm-wrapper-marker {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Restore the inter-block spacing as padding inside the white box.
+ * Padding values mirror the original `margin-bottom` so the visual
+ * rhythm matches what the per-element typography rules above set,
+ * but the spacing now sits INSIDE the sheet so adjacent blocks paint
+ * a continuous white surface. */
+.prose-pm .ProseMirror > p.pm-page-block {
+  padding-top: 0;
+  padding-bottom: 0.75rem;
+}
+
+.prose-pm .ProseMirror > h1.pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Heading1"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="berschrift1"].pm-page-block {
+  padding-top: 1.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.prose-pm .ProseMirror > h1.style-Title.pm-page-block,
+.prose-pm .ProseMirror > h1.style-Titel.pm-page-block,
+.prose-pm .ProseMirror > [data-style="Title"].pm-page-block,
+.prose-pm .ProseMirror > [data-style="Titel"].pm-page-block {
+  padding-top: 1.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.prose-pm .ProseMirror > h2.pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Subtitle"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Untertitel"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Heading2"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="berschrift2"].pm-page-block {
+  padding-top: 1.25rem;
+  padding-bottom: 0.5rem;
+}
+
+.prose-pm .ProseMirror > h3.pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Heading3"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="berschrift3"].pm-page-block {
+  padding-top: 1rem;
+  padding-bottom: 0.4rem;
+}
+
+.prose-pm .ProseMirror > h4.pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Heading4"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="berschrift4"].pm-page-block {
+  padding-top: 0.875rem;
+  padding-bottom: 0.35rem;
+}
+
+.prose-pm .ProseMirror > h5.pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Heading5"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style="berschrift5"].pm-page-block {
+  padding-top: 0.75rem;
+  padding-bottom: 0.3rem;
+}
+
+.prose-pm .ProseMirror > h6.pm-page-block,
+.prose-pm .ProseMirror > p[data-style="Heading6"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style^="Heading7"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style^="Heading8"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style^="Heading9"].pm-page-block {
+  padding-top: 0.625rem;
+  padding-bottom: 0.25rem;
+}
+
+.prose-pm .ProseMirror > p[data-style^="Quote"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style^="IntenseQuote"].pm-page-block {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.prose-pm .ProseMirror > p[data-style^="Caption"].pm-page-block,
+.prose-pm .ProseMirror > p[data-style^="Beschriftung"].pm-page-block {
+  padding-top: 0.25rem;
+  padding-bottom: 0.75rem;
 }
 
 /* Tables are an exception to the universal "page margin = padding"
@@ -986,29 +1181,77 @@ html.dark .prose-pm .ProseMirror {
 .prose-pm .ProseMirror > .pm-table {
   padding-left: 0;
   padding-right: 0;
-  margin-left: var(--pm-page-margin-left, 72px);
-  margin-right: var(--pm-page-margin-right, 72px);
+  margin-left: var(--pm-page-margin-left, 94px);
+  margin-right: var(--pm-page-margin-right, 94px);
   max-width: calc(
-    100% - var(--pm-page-margin-left, 72px) - var(--pm-page-margin-right, 72px)
+    100% - var(--pm-page-margin-left, 94px) - var(--pm-page-margin-right, 94px)
   );
 }
 
-/* Page cap (top): the white header strip above the very first page.
- * Pads top so the sheet has visible top margin. */
+/* Page cap (top): the white top-margin strip of the very first page,
+ * containing the header zone. Padding values approximate Word's A4
+ * defaults (header at 1.25 cm = ~47 px from page top, body at 2.5 cm
+ * = ~94 px from page top): 48 px above the zone, 32 px between zone
+ * and the first body block. Combined with the body's own padding
+ * (`pm-page-first` adds 4 px) and the collapsed-empty-zone min-height
+ * (8 px) the visible top margin lands near 92 px, very close to the
+ * 94 px the chunker reserves in the page geometry. Rounds + shadows
+ * the top edge of sheet 1 so it reads as a discrete piece of paper.
+ *
+ * `pointer-events: none` on the cap itself — combined with `auto` on
+ * the inner zone — means clicks landing in the cap's empty padding
+ * area fall through to ProseMirror underneath, which puts the caret
+ * at the start of the body. Without this, clicking in the visual top
+ * margin steals focus into a `contenteditable=false` widget and the
+ * caret silently jumps elsewhere — exactly the kind of weird
+ * positioning users report when they click "into" a Word page. The
+ * header zone itself stays clickable because the rule below restores
+ * pointer events on it. */
 .prose-pm .ProseMirror > .pm-page-cap-top {
-  padding-top: 28px;
-  padding-bottom: 4px;
+  padding-top: 48px;
+  padding-bottom: 32px;
+  border-top: 1px solid var(--divider);
   border-top-left-radius: 4px;
   border-top-right-radius: 4px;
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.04);
+  pointer-events: none;
 }
 
-/* Page cap (bottom): the white footer strip below the very last
- * page. Pads bottom so the sheet has visible bottom margin. */
+.prose-pm .ProseMirror > .pm-page-cap-top .pm-page-zone {
+  pointer-events: auto;
+}
+
+/* Page cap (bottom): the white bottom-margin strip of the very last
+ * page, containing the footer zone. Mirrors the top cap (32 px above
+ * the zone, 48 px below) so the page has visually balanced top and
+ * bottom margins. Rounds + shadows the bottom edge so the final sheet
+ * has a matching closing edge. Same `pointer-events: none` trick as
+ * the top cap so clicks in the bottom margin land at the end of the
+ * body instead of inside the read-only widget. */
 .prose-pm .ProseMirror > .pm-page-cap-bottom {
-  padding-top: 4px;
-  padding-bottom: 28px;
+  padding-top: 32px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid var(--divider);
   border-bottom-left-radius: 4px;
   border-bottom-right-radius: 4px;
+  box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.prose-pm .ProseMirror > .pm-page-cap-bottom .pm-page-zone {
+  pointer-events: auto;
+}
+
+.dark .prose-pm .ProseMirror > .pm-page-cap-top,
+html.dark .prose-pm .ProseMirror > .pm-page-cap-top {
+  border-top-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.dark .prose-pm .ProseMirror > .pm-page-cap-bottom,
+html.dark .prose-pm .ProseMirror > .pm-page-cap-bottom {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.5);
 }
 
 /* First / last body block in a chunk — keep the body comfortably
@@ -1022,19 +1265,21 @@ html.dark .prose-pm .ProseMirror {
   padding-bottom: 4px;
 }
 
-/* Trailing section-break HR — `<hr class="pm-section-break">` —
- * appears at the end of every section. When it's the last child of
- * the editor (i.e. the document's section properties carrier with
- * no following content), Word does NOT render anything. Hide it
- * inside the page card so it doesn't introduce a phantom dashed
- * line right above the footer cap. */
+/* Trailing section-break HR — `<hr class="pm-section-break">` — is the
+ * PM-side carrier for `<w:sectPr>` and appears at the end of every
+ * section. Word never paints the document's final sectPr; we render
+ * a cap-bottom widget immediately after it to close the page. The
+ * `:last-child` selector on its own doesn't catch this case because
+ * the cap-bottom widget IS a sibling sitting after the HR — so the
+ * HR is never literally last. The `:has(+ .pm-page-cap-bottom)`
+ * selector handles that case: any section-break HR that's followed
+ * by a footer cap is the document terminator and must collapse, or
+ * its 1.5 rem `margin-top` plus dashed border-top would carve a
+ * visible grey gap between the last body block and the footer card.
+ * (The HR stays in the DOM because PM positions depend on it; we
+ * just stop painting its chrome.) */
 .prose-pm .ProseMirror > hr.pm-section-break:last-child,
-.prose-pm .ProseMirror > hr.pm-section-break + .pm-page-cap-bottom {
-  /* The HR itself stays in the doc (PM positions depend on it) but
-   * we collapse its visual chrome and zero its margin so the body
-   * butts directly into the footer cap. */
-}
-.prose-pm .ProseMirror > hr.pm-section-break:last-child {
+.prose-pm .ProseMirror > hr.pm-section-break:has(+ .pm-page-cap-bottom) {
   display: none;
 }
 
@@ -1048,50 +1293,86 @@ html.dark .prose-pm .ProseMirror {
   background: transparent;
 }
 
-/* Page filler — invisible widget rendered at the bottom of every
- * page chunk so the visible white sheet always reaches the
- * document's full content area height (Word-style fixed page
- * sheets). The inline `style="height: …px"` set in
- * `renderPageFiller()` controls the actual size; the rules below
- * neutralise the universal horizontal padding so the dead space is
- * pure background, and forbid pointer / text-selection so the
- * caret can never land inside it. */
+/* Page filler — widget rendered at the bottom of every page chunk so
+ * the visible white sheet always reaches the document's full content
+ * area height (Word-style fixed page sheets). The inline
+ * `style="height: …px"` set in `renderPageFiller()` controls the
+ * actual size; the rules below neutralise the universal horizontal
+ * padding so the dead space is pure sheet, and forbid pointer /
+ * text-selection so the caret can never land inside it. The white
+ * background + side borders are inherited from the shared
+ * "sheet-of-paper" rule above so the filler reads as a continuation
+ * of the page above it. */
 .prose-pm .ProseMirror > .pm-page-filler {
   padding-left: 0;
   padding-right: 0;
   pointer-events: none;
   user-select: none;
-  background: transparent;
 }
 
+/* Page-edge footer-zone: closes the PREVIOUS page sheet, so it owns
+ * the bottom-rounded corners + bottom drop shadow + matching side
+ * borders that the body blocks above it use. */
 .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer {
   background: var(--background);
-  padding: 4px var(--pm-page-margin-right, 72px) 24px var(--pm-page-margin-left, 72px);
+  padding: 4px var(--pm-page-margin-right, 94px) 24px var(--pm-page-margin-left, 94px);
+  border-left: 1px solid var(--divider);
+  border-right: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
   border-bottom-left-radius: 4px;
   border-bottom-right-radius: 4px;
   box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.18);
 }
 
+/* Page-edge header-zone: opens the NEXT page sheet, so it owns the
+ * top-rounded corners + top drop shadow + matching side borders. */
 .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header {
   background: var(--background);
-  padding: 24px var(--pm-page-margin-right, 72px) 4px var(--pm-page-margin-left, 72px);
+  padding: 24px var(--pm-page-margin-right, 94px) 4px var(--pm-page-margin-left, 94px);
+  border-left: 1px solid var(--divider);
+  border-right: 1px solid var(--divider);
+  border-top: 1px solid var(--divider);
   border-top-left-radius: 4px;
   border-top-right-radius: 4px;
   box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.04);
 }
 
-/* The gap inside a page-edge has to paint the desk colour explicitly
- * — the `.ProseMirror` it sits inside is white edge-to-edge, so a
- * transparent gap would just show that whiteness. */
+.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer,
+.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header,
+html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer,
+html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header {
+  border-left-color: rgba(255, 255, 255, 0.05);
+  border-right-color: rgba(255, 255, 255, 0.05);
+}
+
+.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer,
+html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-footer {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.5);
+}
+
+.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header,
+html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-zone-header {
+  border-top-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* The gap inside a page-edge spans edge-to-edge inside a transparent
+ * editor column. Since `.ProseMirror` is now transparent, a
+ * transparent gap would also show the desk through — but we paint
+ * the desk colour explicitly so the gap stays the same colour even
+ * if a parent ever ends up not transparent (e.g. theme changes,
+ * print stylesheets). Bumped from 28px to 36px so the visual break
+ * between sheets reads more clearly. */
 .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
   position: relative;
-  height: 28px;
+  height: 36px;
   background: var(--page-backdrop, #ecebe8);
 }
 
 .dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap,
 html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
-  background: #131313;
+  background: #0e0e0e;
 }
 
 /* Header / footer zone — the actual interactive surface inside a
@@ -1125,23 +1406,30 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
   margin-top: 8px;
 }
 
-/* Sections without a header/footer part: collapse the zone so it
- * doesn't read as a second heading at the top of the page. The
- * dashed separator + pill only return on hover, mirroring Word. */
-.prose-pm .ProseMirror .pm-page-zone:has(.pm-page-zone-no-part) {
+/* Empty header/footer zones — whether the section has no part at all
+ * (`pm-page-zone-no-part`) or has a part with no text yet
+ * (`pm-page-zone-empty`) — collapse their dashed separator + extra
+ * margin so the sheet reads as one continuous piece of paper instead
+ * of three stacked cards. The italic placeholder ("Click to add
+ * header text") still renders inside the cap, but it's just a hint
+ * floating in the page's top margin — exactly how Word displays an
+ * empty header area. The dashed separator + pill only return on
+ * hover, mirroring Word's behaviour when you hover into the header
+ * area but haven't double-clicked into it yet. */
+.prose-pm .ProseMirror .pm-page-zone:has(.pm-page-zone-empty) {
   border: 0;
   padding: 0;
   margin: 0;
   min-height: 8px;
 }
 
-.prose-pm .ProseMirror .pm-page-zone:has(.pm-page-zone-no-part):hover {
+.prose-pm .ProseMirror .pm-page-zone:has(.pm-page-zone-empty):hover {
   border-bottom: 1px dashed var(--divider);
   padding-bottom: 6px;
   margin-bottom: 8px;
 }
 
-.prose-pm .ProseMirror .pm-page-zone-footer:has(.pm-page-zone-no-part):hover {
+.prose-pm .ProseMirror .pm-page-zone-footer:has(.pm-page-zone-empty):hover {
   border-top: 1px dashed var(--divider);
   border-bottom: 0;
   padding-top: 6px;

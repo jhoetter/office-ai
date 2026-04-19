@@ -50,6 +50,16 @@ export interface SvgRenderCtx {
    * back to their stored bounding box corners.
    */
   readonly shapesByCNvPrId?: ReadonlyMap<number, Shape>;
+  /**
+   * When true (the default), text shapes that are empty *and* carry a
+   * `placeholder` field render a dashed outline + ghost prompt label
+   * (e.g. "Click to add title", or an image icon for `pic`-typed
+   * placeholders) so a freshly-inserted layout slide doesn't read as a
+   * blank canvas. The hint UI lives entirely in the renderer — it is
+   * never serialised back into the saved `.pptx`. Pass `false` to
+   * suppress (e.g. when rendering an export-style preview).
+   */
+  readonly renderPlaceholderHints?: boolean;
 }
 
 export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
@@ -99,7 +109,8 @@ function connectorToSvg(shape: ConnectorShape, ctx: SvgRenderCtx): string {
   const ep = endPt ?? fallbackEnd;
   const stroke = shape.stroke?.color ?? "374151";
   const widthEmu = shape.stroke?.widthEmu && shape.stroke.widthEmu > 0 ? shape.stroke.widthEmu : 9525; // ≈ 0.75pt
-  const strokeAttrs = ` stroke="#${stroke}" stroke-width="${u(widthEmu)}" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
+  const dashAttr = dashArrayAttr(shape.stroke?.dash, widthEmu);
+  const strokeAttrs = ` stroke="#${stroke}" stroke-width="${u(widthEmu)}" fill="none" stroke-linecap="round" stroke-linejoin="round"${dashAttr}`;
   const headAttr = shape.headEnd && shape.headEnd !== "none" ? ` marker-end="url(#cxn-arrow)"` : "";
   const tailAttr = shape.tailEnd && shape.tailEnd !== "none" ? ` marker-start="url(#cxn-arrow)"` : "";
   let pathSvg: string;
@@ -107,7 +118,7 @@ function connectorToSvg(shape: ConnectorShape, ctx: SvgRenderCtx): string {
     case "elbow": {
       const startSide = shape.start.kind === "anchored" ? shape.start.side : null;
       const endSide = shape.end.kind === "anchored" ? shape.end.side : null;
-      const points = routeElbow(sp, ep, startSide, endSide);
+      const points = routeElbow(sp, ep, startSide, endSide, shape.waypoints);
       const pts = points.map((p) => `${u(p.x)},${u(p.y)}`).join(" ");
       pathSvg = `<polyline points="${pts}"${strokeAttrs}${headAttr}${tailAttr}/>`;
       break;
@@ -143,7 +154,8 @@ function routeElbow(
   sp: { readonly x: number; readonly y: number },
   ep: { readonly x: number; readonly y: number },
   startSide: "n" | "s" | "e" | "w" | "center" | null,
-  endSide: "n" | "s" | "e" | "w" | "center" | null
+  endSide: "n" | "s" | "e" | "w" | "center" | null,
+  waypoints?: ReadonlyArray<number>
 ): ReadonlyArray<{ readonly x: number; readonly y: number }> {
   const dx = ep.x - sp.x;
   const dy = ep.y - sp.y;
@@ -161,14 +173,16 @@ function routeElbow(
   const eV = sideVector(endSide);
 
   // No information either side → fall back to the legacy single-bend
-  // routing so we don't regress visually for free connectors.
+  // routing so we don't regress visually for free connectors. The
+  // single waypoint slot (segment 0) shifts the inner Z's pivot.
   if (sV.x === 0 && sV.y === 0 && eV.x === 0 && eV.y === 0) {
     const horizontalFirst = Math.abs(dx) >= Math.abs(dy);
-    const midX = horizontalFirst ? sp.x + dx / 2 : sp.x;
-    const midY = horizontalFirst ? sp.y : sp.y + dy / 2;
+    const w0 = waypointAt(waypoints, 0);
     if (horizontalFirst) {
+      const midX = sp.x + dx / 2 + w0;
       return [sp, { x: midX, y: sp.y }, { x: midX, y: ep.y }, ep];
     }
+    const midY = sp.y + dy / 2 + w0;
     return [sp, { x: sp.x, y: midY }, { x: ep.x, y: midY }, ep];
   }
 
@@ -183,19 +197,40 @@ function routeElbow(
 
   if (sIsHoriz && eIsHoriz) {
     // Both leads go horizontally — bridge with a vertical segment in
-    // the middle so we get a Z-shape (5 points).
-    const midX = (p1.x + p2.x) / 2;
+    // the middle so we get a Z-shape (5 points). Waypoint 0 shifts
+    // the bridge's x-coordinate.
+    const midX = (p1.x + p2.x) / 2 + waypointAt(waypoints, 0);
     return [sp, p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2, ep];
   }
   if (!sIsHoriz && !eIsHoriz) {
-    // Both leads go vertically — bridge horizontally.
-    const midY = (p1.y + p2.y) / 2;
+    // Both leads go vertically — bridge horizontally. Waypoint 0
+    // shifts the bridge's y-coordinate.
+    const midY = (p1.y + p2.y) / 2 + waypointAt(waypoints, 0);
     return [sp, p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2, ep];
   }
   // Mixed orientations — the corner of the L falls at the intersection
-  // of the two perpendicular axes (4 points total).
+  // of the two perpendicular axes (4 points total). No waypoint slot:
+  // the bend is fully determined by the two lead directions.
   const corner = sIsHoriz ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
   return [sp, p1, corner, p2, ep];
+}
+
+function waypointAt(waypoints: ReadonlyArray<number> | undefined, index: number): number {
+  if (!waypoints) return 0;
+  const v = waypoints[index];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+function dashArrayAttr(dash: "solid" | "dashed" | "dotted" | undefined, widthEmu: number): string {
+  if (!dash || dash === "solid") return "";
+  // Patterns scale with stroke width so the dashes feel consistent
+  // when users bump the weight. The values mimic PowerPoint's
+  // `prstDash` "dash" / "dot" presets at the default ~1pt width.
+  const w = u(widthEmu);
+  if (dash === "dashed") {
+    return ` stroke-dasharray="${(w * 4).toFixed(2)} ${(w * 3).toFixed(2)}"`;
+  }
+  return ` stroke-dasharray="${(w * 1).toFixed(2)} ${(w * 2).toFixed(2)}"`;
 }
 
 function sideVector(side: "n" | "s" | "e" | "w" | "center" | null): {
@@ -250,9 +285,132 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   const out = [groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }), geometry];
   if (hasText) {
     out.push(renderWrappedTextHtml(shape, box.cx, box.cy, fill, theme));
+  } else if (shape.placeholder && (ctx.renderPlaceholderHints ?? true)) {
+    // Empty layout placeholder. Without this hint the shape renders as
+    // a transparent rect with no fill or stroke — i.e. invisible — so
+    // a freshly-inserted "Title and Content" slide looks blank to the
+    // user. We paint a dashed outline + ghost label (and an image icon
+    // for `pic` placeholders) so the slot reads as "click here to fill
+    // me", matching PowerPoint's authoring affordance. The hint UI is
+    // emitted with `pointer-events="none"` so the underlying shape's
+    // hit-testing (selection, drag) keeps working unchanged. Nothing
+    // here gets serialised back into the saved .pptx — placeholder
+    // prompts live entirely in the renderer.
+    out.push(renderPlaceholderHint(shape.placeholder, box.cx, box.cy));
   }
   out.push(groupClose());
   return out.join("");
+}
+
+/**
+ * Renderer-only ghost UI for an empty placeholder. Produces a dashed
+ * outline that fills the placeholder's bounding box plus a centered
+ * label (and an image-icon glyph for `pic` placeholders). The wrapper
+ * `<g>` carries `pointer-events="none"` so clicks fall through to the
+ * underlying `data-shape-id` group — the user can still select / drag
+ * / resize the placeholder, and double-click still enters edit mode.
+ */
+function renderPlaceholderHint(
+  placeholder: { type?: string; idx?: number },
+  cxEmu: number,
+  cyEmu: number
+): string {
+  const w = u(cxEmu);
+  const h = u(cyEmu);
+  const type = placeholder.type ?? "body";
+  const isPic = type === "pic";
+  const labelColor = "#9ca3af"; // tailwind gray-400
+  const outlineColor = "#cbd5e1"; // tailwind slate-300
+  const dash = `${u(60_000)},${u(40_000)}`;
+  const labelSize = u(estimatePlaceholderLabelSizeEmu(cxEmu, cyEmu));
+  const label = placeholderHintLabel(type);
+  const parts: string[] = [];
+  parts.push(
+    `<g class="placeholder-hint" pointer-events="none">`,
+    `<rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="${outlineColor}" stroke-width="1.5" stroke-dasharray="${dash}" vector-effect="non-scaling-stroke"/>`
+  );
+  if (isPic) {
+    // A small mountain-and-sun glyph (PowerPoint's "Insert Picture"
+    // affordance uses the same metaphor) sized relative to the box, so
+    // it stays legible for both half-slide hero images and tiny inline
+    // thumbnails. Stacks above the label.
+    const iconSize = Math.min(w, h) * 0.28;
+    const iconX = (w - iconSize) / 2;
+    const iconY = (h - iconSize) / 2 - labelSize * 1.4;
+    parts.push(renderPictureIcon(iconX, iconY, iconSize, labelColor));
+    parts.push(
+      `<text x="${w / 2}" y="${h / 2 + iconSize / 2 + labelSize * 0.6}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${labelSize}" fill="${labelColor}">${escXml(label)}</text>`
+    );
+  } else {
+    parts.push(
+      `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${labelSize}" fill="${labelColor}">${escXml(label)}</text>`
+    );
+  }
+  parts.push(`</g>`);
+  return parts.join("");
+}
+
+/**
+ * PowerPoint-style placeholder prompt text. Mirrors the wording in
+ * `BUILTIN_LAYOUTS` (which is dropped during `clonePlaceholdersIntoSlide`
+ * because we don't want the prompt to round-trip as real text content).
+ * Falls back to a generic "Click to add content" for placeholder types
+ * we don't have a specific prompt for.
+ */
+function placeholderHintLabel(type: string): string {
+  switch (type) {
+    case "title":
+    case "ctrTitle":
+      return "Click to add title";
+    case "subTitle":
+      return "Click to add subtitle";
+    case "body":
+      return "Click to add text";
+    case "pic":
+      return "Click to add picture";
+    case "chart":
+      return "Click to add chart";
+    case "tbl":
+      return "Click to add table";
+    case "dgm":
+      return "Click to add diagram";
+    case "media":
+      return "Click to add media";
+    case "ftr":
+      return "Footer";
+    case "hdr":
+      return "Header";
+    case "dt":
+      return "Date";
+    case "sldNum":
+      return "Slide number";
+    default:
+      return "Click to add content";
+  }
+}
+
+/** Compact "image" glyph (frame + sun + mountain) drawn at the given anchor. */
+function renderPictureIcon(x: number, y: number, size: number, color: string): string {
+  const stroke = `stroke="${color}" stroke-width="${Math.max(1, size / 24)}" fill="none" stroke-linejoin="round" stroke-linecap="round"`;
+  const left = x;
+  const top = y;
+  const right = x + size;
+  const bottom = y + size;
+  const sunR = size * 0.1;
+  const sunCx = left + size * 0.32;
+  const sunCy = top + size * 0.32;
+  const mountainBase = bottom - size * 0.12;
+  return [
+    `<rect x="${left}" y="${top}" width="${size}" height="${size}" rx="${size * 0.08}" ry="${size * 0.08}" ${stroke}/>`,
+    `<circle cx="${sunCx}" cy="${sunCy}" r="${sunR}" ${stroke}/>`,
+    `<polyline points="${left + size * 0.12},${mountainBase} ${left + size * 0.42},${top + size * 0.55} ${left + size * 0.62},${top + size * 0.72} ${left + size * 0.78},${top + size * 0.5} ${right - size * 0.06},${mountainBase}" ${stroke}/>`,
+  ].join("");
+}
+
+function estimatePlaceholderLabelSizeEmu(cx: number, cy: number): number {
+  // Aim at ~14–22 px on a typical slide. Floor at 80k EMU (≈ 8.4 px)
+  // so micro-placeholders still get readable text without dominating.
+  return Math.max(80_000, Math.min(220_000, Math.floor(Math.min(cx, cy) / 12)));
 }
 
 /**

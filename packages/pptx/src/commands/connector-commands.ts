@@ -1,5 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type {
+  ConnectorDashStyle,
   ConnectorEndShape,
   ConnectorEndpoint,
   ConnectorShape,
@@ -25,9 +26,11 @@ import {
 } from "./helpers.js";
 import type {
   AddConnectorPayload,
+  ConnectorDashStylePayload,
   ConnectorEndpointPayload,
   SetConnectorEndpointPayload,
   SetConnectorStylePayload,
+  SetConnectorWaypointPayload,
 } from "./payloads.js";
 
 const DEFAULT_STROKE_COLOR = "374151"; // slate-700
@@ -48,6 +51,7 @@ export const addConnectorHandler: CommandHandler<AddConnectorPayload, PptxSnapsh
     const stroke: ConnectorStroke = {
       color: normaliseHex(payload.strokeColor ?? DEFAULT_STROKE_COLOR),
       widthEmu: payload.strokeWidthEmu ?? DEFAULT_STROKE_WIDTH_EMU,
+      ...(payload.strokeDash !== undefined ? { dash: validateDash(payload.strokeDash) } : {}),
     };
     if (stroke.widthEmu < 0) {
       throw makeError("invalid-payload", "strokeWidthEmu must be ≥ 0");
@@ -157,6 +161,7 @@ export const setConnectorStyleHandler: CommandHandler<SetConnectorStylePayload, 
       payload.connectorType === undefined &&
       payload.strokeColor === undefined &&
       payload.strokeWidthEmu === undefined &&
+      payload.strokeDash === undefined &&
       payload.headEnd === undefined &&
       payload.tailEnd === undefined
     ) {
@@ -165,13 +170,16 @@ export const setConnectorStyleHandler: CommandHandler<SetConnectorStylePayload, 
     if (payload.connectorType !== undefined && !isKnownType(payload.connectorType)) {
       throw makeError("invalid-payload", `unknown connector type: ${payload.connectorType}`);
     }
-    const prevStroke = connector.stroke ?? {
+    const prevStroke: ConnectorStroke = connector.stroke ?? {
       color: DEFAULT_STROKE_COLOR,
       widthEmu: DEFAULT_STROKE_WIDTH_EMU,
     };
+    const nextDash: ConnectorDashStyle | undefined =
+      payload.strokeDash !== undefined ? validateDash(payload.strokeDash) : prevStroke.dash;
     const stroke: ConnectorStroke = {
       color: payload.strokeColor !== undefined ? normaliseHex(payload.strokeColor) : prevStroke.color,
       widthEmu: payload.strokeWidthEmu ?? prevStroke.widthEmu,
+      ...(nextDash !== undefined ? { dash: nextDash } : {}),
     };
     if (stroke.widthEmu < 0) {
       throw makeError("invalid-payload", "strokeWidthEmu must be ≥ 0");
@@ -203,6 +211,58 @@ export const setConnectorStyleHandler: CommandHandler<SetConnectorStylePayload, 
   },
 };
 
+// ─── set-connector-waypoint ───────────────────────────────────────────────
+
+export const setConnectorWaypointHandler: CommandHandler<SetConnectorWaypointPayload, PptxSnapshot> = {
+  type: "pptx:set-connector-waypoint",
+  apply(snapshot, payload) {
+    const { slide, index: sIdx } = findSlide(snapshot, payload.slideIndex);
+    const found = findShapeInSlide(slide, payload.shapeId);
+    const connector = found.shape;
+    if (!isConnectorShape(connector)) {
+      throw makeError("invalid-target", `shape ${payload.shapeId} is not a connector`);
+    }
+    if (!Number.isInteger(payload.segmentIndex) || payload.segmentIndex < 0) {
+      throw makeError("invalid-payload", "segmentIndex must be a non-negative integer");
+    }
+    if (payload.valueEmu !== null && !Number.isFinite(payload.valueEmu)) {
+      throw makeError("invalid-payload", "valueEmu must be a finite number or null");
+    }
+    const prev = connector.waypoints ? [...connector.waypoints] : [];
+    if (payload.valueEmu === null) {
+      // Clearing: drop the entry at this index, then trim trailing
+      // undefined slots so we don't carry empty padding.
+      if (payload.segmentIndex < prev.length) {
+        prev.splice(payload.segmentIndex, 1);
+      }
+    } else {
+      while (prev.length <= payload.segmentIndex) prev.push(0);
+      prev[payload.segmentIndex] = Math.round(payload.valueEmu);
+    }
+    const updated: ConnectorShape = {
+      ...connector,
+      ...(prev.length > 0 ? { waypoints: prev } : { waypoints: undefined }),
+    };
+    const nextShapes = replaceShape(slide.shapes, found.path, updated);
+    const newSlide: Slide = { ...slide, shapes: nextShapes };
+    const root = {
+      ...snapshot.root,
+      slides: snapshot.root.slides.map((s, i) => (i === sIdx ? newSlide : s)),
+    };
+    const next = evolveSnapshot(snapshot, root, { slides: [slide.partPath] });
+    return {
+      next,
+      diff: buildDiff(snapshot.revision, next.revision, {
+        kind: "node-updated",
+        nodeId: updated.id,
+        path: ["slides", sIdx, "shapes", ...found.path],
+        field: "waypoints",
+        summary: `connector-waypoint:${payload.segmentIndex}`,
+      }),
+    };
+  },
+};
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 function isKnownType(t: string): t is ConnectorType {
@@ -211,6 +271,11 @@ function isKnownType(t: string): t is ConnectorType {
 
 function isKnownSide(s: string): s is ConnectorSide {
   return s === "n" || s === "s" || s === "e" || s === "w" || s === "center";
+}
+
+function validateDash(d: ConnectorDashStylePayload): ConnectorDashStyle {
+  if (d === "solid" || d === "dashed" || d === "dotted") return d;
+  throw makeError("invalid-payload", `unknown dash style: ${d}`);
 }
 
 /**
@@ -247,7 +312,26 @@ function validateEndpoint(
       `${label} endpoint targetCNvPrId ${ep.targetCNvPrId} not found on slide`
     );
   }
-  return { kind: "anchored", targetCNvPrId: ep.targetCNvPrId, side: ep.side };
+  // `t` is meaningful only for n/s/e/w (the four edges); `center`
+  // ignores it. Clamp + round to 3 decimals so lossy round-trip stays
+  // predictable.
+  const t = normaliseT(ep.t, ep.side);
+  return {
+    kind: "anchored",
+    targetCNvPrId: ep.targetCNvPrId,
+    side: ep.side,
+    ...(t !== undefined ? { t } : {}),
+  };
+}
+
+function normaliseT(t: number | undefined, side: ConnectorSide): number | undefined {
+  if (side === "center") return undefined;
+  if (t === undefined) return undefined;
+  if (!Number.isFinite(t)) {
+    throw makeError("invalid-payload", "endpoint t must be a finite number in [0, 1]");
+  }
+  const clamped = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.round(clamped * 1000) / 1000;
 }
 
 function collectShapesByCNvPrId(shape: Shape, out: Map<number, Shape>): void {

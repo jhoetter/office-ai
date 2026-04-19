@@ -14,21 +14,36 @@ export interface ShapeAnchor {
   readonly side: AnchorSide;
   readonly x: number;
   readonly y: number;
+  /**
+   * Position along the side in [0, 1]. 0.5 is the cardinal midpoint
+   * (the only legal value for `center`); 0.25 / 0.75 are the
+   * quarter-points the canvas exposes alongside the midpoint so users
+   * can latch arrows onto edge thirds without leaving the magnetic
+   * snap. Persisted onto anchored endpoints as `t` and round-tripped
+   * by collapsing back to the nearest cardinal index on save.
+   */
+  readonly t: number;
 }
 
 /**
- * Compute the anchor points for a single shape's bounding box.
+ * Compute the anchor points for a single shape's bounding box. Each
+ * cardinal edge is exposed at three points (t = 0.25, 0.5, 0.75) so
+ * connectors can land on edge thirds; `center` remains a single
+ * anchor at the bbox centre.
  */
 export function anchorsFor(shapeId: string, box: BoundingBox): ShapeAnchor[] {
   const cx = Math.round(box.x + box.cx / 2);
   const cy = Math.round(box.y + box.cy / 2);
-  return [
-    { shapeId, side: "n", x: cx, y: box.y },
-    { shapeId, side: "s", x: cx, y: box.y + box.cy },
-    { shapeId, side: "w", x: box.x, y: cy },
-    { shapeId, side: "e", x: box.x + box.cx, y: cy },
-    { shapeId, side: "center", x: cx, y: cy },
-  ];
+  const ts: ReadonlyArray<number> = [0.25, 0.5, 0.75];
+  const out: ShapeAnchor[] = [];
+  for (const t of ts) {
+    out.push({ shapeId, side: "n", x: Math.round(box.x + box.cx * t), y: box.y, t });
+    out.push({ shapeId, side: "s", x: Math.round(box.x + box.cx * t), y: box.y + box.cy, t });
+    out.push({ shapeId, side: "w", x: box.x, y: Math.round(box.y + box.cy * t), t });
+    out.push({ shapeId, side: "e", x: box.x + box.cx, y: Math.round(box.y + box.cy * t), t });
+  }
+  out.push({ shapeId, side: "center", x: cx, y: cy, t: 0.5 });
+  return out;
 }
 
 export interface AnchorSnapResult {

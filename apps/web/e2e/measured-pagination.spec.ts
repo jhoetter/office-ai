@@ -28,11 +28,11 @@ test.describe("editor: measured pagination", () => {
     // Baseline: bundled welcome doc fits on one sheet.
     await expect(surface.locator(".pm-page-edge")).toHaveCount(0);
 
-    // Type enough paragraphs to push past US-Letter content height
-    // (~880 CSS px). Each Enter creates a new paragraph; each line is
-    // ~28 CSS px in the editor's default 16px / 1.7 line-height. Sixty
-    // paragraphs ≈ 1700 px > 880 px so we should overflow into at
-    // least one extra page.
+    // Type enough paragraphs to push past DIN A4 content height
+    // (~933 CSS px = (16838 - 1417 - 1417) / 15). Each Enter creates a
+    // new paragraph; each line is ~28 CSS px in the editor's default
+    // 16px / 1.7 line-height. Sixty paragraphs ≈ 1700 px > 933 px so
+    // we should overflow into at least one extra page.
     await focusEditor(page);
     await page.keyboard.press("ControlOrMeta+End");
     for (let i = 0; i < 60; i++) {

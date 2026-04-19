@@ -36,6 +36,7 @@ import {
   addConnectorHandler,
   setConnectorEndpointHandler,
   setConnectorStyleHandler,
+  setConnectorWaypointHandler,
 } from "./connector-commands.js";
 import { setSlideLayoutHandler } from "./set-slide-layout.js";
 import { setSlideNotesHandler } from "./set-slide-notes.js";
@@ -84,6 +85,7 @@ export {
   addConnectorHandler,
   setConnectorEndpointHandler,
   setConnectorStyleHandler,
+  setConnectorWaypointHandler,
 } from "./connector-commands.js";
 export { setSlideLayoutHandler } from "./set-slide-layout.js";
 export { setSlideNotesHandler } from "./set-slide-notes.js";
@@ -131,6 +133,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   addConnectorHandler,
   setConnectorEndpointHandler,
   setConnectorStyleHandler,
+  setConnectorWaypointHandler,
   setSlideLayoutHandler,
   setSlideNotesHandler,
   addCommentHandler,

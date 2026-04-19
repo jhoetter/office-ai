@@ -36,10 +36,9 @@ test.describe("editor: theme-aware font resolution", () => {
   test("Plain body text toolbar font reads 'Calibri' (docDefaults literal)", async ({ page }) => {
     await gotoEditor(page);
     await focusEditor(page);
-    // Walk caret down to the third paragraph (the body text). Welcome
-    // doc layout: H1, H2, body, body.
+    // Walk caret down to the second paragraph (the first body text).
+    // Welcome doc layout: H1, body, body.
     await page.keyboard.press("ControlOrMeta+Home");
-    await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
 
     // Confirm we landed on a Normal paragraph before asserting font.
@@ -50,13 +49,16 @@ test.describe("editor: theme-aware font resolution", () => {
 
   test("Heading 2 also resolves through majorHAnsi → 'Aptos Display'", async ({ page }) => {
     await gotoEditor(page);
-    // Triple-click the H2 paragraph to land the caret inside it; PM
-    // honours triple-click as "select containing textblock", which
-    // both focuses the editor at the right position and avoids the
-    // ArrowDown-skips-textblock-with-page-decoration quirk.
-    await selectParagraphContaining(page, "A headless, agent-friendly editor");
+    await focusEditor(page);
+    // Welcome doc no longer ships an H2 by default. Park the caret on
+    // a body paragraph and convert it to Heading 2 via the toolbar's
+    // paragraph style picker so the test still exercises the
+    // majorHAnsi → 'Aptos Display' resolver path.
+    await selectParagraphContaining(page, "tiny synthetic .docx generated");
+    const styleSelect = page.locator('select[aria-label="Paragraph style"]');
+    await styleSelect.selectOption("Heading2");
 
-    await expect(page.locator('select[aria-label="Paragraph style"]')).toHaveValue("Heading2");
+    await expect(styleSelect).toHaveValue("Heading2");
     const fontSelect = page.locator('select[aria-label="Font family"]');
     await expect(fontSelect).toHaveValue("Aptos Display");
   });

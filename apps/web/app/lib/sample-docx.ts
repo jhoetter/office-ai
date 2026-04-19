@@ -103,14 +103,22 @@ const THEME_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   </a:themeElements>
 </a:theme>`;
 
+// DIN A4 — 210 × 297 mm — is the default for ~99% of locales outside
+// the US, and is what Word emits by default in EU installs. Twips:
+// 210 mm × (1440 twip/in ÷ 25.4 mm/in) = 11905.51 → 11906
+// 297 mm × (1440 twip/in ÷ 25.4 mm/in) = 16837.79 → 16838
+// Margins: 2.5 cm on every side = 1417 twips (Word's German A4 default).
+// Header / footer offset: 1.25 cm = 708 twips.
 const DOC_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <w:body>
     <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Welcome to officeAI</w:t></w:r></w:p>
-    <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t xml:space="preserve">A headless, agent-friendly editor</w:t></w:r></w:p>
     <w:p><w:r><w:t xml:space="preserve">This is a tiny synthetic .docx generated in your browser. It serves as a stand-in for "open file" so you can see the editor working without any upload.</w:t></w:r></w:p>
     <w:p><w:r><w:t xml:space="preserve">Type, format, or comment — every change goes through the headless agent's command bus, the same path an AI agent would use.</w:t></w:r></w:p>
-    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/>
+    </w:sectPr>
   </w:body>
 </w:document>`;
 

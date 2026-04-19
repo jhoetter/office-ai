@@ -112,6 +112,30 @@ export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsS
       // Initial measurement on mount: PM has just laid out the doc, so
       // by next frame `getBoundingClientRect()` is meaningful.
       schedule();
+      // Re-chunk whenever the agent snapshot changes.
+      //
+      // The funnel in `mountDocxEditor` applies PM transactions
+      // optimistically *before* mirroring them through the bus, so the
+      // page-decorations `apply()` runs against a stale snapshot (PM
+      // doc has the new paragraph, but `agent.getSnapshot()` is still
+      // pre-Enter). Without this hook the chunker would never re-run
+      // for that mutation: the funnel-suppress branch in mount.ts
+      // returns without dispatching any tx, and remeasureAndForce
+      // can't detect the missing block because the new paragraph never
+      // got its `pm-page-block` class in the first place. Result: the
+      // freshly inserted paragraph rendered AFTER the page filler,
+      // visually pinned to the bottom of the page.
+      //
+      // Subscribing to the agent gives us a guaranteed signal that the
+      // model just changed; we dispatch a `force` meta to re-run
+      // computeState with the up-to-date snapshot, which stamps the
+      // class on the new block. The follow-up RAF then measures it
+      // and the filler shrinks accordingly.
+      const unsubscribe = agent.subscribe(() => {
+        const tr = view.state.tr.setMeta(pageDecorationsKey, "force");
+        view.dispatch(tr);
+        schedule();
+      });
       return {
         update(updatedView, prevState) {
           // Re-measure whenever the doc changed OR the viewport / DOM
@@ -120,6 +144,7 @@ export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsS
           if (updatedView.state.doc !== prevState.doc) schedule();
         },
         destroy() {
+          unsubscribe();
           if (scheduledRaf !== null) {
             cancelAnimationFrame(scheduledRaf);
             scheduledRaf = null;

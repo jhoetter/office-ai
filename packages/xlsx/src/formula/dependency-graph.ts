@@ -62,6 +62,16 @@ export interface DepGraph {
   allKeys(): ReadonlyArray<CellKey>;
   /** Names of volatile cell keys (force-dirty every recalc). */
   volatileKeys(): ReadonlySet<CellKey>;
+  /**
+   * Collect every cell key that transitively depends on `ref` —
+   * direct readers via forward edges plus any formula whose range
+   * dependency includes `ref`. Read-only counterpart to
+   * `markDirty`: useful for command handlers that want to
+   * propagate cached-value updates to dependents only, without
+   * touching unrelated formula cells (preserving OOXML
+   * round-trip identity for parts that didn't actually change).
+   */
+  collectDependents(ref: CellRef): ReadonlySet<CellKey>;
   /** Total cell count. */
   readonly size: number;
 }
@@ -318,6 +328,34 @@ export function createDepGraph(): DepGraph {
     return state.volatile;
   }
 
+  function collectDependents(ref: CellRef): ReadonlySet<CellKey> {
+    const seedKey = cellRefKey(ref);
+    const out = new Set<CellKey>();
+    function walk(key: CellKey): void {
+      const fwd = state.forward.get(key);
+      if (fwd) {
+        for (const downstream of fwd) {
+          if (out.has(downstream)) continue;
+          out.add(downstream);
+          walk(downstream);
+        }
+      }
+      const parsed = parseCellKey(key);
+      const bucket = state.rangeIndex.get(parsed.sheet);
+      if (bucket) {
+        for (const entry of bucket) {
+          if (rangeContains(entry.range, parsed.row, parsed.col)) {
+            if (out.has(entry.dependentKey)) continue;
+            out.add(entry.dependentKey);
+            walk(entry.dependentKey);
+          }
+        }
+      }
+    }
+    walk(seedKey);
+    return out;
+  }
+
   return {
     addCell,
     removeCell,
@@ -329,6 +367,7 @@ export function createDepGraph(): DepGraph {
     setCachedValue,
     allKeys,
     volatileKeys,
+    collectDependents,
     get size() {
       return state.cells.size;
     },

@@ -42,26 +42,30 @@ export function resolveEndpoint(
     cx: target.size.cxEmu,
     cy: target.size.cyEmu,
   };
-  return anchorPoint(box, endpoint.side);
+  return anchorPoint(box, endpoint.side, endpoint.t);
 }
 
 /**
- * The slide-coordinate location of one of the five named anchors on a
- * shape's bounding box. Mirrors `renderer/layout/anchors.ts#anchorsFor`
- * so the persisted `ConnectorSide` round-trips cleanly.
+ * The slide-coordinate location of an anchor on a shape's bounding box.
+ *
+ * `t` (clamped to [0, 1], default 0.5) interpolates along the picked
+ * edge so quarter-points land cleanly: t=0 hits the corner closest to
+ * the prior side in the n→e→s→w cycle (left for n/s, top for w/e),
+ * t=1 the opposite corner. `center` ignores `t`.
  */
-export function anchorPoint(box: Box, side: ConnectorSide): Point {
+export function anchorPoint(box: Box, side: ConnectorSide, t?: number): Point {
   const cx = box.x + box.cx / 2;
   const cy = box.y + box.cy / 2;
+  const u = clampT(t);
   switch (side) {
     case "n":
-      return { x: cx, y: box.y };
+      return { x: box.x + box.cx * u, y: box.y };
     case "s":
-      return { x: cx, y: box.y + box.cy };
+      return { x: box.x + box.cx * u, y: box.y + box.cy };
     case "w":
-      return { x: box.x, y: cy };
+      return { x: box.x, y: box.y + box.cy * u };
     case "e":
-      return { x: box.x + box.cx, y: cy };
+      return { x: box.x + box.cx, y: box.y + box.cy * u };
     case "center":
       return { x: cx, y: cy };
     default: {
@@ -69,6 +73,13 @@ export function anchorPoint(box: Box, side: ConnectorSide): Point {
       return { x: cx + (_exhaustive as unknown as number) * 0, y: cy };
     }
   }
+}
+
+function clampT(t: number | undefined): number {
+  if (t === undefined || !Number.isFinite(t)) return 0.5;
+  if (t < 0) return 0;
+  if (t > 1) return 1;
+  return t;
 }
 
 /**

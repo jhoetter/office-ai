@@ -442,16 +442,28 @@ export type ConnectorEndpoint =
       readonly kind: "anchored";
       readonly targetCNvPrId: number;
       readonly side: ConnectorSide;
+      /**
+       * Optional position along the side, in [0, 1]. 0 is the left end
+       * of n/s edges (resp. top of w/e), 1 the right (resp. bottom),
+       * 0.5 the midpoint. Omitted (treated as 0.5) for plain cardinal
+       * anchors. Ignored for `center`. OOXML round-trip collapses `t`
+       * to the nearest cardinal connection-site index on save.
+       */
+      readonly t?: number;
     };
 
 export type ConnectorType = "straight" | "elbow" | "curved" | "unsupported";
 
 export type ConnectorEndShape = "none" | "arrow" | "triangle" | "oval";
 
+export type ConnectorDashStyle = "solid" | "dashed" | "dotted";
+
 export interface ConnectorStroke {
   /** 6-character RRGGBB hex (no `#`). */
   readonly color: string;
   readonly widthEmu: number;
+  /** Optional dash pattern. Defaults to "solid" when omitted. */
+  readonly dash?: ConnectorDashStyle;
 }
 
 /**
@@ -469,6 +481,15 @@ export interface ConnectorShape extends ShapeBase {
   readonly stroke?: ConnectorStroke;
   readonly headEnd?: ConnectorEndShape;
   readonly tailEnd?: ConnectorEndShape;
+  /**
+   * Optional user-supplied bend offsets for elbow connectors. Each
+   * value is a perpendicular displacement (in EMU) added to one of the
+   * routed segments — see `routeElbow` for which segment each entry
+   * controls. Authoring intent only; ignored for non-elbow types and
+   * lossy through OOXML round-trip (we don't currently emit/parse
+   * <a:bentConnectorAdjust> overrides).
+   */
+  readonly waypoints?: ReadonlyArray<number>;
   /** `<p:nvCxnSpPr>` head/tail (sans `<p:cNvPr>` we type). Verbatim. */
   readonly nvCxnSpPrTail: ReadonlyArray<OpaqueXml>;
   /** `<p:spPr>` tail (sans `<a:xfrm>` and `<a:prstGeom>` we rebuild). */

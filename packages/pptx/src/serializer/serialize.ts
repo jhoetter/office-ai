@@ -638,6 +638,15 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
   if (shape.stroke) {
     lnChildren.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: shape.stroke.color })]));
   }
+  if (shape.stroke?.dash && shape.stroke.dash !== "solid") {
+    // PowerPoint canonicalises the dash via `<a:prstDash>` after the
+    // fill but before the head/tail end markers — we follow that order
+    // so re-saved files diff cleanly against authentic PowerPoint
+    // output.
+    lnChildren.push(
+      makeEntry("a:prstDash", [], { val: shape.stroke.dash === "dotted" ? "dot" : "dash" })
+    );
+  }
   if (shape.headEnd) {
     lnChildren.push(makeEntry("a:headEnd", [], { type: shape.headEnd }));
   }

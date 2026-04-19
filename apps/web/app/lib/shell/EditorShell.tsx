@@ -160,14 +160,22 @@ export function EditorShell({
         onRenameFilename={onRenameFilename}
       />
 
+      {/*
+        Toolbar slot has a fixed 40 px height regardless of selection
+        state. Each product's toolbar uses the shared `ToolbarRow`
+        primitive which never wraps; on narrow viewports the leading
+        slot scrolls horizontally instead of growing taller. This
+        keeps the body (canvas / grid / page) anchored — selection
+        changes never push it down by a row.
+      */}
       {toolbar ? (
-        <div className="border-b border-divider bg-background" role="region" aria-label="Editor toolbar">
+        <div className="h-10 min-h-10 max-h-10 shrink-0 border-b border-divider bg-background">
           {toolbar}
         </div>
       ) : null}
 
-      <div className="relative flex min-h-0 flex-1">
-        <main className="relative flex min-h-0 flex-1 flex-col" role="main">
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" role="main">
           {body}
           {dragHover ? <DropOverlay extension={dropExtension} /> : null}
           <FindReplacePanel

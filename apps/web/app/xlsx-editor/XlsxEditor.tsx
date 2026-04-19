@@ -9,6 +9,8 @@ import {
   EditorShell,
   EmptyState,
   createToastId,
+  type ExportFormat,
+  type ExportOptionValues,
   type FindAdapter,
   type FindMatch,
   type FindOptions,
@@ -23,6 +25,13 @@ import {
   openFile as openFileViaService,
   saveFile as saveFileViaService,
 } from "@/lib/files/file-service";
+import { convertViaServer } from "@/lib/files/convert-client";
+import {
+  sheetToCsv,
+  sheetToTsv,
+  workbookToCsvZip,
+  workbookToJson,
+} from "./lib/export-data";
 import {
   XlsxAgent,
   assignRefColors,
@@ -54,6 +63,7 @@ import {
   type MarchingAntsRect,
   type RefRect,
 } from "./Grid";
+import { GridSkeleton } from "./GridSkeleton";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { computeUsedRange } from "./gridDimensions";
 import { FormulaHighlight } from "./FormulaHighlight";
@@ -96,6 +106,105 @@ import {
 } from "./clipboard";
 
 const SAMPLE_NAME = "sample.xlsx";
+
+const XLSX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
+  {
+    id: "xlsx",
+    label: "Excel workbook (.xlsx)",
+    description: "Round-trip native OOXML with all sheets, formatting and formulas.",
+    extension: "xlsx",
+    mime: PRODUCT_FILE_TYPES.xlsx.primaryMime,
+    kind: "instant",
+    group: "native",
+    icon: "sheet",
+  },
+  {
+    id: "pdf",
+    label: "PDF document (.pdf)",
+    description: "Server-side conversion via LibreOffice. Print-ready output of the full workbook.",
+    extension: "pdf",
+    mime: "application/pdf",
+    kind: "dialog",
+    group: "pdf-web",
+    icon: "pdf",
+    optionFields: [
+      {
+        id: "orientation",
+        label: "Orientation",
+        control: {
+          type: "select",
+          defaultId: "source",
+          options: [
+            { id: "source", label: "Use sheet setting" },
+            { id: "portrait", label: "Portrait" },
+            { id: "landscape", label: "Landscape" },
+          ],
+        },
+        hint: "LibreOffice respects each sheet's own page setup unless overridden.",
+      },
+      {
+        id: "fitToWidth",
+        label: "Fit to page width",
+        control: { type: "toggle", defaultValue: false },
+        hint: "Scales wide tables down so columns don't overflow.",
+      },
+    ],
+  },
+  {
+    id: "html",
+    label: "Web page (.html)",
+    description: "Server-side HTML export. Renders with sheet tabs and styles.",
+    extension: "html",
+    mime: "text/html",
+    kind: "instant",
+    group: "pdf-web",
+    icon: "code",
+  },
+  {
+    id: "csv",
+    label: "CSV (active sheet)",
+    description: "Comma-separated values for the active sheet only.",
+    extension: "csv",
+    mime: "text/csv;charset=utf-8",
+    kind: "instant",
+    group: "data",
+    icon: "text",
+  },
+  {
+    id: "csv-all",
+    label: "CSV — all sheets (.zip)",
+    description: "One CSV per worksheet, bundled as a zip.",
+    extension: "zip",
+    mime: "application/zip",
+    kind: "instant",
+    group: "data",
+    icon: "text",
+  },
+  {
+    id: "tsv",
+    label: "Tab-separated (.tsv)",
+    description: "Tab-separated values for the active sheet.",
+    extension: "tsv",
+    mime: "text/tab-separated-values;charset=utf-8",
+    kind: "instant",
+    group: "data",
+    icon: "text",
+  },
+  {
+    id: "json",
+    label: "JSON",
+    description: "Structured cell values per sheet, keyed by column letter.",
+    extension: "json",
+    mime: "application/json;charset=utf-8",
+    kind: "instant",
+    group: "data",
+    icon: "code",
+  },
+];
+
+function stripXlsxExtension(name: string): string {
+  return name.replace(/\.xlsx$/i, "");
+}
 
 /**
  * True when an event target is a form control / editable surface that
@@ -208,6 +317,14 @@ export function XlsxEditor(): ReactNode {
   const [marchingAnts, setMarchingAnts] = useState<(MarchingAntsRect & { readonly sheet: string }) | null>(
     null
   );
+  // Tracks the initial sample-load lifecycle. While true and `agent`
+  // is still null we render a static GridSkeleton instead of the
+  // EmptyState, so the editor surface looks alive on the very first
+  // paint instead of asking the user to "Open a workbook" for the
+  // ~150-300 ms it takes JSZip + the parser to materialise the
+  // synthetic sample. Flips to false on success (agent appears) or
+  // failure (we then surface EmptyState as the recovery affordance).
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false);
   const shortcutsDialog = useShortcutsDialog();
 
   const pushToast = useCallback((kind: ToastItem["kind"], text: string) => {
@@ -270,6 +387,11 @@ export function XlsxEditor(): ReactNode {
         if (cancelled) return;
         mountAgent(a, SAMPLE_NAME);
       } catch (err) {
+        if (cancelled) return;
+        // Sample build failed — fall back to the EmptyState so the
+        // user has a visible "Open file" affordance instead of being
+        // stuck on the skeleton forever.
+        setInitialLoadFailed(true);
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     })();
@@ -1498,18 +1620,72 @@ export function XlsxEditor(): ReactNode {
     }
   }, [filename, pushToast]);
 
-  const onExport = useCallback(async () => {
-    const a = agentRef.current;
-    if (!a) return;
-    try {
-      const buf = await a.exportFile();
-      const blob = new Blob([buf as BlobPart], { type: PRODUCT_FILE_TYPES.xlsx.primaryMime });
-      downloadBlob(blob, filename);
-      pushToast("success", `Exported ${filename}`);
-    } catch (err) {
-      pushToast("error", err instanceof Error ? err.message : String(err));
-    }
-  }, [filename, pushToast]);
+  const onExport = useCallback(
+    async (format: ExportFormat, options?: ExportOptionValues) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const baseName = stripXlsxExtension(filename);
+      const downloadName = `${baseName}.${format.extension}`;
+      try {
+        switch (format.id) {
+          case "xlsx": {
+            const buf = await a.exportFile();
+            downloadBlob(
+              new Blob([buf as BlobPart], { type: format.mime }),
+              downloadName
+            );
+            break;
+          }
+          case "pdf":
+          case "html": {
+            const buf = await a.exportFile();
+            const out = await convertViaServer({
+              bytes: new Uint8Array(buf),
+              sourceExt: "xlsx",
+              targetExt: format.id,
+              filename: baseName,
+            });
+            downloadBlob(out, downloadName);
+            break;
+          }
+          case "csv": {
+            const sheet = activeSheetRef.current ?? snapshot?.root.sheets[0] ?? null;
+            if (!sheet) throw new Error("No sheet to export.");
+            const csv = sheetToCsv(sheet);
+            downloadBlob(new Blob([csv], { type: format.mime }), downloadName);
+            break;
+          }
+          case "csv-all": {
+            const snap = a.getSnapshot();
+            const blob = await workbookToCsvZip(snap);
+            downloadBlob(blob, downloadName);
+            break;
+          }
+          case "tsv": {
+            const sheet = activeSheetRef.current ?? snapshot?.root.sheets[0] ?? null;
+            if (!sheet) throw new Error("No sheet to export.");
+            const tsv = sheetToTsv(sheet);
+            downloadBlob(new Blob([tsv], { type: format.mime }), downloadName);
+            break;
+          }
+          case "json": {
+            const snap = a.getSnapshot();
+            const json = workbookToJson(snap);
+            downloadBlob(new Blob([json], { type: format.mime }), downloadName);
+            break;
+          }
+          default:
+            throw new Error(`Unsupported export format: ${format.id}`);
+        }
+        pushToast("success", `Exported ${downloadName}`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+      void options;
+    },
+    [filename, pushToast, snapshot]
+  );
 
   const sheets = snapshot?.root.sheets ?? [];
   const revision = snapshot?.revision ?? 0;
@@ -3383,17 +3559,10 @@ export function XlsxEditor(): ReactNode {
       canOpen: true,
       canSave: Boolean(agent),
       canExport: Boolean(agent),
-      exportFormats: [
-        {
-          id: "xlsx",
-          label: "Excel workbook (.xlsx)",
-          extension: "xlsx",
-          mime: PRODUCT_FILE_TYPES.xlsx.primaryMime,
-        },
-      ],
+      exportFormats: XLSX_EXPORT_FORMATS,
       onOpenFile: () => void onPickFile(),
       onSave: () => onSave(),
-      onExport: () => onExport(),
+      onExport: (format, options) => onExport(format, options),
       canUndo: agent?.canUndo() ?? false,
       canRedo: agent?.canRedo() ?? false,
       onUndo: () => {
@@ -3470,7 +3639,13 @@ export function XlsxEditor(): ReactNode {
               onActivateFormatPainter={activateFormatPainter}
               formatPainterActive={formatPainter !== null}
             />
-          ) : null
+          ) : (
+            // Placeholder before the workbook loads so opening the
+            // first file doesn't push the grid down by the toolbar's
+            // height. Visually inert (matches the surface background)
+            // and aria-hidden because there's nothing to interact with.
+            <div aria-hidden data-testid="xlsx-toolbar-placeholder" className="h-[34px] w-full" />
+          )
         }
         statusBarLeft={
           <span className="text-[11px] tabular-nums text-tertiary">
@@ -3488,7 +3663,7 @@ export function XlsxEditor(): ReactNode {
             data-testid="xlsx-surface"
             data-whole-row={wholeRowSelection ? "1" : "0"}
             data-whole-col={wholeColSelection ? "1" : "0"}
-            className="relative flex h-full min-h-0 flex-col gap-2 p-3 outline-none"
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-3 outline-none"
           >
             <input
               ref={imageInputRef}
@@ -3499,7 +3674,11 @@ export function XlsxEditor(): ReactNode {
               onChange={onImageInputChange}
             />
             {!agent ? (
-              <EmptyState product="xlsx" onOpen={() => void onPickFile()} />
+              initialLoadFailed ? (
+                <EmptyState product="xlsx" onOpen={() => void onPickFile()} />
+              ) : (
+                <GridSkeleton />
+              )
             ) : (
               <>
                 <TextToColumnsPopover
@@ -3696,9 +3875,9 @@ export function XlsxEditor(): ReactNode {
                   </div>
                 </div>
 
-                <div className="relative flex flex-1 min-h-0">
+                <div className="relative flex flex-1 min-h-0 min-w-0">
                   <div
-                    className="relative flex-1 min-h-0"
+                    className="relative flex-1 min-h-0 min-w-0"
                     data-format-painter={formatPainter ? "1" : undefined}
                     style={
                       formatPainter

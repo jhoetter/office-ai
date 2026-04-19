@@ -181,6 +181,122 @@ describe("slideToSvgString", () => {
     expect(Number(widthNarrow?.[1])).toBeLessThan(100);
   });
 
+  it("paints a dashed ghost outline + prompt label for an empty text placeholder (no real text)", () => {
+    // Mirrors what `clonePlaceholdersIntoSlide` produces for a fresh
+    // "Title and Content" layout: a body placeholder with one empty
+    // paragraph and zero runs. Without ghost rendering the SVG would
+    // be a transparent rect — visually invisible — which is exactly
+    // the "blank slide" bug we're fixing here.
+    const shape: TextShape = {
+      id: "ph-body",
+      kind: "text",
+      cNvPrId: 2,
+      name: "Body 1",
+      position: { xEmu: 500_000, yEmu: 1_500_000 },
+      size: { cxEmu: 8_000_000, cyEmu: 4_000_000 },
+      nvSpPrTail: [],
+      spPrTail: [],
+      placeholder: { type: "body", idx: 1 },
+      txBody: {
+        paragraphs: [{ id: "p-0", properties: {}, runs: [] }],
+      },
+    };
+    const svg = shapeToSvg(shape, {
+      slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
+    });
+    expect(svg).toContain('class="placeholder-hint"');
+    expect(svg).toContain('stroke-dasharray=');
+    expect(svg).toContain("Click to add text");
+    // The hint must never absorb pointer events — selection / drag /
+    // resize hit-testing depends on the underlying transparent rect
+    // staying clickable. If this regresses the user can no longer
+    // grab an empty placeholder by clicking inside it.
+    expect(svg).toContain('pointer-events="none"');
+  });
+
+  it("renders a picture-icon glyph for an empty pic placeholder", () => {
+    const shape: TextShape = {
+      id: "ph-pic",
+      kind: "text",
+      cNvPrId: 3,
+      name: "Picture Placeholder 1",
+      position: { xEmu: 500_000, yEmu: 1_500_000 },
+      size: { cxEmu: 4_000_000, cyEmu: 3_000_000 },
+      nvSpPrTail: [],
+      spPrTail: [],
+      placeholder: { type: "pic", idx: 2 },
+      txBody: {
+        paragraphs: [{ id: "p-0", properties: {}, runs: [] }],
+      },
+    };
+    const svg = shapeToSvg(shape, {
+      slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
+    });
+    expect(svg).toContain("Click to add picture");
+    // Mountain-and-sun glyph: a polyline (the mountain) + a circle
+    // (the sun) inside the dashed frame. Asserting both ensures the
+    // icon path actually fires — a stray refactor that drops the
+    // helper would still satisfy "Click to add picture".
+    expect(svg).toContain("<polyline");
+    expect(svg).toContain("<circle");
+  });
+
+  it("does NOT paint a ghost when the placeholder already has text", () => {
+    // Once the user types into a placeholder the ghost UI must
+    // disappear, otherwise the slide reads as cluttered (real title
+    // text *plus* a dashed "Click to add title" overlay).
+    const shape: TextShape = {
+      id: "ph-title",
+      kind: "text",
+      cNvPrId: 4,
+      name: "Title 1",
+      position: { xEmu: 500_000, yEmu: 500_000 },
+      size: { cxEmu: 8_000_000, cyEmu: 1_000_000 },
+      nvSpPrTail: [],
+      spPrTail: [],
+      placeholder: { type: "title", idx: 0 },
+      txBody: {
+        paragraphs: [
+          {
+            id: "p-0",
+            properties: {},
+            runs: [{ id: "r-0", text: "Real title", properties: {} }],
+          },
+        ],
+      },
+    };
+    const svg = shapeToSvg(shape, {
+      slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
+    });
+    expect(svg).not.toContain('class="placeholder-hint"');
+    expect(svg).not.toContain("Click to add title");
+    expect(svg).toContain("Real title");
+  });
+
+  it("respects renderPlaceholderHints=false (suppresses the ghost UI)", () => {
+    // Export-style previews opt out of the authoring affordances so
+    // the rendered slide matches what's in the saved .pptx — empty
+    // placeholders should look invisible, not dashed-and-prompty.
+    const shape: TextShape = {
+      id: "ph-body",
+      kind: "text",
+      cNvPrId: 5,
+      name: "Body 1",
+      position: { xEmu: 500_000, yEmu: 1_500_000 },
+      size: { cxEmu: 8_000_000, cyEmu: 4_000_000 },
+      nvSpPrTail: [],
+      spPrTail: [],
+      placeholder: { type: "body", idx: 1 },
+      txBody: { paragraphs: [{ id: "p-0", properties: {}, runs: [] }] },
+    };
+    const svg = shapeToSvg(shape, {
+      slideSize: { cxEmu: 9144000, cyEmu: 6858000 },
+      renderPlaceholderHints: false,
+    });
+    expect(svg).not.toContain('class="placeholder-hint"');
+    expect(svg).not.toContain("Click to add text");
+  });
+
   it("wraps long text inside a narrow text shape (no overflow)", () => {
     const longText =
       "This is a very long sentence that should wrap automatically across multiple lines inside a narrow text box.";

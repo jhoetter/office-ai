@@ -466,11 +466,18 @@ export type ConnectorEndpointPayload =
       readonly kind: "anchored";
       readonly targetCNvPrId: number;
       readonly side: "n" | "s" | "e" | "w" | "center";
+      /**
+       * Optional position along the side, in [0, 1]. Defaults to 0.5
+       * (the cardinal midpoint) when omitted. Ignored for "center".
+       */
+      readonly t?: number;
     };
 
 export type ConnectorTypePayload = "straight" | "elbow" | "curved";
 
 export type ConnectorEndShapePayload = "none" | "arrow" | "triangle" | "oval";
+
+export type ConnectorDashStylePayload = "solid" | "dashed" | "dotted";
 
 export interface AddConnectorPayload {
   readonly slideIndex: number;
@@ -481,6 +488,7 @@ export interface AddConnectorPayload {
   readonly strokeColor?: string;
   /** EMU width. Defaults to ~0.75pt (`9525`). */
   readonly strokeWidthEmu?: number;
+  readonly strokeDash?: ConnectorDashStylePayload;
   readonly headEnd?: ConnectorEndShapePayload;
   readonly tailEnd?: ConnectorEndShapePayload;
   readonly name?: string;
@@ -499,8 +507,21 @@ export interface SetConnectorStylePayload {
   readonly connectorType?: ConnectorTypePayload;
   readonly strokeColor?: string;
   readonly strokeWidthEmu?: number;
+  readonly strokeDash?: ConnectorDashStylePayload;
   readonly headEnd?: ConnectorEndShapePayload;
   readonly tailEnd?: ConnectorEndShapePayload;
+}
+
+/**
+ * Adjust the perpendicular offset of one of an elbow connector's
+ * routed segments. Pass `valueEmu = null` to clear an existing
+ * waypoint (the segment will revert to the auto-routed midpoint).
+ */
+export interface SetConnectorWaypointPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly segmentIndex: number;
+  readonly valueEmu: number | null;
 }
 
 // ─── F4 (Animations) payloads ─────────────────────────────────────────────
