@@ -221,6 +221,22 @@ export interface SlideCanvasProps {
     readonly placeholder: { readonly type?: string; readonly idx?: number };
   }) => void;
   /**
+   * Fired when the user double-clicks a shape kind that is not text-
+   * editable but does have an "open in editor" affordance — currently
+   * `chart` and `ole-spreadsheet`. The host editor is expected to open
+   * an inline edit-data modal (see `EmbeddedXlsxModal`) and dispatch
+   * the appropriate `*:update-spreadsheet` / `*:set-chart-data`
+   * commands when the user finishes.
+   *
+   * Returning without doing anything is a valid no-op; the canvas
+   * leaves the shape selected and does not fall through to text-edit
+   * mode.
+   */
+  readonly onShapeActivate?: (info: {
+    readonly shapeId: string;
+    readonly shape: Shape;
+  }) => void;
+  /**
    * When non-null, the canvas is in "draw a connector" tool mode: any
    * shape under the pointer surfaces ports (regardless of selection),
    * the cursor becomes a crosshair, and a press-drag gesture starts a
@@ -1475,7 +1491,16 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           const id = shapeEl?.dataset.shapeId;
           if (!id) return;
           const sh = findShape(slide.shapes, id);
-          if (sh?.kind !== "text") return;
+          if (!sh) return;
+          // "Open in editor" shapes (chart / OLE spreadsheet): hand the
+          // activation to the parent so it can pop the embedded-xlsx
+          // modal. PowerPoint's analogue is double-clicking a chart /
+          // embedded spreadsheet to launch Excel inline.
+          if (sh.kind === "chart" || sh.kind === "ole-spreadsheet") {
+            props.onShapeActivate?.({ shapeId: id, shape: sh });
+            return;
+          }
+          if (sh.kind !== "text") return;
           // Empty non-text placeholder (pic / chart / tbl / dgm / media):
           // hand the activation to the parent instead of opening the
           // text-edit overlay. Typing into a picture placeholder would

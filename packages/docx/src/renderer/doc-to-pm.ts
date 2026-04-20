@@ -340,7 +340,17 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       // inline-images produced by `docx:insert-image` we synthesize a
       // metadata stub so the editor still gets the relationship id and
       // dimensions.
-      const drawingMeta = child.subkind === "inline-image" ? (child.raw ?? imageStub(child)) : child.raw;
+      // Charts get a structured envelope so the editor can pop the
+      // "Edit Data" modal on double-click without re-parsing the
+      // entire `<w:drawing>` subtree. Other drawings continue to
+      // ride on the raw subtree (or a synthesized stub for typed
+      // inline images) verbatim.
+      const drawingMeta =
+        child.subkind === "chart"
+          ? { chart: { chartPartPath: child.chartPartPath } }
+          : child.subkind === "inline-image"
+            ? (child.raw ?? imageStub(child))
+            : child.raw;
       const attrs: Record<string, unknown> = { runId: child.id, drawingJson: encode(drawingMeta) };
       // Inline images: resolve the relationship to a `data:` URL so the
       // schema's `image.toDOM` can emit a real `<img>` tag. Drawings

@@ -98,6 +98,11 @@ import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope"
 import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
 import { applyXlsxEmbed } from "@/lib/embed/xlsxEmbedShared";
 import type { XlsxEmbedMode } from "@/lib/embed/xlsxEmbedShared";
+import { EmbeddedXlsxModal } from "@/lib/embed/EmbeddedXlsxModal";
+import {
+  resolveEmbeddedXlsxRef,
+  readEmbeddedXlsxBytes,
+} from "@/lib/embed/getEmbeddedXlsxBytes";
 import {
   XlsxRangePickerDialog,
   type XlsxRangePickerResult,
@@ -287,6 +292,16 @@ export function DocxEditor({
   const [zoom, setZoom] = useState<number>(1);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
+  /**
+   * Active "Edit Data" modal for double-click on a chart drawing /
+   * embedded spreadsheet. `null` while the modal is closed.
+   */
+  const [editingEmbed, setEditingEmbed] = useState<{
+    readonly bytes: Uint8Array;
+    readonly embeddingPartPath: string;
+    readonly chartPartPath: string | null;
+    readonly title: string;
+  } | null>(null);
   // Bumped to force re-derivation of toolbar state (active marks /
   // active style) without keeping a redundant copy of the snapshot.
   const [uiTick, setUiTick] = useState(0);
@@ -994,6 +1009,109 @@ export function DocxEditor({
     imageInputRef.current?.click();
   }, []);
 
+  /**
+   * Open the {@link EmbeddedXlsxModal} for the embedded workbook
+   * referenced by the supplied PM image attribute envelope. The
+   * envelope may carry either:
+   *   - `{ chart: { chartPartPath } }` for typed chart drawings, or
+   *   - `{ embeddedSpreadsheet: <embeddingPartPath> }` for OLE
+   *     spreadsheet leaves.
+   *
+   * Anything else (regular inline images, opaque drawings) is ignored
+   * — those don't have an editable embedded workbook.
+   */
+  const openEmbeddedEditor = useCallback(
+    async (envelope: unknown) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      let chartPartPath: string | undefined;
+      let embeddingPartPath: string | undefined;
+      let title = "Edit data";
+      if (envelope && typeof envelope === "object") {
+        const env = envelope as {
+          chart?: { chartPartPath?: unknown };
+          embeddedSpreadsheet?: unknown;
+        };
+        if (env.chart && typeof env.chart.chartPartPath === "string") {
+          chartPartPath = env.chart.chartPartPath;
+          title = "Edit chart data";
+        } else if (typeof env.embeddedSpreadsheet === "string") {
+          embeddingPartPath = env.embeddedSpreadsheet;
+          title = "Edit spreadsheet";
+        }
+      }
+      if (!chartPartPath && !embeddingPartPath) return;
+      try {
+        const ref = resolveEmbeddedXlsxRef({
+          source: { kind: "docx", agent },
+          ...(chartPartPath ? { chartPartPath } : { embeddingPartPath: embeddingPartPath! }),
+        });
+        if (!ref) {
+          pushToast("info", "This object has no embedded workbook to edit.");
+          return;
+        }
+        const bytes = await readEmbeddedXlsxBytes({
+          source: { kind: "docx", agent },
+          embeddingPartPath: ref.embeddingPartPath,
+        });
+        if (!bytes) {
+          pushToast("info", "Embedded workbook bytes could not be loaded.");
+          return;
+        }
+        setEditingEmbed({
+          bytes,
+          embeddingPartPath: ref.embeddingPartPath,
+          chartPartPath: ref.chartPartPath,
+          title,
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleEmbeddedXlsxSave = useCallback(
+    async (result: {
+      readonly bytes: Uint8Array;
+      readonly grid: ReadonlyArray<ReadonlyArray<string | number | null>>;
+    }) => {
+      const agent = agentRef.current;
+      const ctx = editingEmbed;
+      setEditingEmbed(null);
+      if (!agent || !ctx) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:update-spreadsheet",
+          payload: {
+            embeddingPartPath: ctx.embeddingPartPath,
+            bytes: result.bytes,
+            previewGrid: result.grid,
+          },
+          source: "human",
+        });
+        if (ctx.chartPartPath) {
+          const chartUpdate = projectGridToChartData(result.grid);
+          if (chartUpdate) {
+            await agent.applyCommand({
+              type: "docx:set-chart-data",
+              payload: {
+                chartPartPath: ctx.chartPartPath,
+                categories: chartUpdate.categories,
+                series: chartUpdate.series,
+              },
+              source: "human",
+            });
+          }
+        }
+        pushToast("info", "Saved embedded data.");
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [editingEmbed, pushToast]
+  );
+
   const handleXlsxPickerSubmit = useCallback(
     async (result: XlsxRangePickerResult) => {
       const agent = agentRef.current;
@@ -1260,17 +1378,47 @@ export function DocxEditor({
       e.preventDefault();
       void handleImageFile(file);
     };
+    // Double-click on a chart drawing or embedded spreadsheet pops
+    // the {@link EmbeddedXlsxModal}. We hook at the host level so PM
+    // doesn't see the event first and try to start a text selection
+    // inside the atom node — the dblclick on an `image` PM node is
+    // otherwise just dead air. The PM image's host DOM is an `<img>`
+    // (or a `[image]` placeholder span) without our `drawingJson`
+    // attribute on the DOM, so we resolve the position through
+    // ProseMirror and read the typed node attrs.
+    const onDblClick = (e: MouseEvent) => {
+      const view = mountRef.current?.view;
+      if (!view) return;
+      const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
+      if (!pos) return;
+      const node = view.state.doc.nodeAt(pos.pos);
+      const raw = node?.type.name === "image" ? node.attrs.drawingJson : null;
+      if (typeof raw !== "string" || raw.length === 0) return;
+      let envelope: unknown;
+      try {
+        envelope = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      const env = envelope as { chart?: unknown; embeddedSpreadsheet?: unknown };
+      if (!env.chart && !env.embeddedSpreadsheet) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void openEmbeddedEditor(envelope);
+    };
     hostEl.addEventListener("dragover", onDragOver);
     hostEl.addEventListener("drop", onDrop);
     hostEl.addEventListener("paste", onPaste);
+    hostEl.addEventListener("dblclick", onDblClick);
     const uninstallAlt = installAltKeyTracker();
     return () => {
       hostEl.removeEventListener("dragover", onDragOver);
       hostEl.removeEventListener("drop", onDrop);
       hostEl.removeEventListener("paste", onPaste);
+      hostEl.removeEventListener("dblclick", onDblClick);
       uninstallAlt();
     };
-  }, [hostEl, handleImageFile, pushToast]);
+  }, [hostEl, handleImageFile, pushToast, openEmbeddedEditor]);
 
   const scrollToComment = useCallback(
     (commentId: string) => {
@@ -1959,6 +2107,13 @@ export function DocxEditor({
         onCancel={() => setXlsxPickerOpen(null)}
         onSubmit={(result) => void handleXlsxPickerSubmit(result)}
       />
+      <EmbeddedXlsxModal
+        open={editingEmbed !== null}
+        bytes={editingEmbed?.bytes ?? null}
+        title={editingEmbed?.title}
+        onCancel={() => setEditingEmbed(null)}
+        onSave={(r) => void handleEmbeddedXlsxSave(r)}
+      />
       <GotoDialog
         open={gotoOpen}
         currentPage={
@@ -1996,6 +2151,41 @@ function normaliseUrl(raw: string): string {
   if (/^[a-z][a-z0-9+\-.]*:/i.test(v)) return v;
   if (/^#/.test(v)) return v;
   return `https://${v}`;
+}
+
+/**
+ * See {@link projectGridToChartData} in `PptxEditor.tsx` — same
+ * convention (row 0 → series headers, col 0 → categories, interior
+ * → numeric values). Duplicated here instead of being lifted into a
+ * shared helper module because the function has zero React-specific
+ * deps and the editors don't otherwise share an "embed glue"
+ * module beyond the `lib/embed/` directory; lifting one tiny pure
+ * helper into its own file would be more ceremony than it's worth.
+ */
+function projectGridToChartData(
+  grid: ReadonlyArray<ReadonlyArray<string | number | null>>
+): { readonly categories: ReadonlyArray<string>; readonly series: ReadonlyArray<{ readonly name?: string; readonly values: ReadonlyArray<number> }> } | null {
+  if (grid.length < 2) return null;
+  const header = grid[0]!;
+  if (header.length < 2) return null;
+  const categories: string[] = [];
+  for (let r = 1; r < grid.length; r++) {
+    const cell = grid[r]?.[0];
+    categories.push(cell == null ? "" : String(cell));
+  }
+  const series: Array<{ readonly name?: string; readonly values: ReadonlyArray<number> }> = [];
+  for (let c = 1; c < header.length; c++) {
+    const rawName = header[c];
+    const values: number[] = [];
+    for (let r = 1; r < grid.length; r++) {
+      const cell = grid[r]?.[c];
+      const n = typeof cell === "number" ? cell : Number(cell);
+      values.push(Number.isFinite(n) ? n : 0);
+    }
+    const name = rawName == null ? undefined : String(rawName);
+    series.push(name !== undefined ? { name, values } : { values });
+  }
+  return { categories, series };
 }
 
 function pickImageFile(files: FileList | null | undefined): File | null {

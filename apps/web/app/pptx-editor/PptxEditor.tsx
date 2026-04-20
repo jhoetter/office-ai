@@ -79,6 +79,11 @@ import {
   type XlsxRangePickerResult,
 } from "@/lib/embed/XlsxRangePickerDialog";
 import { installAltKeyTracker, isAltKeyPressed } from "@/lib/embed/altKeyTracker";
+import { EmbeddedXlsxModal } from "@/lib/embed/EmbeddedXlsxModal";
+import {
+  resolveEmbeddedXlsxRef,
+  readEmbeddedXlsxBytes,
+} from "@/lib/embed/getEmbeddedXlsxBytes";
 
 const SCALE_OPTIONS = {
   type: "select" as const,
@@ -337,6 +342,21 @@ export function PptxEditor({
   // what users expect when reopening a deck.
   const [notesOpen, setNotesOpen] = useState(false);
   const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
+  /**
+   * Active "Edit Data" modal state for double-click on a chart or
+   * OLE spreadsheet shape. `null` when the modal is closed; otherwise
+   * carries the loaded workbook bytes plus enough context to dispatch
+   * the right `*:update-spreadsheet` (and optional `*:set-chart-data`)
+   * command on save.
+   */
+  const [editingEmbed, setEditingEmbed] = useState<{
+    readonly bytes: Uint8Array;
+    readonly embeddingPartPath: string;
+    readonly chartPartPath: string | null;
+    readonly slideIndex: number;
+    readonly shapeId: string;
+    readonly title: string;
+  } | null>(null);
   const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
   const selectedShapeId = selectedShapeIds[0] ?? null;
   const [textSelection, setTextSelection] = useState<PptxTextSelection | null>(null);
@@ -1072,6 +1092,108 @@ export function PptxEditor({
       }
     },
     [activeIndex, onError, pushToast]
+  );
+
+  /**
+   * Double-click → "Edit Data" entry point. Resolves the embedded
+   * `.xlsx` bytes for the activated chart / OLE spreadsheet shape and
+   * pops the {@link EmbeddedXlsxModal}. Emits a friendly toast (and
+   * does NOT throw) when the shape has no recoverable bytes — for
+   * example, a freshly-inserted chart whose `pendingGrid` was never
+   * set (defensive; should not happen with our current handlers).
+   */
+  const handleShapeActivate = useCallback(
+    async (info: { shapeId: string; shape: Shape }) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const sh = info.shape;
+      if (sh.kind !== "chart" && sh.kind !== "ole-spreadsheet") return;
+      try {
+        const ref = resolveEmbeddedXlsxRef({
+          source: { kind: "pptx", agent: a },
+          ...(sh.kind === "chart"
+            ? { chartPartPath: sh.chartPartPath }
+            : { embeddingPartPath: sh.embeddingPartPath }),
+        });
+        if (!ref) {
+          pushToast("info", "This object has no embedded workbook to edit.");
+          return;
+        }
+        const bytes = await readEmbeddedXlsxBytes({
+          source: { kind: "pptx", agent: a },
+          embeddingPartPath: ref.embeddingPartPath,
+        });
+        if (!bytes) {
+          pushToast("info", "Embedded workbook bytes could not be loaded.");
+          return;
+        }
+        setEditingEmbed({
+          bytes,
+          embeddingPartPath: ref.embeddingPartPath,
+          chartPartPath: ref.chartPartPath,
+          slideIndex: activeIndex,
+          shapeId: info.shapeId,
+          title: sh.kind === "chart" ? "Edit chart data" : "Edit spreadsheet",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, pushToast]
+  );
+
+  /**
+   * Persist edits made in the {@link EmbeddedXlsxModal} back into the
+   * host PPTX. For OLE spreadsheets we only need to refresh the
+   * embedded `.xlsx` bytes — Office re-renders the preview lazily.
+   * For charts we additionally dispatch `pptx:set-chart-data` from
+   * the modal's projected grid: row 1 is treated as the categories
+   * column (skipping A1) and row 2+ as series rows whose first cell
+   * is the series name and whose remaining cells are numeric values.
+   * That mirrors the "first row is header / first column is label"
+   * convention that `buildChartGrid` and `set-chart-data` already use
+   * elsewhere in the codebase.
+   */
+  const handleEmbeddedXlsxSave = useCallback(
+    async (result: {
+      readonly bytes: Uint8Array;
+      readonly grid: ReadonlyArray<ReadonlyArray<string | number | null>>;
+    }) => {
+      const a = agentRef.current;
+      const ctx = editingEmbed;
+      setEditingEmbed(null);
+      if (!a || !ctx) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:update-spreadsheet",
+          payload: {
+            embeddingPartPath: ctx.embeddingPartPath,
+            bytes: result.bytes,
+            previewGrid: result.grid,
+          },
+          source: "human",
+        });
+        if (ctx.chartPartPath) {
+          const chartUpdate = projectGridToChartData(result.grid);
+          if (chartUpdate) {
+            await a.applyCommand({
+              type: "pptx:set-chart-data",
+              payload: {
+                slideIndex: ctx.slideIndex,
+                shapeId: ctx.shapeId,
+                categories: chartUpdate.categories,
+                series: chartUpdate.series,
+              },
+              source: "human",
+            });
+          }
+        }
+        pushToast("info", "Saved embedded data.");
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [editingEmbed, onError, pushToast]
   );
 
   const addTextBox = useCallback(async () => {
@@ -2346,6 +2468,7 @@ export function PptxEditor({
                         commentedShapeIds={commentedShapeIds}
                         commentFlashTarget={commentFlashTarget}
                         onPlaceholderActivate={(info) => void handlePlaceholderActivate(info)}
+                        onShapeActivate={(info) => void handleShapeActivate(info)}
                         connectorTool={connectorTool}
                         onConnectorToolExit={exitConnectorTool}
                         remotePeers={remotePptxPeers}
@@ -2392,6 +2515,13 @@ export function PptxEditor({
         defaultMode={xlsxPickerOpen ?? "materialized"}
         onCancel={() => setXlsxPickerOpen(null)}
         onSubmit={(result) => void handleXlsxPickerSubmit(result)}
+      />
+      <EmbeddedXlsxModal
+        open={editingEmbed !== null}
+        bytes={editingEmbed?.bytes ?? null}
+        title={editingEmbed?.title}
+        onCancel={() => setEditingEmbed(null)}
+        onSave={(r) => void handleEmbeddedXlsxSave(r)}
       />
       {presenting && snap ? (
         <PresentMode
@@ -2521,6 +2651,47 @@ function readSolidFill(shape: TextShape | Picture): string | null {
  * image" input so the canvas-driven path can't sneak in a file type
  * that `pptx:insert-image` would reject downstream.
  */
+/**
+ * Translate the {@link EmbeddedXlsxModal}'s plain 2D grid into the
+ * `categories + series` shape that `pptx:set-chart-data` expects.
+ *
+ * Convention (matches `buildChartGrid` in `@officeai/xlsx`):
+ *   - Row 0 is the header row; cells `[0][1..N]` are series names.
+ *   - Column 0 is the category column; cells `[1..M][0]` are
+ *     category labels.
+ *   - The `M × N` interior is numeric series values.
+ *
+ * Returns `null` when the grid is too small to interpret as chart
+ * data (e.g. user blanked the modal); the caller skips the
+ * `set-chart-data` dispatch in that case so the chart's prior
+ * categories survive.
+ */
+function projectGridToChartData(
+  grid: ReadonlyArray<ReadonlyArray<string | number | null>>
+): { readonly categories: ReadonlyArray<string>; readonly series: ReadonlyArray<{ readonly name?: string; readonly values: ReadonlyArray<number> }> } | null {
+  if (grid.length < 2) return null;
+  const header = grid[0]!;
+  if (header.length < 2) return null;
+  const categories: string[] = [];
+  for (let r = 1; r < grid.length; r++) {
+    const cell = grid[r]?.[0];
+    categories.push(cell == null ? "" : String(cell));
+  }
+  const series: Array<{ readonly name?: string; readonly values: ReadonlyArray<number> }> = [];
+  for (let c = 1; c < header.length; c++) {
+    const rawName = header[c];
+    const values: number[] = [];
+    for (let r = 1; r < grid.length; r++) {
+      const cell = grid[r]?.[c];
+      const n = typeof cell === "number" ? cell : Number(cell);
+      values.push(Number.isFinite(n) ? n : 0);
+    }
+    const name = rawName == null ? undefined : String(rawName);
+    series.push(name !== undefined ? { name, values } : { values });
+  }
+  return { categories, series };
+}
+
 function pickImageFile(): Promise<File | null> {
   return new Promise((resolve) => {
     if (typeof document === "undefined") {
