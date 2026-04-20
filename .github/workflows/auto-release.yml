@@ -174,6 +174,182 @@ jobs:
           tar czf "officeai-agent-${VERSION}.tgz" -C "${RUNNER_TEMP}" officeai-agent
           ls -lh "officeai-agent-${VERSION}.tgz"
 
+      # Same pattern for the React-editors / blanks bundle that hof-os
+      # consumes inside its data-app SPA. `pnpm deploy` inlines the
+      # @officeai/{docx,xlsx,pptx,pdf} deps so the tarball is fully
+      # self-contained — hof-os doesn't need access to office-ai's
+      # workspace at install time.
+      - name: Build release bundle (officeai-react-editors)
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.bump.outputs.new_version }}"
+          DEPLOY_DIR="${RUNNER_TEMP}/officeai-react-editors"
+          rm -rf "${DEPLOY_DIR}"
+          pnpm --filter @officeai/react-editors --prod deploy "${DEPLOY_DIR}"
+          # Sanity check: every subpath entry point hof-os imports
+          # from must exist after the deploy.
+          test -f "${DEPLOY_DIR}/dist/index.js"
+          test -f "${DEPLOY_DIR}/dist/blanks/index.js"
+          test -f "${DEPLOY_DIR}/dist/blanks/docx.js"
+          test -f "${DEPLOY_DIR}/dist/blanks/xlsx.js"
+          test -f "${DEPLOY_DIR}/dist/blanks/pptx.js"
+          test -f "${DEPLOY_DIR}/dist/blanks/pdf.js"
+          test -f "${DEPLOY_DIR}/dist/mime.js"
+          test -f "${DEPLOY_DIR}/dist/contract.js"
+          # Phase-1.5 bundled editor components — required for the
+          # inline editor surface in hof-os' data-app SPA.
+          test -f "${DEPLOY_DIR}/dist/components/docx.js"
+          test -f "${DEPLOY_DIR}/dist/components/xlsx.js"
+          test -f "${DEPLOY_DIR}/dist/components/pptx.js"
+          test -f "${DEPLOY_DIR}/dist/components/pdf.js"
+          test -f "${DEPLOY_DIR}/dist/components/docx.d.ts"
+          test -f "${DEPLOY_DIR}/dist/components/xlsx.d.ts"
+          test -f "${DEPLOY_DIR}/dist/components/pptx.d.ts"
+          test -f "${DEPLOY_DIR}/dist/components/pdf.d.ts"
+          # Optional public stylesheet — `dist/styles.css` is the
+          # human-readable extract emitted by
+          # `packages/react-editors/scripts/build-styles.mjs` for
+          # hosts that want to load editor CSS via a `<link>` tag.
+          # The bundled components don't depend on it (they
+          # self-inject via the `officeai-css-inject` esbuild plugin
+          # — assertions below).
+          test -f "${DEPLOY_DIR}/dist/styles.css"
+          # Catch the "bundled component lost its stylesheet" class
+          # of regressions at release-build time. The Next.js host
+          # gets editor CSS via Next's automatic `import "*.css"`
+          # discovery; our esbuild bundle gets the same coverage via
+          # the `officeai-css-inject` plugin in
+          # `packages/react-editors/build.mjs`. If the plugin breaks,
+          # a component entry drops a `.css` import, or a dep
+          # upgrade makes a stylesheet vanish, the editors silently
+          # revert to broken styling (xlsx cells stacked at one
+          # pixel, docx losing ProseMirror selection chrome, pdf
+          # losing text-layer absolute positioning + transparent
+          # glyphs). Search each entry's transitive chunk graph for
+          # a distinctive selector from each required stylesheet.
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const root = process.argv[1];
+            function readGraph(entryRel) {
+              const entry = path.join(root, entryRel);
+              const seen = new Set([entry]);
+              const queue = [entry];
+              let blob = "";
+              while (queue.length) {
+                const f = queue.shift();
+                const t = fs.readFileSync(f, "utf8");
+                blob += t;
+                const re = /from\s+["\x27]([^"\x27]+\.js)["\x27]/g;
+                let m;
+                while ((m = re.exec(t)) !== null) {
+                  const next = path.join(path.dirname(f), m[1]);
+                  if (!seen.has(next) && fs.existsSync(next)) {
+                    seen.add(next);
+                    queue.push(next);
+                  }
+                }
+              }
+              return blob;
+            }
+            const checks = [
+              ["dist/components/xlsx.js", "XLSX", [".xlsx-grid-cell"]],
+              ["dist/components/pptx.js", "PPTX", [".xlsx-grid-cell"]],
+              ["dist/components/docx.js", "DOCX", [".xlsx-grid-cell", ".ProseMirror-selectednode"]],
+              ["dist/components/pdf.js",  "PDF",  [".xlsx-grid-cell", ".officeai-pdf-text-layer"]],
+            ];
+            for (const [entry, label, needles] of checks) {
+              const blob = readGraph(entry);
+              for (const needle of needles) {
+                if (!blob.includes(needle)) {
+                  console.error(label + " bundle missing CSS selector: " + needle);
+                  process.exit(1);
+                }
+              }
+              console.log(label + " bundle CSS check OK (" + needles.join(", ") + ")");
+            }
+          ' "${DEPLOY_DIR}"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/docx"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/xlsx"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/pptx"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/pdf"
+          # Shamefully-hoist the deploy output so consumers running with
+          # `resolve.preserveSymlinks: true` (e.g. hof-os data-app/ui's
+          # Vite) can resolve transitive deps. pnpm deploy nests them
+          # under `.pnpm/<entry>/node_modules/<pkg>` and only hoists
+          # declared direct deps — under preserveSymlinks the resolver
+          # never crosses into `.pnpm/` so every transitive dep
+          # (`@officeai/core`, `@e965/xlsx`, `pdf-lib`,
+          # `fast-xml-parser`, `js-sha256`, …) is invisible. We mirror
+          # `pnpm install --shamefully-hoist`'s effect by symlinking
+          # every package found under `.pnpm/.../node_modules/` at the
+          # top of `node_modules/`. Idempotent / first-wins on dupes.
+          # Mirrors the self-healing fallback in hof-os's
+          # `data-app/ui/scripts/ensure-officeai-react-editors.cjs`.
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const root = process.argv[1];
+            const nm = path.join(root, "node_modules");
+            const pnpmDir = path.join(nm, ".pnpm");
+            if (!fs.existsSync(pnpmDir)) process.exit(0);
+            let hoisted = 0;
+            const seen = new Set();
+            for (const entry of fs.readdirSync(pnpmDir)) {
+              const inner = path.join(pnpmDir, entry, "node_modules");
+              if (!fs.existsSync(inner)) continue;
+              for (const pkg of fs.readdirSync(inner)) {
+                if (pkg === ".bin") continue;
+                if (pkg.startsWith("@")) {
+                  let subs;
+                  try { subs = fs.readdirSync(path.join(inner, pkg)); }
+                  catch { continue; }
+                  for (const sub of subs) {
+                    const full = pkg + "/" + sub;
+                    if (seen.has(full)) continue;
+                    seen.add(full);
+                    const target = path.join(nm, pkg, sub);
+                    if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+                    fs.mkdirSync(path.dirname(target), { recursive: true });
+                    fs.symlinkSync(path.relative(path.dirname(target), path.join(inner, pkg, sub)), target);
+                    hoisted++;
+                  }
+                } else {
+                  if (seen.has(pkg)) continue;
+                  seen.add(pkg);
+                  const target = path.join(nm, pkg);
+                  if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+                  fs.symlinkSync(path.relative(path.dirname(target), path.join(inner, pkg)), target);
+                  hoisted++;
+                }
+              }
+            }
+            console.log("Shamefully-hoisted " + hoisted + " package(s) into deploy root.");
+          ' "${DEPLOY_DIR}"
+          # Sanity check key transitives are now resolvable from the
+          # deploy root (catches accidental breakage of the hoist step).
+          # Includes both the agent-graph deps (pdf-lib, fast-xml-parser)
+          # and the Phase-1.5 editor externals (pdfjs-dist, prosemirror-*,
+          # lucide-react, jszip, yjs, y-websocket).
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/core"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/pdf-engine"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/ui"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/comments"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/realtime"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/text-formatting"
+          test -d "${DEPLOY_DIR}/node_modules/@officeai/design-tokens"
+          test -d "${DEPLOY_DIR}/node_modules/pdf-lib"
+          test -d "${DEPLOY_DIR}/node_modules/fast-xml-parser"
+          test -d "${DEPLOY_DIR}/node_modules/pdfjs-dist"
+          test -d "${DEPLOY_DIR}/node_modules/lucide-react"
+          test -d "${DEPLOY_DIR}/node_modules/jszip"
+          test -d "${DEPLOY_DIR}/node_modules/yjs"
+          test -d "${DEPLOY_DIR}/node_modules/y-websocket"
+          test -d "${DEPLOY_DIR}/node_modules/prosemirror-view"
+          tar czf "officeai-react-editors-${VERSION}.tgz" -C "${RUNNER_TEMP}" officeai-react-editors
+          ls -lh "officeai-react-editors-${VERSION}.tgz"
+
       - name: Publish GitHub Release
         if: steps.check_tag.outputs.already_tagged == 'false'
         env:
@@ -183,6 +359,7 @@ jobs:
           VERSION="${{ steps.bump.outputs.new_version }}"
           gh release create "v${VERSION}" \
             "officeai-agent-${VERSION}.tgz" \
+            "officeai-react-editors-${VERSION}.tgz" \
             --title "v${VERSION}" \
             --generate-notes
 
@@ -208,9 +385,15 @@ jobs:
           set -euo pipefail
           mkdir -p infra
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          AGENT_TARBALL="https://github.com/jhoetter/office-ai/releases/download/v${NEW_VERSION}/officeai-agent-${NEW_VERSION}.tgz"
+          REACT_TARBALL="https://github.com/jhoetter/office-ai/releases/download/v${NEW_VERSION}/officeai-react-editors-${NEW_VERSION}.tgz"
           cat > infra/officeai.lock.json <<EOF
           {
             "version": "${NEW_VERSION}",
+            "agent_version": "${NEW_VERSION}",
+            "agent_tarball": "${AGENT_TARBALL}",
+            "react_editors_version": "${NEW_VERSION}",
+            "react_editors_tarball": "${REACT_TARBALL}",
             "published_at": "${PUBLISHED_AT}",
             "source_repo": "jhoetter/office-ai",
             "source_sha": "${GIT_SHA}"

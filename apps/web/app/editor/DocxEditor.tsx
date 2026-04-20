@@ -66,6 +66,7 @@ import type { EditorView } from "prosemirror-view";
 import { TextSelection } from "prosemirror-state";
 import { NotImplementedError } from "@officeai/core";
 import { buildBlankDocx, buildSampleDocx } from "@/lib/sample-docx";
+import { I18nProvider, type Locale } from "@/lib/i18n";
 import {
   activeMarkAttr,
   commentParagraphIndex,
@@ -216,6 +217,35 @@ export interface DocxEditorProps {
    * land in a fresh file rather than the demo content. Ignored when
    * `initialSource` is set. */
   readonly initialBlank?: boolean;
+  /** Optional pre-loaded document bytes. When set, takes priority
+   * over `initialSource` and `initialBlank` so embedding hosts can
+   * stream a `Uint8Array` straight into the editor without first
+   * stashing it under a URL. The companion `initialFilename`
+   * controls the working filename (Save / Export). */
+  readonly initialBytes?: Uint8Array;
+  /** Filename to display + use on Save when `initialBytes` is set.
+   * Ignored unless `initialBytes` is provided (since the URL-based
+   * `initialSource` already carries `name`). */
+  readonly initialFilename?: string;
+  /** Host save handler. When provided the editor's Save action
+   * invokes this with the freshly-exported bytes, the OOXML MIME,
+   * and the working filename — instead of reaching into the browser
+   * `saveFile` File-System-Access fallback. Hosts (e.g. hof-os)
+   * wire this up to push the bytes back to their own storage. */
+  readonly onSave?: (bytes: Uint8Array, mime: string, filename: string) => Promise<void>;
+  /** Host close handler. When provided, surfaces a "Back" affordance
+   * in the editor chrome so users can return to the host. The
+   * embedding route is responsible for the actual navigation. */
+  readonly onClose?: () => void;
+  /** Override the i18n locale. When set, the editor mounts its own
+   * `<I18nProvider initialLocale={locale}>` so a host whose root
+   * provider is in a different locale (or absent entirely) still
+   * gets the correct UI language for the editor surface. */
+  readonly locale?: Locale;
+  /** Theme override forwarded to next-themes inside Phase 1's
+   * extracted package. Today this is a passthrough placeholder so
+   * the embedding contract is stable across phases. */
+  readonly theme?: "light" | "dark";
 }
 
 /**
@@ -238,11 +268,28 @@ export interface DocxEditorProps {
  * integration point for third-party agents. The bus stays the same
  * either way; this UI only shows human-driven actions.
  */
-export function DocxEditor({
+export function DocxEditor(props: DocxEditorProps = {}): React.ReactNode {
+  const { locale } = props;
+  if (locale !== undefined) {
+    return (
+      <I18nProvider initialLocale={locale}>
+        <DocxEditorInner {...props} />
+      </I18nProvider>
+    );
+  }
+  return <DocxEditorInner {...props} />;
+}
+
+function DocxEditorInner({
   onBootstrapReady,
   initialSource,
   initialBlank,
+  initialBytes,
+  initialFilename,
+  onSave: onSaveProp,
+  onClose: onCloseProp,
 }: DocxEditorProps = {}): React.ReactNode {
+  void onCloseProp;
   const { t } = useTranslator();
   // The editor host DOM node is exposed via a callback ref so that
   // descendants (e.g. TrackedChangesUI's hover delegation) can read it
@@ -275,7 +322,9 @@ export function DocxEditor({
   }, [agentReady, onBootstrapReady]);
   const [toasts, setToasts] = useState<ReadonlyArray<ToastItem>>([]);
   const [docName, setDocName] = useState(
-    initialSource?.name ?? (initialBlank ? "Untitled.docx" : "welcome.docx")
+    initialFilename ??
+      initialSource?.name ??
+      (initialBlank || initialBytes ? "Untitled.docx" : "welcome.docx")
   );
   const [docInfo, setDocInfo] = useState<{
     paragraphs: number;
@@ -422,24 +471,36 @@ export function DocxEditor({
     let cleanup: (() => void) | undefined;
     void (async () => {
       try {
-        // Three bootstrap paths, picked in priority order:
-        //   1. `initialSource` — fetch a pre-existing .docx (sample
+        // Four bootstrap paths, picked in priority order:
+        //   1. `initialBytes` — host streams the document straight
+        //      in (used when the editor is embedded by hof-os and
+        //      the bytes already came back from S3).
+        //   2. `initialSource` — fetch a pre-existing .docx (sample
         //      files listing on the home page).
-        //   2. `initialBlank` — build a truly empty document (the
+        //   3. `initialBlank` — build a truly empty document (the
         //      "New document" action on the home page).
-        //   3. Default — build the synthetic welcome sample so the
+        //   4. Default — build the synthetic welcome sample so the
         //      editor route is never empty when navigated to
         //      directly.
-        const buf = initialSource
-          ? await fetch(initialSource.url).then(async (res) => {
-              if (!res.ok) {
-                throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
-              }
-              return res.arrayBuffer();
-            })
-          : initialBlank
-            ? await buildBlankDocx()
-            : await buildSampleDocx();
+        let buf: ArrayBuffer;
+        if (initialBytes) {
+          // Copy into a fresh ArrayBuffer so downstream consumers
+          // can transfer the buffer (PDF.js worker etc.) without
+          // detaching the host's pristine view.
+          const copy = new Uint8Array(initialBytes.byteLength);
+          copy.set(initialBytes);
+          buf = copy.buffer;
+        } else if (initialSource) {
+          const res = await fetch(initialSource.url);
+          if (!res.ok) {
+            throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
+          }
+          buf = await res.arrayBuffer();
+        } else if (initialBlank) {
+          buf = await buildBlankDocx();
+        } else {
+          buf = await buildSampleDocx();
+        }
         if (cancelled) return;
         cleanup = await mountAgent(buf, hostEl);
       } catch (err) {
@@ -456,7 +517,7 @@ export function DocxEditor({
       setAgent(null);
       setView(null);
     };
-  }, [mountAgent, hostEl, initialSource, initialBlank, pushToast]);
+  }, [mountAgent, hostEl, initialSource, initialBlank, initialBytes, pushToast]);
 
   // Re-derive toolbar UI state on every selection change so Bold/Italic
   // pressed-state and the paragraph style picker stay in sync with the
@@ -528,19 +589,25 @@ export function DocxEditor({
     setSaveState("saving");
     try {
       const buf = await agent.exportFile();
-      const wroteInPlace = await saveFileViaService(
-        new Uint8Array(buf),
-        docName,
-        PRODUCT_FILE_TYPES.docx.primaryMime,
-        fileHandleRef.current
-      );
+      const bytes = new Uint8Array(buf);
+      const mime = PRODUCT_FILE_TYPES.docx.primaryMime;
+      // Embedding hosts (hof-os) get first dibs — when `onSave` is
+      // provided we hand bytes back to the host instead of going
+      // through the browser File-System-Access fallback.
+      if (onSaveProp) {
+        await onSaveProp(bytes, mime, docName);
+        setSaveState("saved");
+        pushToast("success", `Saved ${docName}`);
+        return;
+      }
+      const wroteInPlace = await saveFileViaService(bytes, docName, mime, fileHandleRef.current);
       setSaveState("saved");
       pushToast("success", wroteInPlace ? `Saved ${docName}` : `Downloaded ${docName}`);
     } catch (err) {
       setSaveState("error");
       pushToast("error", err instanceof Error ? err.message : String(err));
     }
-  }, [docName, pushToast]);
+  }, [docName, onSaveProp, pushToast]);
 
   const handleExport = useCallback(
     async (format: ExportFormat, options?: ExportOptionValues) => {

@@ -35,6 +35,7 @@ const PUBLISHABLE = [
   "pdf-annotations",
   "pdf-engine",
   "agent",
+  "react-editors",
 ];
 
 function fail(msg) {

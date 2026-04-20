@@ -1,0 +1,116 @@
+{
+  "name": "@officeai/react-editors",
+  "version": "0.1.4",
+  "description": "Embeddable React editor surfaces and blank-file builders for hosts (e.g. hof-os) that want office-ai's DOCX / XLSX / PPTX / PDF editing UX without standing up the apps/web Next.js shell. Phase 1 ships the headless `*Agent.empty()` re-exports under ./blanks; Phase 1.5 adds the bundled editor components under ./components/* (see docs/embedding.md in the office-ai repo).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./blanks": {
+      "types": "./dist/blanks/index.d.ts",
+      "import": "./dist/blanks/index.js"
+    },
+    "./blanks/docx": {
+      "types": "./dist/blanks/docx.d.ts",
+      "import": "./dist/blanks/docx.js"
+    },
+    "./blanks/xlsx": {
+      "types": "./dist/blanks/xlsx.d.ts",
+      "import": "./dist/blanks/xlsx.js"
+    },
+    "./blanks/pptx": {
+      "types": "./dist/blanks/pptx.d.ts",
+      "import": "./dist/blanks/pptx.js"
+    },
+    "./blanks/pdf": {
+      "types": "./dist/blanks/pdf.d.ts",
+      "import": "./dist/blanks/pdf.js"
+    },
+    "./contract": {
+      "types": "./dist/contract.d.ts",
+      "import": "./dist/contract.js"
+    },
+    "./mime": {
+      "types": "./dist/mime.d.ts",
+      "import": "./dist/mime.js"
+    },
+    "./components/docx": {
+      "types": "./dist/components/docx.d.ts",
+      "import": "./dist/components/docx.js"
+    },
+    "./components/xlsx": {
+      "types": "./dist/components/xlsx.d.ts",
+      "import": "./dist/components/xlsx.js"
+    },
+    "./components/pptx": {
+      "types": "./dist/components/pptx.d.ts",
+      "import": "./dist/components/pptx.js"
+    },
+    "./components/pdf": {
+      "types": "./dist/components/pdf.d.ts",
+      "import": "./dist/components/pdf.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs && pnpm run build:types",
+    "build:types": "tsc -p tsconfig.types.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@officeai/comments": "workspace:*",
+    "@officeai/core": "workspace:*",
+    "@officeai/design-tokens": "workspace:*",
+    "@officeai/docx": "workspace:*",
+    "@officeai/pdf": "workspace:*",
+    "@officeai/pdf-annotations": "workspace:*",
+    "@officeai/pdf-engine": "workspace:*",
+    "@officeai/pptx": "workspace:*",
+    "@officeai/realtime": "workspace:*",
+    "@officeai/text-formatting": "workspace:*",
+    "@officeai/ui": "workspace:*",
+    "@officeai/xlsx": "workspace:*",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.574.0",
+    "pdfjs-dist": "^4.10.38",
+    "prosemirror-model": "^1.24.1",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-view": "^1.37.1",
+    "y-websocket": "^2.0.4",
+    "yjs": "^13.6.20"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "esbuild": "^0.24",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/react-editors"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
+  }
+}

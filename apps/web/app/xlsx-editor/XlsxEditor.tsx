@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CommentComposer, CommentsSidebar, cn } from "@officeai/ui";
-import { useTranslator } from "@/lib/i18n";
+import { I18nProvider, useTranslator, type Locale } from "@/lib/i18n";
 import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   EditorShell,
@@ -316,13 +316,50 @@ export interface XlsxEditorProps {
    * by the home page's "New spreadsheet" action. Ignored when
    * `initialSource` is set. */
   readonly initialBlank?: boolean;
+  /** Optional pre-loaded workbook bytes. When set, takes priority
+   * over `initialSource` and `initialBlank` so embedding hosts can
+   * stream a `Uint8Array` straight into the editor without first
+   * stashing it under a URL. */
+  readonly initialBytes?: Uint8Array;
+  /** Filename to display + use on Save when `initialBytes` is set. */
+  readonly initialFilename?: string;
+  /** Host save handler. When provided, Save invokes this with the
+   * exported bytes, OOXML MIME, and working filename — instead of
+   * falling back to File-System-Access. */
+  readonly onSave?: (bytes: Uint8Array, mime: string, filename: string) => Promise<void>;
+  /** Host close handler — surfaces a "Back" affordance in editor
+   * chrome. Embedding route owns the actual navigation. */
+  readonly onClose?: () => void;
+  /** Override the i18n locale; mounts a self-contained
+   * `<I18nProvider initialLocale={locale}>` so the editor renders in
+   * the requested language regardless of host provider state. */
+  readonly locale?: Locale;
+  /** Theme override placeholder; wired in Phase 1. */
+  readonly theme?: "light" | "dark";
 }
 
-export function XlsxEditor({
+export function XlsxEditor(props: XlsxEditorProps = {}): ReactNode {
+  const { locale } = props;
+  if (locale !== undefined) {
+    return (
+      <I18nProvider initialLocale={locale}>
+        <XlsxEditorInner {...props} />
+      </I18nProvider>
+    );
+  }
+  return <XlsxEditorInner {...props} />;
+}
+
+function XlsxEditorInner({
   onBootstrapReady,
   initialSource,
   initialBlank,
+  initialBytes,
+  initialFilename,
+  onSave: onSaveProp,
+  onClose: onCloseProp,
 }: XlsxEditorProps = {}): ReactNode {
+  void onCloseProp;
   const { t } = useTranslator();
   const agentRef = useRef<XlsxAgent | null>(null);
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
@@ -355,7 +392,7 @@ export function XlsxEditor({
   // accept= filter doesn't bleed across the two flows.
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [filename, setFilename] = useState<string>(
-    initialSource?.name ?? (initialBlank ? BLANK_NAME : SAMPLE_NAME)
+    initialFilename ?? initialSource?.name ?? (initialBlank || initialBytes ? BLANK_NAME : SAMPLE_NAME)
   );
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const fileHandleRef = useRef<FileSystemFileHandle | undefined>(undefined);
@@ -448,27 +485,35 @@ export function XlsxEditor({
     let cancelled = false;
     void (async () => {
       try {
-        // Three bootstrap paths, picked in priority order:
-        //   1. `initialSource` — fetch a pre-existing .xlsx (sample
-        //      files listing on the home page).
-        //   2. `initialBlank` — build an empty workbook (the "New
-        //      spreadsheet" action on the home page).
-        //   3. Default — build the synthetic sample so the route is
-        //      never empty when navigated to directly.
-        const buf = initialSource
-          ? await fetch(initialSource.url).then(async (res) => {
-              if (!res.ok) {
-                throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
-              }
-              return res.arrayBuffer();
-            })
-          : initialBlank
-            ? await buildBlankXlsx()
-            : await buildSampleXlsx();
+        // Four bootstrap paths, picked in priority order:
+        //   1. `initialBytes` — host streams the workbook straight
+        //      in (used when the editor is embedded by hof-os and
+        //      the bytes already came back from S3).
+        //   2. `initialSource` — fetch a pre-existing .xlsx.
+        //   3. `initialBlank` — build an empty workbook.
+        //   4. Default — build the synthetic sample.
+        let buf: ArrayBuffer;
+        if (initialBytes) {
+          const copy = new Uint8Array(initialBytes.byteLength);
+          copy.set(initialBytes);
+          buf = copy.buffer;
+        } else if (initialSource) {
+          const res = await fetch(initialSource.url);
+          if (!res.ok) {
+            throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
+          }
+          buf = await res.arrayBuffer();
+        } else if (initialBlank) {
+          buf = await buildBlankXlsx();
+        } else {
+          buf = await buildSampleXlsx();
+        }
         if (cancelled) return;
         const a = await XlsxAgent.fromBuffer(buf);
         if (cancelled) return;
-        mountAgent(a, initialSource?.name ?? (initialBlank ? BLANK_NAME : SAMPLE_NAME));
+        const name =
+          initialFilename ?? initialSource?.name ?? (initialBlank || initialBytes ? BLANK_NAME : SAMPLE_NAME);
+        mountAgent(a, name);
       } catch (err) {
         if (cancelled) return;
         // Sample build failed — fall back to the EmptyState so the
@@ -485,7 +530,7 @@ export function XlsxEditor({
       agentRef.current = null;
       setAgent(null);
     };
-  }, [pushToast, mountAgent, initialSource, initialBlank]);
+  }, [pushToast, mountAgent, initialSource, initialBlank, initialBytes, initialFilename]);
 
   const openFile = useCallback(
     async (file: File, handle?: FileSystemFileHandle) => {
@@ -2006,19 +2051,22 @@ export function XlsxEditor({
     setSaveState("saving");
     try {
       const buf = await a.exportFile();
-      const wroteInPlace = await saveFileViaService(
-        new Uint8Array(buf),
-        filename,
-        PRODUCT_FILE_TYPES.xlsx.primaryMime,
-        fileHandleRef.current
-      );
+      const bytes = new Uint8Array(buf);
+      const mime = PRODUCT_FILE_TYPES.xlsx.primaryMime;
+      if (onSaveProp) {
+        await onSaveProp(bytes, mime, filename);
+        setSaveState("saved");
+        pushToast("success", `Saved ${filename}`);
+        return;
+      }
+      const wroteInPlace = await saveFileViaService(bytes, filename, mime, fileHandleRef.current);
       setSaveState("saved");
       pushToast("success", wroteInPlace ? `Saved ${filename}` : `Downloaded ${filename}`);
     } catch (err) {
       setSaveState("error");
       pushToast("error", err instanceof Error ? err.message : String(err));
     }
-  }, [filename, pushToast]);
+  }, [filename, onSaveProp, pushToast]);
 
   const onExport = useCallback(
     async (format: ExportFormat, options?: ExportOptionValues) => {

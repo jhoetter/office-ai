@@ -51,8 +51,33 @@ import { CliError, type IO } from "./cli-shared.js";
  * Commander `Command` to register the surface in isolation.
  */
 export function registerPdfSubcommands(pdf: CommanderCommand, io: IO): void {
+  registerCreateCommand(pdf, io);
   registerReadCommands(pdf, io);
   registerMutateCommands(pdf, io);
+}
+
+function registerCreateCommand(pdf: CommanderCommand, io: IO): void {
+  pdf
+    .command("create")
+    .description("Create a brand-new blank PDF at --out (one Letter-sized blank page).")
+    .requiredOption("--out <path>", "Path to write the new .pdf file")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(async (opts: { out: string; pretty: boolean }) => {
+      await pdfAction(io, async () => {
+        const agent = await PdfAgent.empty();
+        const bytes = await agent.exportFile();
+        const target = resolve(opts.out);
+        await ensureDir(target);
+        await writeFile(target, Buffer.from(bytes));
+        const summary = {
+          schema: "office-agent/pdf-create@1" as const,
+          wrote: opts.out,
+          format: "pdf" as const,
+          bytes: bytes.byteLength,
+        };
+        io.stdout.write(JSON.stringify(summary, null, opts.pretty ? 2 : 0) + "\n");
+      });
+    });
 }
 
 // ── Helpers (also used by mcp.ts) ────────────────────────────────────────

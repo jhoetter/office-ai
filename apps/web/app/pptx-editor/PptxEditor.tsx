@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommentComposer, CommentsSidebar } from "@officeai/ui";
-import { useTranslator } from "@/lib/i18n";
+import { I18nProvider, useTranslator, type Locale } from "@/lib/i18n";
 import { createPptxCommentsProvider } from "./pptxCommentsProvider";
 import { PptxAgent } from "@officeai/pptx/agent";
 import {
@@ -305,13 +305,46 @@ export interface PptxEditorProps {
    * sample. Used by the home page's "New presentation" action.
    * Ignored when `initialSource` is set. */
   readonly initialBlank?: boolean;
+  /** Optional pre-loaded deck bytes. When set, takes priority over
+   * `initialSource` and `initialBlank` so embedding hosts can
+   * stream a `Uint8Array` straight into the editor without first
+   * stashing it under a URL. */
+  readonly initialBytes?: Uint8Array;
+  /** Filename to display + use on Save when `initialBytes` is set. */
+  readonly initialFilename?: string;
+  /** Host save handler. */
+  readonly onSave?: (bytes: Uint8Array, mime: string, filename: string) => Promise<void>;
+  /** Host close handler — embedding route owns navigation. */
+  readonly onClose?: () => void;
+  /** Override the i18n locale; mounts a self-contained
+   * `<I18nProvider initialLocale={locale}>`. */
+  readonly locale?: Locale;
+  /** Theme override placeholder; wired in Phase 1. */
+  readonly theme?: "light" | "dark";
 }
 
-export function PptxEditor({
+export function PptxEditor(props: PptxEditorProps = {}): React.ReactNode {
+  const { locale } = props;
+  if (locale !== undefined) {
+    return (
+      <I18nProvider initialLocale={locale}>
+        <PptxEditorInner {...props} />
+      </I18nProvider>
+    );
+  }
+  return <PptxEditorInner {...props} />;
+}
+
+function PptxEditorInner({
   onBootstrapReady,
   initialSource,
   initialBlank,
+  initialBytes,
+  initialFilename,
+  onSave: onSaveProp,
+  onClose: onCloseProp,
 }: PptxEditorProps = {}): React.ReactNode {
+  void onCloseProp;
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PptxAgent | null>(null);
   const agentRef = useRef<PptxAgent | null>(null);
@@ -325,7 +358,9 @@ export function PptxEditor({
     onBootstrapReady?.(ready);
   }, [ready, onBootstrapReady]);
   const [docName, setDocName] = useState(
-    initialSource?.name ?? (initialBlank ? "Untitled.pptx" : "welcome.pptx")
+    initialFilename ??
+      initialSource?.name ??
+      (initialBlank || initialBytes ? "Untitled.pptx" : "welcome.pptx")
   );
   const [activeIndex, setActiveIndex] = useState(0);
   const [tick, setTick] = useState(0);
@@ -464,23 +499,27 @@ export function PptxEditor({
     let cancelled = false;
     void (async () => {
       try {
-        // Three bootstrap paths, picked in priority order:
-        //   1. `initialSource` — fetch a pre-existing .pptx (sample
-        //      files listing on the home page).
-        //   2. `initialBlank` — build an empty deck (the "New
-        //      presentation" action on the home page).
-        //   3. Default — build the synthetic welcome deck so the
-        //      route is never empty when navigated to directly.
-        const buf = initialSource
-          ? await fetch(initialSource.url).then(async (res) => {
-              if (!res.ok) {
-                throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
-              }
-              return res.arrayBuffer();
-            })
-          : initialBlank
-            ? await buildBlankPptx()
-            : await buildSamplePptx();
+        // Four bootstrap paths, picked in priority order:
+        //   1. `initialBytes` — host streams the deck straight in.
+        //   2. `initialSource` — fetch a pre-existing .pptx.
+        //   3. `initialBlank` — build an empty deck.
+        //   4. Default — build the synthetic welcome deck.
+        let buf: ArrayBuffer;
+        if (initialBytes) {
+          const copy = new Uint8Array(initialBytes.byteLength);
+          copy.set(initialBytes);
+          buf = copy.buffer;
+        } else if (initialSource) {
+          const res = await fetch(initialSource.url);
+          if (!res.ok) {
+            throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
+          }
+          buf = await res.arrayBuffer();
+        } else if (initialBlank) {
+          buf = await buildBlankPptx();
+        } else {
+          buf = await buildSamplePptx();
+        }
         if (!cancelled) await mountAgent(buf);
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
@@ -489,7 +528,7 @@ export function PptxEditor({
     return () => {
       cancelled = true;
     };
-  }, [mountAgent, pushToast, initialSource, initialBlank]);
+  }, [mountAgent, pushToast, initialSource, initialBlank, initialBytes]);
 
   const onError = useCallback(
     (err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)),
@@ -660,19 +699,22 @@ export function PptxEditor({
     try {
       setSaveState("saving");
       const buf = await a.exportFile();
-      const inPlace = await saveFile(
-        new Uint8Array(buf),
-        docName,
-        PRODUCT_FILE_TYPES.pptx.primaryMime,
-        fileHandle
-      );
+      const bytes = new Uint8Array(buf);
+      const mime = PRODUCT_FILE_TYPES.pptx.primaryMime;
+      if (onSaveProp) {
+        await onSaveProp(bytes, mime, docName);
+        setSaveState("saved");
+        pushToast("success", `Saved ${docName}`);
+        return;
+      }
+      const inPlace = await saveFile(bytes, docName, mime, fileHandle);
       setSaveState("saved");
       pushToast("success", inPlace ? `Saved ${docName}` : `Downloaded ${docName}`);
     } catch (err) {
       setSaveState("error");
       onError(err);
     }
-  }, [docName, fileHandle, onError, pushToast]);
+  }, [docName, fileHandle, onError, onSaveProp, pushToast]);
 
   const handleExport = useCallback(
     async (format: ExportFormat, options?: ExportOptionValues) => {

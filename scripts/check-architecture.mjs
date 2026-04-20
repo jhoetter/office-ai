@@ -56,19 +56,9 @@ const ALLOWED_INTERNAL_DEPS = {
   // docx/pptx may depend on xlsx for embedded-spreadsheet support
   // (chart data parts in docx; native OLE-spreadsheet shapes in pptx).
   // The dep is one-way — xlsx never reaches back into docx/pptx.
-  "@officeai/docx": [
-    "@officeai/core",
-    "@officeai/text-formatting",
-    "@officeai/comments",
-    "@officeai/xlsx",
-  ],
+  "@officeai/docx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments", "@officeai/xlsx"],
   "@officeai/xlsx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
-  "@officeai/pptx": [
-    "@officeai/core",
-    "@officeai/text-formatting",
-    "@officeai/comments",
-    "@officeai/xlsx",
-  ],
+  "@officeai/pptx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments", "@officeai/xlsx"],
   "@officeai/pdf-engine": [],
   // pdf depends on pdf-annotations for the unified comment/annotation
   // surface exposed at the top-level pdf package.
@@ -87,6 +77,36 @@ const ALLOWED_INTERNAL_DEPS = {
     "@officeai/pdf-annotations",
     "@officeai/pdf-forms",
     "@officeai/pdf-ocr",
+  ],
+  // react-editors is the host-facing embed surface. Phase 1 ships the
+  // blank-file builders + MIME constants; Phase 1.5 ships the bundled
+  // editor components under ./components/{docx,xlsx,pptx,pdf} (built
+  // from apps/web sources via esbuild — see packages/react-editors/
+  // build.mjs).
+  //
+  // All @officeai/* deps are declared explicitly because Vite hosts
+  // that set `resolve.preserveSymlinks: true` (data-app/ui in hof-os)
+  // can't see through pnpm's nested .pnpm/ store — declaring them as
+  // direct deps makes pnpm hoist a top-level symlink at
+  // `react-editors/node_modules/@officeai/<name>` where the resolver
+  // actually looks. The Phase-1.5 bundles externalize these packages
+  // (so they're shared with the host) which would fail to resolve
+  // without this hoist. Same story for the heavy third-party deps
+  // (pdfjs-dist, prosemirror-*, lucide-react, jszip, yjs, y-websocket)
+  // which sit in package.json `dependencies` for the same reason.
+  "@officeai/react-editors": [
+    "@officeai/docx",
+    "@officeai/xlsx",
+    "@officeai/pptx",
+    "@officeai/pdf",
+    "@officeai/core",
+    "@officeai/pdf-engine",
+    "@officeai/pdf-annotations",
+    "@officeai/ui",
+    "@officeai/comments",
+    "@officeai/design-tokens",
+    "@officeai/realtime",
+    "@officeai/text-formatting",
   ],
   "@officeai/realtime-server": [],
   "@officeai/integration-tests": [
@@ -113,6 +133,7 @@ const ALLOWED_INTERNAL_DEPS = {
     "@officeai/pdf-forms",
     "@officeai/pdf-ocr",
     "@officeai/agent",
+    "@officeai/react-editors",
     "@officeai/ui",
     "@officeai/design-tokens",
     "@officeai/text-formatting",
@@ -184,10 +205,7 @@ function discoverPackages() {
 }
 
 function depKeys(pkg) {
-  return [
-    ...Object.keys(pkg.dependencies ?? {}),
-    ...Object.keys(pkg.peerDependencies ?? {}),
-  ];
+  return [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})];
 }
 
 function relPath(p) {
@@ -236,7 +254,13 @@ function main() {
 
   if (violations.length === 0) {
     console.log("architecture-check: OK");
-    console.log("  packages checked:", pkgs.map((p) => p.name).sort().join(", "));
+    console.log(
+      "  packages checked:",
+      pkgs
+        .map((p) => p.name)
+        .sort()
+        .join(", ")
+    );
     return 0;
   }
 

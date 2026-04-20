@@ -21,15 +21,17 @@ release: bump every publishable package via scripts/bump-version.mjs
    ↓ tag vX.Y.Z, push
    ↓ pnpm install (refresh lockfile after bump)
    ↓ pnpm build
-   ↓ pnpm --filter @officeai/agent --prod deploy → self-contained dir
+   ↓ pnpm --filter @officeai/agent          --prod deploy → self-contained dir
+   ↓ pnpm --filter @officeai/react-editors  --prod deploy → self-contained dir
    ↓ tar czf officeai-agent-X.Y.Z.tgz …
-   ↓ gh release create vX.Y.Z officeai-agent-X.Y.Z.tgz
+   ↓ tar czf officeai-react-editors-X.Y.Z.tgz …
+   ↓ gh release create vX.Y.Z {agent,react-editors}-X.Y.Z.tgz
    ↓
 notify-hof-os: rewrite infra/officeai.lock.json → push to hof-os/main
    ↓
-hof-os deploy curls
-   https://github.com/jhoetter/office-ai/releases/download/vX.Y.Z/officeai-agent-X.Y.Z.tgz
-into the sandbox image
+hof-os sandbox build  curls officeai-agent-X.Y.Z.tgz       (CLI for agents)
+hof-os data-app/ui    postinstall pulls
+                      officeai-react-editors-X.Y.Z.tgz     (browser editors)
 ```
 
 To skip a release for a doc-only change, append `[skip ci]` or
@@ -64,11 +66,35 @@ version-bumped in lockstep so the deployed bundle's resolved
 dependency versions match the release tag. The list lives in
 [`scripts/bump-version.mjs`](../scripts/bump-version.mjs).
 
-Only `@officeai/agent` is actually packaged for release — the other
-packages travel inside its `node_modules/` after `pnpm deploy`.
-Anything not in the list (`apps/web`, `ui`, `design-tokens`,
-`comments`, `realtime`, `realtime-server`, `tests`) stays
-`"private": true`.
+Two packages are actually packaged for release — `@officeai/agent`
+(headless CLI) and `@officeai/react-editors` (browser editor surfaces
+
+- blank-file builders). The other publishable packages travel inside
+  their `node_modules/` after `pnpm deploy`. Anything not in the list
+  (`apps/web`, `ui`, `design-tokens`, `comments`, `realtime`,
+  `realtime-server`, `tests`) stays `"private": true`.
+
+### Lockfile schema
+
+The `notify-hof-os` job writes both pins into
+`infra/officeai.lock.json` so a single bump informs the backend (CLI)
+and the data-app UI (editors) at once:
+
+```json
+{
+  "version": "X.Y.Z",
+  "agent_version": "X.Y.Z",
+  "agent_tarball": "https://github.com/jhoetter/office-ai/releases/download/vX.Y.Z/officeai-agent-X.Y.Z.tgz",
+  "react_editors_version": "X.Y.Z",
+  "react_editors_tarball": "https://github.com/jhoetter/office-ai/releases/download/vX.Y.Z/officeai-react-editors-X.Y.Z.tgz",
+  "published_at": "…",
+  "source_repo": "jhoetter/office-ai",
+  "source_sha": "…"
+}
+```
+
+`version` stays for backwards compatibility with the bootstrap
+lockfile shape.
 
 ## One-time external setup
 
@@ -130,8 +156,10 @@ pnpm verify             # full quality gate, ends with bundle:dry-run
 pnpm bundle:dry-run     # only the bundle smoke-test
 ```
 
-`bundle:dry-run` runs the same `pnpm --filter @officeai/agent --prod
-deploy` as CI into a temp directory, sanity-checks that
-`dist/cli.js` exists with a node shebang and `node_modules/` got
-populated, prints the bundle size, then deletes the temp dir. Use it
-before merging anything that touches a publishable `package.json`.
+`bundle:dry-run` runs the same `pnpm --filter <pkg> --prod deploy`
+as CI for **both** release artefacts (`@officeai/agent` and
+`@officeai/react-editors`) into a temp directory, sanity-checks that
+the expected entry points exist and `node_modules/` got populated
+with the inlined `@officeai/*` workspace deps, prints the bundle
+size, then deletes the temp dir. Use it before merging anything that
+touches a publishable `package.json`.

@@ -12,7 +12,7 @@ import type {
   PdfRotation,
   PdfSnapshot,
 } from "@officeai/pdf";
-import { useTranslator } from "@/lib/i18n";
+import { I18nProvider, useTranslator, type Locale } from "@/lib/i18n";
 import { handleUndoRedo } from "@/lib/undo-redo";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import {
@@ -111,9 +111,45 @@ export interface PdfEditorProps {
   /** Bootstrap with a one-page blank PDF (the rare "New PDF"
    * action). Ignored when `initialSource` is set. */
   readonly initialBlank?: boolean;
+  /** Optional pre-loaded PDF bytes. When set, takes priority over
+   * `initialSource` and `initialBlank` so embedding hosts can stream
+   * a `Uint8Array` straight into the viewer. */
+  readonly initialBytes?: Uint8Array;
+  /** Filename to display + use on Save when `initialBytes` is set. */
+  readonly initialFilename?: string;
+  /** Host save handler. */
+  readonly onSave?: (bytes: Uint8Array, mime: string, filename: string) => Promise<void>;
+  /** Host close handler. */
+  readonly onClose?: () => void;
+  /** Override the i18n locale; mounts a self-contained
+   * `<I18nProvider initialLocale={locale}>`. */
+  readonly locale?: Locale;
+  /** Theme override placeholder; wired in Phase 1. */
+  readonly theme?: "light" | "dark";
 }
 
-export function PdfEditor({ onBootstrapReady, initialSource, initialBlank }: PdfEditorProps = {}): ReactNode {
+export function PdfEditor(props: PdfEditorProps = {}): ReactNode {
+  const { locale } = props;
+  if (locale !== undefined) {
+    return (
+      <I18nProvider initialLocale={locale}>
+        <PdfEditorInner {...props} />
+      </I18nProvider>
+    );
+  }
+  return <PdfEditorInner {...props} />;
+}
+
+function PdfEditorInner({
+  onBootstrapReady,
+  initialSource,
+  initialBlank,
+  initialBytes,
+  initialFilename,
+  onSave: onSaveProp,
+  onClose: onCloseProp,
+}: PdfEditorProps = {}): ReactNode {
+  void onCloseProp;
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PdfAgent | null>(null);
   const agentRef = useRef<PdfAgent | null>(null);
@@ -123,7 +159,7 @@ export function PdfEditor({ onBootstrapReady, initialSource, initialBlank }: Pdf
   const [tick, setTick] = useState(0);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [docName, setDocName] = useState(
-    initialSource?.name ?? (initialBlank ? "Untitled.pdf" : "document.pdf")
+    initialFilename ?? initialSource?.name ?? (initialBlank || initialBytes ? "Untitled.pdf" : "document.pdf")
   );
   const [fileHandle, setFileHandle] = useState<FileSystemFileHandle | undefined>(undefined);
   const [saveState, setSaveState] = useState<SaveState>("saved");
@@ -238,7 +274,11 @@ export function PdfEditor({ onBootstrapReady, initialSource, initialBlank }: Pdf
     let cancelled = false;
     void (async () => {
       try {
-        if (initialSource) {
+        if (initialBytes) {
+          const copy = new Uint8Array(initialBytes.byteLength);
+          copy.set(initialBytes);
+          if (!cancelled) await mountAgent(copy);
+        } else if (initialSource) {
           const res = await fetch(initialSource.url);
           if (!res.ok) {
             throw new Error(`Failed to load ${initialSource.name} (${res.status})`);
@@ -263,7 +303,7 @@ export function PdfEditor({ onBootstrapReady, initialSource, initialBlank }: Pdf
     return () => {
       cancelled = true;
     };
-  }, [initialBlank, initialSource, mountAgent, pushToast]);
+  }, [initialBlank, initialBytes, initialSource, mountAgent, pushToast]);
 
   useEffect(() => {
     return () => {
@@ -338,14 +378,21 @@ export function PdfEditor({ onBootstrapReady, initialSource, initialBlank }: Pdf
     try {
       setSaveState("saving");
       const buf = await a.exportFile();
-      const inPlace = await saveFile(new Uint8Array(buf), docName, PDF_MIME, fileHandle);
+      const bytes = new Uint8Array(buf);
+      if (onSaveProp) {
+        await onSaveProp(bytes, PDF_MIME, docName);
+        setSaveState("saved");
+        pushToast("success", `Saved ${docName}`);
+        return;
+      }
+      const inPlace = await saveFile(bytes, docName, PDF_MIME, fileHandle);
       setSaveState("saved");
       pushToast("success", inPlace ? `Saved ${docName}` : `Downloaded ${docName}`);
     } catch (err) {
       setSaveState("error");
       onError(err);
     }
-  }, [docName, fileHandle, onError, pushToast]);
+  }, [docName, fileHandle, onError, onSaveProp, pushToast]);
 
   const exportFormats = usePdfFormatProvider();
 

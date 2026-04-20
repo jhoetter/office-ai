@@ -87,6 +87,23 @@ async function writeFixture(name: string, bytes: Uint8Array): Promise<string> {
   return path;
 }
 
+describe("office-agent pdf — create command", () => {
+  it("create writes a fresh blank PDF and emits a versioned summary", async () => {
+    const out = join(TMP, "blank.pdf");
+    const { io, stdout } = makeIO();
+    const code = await runCli(["pdf", "create", "--out", out], io);
+    expect(code).toBe(0);
+    const summary = JSON.parse(stdout.text());
+    expect(summary.schema).toBe("office-agent/pdf-create@1");
+    expect(summary.format).toBe("pdf");
+    expect(summary.wrote).toBe(out);
+    expect(summary.bytes).toBeGreaterThan(0);
+    const written = readFileSync(out);
+    expect(written.byteLength).toBe(summary.bytes);
+    expect(written.subarray(0, 4).toString("ascii")).toBe("%PDF");
+  });
+});
+
 describe("office-agent pdf — read commands", () => {
   it("read-metadata returns a versioned envelope", async () => {
     const path = await writeFixture("meta.pdf", await buildPdf({ pages: 3, title: "Hello", author: "Ada" }));
