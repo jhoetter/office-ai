@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@officeai/core": "workspace:*",
+    "@officeai/pdf-annotations": "workspace:*",
     "@officeai/pdf-engine": "workspace:*",
     "pdf-lib": "^1.17.1"
   },

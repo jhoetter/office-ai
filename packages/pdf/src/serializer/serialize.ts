@@ -1,5 +1,6 @@
+import { addAnnotations, type AnnotationInput } from "@officeai/pdf-annotations";
 import { PDFDocument, degrees } from "pdf-lib";
-import type { PdfSnapshot } from "../model/types.js";
+import type { PdfAnnotation, PdfSnapshot } from "../model/types.js";
 import { PdfSerializeError } from "./errors.js";
 
 export interface PdfSerializeOptions {
@@ -13,12 +14,13 @@ export interface PdfSerializeOptions {
 
 /**
  * Serialize a PdfSnapshot back into PDF bytes by replaying mutations
- * (page order, page rotation, metadata) onto the original PDF buffer.
+ * (page order, page rotation, metadata, session annotations) onto the
+ * original PDF buffer.
  *
- * NOTE: Annotations, form-field values, and bookmark/outline edits are
- * out of scope for this initial serializer — those round-trip via the
- * dedicated capability packages (@officeai/pdf-annotations,
- * @officeai/pdf-forms) per /spec/pdf/editing-pipeline.md.
+ * Session-added highlight + sticky annotations route through
+ * `@officeai/pdf-annotations` after the page-identity copy pass.
+ * Form-field values and bookmark/outline edits remain out of scope
+ * for this serializer per /spec/pdf/editing-pipeline.md.
  */
 export const serializePdf = async (
   snapshot: PdfSnapshot,
@@ -57,6 +59,7 @@ export const serializePdf = async (
       desiredSourceIndices.length === originalPageCount &&
       desiredSourceIndices.every((srcIdx, i) => srcIdx === i);
 
+    let intermediate: Uint8Array;
     if (!isIdentity) {
       const reordered = await PDFDocument.create();
       const copied = await reordered.copyPages(pdf, desiredSourceIndices);
@@ -69,22 +72,64 @@ export const serializePdf = async (
       if (md.producer !== undefined) reordered.setProducer(md.producer);
       const pages = reordered.getPages();
       pages.forEach((page, i) => page.setRotation(degrees(desiredRotations[i])));
-      return reordered.save({ useObjectStreams: opts.incremental !== false });
+      intermediate = await reordered.save({ useObjectStreams: opts.incremental !== false });
+    } else {
+      const pages = pdf.getPages();
+      pages.forEach((page, i) => {
+        const desired = desiredRotations[i];
+        const current = page.getRotation().angle;
+        if (desired !== current) page.setRotation(degrees(desired));
+      });
+      intermediate = await pdf.save({ useObjectStreams: opts.incremental !== false });
     }
 
-    const pages = pdf.getPages();
-    pages.forEach((page, i) => {
-      const desired = desiredRotations[i];
-      const current = page.getRotation().angle;
-      if (desired !== current) page.setRotation(degrees(desired));
-    });
+    const sessionAnnotations = snapshot.root.annotations.filter((a) => a.source === "session");
+    if (sessionAnnotations.length === 0) return intermediate;
 
-    return pdf.save({ useObjectStreams: opts.incremental !== false });
+    const writable = sessionAnnotations
+      .map(toAnnotationInput)
+      .filter((input): input is AnnotationInput => input !== null);
+    if (writable.length === 0) return intermediate;
+
+    return addAnnotations(intermediate, { annotations: writable });
   } catch (err) {
     if (err instanceof PdfSerializeError) throw err;
     throw new PdfSerializeError(
       err instanceof Error ? `Failed to serialize PDF: ${err.message}` : "Failed to serialize PDF",
       err,
     );
+  }
+};
+
+/**
+ * Map our document-model annotation projection onto the writer's
+ * input shape. Returns `null` for kinds we don't (yet) round-trip —
+ * the editor surfaces only Highlight + Sticky for now, and free-text
+ * lands in a follow-up.
+ */
+const toAnnotationInput = (a: PdfAnnotation): AnnotationInput | null => {
+  const base = {
+    pageNumber: a.pageNumber,
+    rect: a.rect,
+    ...(a.author !== undefined ? { author: a.author } : {}),
+    ...(a.contents !== undefined ? { contents: a.contents } : {}),
+    ...(a.color !== undefined ? { color: a.color } : {}),
+  } as const;
+  switch (a.kind) {
+    case "highlight":
+      return { ...base, kind: "highlight" };
+    case "note":
+      return { ...base, kind: "sticky-note", contents: a.contents ?? "" };
+    case "free-text":
+      return { ...base, kind: "free-text", contents: a.contents ?? "" };
+    case "link":
+      return {
+        ...base,
+        kind: "link",
+        ...(a.url !== undefined ? { url: a.url } : {}),
+        ...(a.destPage !== undefined ? { destPage: a.destPage } : {}),
+      };
+    default:
+      return null;
   }
 };

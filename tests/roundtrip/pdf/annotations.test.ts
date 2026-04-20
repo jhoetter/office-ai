@@ -56,4 +56,39 @@ describe("PDF roundtrip — annotations", () => {
     // Watermark text isn't an annotation; we just want to confirm the
     // mutated PDF still parses with the same page count.
   });
+
+  it("session-added highlight + sticky survive exportFile + re-parse", async () => {
+    const bytes = await loadFixture("simple-text-1page.pdf");
+    const agent = await PdfAgent.fromBuffer(bytes);
+    const page = agent.getSnapshot().root.pages[0];
+    const before = agent.getSnapshot().root.annotations.length;
+
+    await agent.applyCommand({
+      type: "pdf:add-annotation",
+      payload: {
+        kind: "highlight",
+        pageNumber: page.pageNumber,
+        rect: [50, 100, 200, 130],
+        contents: "important sentence",
+        color: { r: 1, g: 0.95, b: 0 },
+      },
+    });
+    await agent.applyCommand({
+      type: "pdf:add-annotation",
+      payload: {
+        kind: "note",
+        pageNumber: page.pageNumber,
+        rect: [50, 50, 70, 70],
+        contents: "follow up here",
+      },
+    });
+
+    const exported = await agent.exportFile();
+    const reopened = await PdfAgent.fromBuffer(exported);
+    const after = reopened.getSnapshot().root.annotations;
+    expect(after.length).toBe(before + 2);
+    const kinds = after.map((a) => a.kind);
+    expect(kinds).toContain("highlight");
+    expect(kinds).toContain("note");
+  });
 });

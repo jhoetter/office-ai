@@ -101,6 +101,14 @@ export interface PdfAnnotation {
   readonly createdAt?: string;
   /** Native PDF object number, if known. Used for incremental save. */
   readonly nativeObjectNumber?: number;
+  /**
+   * "loaded" — present in the source PDF buffer, kept as-is.
+   * "session" — minted by `pdf:add-annotation`. The serializer writes
+   * these out via `@officeai/pdf-annotations`'s `addAnnotations`.
+   */
+  readonly source: "loaded" | "session";
+  /** Optional per-line quad rects (PDF user-space). Used by highlights. */
+  readonly quadRects?: ReadonlyArray<PdfRect>;
 }
 
 export type PdfFormFieldType =

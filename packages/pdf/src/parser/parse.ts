@@ -104,6 +104,7 @@ export const parsePdf = async (
           subtype: a.subtype,
           pageNumber: i,
           rect: [a.rect[0], a.rect[1], a.rect[2], a.rect[3]] as PdfRect,
+          source: "loaded",
           ...(a.contents !== undefined ? { contents: a.contents } : {}),
           ...(a.author !== undefined ? { author: a.author } : {}),
           ...(a.url !== undefined ? { url: a.url } : {}),

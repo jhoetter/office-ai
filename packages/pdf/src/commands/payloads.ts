@@ -1,5 +1,5 @@
 import type { NodeId } from "@officeai/core";
-import type { PdfRect, PdfRotation } from "../model/types.js";
+import type { PdfAnnotationKind, PdfRect, PdfRotation } from "../model/types.js";
 
 export const PDF_COMMAND_TYPES = [
   "pdf:rotate-pages",
@@ -13,6 +13,9 @@ export const PDF_COMMAND_TYPES = [
   "pdf:edit-comment",
   "pdf:resolve-comment",
   "pdf:delete-comment",
+  "pdf:add-annotation",
+  "pdf:update-annotation",
+  "pdf:remove-annotation",
 ] as const;
 
 export type PdfCommandType = (typeof PDF_COMMAND_TYPES)[number];
@@ -84,4 +87,35 @@ export interface ResolveCommentPayload {
 
 export interface DeleteCommentPayload {
   readonly commentId: NodeId;
+}
+
+export interface PdfAnnotationColor {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly a?: number;
+}
+
+export interface AddAnnotationPayload {
+  readonly id?: NodeId;
+  readonly kind: PdfAnnotationKind;
+  readonly pageNumber: number;
+  /** PDF user-space rect: [x1, y1, x2, y2]. */
+  readonly rect: PdfRect;
+  /** Optional per-line quad rects (used for highlights spanning lines). */
+  readonly quadRects?: ReadonlyArray<PdfRect>;
+  readonly contents?: string;
+  readonly author?: string;
+  readonly color?: PdfAnnotationColor;
+}
+
+export interface UpdateAnnotationPayload {
+  readonly annotationId: NodeId;
+  readonly contents?: string;
+  readonly color?: PdfAnnotationColor;
+  readonly rect?: PdfRect;
+}
+
+export interface RemoveAnnotationPayload {
+  readonly annotationId: NodeId;
 }
