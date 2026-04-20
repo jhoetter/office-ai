@@ -5,25 +5,20 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Edit3,
   Highlighter,
   Maximize2,
   Minus,
-  Moon,
-  PenLine,
   Plus,
   RotateCcw,
   RotateCw,
   Printer,
-  ScrollText,
-  Square,
   StickyNote,
   Trash2,
   Workflow,
 } from "lucide-react";
 import { ToolbarMenu, ToolbarRow } from "@/lib/shell";
 import { useTranslator } from "@/lib/i18n";
-import type { PdfDarkModeStrategy, PdfViewMode } from "./PdfCanvas";
+import type { PdfViewMode } from "./PdfCanvas";
 
 export type PdfAnnotationTool = "highlight" | "sticky";
 
@@ -33,8 +28,6 @@ export interface PdfToolbarProps {
   readonly totalPages: number;
   readonly zoom: number;
   readonly viewMode: PdfViewMode;
-  readonly darkMode: PdfDarkModeStrategy;
-  readonly reflow: boolean;
   /** Currently armed annotation tool, or `null` when none is armed. */
   readonly armedTool: PdfAnnotationTool | null;
   readonly onPrevPage: () => void;
@@ -52,12 +45,7 @@ export interface PdfToolbarProps {
   readonly onAnnotate: (tool: PdfAnnotationTool) => void;
   readonly onPrint: () => void;
   readonly onRotatePages: () => void;
-  readonly onReorderPages: () => void;
   readonly onDeletePages: () => void;
-  readonly onFillForm: () => void;
-  readonly onFlattenForm: () => void;
-  readonly onSetDarkMode: (mode: PdfDarkModeStrategy) => void;
-  readonly onToggleReflow: () => void;
 }
 
 /**
@@ -69,11 +57,9 @@ export interface PdfToolbarProps {
  *   Zoom             · - / "100 %" picker / +
  *   View mode        · single / continuous / two-up dropdown
  *   Rotate view      · CCW / CW
- *   Annotate         · highlight / sticky / free-text
- *   Page ops         · rotate / reorder / delete pages dropdowns
- *   Form             · fill / flatten
- *   Dark mode        · binary on/off toggle
- *   Reflow           · single-column toggle
+ *   Annotate         · highlight / sticky
+ *   Page ops         · rotate / delete pages dropdown
+ *   Print            · open browser print dialog
  *
  * Every label is sourced from `t("pdf.*")`. The toolbar is a thin
  * presentational surface — every callback maps directly to a
@@ -89,8 +75,6 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
     totalPages,
     zoom,
     viewMode,
-    darkMode,
-    reflow,
   } = props;
   const noPages = totalPages === 0;
   const canPrev = !disabled && !noPages && currentPage > 1;
@@ -169,23 +153,7 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
       <PageOpsMenu
         disabled={disabled}
         onRotatePages={props.onRotatePages}
-        onReorderPages={props.onReorderPages}
         onDeletePages={props.onDeletePages}
-      />
-      <FormMenu
-        disabled={disabled}
-        onFillForm={props.onFillForm}
-        onFlattenForm={props.onFlattenForm}
-      />
-      <Sep />
-      <DarkModeToggle value={darkMode} disabled={disabled} onChange={props.onSetDarkMode} />
-      <ToolbarTextButton
-        onClick={props.onToggleReflow}
-        icon={<ScrollText size={14} />}
-        label={t("pdf.reflow")}
-        disabled={disabled}
-        active={reflow}
-        testId="pdf-reflow-toggle"
       />
       <Sep />
       <IconButton
@@ -505,14 +473,12 @@ function ViewModeMenu({ mode, disabled, onPick }: ViewModeMenuProps): React.Reac
 interface PageOpsMenuProps {
   readonly disabled: boolean;
   readonly onRotatePages: () => void;
-  readonly onReorderPages: () => void;
   readonly onDeletePages: () => void;
 }
 
 function PageOpsMenu({
   disabled,
   onRotatePages,
-  onReorderPages,
   onDeletePages,
 }: PageOpsMenuProps): React.ReactNode {
   const { t } = useTranslator();
@@ -551,17 +517,6 @@ function PageOpsMenu({
           testId="pdf-rotate-pages"
         />
         <MenuItem
-          icon={<Workflow size={14} />}
-          label={t("pdf.reorderPages")}
-          onClick={() => {
-            setOpen(false);
-            onReorderPages();
-          }}
-          testId="pdf-reorder-pages"
-          disabled
-          badge="soon"
-        />
-        <MenuItem
           icon={<Trash2 size={14} />}
           label={t("pdf.deletePages")}
           onClick={() => {
@@ -572,106 +527,6 @@ function PageOpsMenu({
         />
       </ToolbarMenu>
     </>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Form
-
-interface FormMenuProps {
-  readonly disabled: boolean;
-  readonly onFillForm: () => void;
-  readonly onFlattenForm: () => void;
-}
-
-function FormMenu({ disabled, onFillForm, onFlattenForm }: FormMenuProps): React.ReactNode {
-  const { t } = useTranslator();
-  const [open, setOpen] = React.useState(false);
-  const triggerRef = React.useRef<HTMLButtonElement>(null);
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        title={t("pdf.fillForm")}
-        data-testid="pdf-form-trigger"
-        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <Edit3 size={14} />
-        <span className="hidden sm:inline">{t("pdf.fillForm")}</span>
-        <ChevronDown size={12} />
-      </button>
-      <ToolbarMenu
-        open={open}
-        onClose={() => setOpen(false)}
-        triggerRef={triggerRef}
-        role="menu"
-        testId="pdf-form-menu"
-        className="grid w-44 grid-cols-1 gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-lg"
-      >
-        <MenuItem
-          icon={<PenLine size={14} />}
-          label={t("pdf.fillForm")}
-          onClick={() => {
-            setOpen(false);
-            onFillForm();
-          }}
-          testId="pdf-form-fill"
-          disabled
-          badge="soon"
-        />
-        <MenuItem
-          icon={<Square size={14} />}
-          label={t("pdf.flattenForm")}
-          onClick={() => {
-            setOpen(false);
-            onFlattenForm();
-          }}
-          testId="pdf-form-flatten"
-          disabled
-          badge="soon"
-        />
-      </ToolbarMenu>
-    </>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Dark mode
-
-interface DarkModeToggleProps {
-  readonly value: PdfDarkModeStrategy;
-  readonly disabled: boolean;
-  readonly onChange: (next: PdfDarkModeStrategy) => void;
-}
-
-/**
- * Binary dark-mode toggle. Click flips between `off` and `on`.
- */
-function DarkModeToggle({ value, disabled, onChange }: DarkModeToggleProps): React.ReactNode {
-  const { t } = useTranslator();
-  const next: PdfDarkModeStrategy = value === "off" ? "on" : "off";
-  const label = t("pdf.darkMode");
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(next)}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      aria-pressed={value === "on"}
-      data-testid="pdf-dark-mode-toggle"
-      data-mode={value}
-      className={
-        "inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 " +
-        (value === "on" ? "bg-hover ring-1 ring-[var(--accent)]/40" : "")
-      }
-    >
-      <Moon size={14} />
-      <span className="hidden sm:inline">{t("pdf.darkMode")}</span>
-    </button>
   );
 }
 

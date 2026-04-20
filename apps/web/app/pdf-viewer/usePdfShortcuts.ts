@@ -20,8 +20,6 @@ export interface PdfShortcutHandlers {
   readonly openSearch?: () => void;
   readonly rotateClockwise?: () => void;
   readonly rotateCounterClockwise?: () => void;
-  readonly toggleDarkMode?: () => void;
-  readonly toggleReflow?: () => void;
 }
 
 /**
@@ -61,8 +59,6 @@ function isFormField(target: EventTarget | null): boolean {
  *   1                                          → fit width
  *   2                                          → fit page
  *   ] (Cmd/Ctrl) → rotate clockwise           , [ (Cmd/Ctrl) → counter
- *   d                                          → toggle smart-invert dark mode
- *   r                                          → toggle reflow mode
  *   /  or Cmd/Ctrl+F (handled by EditorShell)  → open find
  */
 export function usePdfShortcuts(handlers: PdfShortcutHandlers): void {
@@ -156,14 +152,6 @@ export function usePdfShortcuts(handlers: PdfShortcutHandlers): void {
         case "2":
           e.preventDefault();
           handlers.fitPage?.();
-          return;
-        case "d":
-          e.preventDefault();
-          handlers.toggleDarkMode?.();
-          return;
-        case "r":
-          e.preventDefault();
-          handlers.toggleReflow?.();
           return;
         case "/":
           e.preventDefault();

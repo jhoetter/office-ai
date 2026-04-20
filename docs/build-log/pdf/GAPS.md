@@ -325,6 +325,39 @@ Entries are ordered roughly by impact / cost ratio (high → low).
     annotation, exports, re-parses, sees one fewer.
 - **Effort:** M.
 
+### G15. Toolbar surfaces removed pending real implementations
+
+- **What:** the toolbar previously carried four entries that were
+  cosmetically present but functionally weak — **dark mode** (CSS
+  `filter: invert()` only, no per-pixel correction; produced
+  inverted images and washed-out colour profiles), **reflow**
+  (single-column text dump that, per G9, garbled multi-column /
+  tabular content), and the **Form** menu's *Fill* / *Flatten*
+  entries plus the **Page ops** menu's *Reorder*, all carrying a
+  `soon` badge against missing implementations. They were removed
+  in this pass because their on-canvas effect was net-negative for
+  most PDFs and the placeholders muddied the affordance bar.
+- **Why deferred:** each one needs real product work before it
+  re-earns toolbar real estate (smart-invert per glyph for dark
+  mode; column / table-aware reflow per G9; an actual form-filling
+  composer; a thumbnail drag-reorder UX).
+- **Where:** `apps/web/app/pdf-viewer/PdfToolbar.tsx`,
+  `apps/web/app/pdf-viewer/PdfEditor.tsx`,
+  `apps/web/app/pdf-viewer/PdfCanvas.tsx`
+  (`PdfDarkModeStrategy` and `reflow` props are still typed on
+  the canvas, just always passed `"off"` / `false` from the
+  editor — re-introducing them is a one-line wiring change once
+  the real implementation lands).
+- **Acceptance:**
+  - Dark mode returns once `PdfCanvas` uses a per-glyph invert
+    that preserves photo regions (likely a shader on the page
+    bitmap, not a wholesale CSS filter).
+  - Reflow returns once G9 (column / table heuristics) lands.
+  - Form fill / flatten return as a real composer or are kept
+    CLI-only.
+  - Reorder returns when thumbnail drag-and-drop is wired.
+- **Effort:** see G6 / G9 / G14a — each is its own card.
+
 ### G14. LibreOffice headless XLSX chart round-trip flake
 
 - **Not a PDF gap, but observed during validation.**

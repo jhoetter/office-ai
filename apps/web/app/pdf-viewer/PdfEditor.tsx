@@ -55,7 +55,6 @@ import {
 import { PdfToolbar, type PdfAnnotationTool } from "./PdfToolbar";
 import {
   PdfCanvas,
-  type PdfDarkModeStrategy,
   type PdfHighlight,
   type PdfViewMode,
 } from "./PdfCanvas";
@@ -141,8 +140,12 @@ export function PdfEditor({
   const [jumpNonce, setJumpNonce] = useState(0);
   const [zoom, setZoom] = useState(0.95);
   const [viewMode, setViewMode] = useState<PdfViewMode>("continuous");
-  const [darkMode, setDarkMode] = useState<PdfDarkModeStrategy>("off");
-  const [reflow, setReflow] = useState(false);
+  // Default to fit-page on every fresh document load. We don't
+  // know the actual fit ratio until the canvas reports back via
+  // `onZoomMetricsChange` (it depends on container × page size),
+  // so we set this flag in `mountAgent` and consume it on the
+  // first metrics callback after load.
+  const pendingFitOnLoadRef = useRef(true);
   const [viewportRotation, setViewportRotation] = useState<PdfRotation>(0);
   const [sidebarTab, setSidebarTab] = useState<PdfSidebarTab>("thumbnails");
   const [highlight, setHighlight] = useState<PdfHighlight | null>(null);
@@ -210,7 +213,10 @@ export function PdfEditor({
       setAgent(nextAgent);
       setEngineDoc(nextEngine);
       setCurrentPage(1);
-      setZoom(0.95);
+      // Provisional zoom — gets overwritten by fit-page once the
+      // canvas reports its first layout metrics (see ref above).
+      setZoom(1);
+      pendingFitOnLoadRef.current = true;
       setViewportRotation(0);
       setHighlight(null);
       setSaveState("saved");
@@ -410,6 +416,10 @@ export function PdfEditor({
   const onZoomMetricsChange = useCallback(
     (metrics: { actualSizeZoom: number; fitPageZoom: number }) => {
       zoomMetricsRef.current = metrics;
+      if (pendingFitOnLoadRef.current) {
+        pendingFitOnLoadRef.current = false;
+        setZoom(clampZoom(metrics.fitPageZoom));
+      }
     },
     []
   );
@@ -436,7 +446,6 @@ export function PdfEditor({
     []
   );
 
-  const onToggleReflow = useCallback(() => setReflow((v) => !v), []);
 
   const printIframeRef = useRef<HTMLIFrameElement | null>(null);
   const printObjectUrlRef = useRef<string | null>(null);
@@ -592,10 +601,6 @@ export function PdfEditor({
     }
   }, [currentPage, onError, totalPages]);
 
-  const onReorderPages = useCallback(() => {
-    pushToast("info", "Page reorder UI ships in a follow-up — drag thumbnails to move pages.");
-  }, [pushToast]);
-
   const onDeletePages = useCallback(async () => {
     const a = agentRef.current;
     if (!a || totalPages <= 1) {
@@ -613,13 +618,6 @@ export function PdfEditor({
       onError(err);
     }
   }, [currentPage, onError, pushToast, totalPages]);
-
-  const onFillForm = useCallback(() => {
-    pushToast("info", "Form-filling UI lands in a follow-up wave.");
-  }, [pushToast]);
-  const onFlattenForm = useCallback(() => {
-    pushToast("info", "Form flatten lands in a follow-up wave.");
-  }, [pushToast]);
 
   // ── Search / find-replace ─────────────────────────────────────────
   const findAdapter = useMemo<FindAdapter | undefined>(() => {
@@ -694,10 +692,6 @@ export function PdfEditor({
   );
 
   // ── Keyboard shortcuts ────────────────────────────────────────────
-  const cycleDarkMode = useCallback(() => {
-    setDarkMode((m) => (m === "off" ? "on" : "off"));
-  }, []);
-
   usePdfShortcuts({
     nextPage: onNextPage,
     prevPage: onPrevPage,
@@ -710,8 +704,6 @@ export function PdfEditor({
     actualSize: onActualSize,
     rotateClockwise: onRotateClockwise,
     rotateCounterClockwise: onRotateCounterClockwise,
-    toggleDarkMode: cycleDarkMode,
-    toggleReflow: onToggleReflow,
   });
 
   // ── Comments provider ─────────────────────────────────────────────
@@ -764,8 +756,6 @@ export function PdfEditor({
       "pdf.actual-size": { run: onActualSize },
       "pdf.rotate-cw": { run: onRotateClockwise },
       "pdf.rotate-ccw": { run: onRotateCounterClockwise },
-      "pdf.toggle-dark": { run: cycleDarkMode },
-      "pdf.toggle-reflow": { run: onToggleReflow },
       "pdf.rotate-page": { run: () => void onRotatePages(), enabled: totalPages > 0 },
       "pdf.delete-page": { run: () => void onDeletePages(), enabled: totalPages > 1 },
       "pdf.print": { run: () => void onPrint(), enabled: totalPages > 0 },
@@ -773,7 +763,6 @@ export function PdfEditor({
     return buildPaletteFromCatalogue(pdfActions, runners);
   }, [
     currentPage,
-    cycleDarkMode,
     onActualSize,
     onDeletePages,
     onFirstPage,
@@ -786,7 +775,6 @@ export function PdfEditor({
     onRotateClockwise,
     onRotateCounterClockwise,
     onRotatePages,
-    onToggleReflow,
     onZoomIn,
     onZoomOut,
     totalPages,
@@ -886,8 +874,6 @@ export function PdfEditor({
             totalPages={totalPages}
             zoom={zoom}
             viewMode={viewMode}
-            darkMode={darkMode}
-            reflow={reflow}
             onPrevPage={onPrevPage}
             onNextPage={onNextPage}
             onJumpToPage={goToPage}
@@ -904,12 +890,7 @@ export function PdfEditor({
             armedTool={armedTool}
             onPrint={() => void onPrint()}
             onRotatePages={() => void onRotatePages()}
-            onReorderPages={onReorderPages}
             onDeletePages={() => void onDeletePages()}
-            onFillForm={onFillForm}
-            onFlattenForm={onFlattenForm}
-            onSetDarkMode={setDarkMode}
-            onToggleReflow={onToggleReflow}
           />
         }
         statusBarLeft={
@@ -947,8 +928,8 @@ export function PdfEditor({
                     currentPage={currentPage}
                     zoom={zoom}
                     viewMode={viewMode}
-                    darkMode={darkMode}
-                    reflow={reflow}
+                    darkMode="off"
+                    reflow={false}
                     viewportRotation={viewportRotation}
                     onCurrentPageChange={setCurrentPage}
                     onZoomMetricsChange={onZoomMetricsChange}

@@ -22,8 +22,7 @@ test.describe("pdf-viewer route", () => {
     await expect(page.getByTestId("pdf-zoom-menu-trigger")).toBeVisible();
     await expect(page.getByTestId("pdf-view-mode-trigger")).toBeVisible();
     await expect(page.getByTestId("pdf-page-ops-trigger")).toBeVisible();
-    await expect(page.getByTestId("pdf-form-trigger")).toBeVisible();
-    await expect(page.getByTestId("pdf-dark-mode-toggle")).toBeVisible();
+    await expect(page.getByTestId("pdf-print")).toBeVisible();
   });
 
   test("renders the first page thumbnail and the page-1 canvas tile", async ({ page }) => {
@@ -42,16 +41,6 @@ test.describe("pdf-viewer route", () => {
     const input = page.getByTestId("pdf-page-input");
     await expect(input).toBeVisible();
     await expect(input).toHaveValue("1");
-  });
-
-  test("toggling smart dark mode flips the toolbar's pressed state", async ({ page }) => {
-    await gotoBlankPdf(page);
-    const dark = page.getByTestId("pdf-dark-mode-toggle");
-    await expect(dark).toHaveAttribute("aria-pressed", "false");
-    await dark.click();
-    await expect(dark).toHaveAttribute("aria-pressed", "true");
-    await dark.click();
-    await expect(dark).toHaveAttribute("aria-pressed", "false");
   });
 
   test("opens with no error toast on first paint", async ({ page }) => {
