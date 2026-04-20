@@ -14,6 +14,7 @@ import {
   Plus,
   RotateCcw,
   RotateCw,
+  Printer,
   ScrollText,
   Square,
   StickyNote,
@@ -49,6 +50,7 @@ export interface PdfToolbarProps {
   readonly onRotateClockwise: () => void;
   readonly onRotateCounterClockwise: () => void;
   readonly onAnnotate: (tool: PdfAnnotationTool) => void;
+  readonly onPrint: () => void;
   readonly onRotatePages: () => void;
   readonly onReorderPages: () => void;
   readonly onDeletePages: () => void;
@@ -184,6 +186,14 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
         disabled={disabled}
         active={reflow}
         testId="pdf-reflow-toggle"
+      />
+      <Sep />
+      <IconButton
+        onClick={props.onPrint}
+        icon={<Printer size={14} />}
+        label={t("pdf.print")}
+        disabled={disabled}
+        testId="pdf-print"
       />
     </ToolbarRow>
   );

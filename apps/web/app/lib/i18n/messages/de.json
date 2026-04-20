@@ -892,6 +892,7 @@
     "scanned": "Gescannte Seite – keine Textebene",
     "scannedBannerTitle": "Sieht gescannt aus.",
     "scannedBannerHint": "In diesem PDF wurde kein auswählbarer Text gefunden. Führe `office-agent pdf ocr <file> --out <out.pdf>` aus, um eine durchsuchbare Textebene zu ergänzen.",
+    "print": "Drucken",
     "ocrPage": "OCR auf dieser Seite ausführen",
     "ocrAll": "OCR auf allen Seiten ausführen",
     "noOutline": "Dieses Dokument hat kein Inhaltsverzeichnis.",

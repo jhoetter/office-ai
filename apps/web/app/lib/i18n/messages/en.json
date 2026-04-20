@@ -892,6 +892,7 @@
     "scanned": "Scanned page — no text layer",
     "scannedBannerTitle": "Looks scanned.",
     "scannedBannerHint": "No selectable text was found in this PDF. Run `office-agent pdf ocr <file> --out <out.pdf>` to add a searchable text layer.",
+    "print": "Print",
     "ocrPage": "Run OCR on this page",
     "ocrAll": "Run OCR on all pages",
     "noOutline": "This document has no outline.",

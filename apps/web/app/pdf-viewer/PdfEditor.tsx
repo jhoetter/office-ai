@@ -435,6 +435,63 @@ export function PdfEditor({
 
   const onToggleReflow = useCallback(() => setReflow((v) => !v), []);
 
+  const printIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const printObjectUrlRef = useRef<string | null>(null);
+  const onPrint = useCallback(async () => {
+    const a = agentRef.current;
+    if (!a) return;
+    try {
+      const bytes = await a.exportFile();
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+      const previousUrl = printObjectUrlRef.current;
+      const url = URL.createObjectURL(blob);
+      printObjectUrlRef.current = url;
+      let iframe = printIframeRef.current;
+      if (!iframe) {
+        iframe = document.createElement("iframe");
+        iframe.style.position = "fixed";
+        iframe.style.right = "0";
+        iframe.style.bottom = "0";
+        iframe.style.width = "0";
+        iframe.style.height = "0";
+        iframe.style.border = "0";
+        iframe.setAttribute("aria-hidden", "true");
+        iframe.setAttribute("data-testid", "pdf-print-iframe");
+        document.body.appendChild(iframe);
+        printIframeRef.current = iframe;
+      }
+      iframe.onload = () => {
+        try {
+          iframe?.contentWindow?.focus();
+          iframe?.contentWindow?.print();
+        } catch (err) {
+          // Some browsers block print() on cross-origin or sandboxed
+          // iframes — fall back to opening the blob in a new tab so
+          // the user can hit Cmd+P themselves.
+          window.open(url, "_blank", "noopener,noreferrer");
+          if (err instanceof Error) onError(err);
+        }
+      };
+      iframe.src = url;
+      if (previousUrl) {
+        // Defer revoking the previous URL until after the new one
+        // has loaded so the iframe doesn't snap to about:blank
+        // mid-transition.
+        setTimeout(() => URL.revokeObjectURL(previousUrl), 60_000);
+      }
+    } catch (err) {
+      onError(err);
+    }
+  }, [onError]);
+  useEffect(() => {
+    return () => {
+      const url = printObjectUrlRef.current;
+      if (url) URL.revokeObjectURL(url);
+      const iframe = printIframeRef.current;
+      if (iframe?.parentNode) iframe.parentNode.removeChild(iframe);
+    };
+  }, []);
+
   const [armedTool, setArmedTool] = useState<PdfAnnotationTool | null>(null);
   const onAnnotate = useCallback((tool: PdfAnnotationTool) => {
     setArmedTool((current) => (current === tool ? null : tool));
@@ -450,6 +507,22 @@ export function PdfEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Cmd/Ctrl+P prints the current PDF (with session annotations).
+  // We intercept the system print dialog so the bytes that go to
+  // the printer are the freshly-serialised PDF — not a screenshot
+  // of the canvas, which would lose vector quality and any text.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key.toLowerCase() !== "p") return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      void onPrint();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onPrint]);
 
   const onAddAnnotation = useCallback(
     async (input: AddAnnotationInput) => {
@@ -688,6 +761,7 @@ export function PdfEditor({
       { id: "pdf.toggle-reflow", label: "Toggle reflow", section: "View", run: onToggleReflow },
       { id: "pdf.rotate-page", label: "Rotate current page 90°", section: "Pages", run: () => void onRotatePages(), enabled: totalPages > 0 },
       { id: "pdf.delete-page", label: "Delete current page", section: "Pages", run: () => void onDeletePages(), enabled: totalPages > 1 },
+      { id: "pdf.print", label: "Print…", section: "File", run: () => void onPrint(), enabled: totalPages > 0 },
     ];
   }, [
     currentPage,
@@ -700,6 +774,7 @@ export function PdfEditor({
     onLastPage,
     onNextPage,
     onPrevPage,
+    onPrint,
     onRotateClockwise,
     onRotateCounterClockwise,
     onRotatePages,
@@ -819,6 +894,7 @@ export function PdfEditor({
             onRotateCounterClockwise={onRotateCounterClockwise}
             onAnnotate={onAnnotate}
             armedTool={armedTool}
+            onPrint={() => void onPrint()}
             onRotatePages={() => void onRotatePages()}
             onReorderPages={onReorderPages}
             onDeletePages={() => void onDeletePages()}
