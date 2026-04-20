@@ -9,6 +9,7 @@
  * units are 1/72 inch by default. Page-level rect: [x1, y1, x2, y2].
  */
 import type { DocumentSnapshot, NodeId } from "@officeai/core";
+import type { StructuredPage } from "../text/structured.js";
 
 export type PdfRotation = 0 | 90 | 180 | 270;
 
@@ -49,6 +50,13 @@ export interface PdfPage {
   readonly label?: string;
   /** Plain-text reading-order projection (best-effort, may be empty for scans). */
   readonly text: string;
+  /**
+   * Structured representation of the page text — reading-order
+   * blocks (paragraphs / headings / lists), per-line glyph rects in
+   * PDF user-space. Backs glyph-precise search highlights, copy-as
+   * -markdown, and AI extraction. Empty for fully scanned pages.
+   */
+  readonly structured: StructuredPage;
   /** True if the page has a text layer (selectable text). */
   readonly hasTextLayer: boolean;
   /** True if any annotations live on the page. */

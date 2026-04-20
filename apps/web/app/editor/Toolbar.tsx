@@ -21,6 +21,7 @@ import {
   X,
   ScrollText,
   SeparatorHorizontal,
+  Table2,
 } from "lucide-react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
@@ -78,6 +79,13 @@ export interface ToolbarProps {
   styleOptions: ReadonlyArray<ToolbarStyleOption>;
   onInsertImage: () => void;
   onInsertTable: (rows: number, cols: number) => void;
+  /**
+   * Open the XlsxRangePicker dialog so the user can pick a .xlsx
+   * file + sheet + range and decide whether to insert it as a
+   * native table, a live-OLE embedded workbook, or a chart. Mirrors
+   * the three "Insert from xlsx" entries in the action catalogue.
+   */
+  onInsertFromXlsx: () => void;
   onSetParagraphStyle: (style: string) => void;
   onSetAlignment: (alignment: AlignmentValue) => void;
   onAdjustIndent: (deltaTwips: number) => void;
@@ -283,6 +291,13 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       {/* Insert table — Word-style grid picker. */}
       <InsertTableMenu disabled={!props.agentReady} onInsert={props.onInsertTable} />
+
+      {/* Insert from xlsx — opens the XlsxRangePicker dialog so users
+          can pick a range from a workbook and decide whether to embed
+          it as a native table, a live OLE object, or a chart. */}
+      <ToolbarBtn label="Insert from xlsx" onClick={props.onInsertFromXlsx}>
+        <Table2 size={14} />
+      </ToolbarBtn>
 
       {/* Section break — Word-style submenu (B11). */}
       <SectionBreakMenu disabled={!props.agentReady} onInsert={props.onInsertSectionBreak} />

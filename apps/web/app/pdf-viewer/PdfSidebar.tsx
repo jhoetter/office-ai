@@ -162,24 +162,49 @@ function ThumbnailsPanel({
   const { t } = useTranslator();
   const pages = snapshot?.root.pages ?? [];
 
-  // Auto-scroll the active thumbnail into view when it changes via
-  // any means other than a sidebar click (toolbar nav / scroll /
-  // shortcuts). Smooth so it never visually competes with the
-  // user's own scroll gesture.
+  // Keep the active thumbnail roughly centred in the rail whenever
+  // `currentPage` moves — including when the user is scrolling the
+  // main canvas. Centring (rather than `block: "nearest"`) means the
+  // reader can always see the previous + next page above and below
+  // the highlighted one, so the rail acts as a "what's coming"
+  // preview while reading. The effect only reacts to `currentPage`
+  // changes, never to sidebar scroll, so the main canvas stays put
+  // when the user scrubs the rail by hand.
   const containerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const root = containerRef.current;
-    if (!root) return;
-    const target = root.querySelector<HTMLElement>(
+    const inner = containerRef.current;
+    if (!inner) return;
+    const target = inner.querySelector<HTMLElement>(
       `[data-thumb-page="${currentPage}"]`
     );
     if (!target) return;
-    const tTop = target.offsetTop;
+    // The scrollable element is the panel wrapper one level up from
+    // our flex column (see `PdfSidebar`'s `overflow-y-auto` div).
+    // Walk up until we find an actually-scrollable ancestor so the
+    // visibility check uses the right viewport.
+    let scroller: HTMLElement | null = inner.parentElement;
+    while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
+      scroller = scroller.parentElement;
+    }
+    if (!scroller) return;
+    const tTop = target.offsetTop - scroller.offsetTop;
     const tBot = tTop + target.offsetHeight;
-    const visTop = root.scrollTop;
-    const visBot = visTop + root.clientHeight;
-    if (tTop < visTop || tBot > visBot) {
-      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const visTop = scroller.scrollTop;
+    const visBot = visTop + scroller.clientHeight;
+    const fullyVisible = tTop >= visTop && tBot <= visBot;
+    // Always re-centre when partially / fully off-screen; for an
+    // already fully visible thumbnail we still nudge it back toward
+    // the middle so the next page peeks into view as the reader
+    // scrolls forward.
+    const desired = target.offsetTop -
+      scroller.offsetTop -
+      (scroller.clientHeight - target.offsetHeight) / 2;
+    const clamped = Math.max(
+      0,
+      Math.min(scroller.scrollHeight - scroller.clientHeight, desired)
+    );
+    if (!fullyVisible || Math.abs(clamped - visTop) > target.offsetHeight) {
+      scroller.scrollTo({ top: clamped, behavior: "smooth" });
     }
   }, [currentPage]);
 

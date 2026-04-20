@@ -25,7 +25,7 @@ import { existsSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import * as XLSX from "xlsx";
+import * as XLSX from "@e965/xlsx";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");

@@ -1,6 +1,7 @@
 import type {
   ChartPart,
   ChartShape,
+  ConnectorDashStyle,
   ConnectorShape,
   GroupShape,
   OpaqueShape,
@@ -80,6 +81,11 @@ export interface SvgRenderCtx {
 }
 
 export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
+  const inner = shapeBodyToSvg(shape, ctx);
+  return wrapWithRotation(shape, inner);
+}
+
+function shapeBodyToSvg(shape: Shape, ctx: SvgRenderCtx): string {
   switch (shape.kind) {
     case "text":
       return textShapeToSvg(shape, ctx);
@@ -91,11 +97,68 @@ export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
       return tableToSvg(shape, ctx);
     case "chart":
       return chartToSvg(shape, ctx);
+    case "ole-spreadsheet":
+      return oleSpreadsheetToSvg(shape, ctx);
     case "connector":
       return connectorToSvg(shape, ctx);
     case "opaque":
       return opaqueShapeToSvg(shape);
   }
+}
+
+/**
+ * OLE spreadsheets render as a placeholder rectangle with a small
+ * "Excel" badge. The actual interactive embed only exists when opened
+ * in PowerPoint (double-click → spawn Excel). For our preview surface
+ * we fall back to the captured preview image when one was parsed; if
+ * that's missing we draw the badge so the user can still see + move
+ * the embed.
+ */
+function oleSpreadsheetToSvg(
+  shape: import("../../model/types.js").OleSpreadsheetShape,
+  ctx: SvgRenderCtx
+): string {
+  if (shape.previewMediaPartPath) {
+    const url = ctx.mediaUrls?.get(shape.previewMediaPartPath);
+    if (url && shape.position && shape.size) {
+      return `<image x="${u(shape.position.xEmu)}" y="${u(shape.position.yEmu)}" width="${u(shape.size.cxEmu)}" height="${u(shape.size.cyEmu)}" href="${url}" preserveAspectRatio="xMidYMid meet"/>`;
+    }
+  }
+  if (!shape.position || !shape.size) return "";
+  const x = u(shape.position.xEmu);
+  const y = u(shape.position.yEmu);
+  const cx = u(shape.size.cxEmu);
+  const cy = u(shape.size.cyEmu);
+  return [
+    `<rect x="${x}" y="${y}" width="${cx}" height="${cy}" fill="#f7f7f7" stroke="#107c41" stroke-width="2" stroke-dasharray="6 4"/>`,
+    `<text x="${x + cx / 2}" y="${y + cy / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Calibri,sans-serif" font-size="14" fill="#107c41">Excel embed</text>`,
+  ].join("");
+}
+
+/**
+ * Wrap the shape's SVG body in a `<g transform="rotate(deg cx cy)">` when
+ * the model carries a non-zero `rotation`. The pivot is the shape's
+ * (axis-aligned, pre-rotation) bounding box centre — this matches
+ * PowerPoint's `<a:xfrm rot=…>` semantics, where `<a:off>`/`<a:ext>`
+ * describe the unrotated box and `rot` rotates around its centre.
+ *
+ * Connectors don't carry a meaningful rotation in the OOXML we round-trip
+ * (`flipH`/`flipV` plus the endpoints describe orientation), and groups
+ * have their own coordinate transforms — for both we still honour an
+ * explicit `rotation` if one is set, which is uncommon but cheap to
+ * support and keeps the renderer agnostic to shape kind.
+ */
+function wrapWithRotation(shape: Shape, inner: string): string {
+  const rot = "rotation" in shape ? shape.rotation : undefined;
+  if (rot === undefined || !Number.isFinite(rot)) return inner;
+  const normalised = ((rot % 360) + 360) % 360;
+  if (normalised === 0) return inner;
+  const bbox = shapeBoundingBox(shape);
+  if (!bbox) return inner;
+  const cx = u(bbox.x + bbox.cx / 2);
+  const cy = u(bbox.y + bbox.cy / 2);
+  const deg = Math.round(normalised * 1000) / 1000;
+  return `<g transform="rotate(${deg} ${cx} ${cy})">${inner}</g>`;
 }
 
 // ─── Connector renderer ───────────────────────────────────────────────────
@@ -287,24 +350,40 @@ function endShapeMarkerAttr(
   }
 }
 
-function dashArrayAttr(
-  dash: "solid" | "dashed" | "dotted" | "longDash" | "dashDot" | undefined,
-  widthEmu: number
-): string {
+function dashArrayAttr(dash: ConnectorDashStyle | undefined, widthEmu: number): string {
   if (!dash || dash === "solid") return "";
   // Patterns scale with stroke width so the dashes feel consistent
   // when users bump the weight. The values mimic PowerPoint's
-  // `prstDash` presets at the default ~1pt width.
+  // `prstDash` presets at the default ~1pt width. We keep the
+  // canonical OOXML preset names (dot, dash, lgDash, …) as the
+  // primary cases and fold the legacy short aliases into the same
+  // visual output so existing fixtures don't shift pixels.
   const w = u(widthEmu);
+  const dot = (w * 1).toFixed(2);
+  const gap = (w * 2).toFixed(2);
+  const dashLen = (w * 4).toFixed(2);
+  const longDash = (w * 8).toFixed(2);
+  const sep = (w * 3).toFixed(2);
   switch (dash) {
-    case "dashed":
-      return ` stroke-dasharray="${(w * 4).toFixed(2)} ${(w * 3).toFixed(2)}"`;
-    case "longDash":
-      return ` stroke-dasharray="${(w * 8).toFixed(2)} ${(w * 3).toFixed(2)}"`;
-    case "dashDot":
-      return ` stroke-dasharray="${(w * 4).toFixed(2)} ${(w * 3).toFixed(2)} ${(w * 1).toFixed(2)} ${(w * 3).toFixed(2)}"`;
+    case "dot":
+    case "sysDot":
     case "dotted":
-      return ` stroke-dasharray="${(w * 1).toFixed(2)} ${(w * 2).toFixed(2)}"`;
+      return ` stroke-dasharray="${dot} ${gap}"`;
+    case "dash":
+    case "sysDash":
+    case "dashed":
+      return ` stroke-dasharray="${dashLen} ${sep}"`;
+    case "lgDash":
+    case "longDash":
+      return ` stroke-dasharray="${longDash} ${sep}"`;
+    case "dashDot":
+    case "sysDashDot":
+      return ` stroke-dasharray="${dashLen} ${sep} ${dot} ${sep}"`;
+    case "lgDashDot":
+      return ` stroke-dasharray="${longDash} ${sep} ${dot} ${sep}"`;
+    case "lgDashDotDot":
+    case "sysDashDotDot":
+      return ` stroke-dasharray="${longDash} ${sep} ${dot} ${sep} ${dot} ${sep}"`;
     default: {
       const _exhaustive: never = dash;
       void _exhaustive;

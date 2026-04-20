@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
 import { ImageOverlay, type AnchorFromPx } from "./ImageOverlay";
 import { ChartOverlay } from "./ChartOverlay";
+import type { ChartKind } from "@officeai/xlsx";
 import { XlsxRemoteSelectionLayer, type RemoteXlsxPeer } from "./XlsxRemoteSelectionLayer";
 import {
   containsCell,
@@ -192,13 +193,19 @@ export interface GridProps {
   readonly onImageContextMenu?: (imageId: string, coords: { x: number; y: number }) => void;
   /**
    * C15 — chart overlays. The Grid pins each `sheet.charts` entry
-   * to its anchor (same coordinate model as images). Selection +
-   * removal route through the parent's `xlsx:remove-chart` /
-   * `xlsx:move-chart` handlers; v1 has no inline drag.
+   * to its anchor (same coordinate model as images). The overlay
+   * itself owns its drag/resize transient state and commits on
+   * mouse-up via these callbacks. The "Edit data…" toolbar button
+   * routes through `onRequestEditChart` which the parent uses to
+   * open the Chart edit dialog.
    */
   readonly selectedChartId?: string | null;
   readonly onSelectChart?: (id: string | null) => void;
   readonly onRemoveChart?: (id: string) => void;
+  readonly onMoveChart?: (id: string, anchor: AnchorFromPx) => void;
+  readonly onResizeChart?: (id: string, size: { widthPx: number; heightPx: number }) => void;
+  readonly onChangeChartKind?: (id: string, kind: ChartKind) => void;
+  readonly onRequestEditChart?: (id: string) => void;
   /**
    * Remote peers from the realtime layer. The Grid renders a 2px
    * colored outline + name tag around the range each peer has
@@ -281,6 +288,10 @@ export function Grid(props: GridProps): ReactNode {
     selectedChartId,
     onSelectChart,
     onRemoveChart,
+    onMoveChart,
+    onResizeChart,
+    onChangeChartKind,
+    onRequestEditChart,
     remotePeers,
   } = props;
   const extras: ReadonlyArray<Selection> = extraAreas ?? [];
@@ -459,6 +470,11 @@ export function Grid(props: GridProps): ReactNode {
   // where n = number of column/row overrides (typically < 100).
   const dims: GridDims = useMemo(() => {
     const colOverrides = new Map<number, number>(sheet.columnWidths);
+    // `<col hidden="1"/>` collapses the column to zero width; the
+    // parser already set the width to 0 in `columnWidths`, but a
+    // sheet whose hidden cols carry no width override would render
+    // at the default width without this explicit pass.
+    for (const c of sheet.hiddenCols) colOverrides.set(c, 0);
     if (colDrag) {
       colOverrides.set(colDrag.col, Math.max(MIN_COL_WIDTH, colDrag.widthPx));
     }
@@ -470,12 +486,21 @@ export function Grid(props: GridProps): ReactNode {
     return buildGridDims({
       columnWidths: colOverrides,
       rowHeights: rowOverrides,
-      defaultColWidth: COL_WIDTH,
-      defaultRowHeight: ROW_HEIGHT,
+      defaultColWidth: sheet.defaultColWidthPx ?? COL_WIDTH,
+      defaultRowHeight: sheet.defaultRowHeightPx ?? ROW_HEIGHT,
       totalRows: TOTAL_ROWS,
       totalCols: TOTAL_COLS,
     });
-  }, [sheet.columnWidths, sheet.rowHeights, sheet.hiddenRows, colDrag, rowDrag]);
+  }, [
+    sheet.columnWidths,
+    sheet.rowHeights,
+    sheet.hiddenRows,
+    sheet.hiddenCols,
+    sheet.defaultColWidthPx,
+    sheet.defaultRowHeightPx,
+    colDrag,
+    rowDrag,
+  ]);
 
   // Array-like proxies preserve the existing `colXs[c]` access shape.
   // Reads delegate to `dims.xAt(c)` / `dims.yAt(r)` so the rest of
@@ -1744,31 +1769,23 @@ export function Grid(props: GridProps): ReactNode {
             }}
           />
         </div>
-        {sheet.charts.map((chart) => {
-          const a = chart.anchor;
-          const top = HEADER_ROW_HEIGHT + (rowYs[a.fromRow] ?? 0) + a.fromOffsetYPx;
-          const left = HEADER_COL_WIDTH + (colXs[a.fromCol] ?? 0) + a.fromOffsetXPx;
-          return (
-            <div
-              key={`chart-wrap-${chart.id}`}
-              style={{ position: "absolute", top, left, zIndex: 5 }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                onSelectChart?.(chart.id);
-              }}
-            >
-              <ChartOverlay
-                chart={chart}
-                sheet={sheet}
-                width={a.widthPx}
-                height={a.heightPx}
-                selected={selectedChartId === chart.id}
-                onSelect={() => onSelectChart?.(chart.id)}
-                onRequestRemove={onRemoveChart ? () => onRemoveChart(chart.id) : undefined}
-              />
-            </div>
-          );
-        })}
+        {sheet.charts.map((chart) => (
+          <ChartOverlay
+            key={`chart-${chart.id}`}
+            chart={chart}
+            sheet={sheet}
+            colXs={colXs}
+            rowYs={rowYs}
+            headerOffset={{ x: HEADER_COL_WIDTH, y: HEADER_ROW_HEIGHT }}
+            selected={selectedChartId === chart.id}
+            onSelect={() => onSelectChart?.(chart.id)}
+            onRequestRemove={onRemoveChart ? () => onRemoveChart(chart.id) : undefined}
+            onRequestEdit={onRequestEditChart ? () => onRequestEditChart(chart.id) : undefined}
+            onMoveCommit={onMoveChart ? (anchor) => onMoveChart(chart.id, anchor) : undefined}
+            onResizeCommit={onResizeChart ? (size) => onResizeChart(chart.id, size) : undefined}
+            onChangeKind={onChangeChartKind ? (kind) => onChangeChartKind(chart.id, kind) : undefined}
+          />
+        ))}
         {sheet.images.map((image) => (
           <div
             key={`image-wrap-${image.id}`}

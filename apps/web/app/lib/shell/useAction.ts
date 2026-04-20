@@ -16,6 +16,8 @@
 
 import { useMemo } from "react";
 import type { ActionDescriptor } from "@officeai/core";
+import { useTranslator } from "../i18n";
+import { translateAction } from "./translateAction";
 
 export interface ResolvedAction {
   readonly id: string;
@@ -50,5 +52,17 @@ export function useAction(
   catalogue: ReadonlyArray<ActionDescriptor>,
   id: string
 ): ResolvedAction {
-  return useMemo(() => getAction(catalogue, id), [catalogue, id]);
+  const { t } = useTranslator();
+  return useMemo(() => {
+    const base = getAction(catalogue, id);
+    const descriptor = catalogue.find((a) => a.id === id);
+    if (!descriptor) return base;
+    const strings = translateAction(descriptor, t);
+    return {
+      ...base,
+      label: strings.label,
+      description: strings.description,
+      section: strings.section,
+    };
+  }, [catalogue, id, t]);
 }

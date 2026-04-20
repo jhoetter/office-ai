@@ -167,6 +167,8 @@ function runChildToPlain(child: RunChild): string {
       return "";
     case "opaque":
       return "";
+    case "embedded-spreadsheet":
+      return "";
     default: {
       const _exhaustive: never = child;
       void _exhaustive;

@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev build lint lint-root lint-web format format-check architecture actions \
+.PHONY: help install dev dev-realtime build lint lint-root lint-web format format-check architecture actions \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -15,11 +15,23 @@
         xsd-fetch schema-validate schema-validate-docx schema-validate-xlsx \
         schema-validate-pptx schema-validate-all
 
+# ----------------------------------------------------------------------
+# Dev port (Next.js editor host)
+#
+# Default 3100 (one digit above Next.js's 3000) so the editor coexists
+# with hof-os's `make dev` out of the box — hof-os binds 3000 and its
+# `kill-ports` step `kill -9`s anything else holding it. Override with
+# `PORT=3000 make dev` if you're running office-ai standalone and want
+# the historical localhost:3000. The realtime ws server listens on
+# 1234 (override via OAI_RT_PORT) — never collides with hof-os.
+# ----------------------------------------------------------------------
+PORT ?= 3100
+
 help:
 	@echo "officeAI — available targets (see docs/ci-pipeline.md for the full map)"
 	@echo ""
 	@echo "  install        Install all dependencies"
-	@echo "  dev            Start the Next.js editor host"
+	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100; coexists with hof-os on 3000)"
 	@echo "  build          Build all packages"
 	@echo ""
 	@echo "  Quality gates  (== what CI runs in the 'verify' job):"
@@ -85,13 +97,19 @@ install:
 # Iterating on a package's source after `make dev` is running? Re-run
 # `pnpm build` (or `pnpm --filter @officeai/<pkg> build`) in another shell
 # — Next.js HMR will pick up the new dist on next request.
+#
+# PORT is forwarded into Next.js dev (it honours $PORT natively).
+# Default is 3100 so this can run alongside hof-os's `make dev` (which
+# claims 3000 and `kill -9`s any other process holding it). Run with
+# `PORT=3000 make dev` if you want the historical localhost:3000 in
+# standalone office-ai workflows.
 dev:
 	pnpm build
 	@echo ""
-	@echo "→ next dev      http://localhost:3000"
+	@echo "→ next dev      http://localhost:$(PORT)"
 	@echo "→ realtime ws   ws://localhost:1234   (health: http://localhost:1234/health)"
 	@echo ""
-	pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev
+	PORT=$(PORT) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev
 
 dev-realtime:
 	pnpm --filter @officeai/realtime-server dev

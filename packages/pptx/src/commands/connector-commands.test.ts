@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ooxml } from "@officeai/core";
 import { PptxAgent } from "../agent/agent.js";
-import type { ConnectorShape, TextShape } from "../model/types.js";
+import type { ConnectorDashStyle, ConnectorShape, TextShape } from "../model/types.js";
 
 const FIXTURES_DIR = new URL("../../../../fixtures/pptx/synthetic/", import.meta.url);
 
@@ -380,15 +380,26 @@ describe("pptx:set-connector-style strokeDash", () => {
     const cxn = reloaded.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "connector") as
       | ConnectorShape
       | undefined;
-    expect(cxn?.stroke?.dash).toBe("dotted");
+    // Legacy alias `dotted` is normalised to its OOXML token `dot`
+    // on a save/re-parse cycle. Either spelling is accepted as
+    // input on the command boundary.
+    expect(cxn?.stroke?.dash).toBe("dot");
   });
 
   it("round-trips new longDash / dashDot presets through OOXML", async () => {
-    for (const dash of ["longDash", "dashDot"] as const) {
+    // Legacy short aliases (`longDash`) are accepted as input but
+    // canonicalised to their OOXML preset name (`lgDash`) on save +
+    // re-parse. `dashDot` is already the OOXML token so it
+    // round-trips byte-stable.
+    const cases: ReadonlyArray<{ in: ConnectorDashStyle; out: ConnectorDashStyle }> = [
+      { in: "longDash", out: "lgDash" },
+      { in: "dashDot", out: "dashDot" },
+    ];
+    for (const { in: input, out: expected } of cases) {
       const { agent, connector } = await setupTwoShapesAndConnector();
       await agent.applyCommand({
         type: "pptx:set-connector-style",
-        payload: { slideIndex: 0, shapeId: connector.id, strokeDash: dash },
+        payload: { slideIndex: 0, shapeId: connector.id, strokeDash: input },
         source: "human",
       });
       const buf = await agent.exportFile();
@@ -396,8 +407,51 @@ describe("pptx:set-connector-style strokeDash", () => {
       const cxn = reloaded.getSnapshot().root.slides[0].shapes.find((s) => s.kind === "connector") as
         | ConnectorShape
         | undefined;
-      expect(cxn?.stroke?.dash).toBe(dash);
+      expect(cxn?.stroke?.dash).toBe(expected);
     }
+  });
+
+  it("preserves theme color refs (a:schemeClr) on connector strokes through a save/parse cycle", async () => {
+    // Tamper the parsed connector to carry a schemeClr ref, then
+    // serialize + re-parse and confirm the theme token survived
+    // (the round-trip drops to literal hex without the new
+    // colorTheme slot wired through parser+serializer).
+    const { agent, connector } = await setupTwoShapesAndConnector();
+    const snap = agent.getSnapshot();
+    const slide = snap.root.slides[0]!;
+    const shapes = slide.shapes.slice();
+    const idx = shapes.findIndex((s) => s.id === connector.id);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const cxn = shapes[idx] as ConnectorShape;
+    shapes[idx] = {
+      ...cxn,
+      stroke: {
+        color: "000000",
+        colorTheme: "accent1",
+        widthEmu: 19_050,
+        dash: "solid",
+      },
+    } as ConnectorShape;
+    const slides = snap.root.slides.slice();
+    slides[0] = { ...slide, shapes };
+    const tampered = {
+      ...snap,
+      root: { ...snap.root, slides },
+      dirty: { ...snap.dirty, slides: new Set([slide.partPath]) },
+    };
+    // Reach into the agent internals: easiest path is rebuilding via
+    // PptxAgent.fromSnapshot? There's no such API yet, so write a
+    // raw serialize/parse round-trip via the underlying functions.
+    const { serializePptx } = await import("../serializer/serialize.js");
+    const { parsePptx } = await import("../parser/parse.js");
+    const buf = await serializePptx(tampered);
+    const xml = (await ooxml.OoxmlContainer.load(buf)).readText(slide.partPath);
+    expect(xml).toContain('<a:schemeClr val="accent1"');
+    const reparsed = await parsePptx(buf);
+    const re = reparsed.root.slides[0]!.shapes.find((s) => s.kind === "connector") as
+      | ConnectorShape
+      | undefined;
+    expect(re?.stroke?.colorTheme).toBe("accent1");
   });
 
   it("round-trips headEnd / tailEnd shapes", async () => {

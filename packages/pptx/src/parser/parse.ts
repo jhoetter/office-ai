@@ -7,14 +7,15 @@ import type {
   ChartShape,
   ChartType,
   ConnectorEndShape,
+  ConnectorDashStyle,
   ConnectorEndpoint,
   ConnectorShape,
   ConnectorSide,
   ConnectorStroke,
   ConnectorType,
   ContentTypesSnap,
-  EntranceAnimation,
-  EntranceEffect,
+  ShapeAnimation,
+  AnimationTrigger,
   GroupShape,
   MediaPart,
   OpaquePart,
@@ -22,6 +23,7 @@ import type {
   OpaqueXml,
   Picture,
   NotesSlide,
+  OleSpreadsheetShape,
   PlaceholderSpec,
   PptxComment,
   PptxCommentAuthor,
@@ -51,6 +53,7 @@ import type {
   TransitionSpeed,
 } from "../model/types.js";
 import { emptyDirty } from "../model/types.js";
+import { directionForSubtype, findPresetByOoxmlIds } from "../animation/presets.js";
 import { PptxParseError } from "./errors.js";
 import {
   attrOf,
@@ -250,6 +253,21 @@ export async function parsePptx(
     break;
   }
 
+  // Embeddings: every binary under ppt/embeddings/. Currently the home
+  // of OLE-Excel `.xlsx` packages shipped by `pptx:insert-spreadsheet`.
+  // We keep them in a typed map so the serializer can re-emit fresh
+  // embeds while untouched ones ride the container's part cache.
+  const embeddings = new Map<string, import("../model/types.js").EmbeddedBinaryPart>();
+  for (const partPath of container.parts.keys()) {
+    if (!partPath.startsWith("ppt/embeddings/")) continue;
+    const bytes = container.readBytes(partPath);
+    const ext = partPath.slice(partPath.lastIndexOf(".") + 1).toLowerCase();
+    const contentType = ext === "xlsx"
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "application/vnd.openxmlformats-officedocument.oleObject";
+    embeddings.set(partPath, { partPath, bytes, contentType });
+  }
+
   // Media: every binary under ppt/media/.
   const media = new Map<string, MediaPart>();
   let nextMediaPartIndex = 1;
@@ -314,8 +332,29 @@ export async function parsePptx(
     const chartXml = container.readText(chartPath);
     const ctOverride = ct.overrides.find((o) => o.partName === `/${chartPath}`)?.contentType;
     const ctype = ctOverride ?? "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+    let embeddingPartPath: string | undefined;
+    let embeddingRelId: string | undefined;
+    const chartRelsPath = ooxml.RelationshipGraph.relsPathFor(chartPath);
+    if (container.has(chartRelsPath)) {
+      const chartRels = ooxml.RelationshipGraph.loadFor(container, chartPath);
+      const pkgRel = chartRels.relationships.find(
+        (r) =>
+          r.type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" ||
+          r.type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      );
+      if (pkgRel) {
+        embeddingPartPath = resolveTarget(chartPath, pkgRel.target);
+        embeddingRelId = pkgRel.id;
+      }
+    }
     try {
-      charts.set(chartPath, parseChartPart(chartPath, chartXml, ctype, mintNodeId));
+      charts.set(
+        chartPath,
+        parseChartPart(chartPath, chartXml, ctype, mintNodeId, {
+          ...(embeddingPartPath ? { embeddingPartPath } : {}),
+          ...(embeddingRelId ? { embeddingRelId } : {}),
+        })
+      );
     } catch {
       // Skip malformed chart parts; they remain as opaque container bytes.
     }
@@ -335,6 +374,7 @@ export async function parsePptx(
     commentAuthors,
     media,
     charts,
+    embeddings,
     presentationRootAttrs,
     presentationOpaqueTail,
     sldIdLstAttrs,
@@ -444,7 +484,7 @@ function parseSlide(
   const slideOpaqueTail: OpaqueXml[] = [];
   let transition: SlideTransition | undefined;
   let timingTailRaw: OpaqueXml | undefined;
-  const animations: EntranceAnimation[] = [];
+  const animations: ShapeAnimation[] = [];
   let pastCsld = false;
   for (const c of elementEntries(sldChildren)) {
     if (!pastCsld) {
@@ -508,6 +548,8 @@ function parseShape(
       if (table) return table;
       const chart = parseGraphicFrameChart(entry, mintNodeId, partPath, slideRelTargets);
       if (chart) return chart;
+      const ole = parseGraphicFrameOleSpreadsheet(entry, mintNodeId, partPath, slideRelTargets);
+      if (ole) return ole;
       return parseOpaqueShape(entry, mintNodeId);
     }
     default:
@@ -517,6 +559,9 @@ function parseShape(
 
 const TABLE_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006/table";
 const CHART_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const OLE_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/presentationml/2006/ole";
+const REL_TYPE_OLE_OBJECT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+const REL_TYPE_PACKAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package";
 
 /**
  * Parse `<p:graphicFrame>` ⇒ `ChartShape` if its `<a:graphicData @uri>`
@@ -591,6 +636,152 @@ function parseGraphicFrameChart(
     ...(size ? { size } : {}),
     chartRelId,
     chartPartPath,
+    nvGraphicFramePrTail: nvGFPrTail,
+    graphicDataUri: uri,
+  };
+}
+
+/**
+ * Parse `<p:graphicFrame>` ⇒ `OleSpreadsheetShape` if its
+ * `<a:graphicData @uri>` is the OLE URI and the `<p:oleObj progId>`
+ * starts with `Excel.Sheet`. Returns `null` otherwise so the caller
+ * can keep falling back to `OpaqueShape` for non-Excel OLE objects
+ * (Word / Visio / generic CFB blobs we don't claim to understand).
+ */
+function parseGraphicFrameOleSpreadsheet(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter,
+  slidePartPath: string,
+  slideRelTargets: ReadonlyMap<string, string>
+): OleSpreadsheetShape | null {
+  const children = (entry["p:graphicFrame"] as unknown[] | undefined) ?? [];
+  const nvGFPr = findElementEntry(children, "p:nvGraphicFramePr");
+  const xfrm = findElementEntry(children, "p:xfrm");
+  const graphic = findElementEntry(children, "a:graphic");
+  if (!graphic) return null;
+  const graphicData = findElementEntry(
+    (graphic["a:graphic"] as unknown[] | undefined) ?? [],
+    "a:graphicData"
+  );
+  if (!graphicData) return null;
+  const uri = attrOf(graphicData, "uri") ?? "";
+  if (uri !== OLE_GRAPHIC_DATA_URI) return null;
+  const oleObj =
+    findElementEntry((graphicData["a:graphicData"] as unknown[] | undefined) ?? [], "p:oleObj") ??
+    findElementEntry((graphicData["a:graphicData"] as unknown[] | undefined) ?? [], "mc:AlternateContent");
+  if (!oleObj) return null;
+
+  // mc:AlternateContent wraps p:oleObj inside <mc:Choice>; drill in.
+  let oleAttrs = readRootAttrs(oleObj);
+  let oleChildren = (oleObj["p:oleObj"] as unknown[] | undefined) ?? [];
+  if (ooxml.getTag(oleObj) === "mc:AlternateContent") {
+    const choice =
+      findElementEntry((oleObj["mc:AlternateContent"] as unknown[] | undefined) ?? [], "mc:Choice") ??
+      findElementEntry((oleObj["mc:AlternateContent"] as unknown[] | undefined) ?? [], "mc:Fallback");
+    if (!choice) return null;
+    const inner = findElementEntry(
+      (choice[ooxml.getTag(choice)] as unknown[] | undefined) ?? [],
+      "p:oleObj"
+    );
+    if (!inner) return null;
+    oleAttrs = readRootAttrs(inner);
+    oleChildren = (inner["p:oleObj"] as unknown[] | undefined) ?? [];
+  }
+
+  const progId = oleAttrs["progId"] ?? "";
+  if (!progId.startsWith("Excel.Sheet")) return null;
+
+  const oleRelId = oleAttrs["r:id"] ?? "";
+  if (!oleRelId) return null;
+  const oleTarget = slideRelTargets.get(oleRelId);
+  if (!oleTarget) return null;
+  const embeddingPartPath = resolveTarget(slidePartPath, oleTarget);
+
+  // Distinguish a true xlsx package (rel type "package") from a legacy
+  // .bin compound document (rel type "oleObject"). The serializer needs
+  // this to pick the right content type when round-tripping.
+  let embeddingKind: "xlsx" | "bin" = embeddingPartPath.toLowerCase().endsWith(".xlsx")
+    ? "xlsx"
+    : "bin";
+  void REL_TYPE_OLE_OBJECT;
+  void REL_TYPE_PACKAGE;
+
+  // Preview image: <p:pic>/<p:blipFill>/<a:blip r:embed>.
+  let previewMediaRelId: string | undefined;
+  let previewMediaPartPath: string | undefined;
+  const oleObjChildrenRaw: OpaqueXml[] = [];
+  for (const c of elementEntries(oleChildren)) {
+    const tag = ooxml.getTag(c);
+    if (tag === "p:pic") {
+      const blipFill = findElementEntry((c["p:pic"] as unknown[] | undefined) ?? [], "p:blipFill");
+      if (blipFill) {
+        const blip = findElementEntry(
+          (blipFill["p:blipFill"] as unknown[] | undefined) ?? [],
+          "a:blip"
+        );
+        if (blip) {
+          const embed = attrOf(blip, "r:embed");
+          if (embed) {
+            previewMediaRelId = embed;
+            const t = slideRelTargets.get(embed);
+            if (t) previewMediaPartPath = resolveTarget(slidePartPath, t);
+          }
+        }
+      }
+    }
+    oleObjChildrenRaw.push(captureOpaque(c));
+  }
+  void REL_TYPE_IMAGE;
+
+  let cNvPrId = 0;
+  let name = "";
+  const nvGFPrTail: OpaqueXml[] = [];
+  if (nvGFPr) {
+    for (const c of elementEntries((nvGFPr["p:nvGraphicFramePr"] as unknown[] | undefined) ?? [])) {
+      const tag = ooxml.getTag(c);
+      if (tag === "p:cNvPr") {
+        cNvPrId = Number(attrOf(c, "id") ?? "0");
+        name = attrOf(c, "name") ?? "";
+      }
+      nvGFPrTail.push(captureOpaque(c));
+    }
+  }
+
+  let position: { xEmu: number; yEmu: number } | undefined;
+  let size: { cxEmu: number; cyEmu: number } | undefined;
+  if (xfrm) {
+    const xfrmChildren = (xfrm["p:xfrm"] as unknown[] | undefined) ?? [];
+    const off = findElementEntry(xfrmChildren, "a:off");
+    const ext = findElementEntry(xfrmChildren, "a:ext");
+    if (off) {
+      position = {
+        xEmu: Number(attrOf(off, "x") ?? "0"),
+        yEmu: Number(attrOf(off, "y") ?? "0"),
+      };
+    }
+    if (ext) {
+      size = {
+        cxEmu: Number(attrOf(ext, "cx") ?? "0"),
+        cyEmu: Number(attrOf(ext, "cy") ?? "0"),
+      };
+    }
+  }
+
+  return {
+    kind: "ole-spreadsheet",
+    id: mintNodeId(),
+    cNvPrId,
+    name,
+    ...(position ? { position } : {}),
+    ...(size ? { size } : {}),
+    oleRelId,
+    embeddingPartPath,
+    progId,
+    embeddingKind,
+    ...(previewMediaRelId ? { previewMediaRelId } : {}),
+    ...(previewMediaPartPath ? { previewMediaPartPath } : {}),
+    oleObjAttrs: oleAttrs,
+    oleObjChildrenRaw,
     nvGraphicFramePrTail: nvGFPrTail,
     graphicDataUri: uri,
   };
@@ -721,7 +912,7 @@ function parseSp(entry: Record<string, unknown>, mintNodeId: IdMinter): TextShap
   const styleEntry = findElementEntry(children, "p:style");
 
   const { cNvPrId, name, nvTail } = readNvSpPr(nvSpPr);
-  const { position, size, spPrTail } = readSpPr(spPr);
+  const { position, size, rotation, spPrTail } = readSpPr(spPr);
   const placeholder = readPlaceholder(nvSpPr);
 
   const txBody = txBodyEntry ? parseTextBody(txBodyEntry, mintNodeId) : emptyTextBody();
@@ -733,6 +924,7 @@ function parseSp(entry: Record<string, unknown>, mintNodeId: IdMinter): TextShap
     name,
     ...(position ? { position } : {}),
     ...(size ? { size } : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
     ...(placeholder ? { placeholder } : {}),
     txBody,
     nvSpPrTail: nvTail,
@@ -832,14 +1024,27 @@ function parseCxnSp(entry: Record<string, unknown>, mintNodeId: IdMinter): Conne
         let widthEmu = 0;
         if (widthAttr && /^\d+$/.test(widthAttr)) widthEmu = Number(widthAttr);
         let color: string | undefined;
-        let dash: "solid" | "dashed" | "dotted" | "longDash" | "dashDot" | undefined;
+        let colorTheme: string | undefined;
+        let dash: ConnectorDashStyle | undefined;
         for (const ln of elementEntries((c["a:ln"] as unknown[] | undefined) ?? [])) {
           const lnTag = ooxml.getTag(ln);
           if (lnTag === "a:solidFill") {
-            const srgb = findElementEntry((ln["a:solidFill"] as unknown[] | undefined) ?? [], "a:srgbClr");
+            const fillChildren = (ln["a:solidFill"] as unknown[] | undefined) ?? [];
+            const srgb = findElementEntry(fillChildren, "a:srgbClr");
             if (srgb) {
               const v = attrOf(srgb, "val");
               if (v) color = v;
+            }
+            // Theme color refs: `<a:schemeClr val="accent1"/>`. We
+            // round-trip the token verbatim so unknown values
+            // (custom theme entries) survive too. Note: a single
+            // `<a:solidFill>` can carry only one of srgbClr or
+            // schemeClr — when both appear (malformed), srgbClr wins
+            // because PowerPoint resolves it first at paint time.
+            const sch = findElementEntry(fillChildren, "a:schemeClr");
+            if (sch) {
+              const v = attrOf(sch, "val");
+              if (v) colorTheme = v;
             }
           } else if (lnTag === "a:headEnd") {
             const t = attrOf(ln, "type");
@@ -852,8 +1057,13 @@ function parseCxnSp(entry: Record<string, unknown>, mintNodeId: IdMinter): Conne
             if (v) dash = mapPrstDash(v);
           }
         }
-        if (color !== undefined || widthEmu > 0 || dash !== undefined) {
-          stroke = { color: color ?? "000000", widthEmu, ...(dash !== undefined ? { dash } : {}) };
+        if (color !== undefined || colorTheme !== undefined || widthEmu > 0 || dash !== undefined) {
+          stroke = {
+            color: color ?? "000000",
+            widthEmu,
+            ...(colorTheme !== undefined ? { colorTheme } : {}),
+            ...(dash !== undefined ? { dash } : {}),
+          };
         }
       }
       spPrTail.push(captureOpaque(c));
@@ -893,20 +1103,29 @@ function mapPrstToConnectorType(prst: string): ConnectorType {
   return "unsupported";
 }
 
-function mapPrstDash(v: string): "solid" | "dashed" | "dotted" | "longDash" | "dashDot" {
-  // PowerPoint exposes ~10 dash presets; we collapse them to the five
-  // the editor exposes. Mapping mirrors `serialize.ts` so a round-trip
-  // doesn't drift between presets. Unknown presets fall through to
-  // solid, which is the no-op default.
-  const k = v.toLowerCase();
-  if (k === "solid") return "solid";
-  if (k === "dot" || k === "sysdot") return "dotted";
-  if (k === "lgdash" || k === "syslgdash" || k === "lgdashdot" || k === "lgdashdotdot") {
-    return "longDash";
+function mapPrstDash(v: string): ConnectorDashStyle {
+  // OOXML `ST_PresetLineDashVal` round-trip table. We preserve the
+  // canonical OOXML token wherever possible so saving back doesn't
+  // drift between presets (e.g. a `lgDashDotDot` source no longer
+  // collapses to `longDash`).
+  switch (v) {
+    case "solid":
+    case "dot":
+    case "dash":
+    case "lgDash":
+    case "dashDot":
+    case "lgDashDot":
+    case "lgDashDotDot":
+    case "sysDash":
+    case "sysDot":
+    case "sysDashDot":
+    case "sysDashDotDot":
+      return v;
+    default:
+      // Unknown preset → solid, which is the no-op default. The opaque
+      // tail capture catches anything we missed.
+      return "solid";
   }
-  if (k === "dashdot" || k === "sysdashdot" || k === "sysdashdotdot") return "dashDot";
-  // dash, sysdash, dashlongdash, etc.
-  return "dashed";
 }
 
 function mapEndShape(t: string): ConnectorEndShape {
@@ -1019,7 +1238,7 @@ function parsePic(
     }
   }
 
-  const { position, size, spPrTail } = readSpPr(spPr);
+  const { position, size, rotation, spPrTail } = readSpPr(spPr);
 
   const targetRel = mediaRelId ? slideRelTargets.get(mediaRelId) : undefined;
   const mediaPartPath = targetRel ? resolveTarget(partPath, targetRel) : "";
@@ -1031,6 +1250,7 @@ function parsePic(
     name,
     ...(position ? { position } : {}),
     ...(size ? { size } : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
     mediaRelId,
     mediaPartPath,
     nvPicPrTail,
@@ -1171,15 +1391,27 @@ function readPlaceholder(
 function readSpPr(spPr: Record<string, unknown> | null): {
   position?: { xEmu: number; yEmu: number };
   size?: { cxEmu: number; cyEmu: number };
+  rotation?: number;
   spPrTail: OpaqueXml[];
 } {
   if (!spPr) return { spPrTail: [] };
   let position: { xEmu: number; yEmu: number } | undefined;
   let size: { cxEmu: number; cyEmu: number } | undefined;
+  let rotation: number | undefined;
   const spPrTail: OpaqueXml[] = [];
   for (const c of elementEntries((spPr["p:spPr"] as unknown[] | undefined) ?? [])) {
     const tag = ooxml.getTag(c);
     if (tag === "a:xfrm") {
+      // OOXML stores rotation in 60000ths of a degree on `<a:xfrm rot>`.
+      // We carry it on the model in plain degrees so commands and the
+      // SVG renderer (which speaks degrees) don't have to convert at
+      // every call site; the serializer multiplies back on the way out.
+      const xfrmAttrs = readRootAttrs(c);
+      const rotAttr = xfrmAttrs.rot;
+      if (rotAttr !== undefined) {
+        const n = Number(rotAttr);
+        if (Number.isFinite(n) && n !== 0) rotation = n / 60000;
+      }
       const xfrmChildren = (c["a:xfrm"] as unknown[] | undefined) ?? [];
       const off = findElementEntry(xfrmChildren, "a:off");
       const ext = findElementEntry(xfrmChildren, "a:ext");
@@ -1199,6 +1431,7 @@ function readSpPr(spPr: Record<string, unknown> | null): {
   return {
     ...(position ? { position } : {}),
     ...(size ? { size } : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
     spPrTail,
   };
 }
@@ -1339,7 +1572,28 @@ function parseRunProperties(entry: Record<string, unknown>): TextRunProperties {
       }
     } else if (tag === "a:latin") {
       const v = attrOf(c, "typeface");
-      if (v) props.fontFamily = v;
+      if (v) {
+        // Theme refs in PowerPoint use a `+mj-lt` / `+mn-lt` prefix.
+        // Persist them in the dedicated theme slot so font edits
+        // don't collapse the indirection.
+        if (v.startsWith("+")) props.fontFamilyLatinTheme = v;
+        else props.fontFamily = v;
+      }
+    } else if (tag === "a:ea") {
+      const v = attrOf(c, "typeface");
+      if (v) {
+        if (v.startsWith("+")) props.fontFamilyEastAsiaTheme = v;
+        else props.fontFamilyEastAsia = v;
+      }
+    } else if (tag === "a:cs") {
+      const v = attrOf(c, "typeface");
+      if (v) {
+        if (v.startsWith("+")) props.fontFamilyComplexScriptTheme = v;
+        else props.fontFamilyComplexScript = v;
+      }
+    } else if (tag === "a:sym") {
+      const v = attrOf(c, "typeface");
+      if (v) props.fontFamilySymbol = v;
     } else if (tag === "a:highlight") {
       const hl = (c["a:highlight"] as unknown[] | undefined) ?? [];
       const srgb = findElementEntry(hl, "a:srgbClr");
@@ -1870,7 +2124,13 @@ const CHART_TYPE_TAGS: ReadonlyArray<{ tag: string; type: ChartType }> = [
  * so the serializer can rebuild the part byte-for-byte unless explicitly
  * dirtied.
  */
-function parseChartPart(partPath: string, xml: string, contentType: string, mintNodeId: IdMinter): ChartPart {
+function parseChartPart(
+  partPath: string,
+  xml: string,
+  contentType: string,
+  mintNodeId: IdMinter,
+  embedding: { embeddingPartPath?: string; embeddingRelId?: string } = {}
+): ChartPart {
   const tree = ooxml.parseXml(xml) as unknown[];
   const chartSpace = findElementEntry(tree, "c:chartSpace");
   if (!chartSpace) {
@@ -1941,6 +2201,8 @@ function parseChartPart(partPath: string, xml: string, contentType: string, mint
     chartSpaceRaw: captureOpaque(chartSpace),
     plotAreaTailRaw,
     seriesRaw,
+    ...(embedding.embeddingPartPath ? { embeddingPartPath: embedding.embeddingPartPath } : {}),
+    ...(embedding.embeddingRelId ? { embeddingRelId: embedding.embeddingRelId } : {}),
   };
 }
 
@@ -2054,14 +2316,6 @@ const TRANSITION_KIND_TAGS: ReadonlyArray<{ tag: string; kind: TransitionKind }>
   { tag: "p:cut", kind: "cut" },
 ];
 
-const ENTRANCE_PRESET_CLASS = "entr";
-const ENTRANCE_PRESET_IDS: ReadonlyMap<number, EntranceEffect> = new Map([
-  [1, "appear"],
-  [2, "fly-in"],
-  [3, "fade"],
-  [10, "wipe"],
-]);
-
 function parseSlideTransition(entry: Record<string, unknown>, mintNodeId: IdMinter): SlideTransition {
   const children = (entry["p:transition"] as unknown[] | undefined) ?? [];
   const speedAttr = attrOf(entry, "spd");
@@ -2083,41 +2337,80 @@ function parseSlideTransition(entry: Record<string, unknown>, mintNodeId: IdMint
 }
 
 /**
- * Parse `<p:timing>` and promote a flat list of typed entrance animations.
- * Anything we can't model is preserved as the raw `<p:timing>` blob — the
- * serializer re-emits the raw verbatim when no commands have touched the
- * typed list.
+ * Parse `<p:timing>` and promote a flat list of typed shape animations.
+ * Anything we can't model is preserved as the raw `<p:timing>` blob —
+ * the serializer re-emits the raw verbatim when no commands have
+ * touched the typed list. Within the typed list, every animation also
+ * keeps its own `<p:par>` carrier as `raw` so that byte-perfect
+ * round-trip survives an unrelated edit (matches the `transition.raw`
+ * pattern used elsewhere).
  *
- * The walk is intentionally tolerant: PowerPoint nests timing nodes deeply
- * (`p:tnLst` → `p:par` → multiple `p:childTnLst` → … → `p:set` / `p:anim`),
- * so we recursively look for `p:cTn @presetClass="entr"` carriers and
- * resolve their `<p:spTgt @spid>` in any descendant.
+ * The walk is intentionally tolerant: PowerPoint nests timing nodes
+ * deeply (`p:tnLst` → `p:par` → multiple `p:childTnLst` → … → `p:par`),
+ * so we recursively look for `p:par` carriers whose child `p:cTn`
+ * declares a `(presetClass, presetID)` we recognise via the registry.
  */
 function parseSlideTiming(
   entry: Record<string, unknown>,
   mintNodeId: IdMinter
-): { animations: EntranceAnimation[]; tail: OpaqueXml | undefined } {
-  const animations: EntranceAnimation[] = [];
+): { animations: ShapeAnimation[]; tail: OpaqueXml | undefined } {
+  const animations: ShapeAnimation[] = [];
   const visit = (node: unknown): void => {
     if (!node || typeof node !== "object") return;
     const e = node as Record<string, unknown>;
     const tag = ooxml.getTag(e);
-    if (tag === "p:cTn") {
-      const presetClass = attrOf(e, "presetClass");
-      const presetId = Number(attrOf(e, "presetID") ?? "0");
-      if (presetClass === ENTRANCE_PRESET_CLASS && ENTRANCE_PRESET_IDS.has(presetId)) {
-        const spid = findSpTgtSpid(e);
-        if (spid !== null) {
-          const dur = attrOf(e, "dur");
-          const effect = ENTRANCE_PRESET_IDS.get(presetId);
-          if (effect) {
+    if (tag === "p:par") {
+      // A timing par is recognised when its first child is a `p:cTn`
+      // carrying both `presetClass` and `presetID`. The mainSeq /
+      // tmRoot wrappers also use `p:par` but their `p:cTn` doesn't
+      // declare a preset, so they fall through to the recursive
+      // descent below.
+      const ctn = findChildCTn(e);
+      if (ctn) {
+        const presetClass = attrOf(ctn, "presetClass");
+        const presetIdAttr = attrOf(ctn, "presetID");
+        if (presetClass && presetIdAttr) {
+          const presetId = Number(presetIdAttr);
+          const spec = findPresetByOoxmlIds(presetClass, presetId);
+          const spid = findSpTgtSpid(ctn);
+          if (spec && spid !== null) {
+            const dur = attrOf(ctn, "dur");
+            const delay = attrOf(ctn, "delay");
+            const subtype = attrOf(ctn, "presetSubtype");
+            const trigger = nodeTypeToTrigger(attrOf(ctn, "nodeType"));
+            const direction = directionForSubtype(
+              spec,
+              subtype !== undefined ? Number(subtype) : undefined
+            );
+            const motionPath = spec.category === "motionPath" ? findMotionPath(ctn) : undefined;
+            // Built-in motion paths (`arc`, `turn`, `loops`) use distinct
+            // preset IDs, so the registry already maps them correctly.
+            // `line` (presetID=1) is the only one that doubles as the
+            // OOXML `custom` discriminant, so we upgrade `path/1` to
+            // `custom` only when the path string differs from the
+            // canonical line we emit. The original path is preserved
+            // verbatim in `motionPath` for re-emit either way.
+            const preset =
+              spec.category === "motionPath" &&
+              spec.preset === "line" &&
+              motionPath !== undefined &&
+              motionPath !== "M 0 0 L 0.25 0 E"
+                ? "custom"
+                : spec.preset;
             animations.push({
               id: mintNodeId(),
               targetCNvPrId: spid,
-              effect,
+              category: spec.category,
+              preset,
+              trigger,
+              ...(direction ? { direction } : {}),
               ...(dur && /^\d+$/.test(dur) ? { durationMs: Number(dur) } : {}),
+              ...(delay && /^\d+$/.test(delay) ? { delayMs: Number(delay) } : {}),
+              ...(motionPath ? { motionPath } : {}),
               order: animations.length,
+              raw: captureOpaque(e),
             });
+            return; // don't descend into a captured par
           }
         }
       }
@@ -2129,6 +2422,60 @@ function parseSlideTiming(
   };
   visit(entry);
   return { animations, tail: captureOpaque(entry) };
+}
+
+function nodeTypeToTrigger(nodeType: string | undefined): AnimationTrigger {
+  switch (nodeType) {
+    case "withEffect":
+      return "withPrevious";
+    case "afterEffect":
+      return "afterPrevious";
+    case "clickEffect":
+    default:
+      return "onClick";
+  }
+}
+
+/**
+ * The first direct `<p:cTn>` child of a `<p:par>` carries the preset
+ * metadata; surrounding wrappers don't. Walk only one level so
+ * non-preset envelopes (mainSeq, tmRoot) don't trick us into thinking
+ * the deck has duplicate animations.
+ */
+function findChildCTn(par: Record<string, unknown>): Record<string, unknown> | null {
+  const tag = ooxml.getTag(par);
+  const children = par[tag] as unknown[] | undefined;
+  if (!Array.isArray(children)) return null;
+  for (const c of children) {
+    if (!c || typeof c !== "object") continue;
+    const e = c as Record<string, unknown>;
+    if (ooxml.getTag(e) === "p:cTn") return e;
+  }
+  return null;
+}
+
+/**
+ * Recover the `path` attribute from a `<p:animMotion>` anywhere under
+ * the given `<p:cTn>`. Used to extract the SVG-style trajectory string
+ * for `motionPath` animations so the editor can paint the trajectory
+ * overlay and the playback engine can replay it.
+ */
+function findMotionPath(node: unknown): string | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  const e = node as Record<string, unknown>;
+  const tag = ooxml.getTag(e);
+  if (tag === "p:animMotion") {
+    const path = attrOf(e, "path");
+    if (path) return path;
+  }
+  const children = e[tag] as unknown[] | undefined;
+  if (Array.isArray(children)) {
+    for (const c of children) {
+      const found = findMotionPath(c);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }
 
 /**

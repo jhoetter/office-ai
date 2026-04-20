@@ -617,7 +617,7 @@ export function createMcpServer(): McpServer {
                 for (const a of s.animations) {
                   const dur = a.durationMs !== undefined ? ` ${a.durationMs}ms` : "";
                   lines.push(
-                    `  - \`${a.id}\` ${a.order + 1}. **${a.effect}**${dur} → cNvPr=${a.targetCNvPrId}`
+                    `  - \`${a.id}\` ${a.order + 1}. **${a.category}/${a.preset}**${dur} → cNvPr=${a.targetCNvPrId}`
                   );
                 }
               }

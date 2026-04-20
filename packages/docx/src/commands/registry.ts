@@ -4,6 +4,13 @@ import { acceptAllChangesHandler } from "./accept-all-changes.js";
 import { acceptChangeHandler } from "./accept-change.js";
 import { addCommentHandler } from "./add-comment.js";
 import { applyListFormatHandler } from "./apply-list-format.js";
+import {
+  setChartDataHandler,
+  setChartTitleHandler,
+  setChartTypeHandler,
+} from "./chart-edits.js";
+import { insertChartHandler } from "./insert-chart.js";
+import { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
 import { rejectAllChangesHandler } from "./reject-all-changes.js";
 import { deleteCommentHandler } from "./delete-comment.js";
 import { deleteRangeHandler } from "./delete-range.js";
@@ -76,6 +83,12 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   insertPageBreakHandler as CommandHandler<unknown, DocxSnapshot>,
   insertTextTrackedHandler as CommandHandler<unknown, DocxSnapshot>,
   deleteRangeTrackedHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertChartHandler as CommandHandler<unknown, DocxSnapshot>,
+  setChartDataHandler as CommandHandler<unknown, DocxSnapshot>,
+  setChartTitleHandler as CommandHandler<unknown, DocxSnapshot>,
+  setChartTypeHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertSpreadsheetHandler as CommandHandler<unknown, DocxSnapshot>,
+  updateSpreadsheetHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

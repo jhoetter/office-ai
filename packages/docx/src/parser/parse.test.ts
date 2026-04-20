@@ -123,12 +123,12 @@ describe("parseDocx", () => {
     expect(end.wrapperId).toBe(begin.wrapperId);
   });
 
-  it("unwraps a <w:fldSimple> wrapper into typed inline children", async () => {
+  it("promotes <w:fldSimple w:instr=\"PAGE\"> into a typed PageNumberFieldLeaf", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
   <w:p>
     <w:r><w:t xml:space="preserve">Page </w:t></w:r>
-    <w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>
+    <w:fldSimple w:instr=" PAGE \\* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple>
   </w:p>
 </w:body></w:document>`;
     const buf = await makeSyntheticDocx({ documentXml: xml });
@@ -136,15 +136,51 @@ describe("parseDocx", () => {
     const p = snap.root.body[0];
     if (p.kind !== "paragraph") throw new Error();
     expect(p.children).toHaveLength(2);
-    const op = p.children[1];
+    const fieldRun = p.children[1];
+    if (fieldRun.kind !== "run") throw new Error();
+    expect(fieldRun.children).toHaveLength(1);
+    const leaf = fieldRun.children[0];
+    if (leaf.kind !== "page-number-field") throw new Error();
+    expect(leaf.field).toBe("PAGE");
+    expect(leaf.instr).toBe(" PAGE \\* MERGEFORMAT ");
+    expect(leaf.cachedText).toBe("1");
+  });
+
+  it("leaves non-PAGE/NUMPAGES <w:fldSimple> wrappers as opaque-inline", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+  <w:p>
+    <w:fldSimple w:instr="TOC \\o &quot;1-3&quot; \\h"><w:r><w:t>TOC contents</w:t></w:r></w:fldSimple>
+  </w:p>
+</w:body></w:document>`;
+    const buf = await makeSyntheticDocx({ documentXml: xml });
+    const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
+    const p = snap.root.body[0];
+    if (p.kind !== "paragraph") throw new Error();
+    const op = p.children[0];
     expect(op.kind).toBe("opaque-inline");
     if (op.kind !== "opaque-inline") throw new Error();
     expect(op.raw.tag).toBe("w:fldSimple");
-    expect(op.children).toBeDefined();
-    expect(op.children).toHaveLength(1);
-    const inner = op.children![0];
-    if (inner.kind !== "run") throw new Error();
-    expect(inner.children[0]).toMatchObject({ kind: "text", text: "1" });
+  });
+
+  it("promotes <w:r><w:commentReference w:id=\"N\"/></w:r> into a typed CommentReference", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+  <w:p>
+    <w:commentRangeStart w:id="3"/>
+    <w:r><w:t xml:space="preserve">Hello</w:t></w:r>
+    <w:commentRangeEnd w:id="3"/>
+    <w:r><w:commentReference w:id="3"/></w:r>
+  </w:p>
+</w:body></w:document>`;
+    const buf = await makeSyntheticDocx({ documentXml: xml });
+    const snap = await parseDocx(buf, { idMinter: deterministicIdMinter() });
+    const p = snap.root.body[0];
+    if (p.kind !== "paragraph") throw new Error();
+    const last = p.children[p.children.length - 1];
+    expect(last.kind).toBe("comment-reference");
+    if (last.kind !== "comment-reference") throw new Error();
+    expect(last.commentId).toBe("3");
   });
 
   it("preserves SDT carrier raw subtree on the wrapper-marker for byte-identical re-emission", async () => {

@@ -358,6 +358,22 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       out.push(docxSchema.nodes.image.create(attrs, null, marks));
       return;
     }
+    case "embedded-spreadsheet": {
+      // Render OLE-embedded Excel as a placeholder image chip carrying
+      // its part path so the editor can wire the double-click "Edit
+      // Data" flow back to the embedded workbook bytes. The chip is a
+      // standalone PM image node so cursor placement / deletion behave
+      // like other drawings.
+      const attrs: Record<string, unknown> = {
+        runId: child.id,
+        drawingJson: encode({ embeddedSpreadsheet: child.embeddingPartPath }),
+        width: 320,
+        height: 220,
+        alt: `Embedded spreadsheet (${child.progId})`,
+      };
+      out.push(docxSchema.nodes.image.create(attrs, null, marks));
+      return;
+    }
     case "opaque": {
       const pmNode = opaqueInlineToPM(child.id, child.raw, marks);
       if (pmNode) out.push(pmNode);

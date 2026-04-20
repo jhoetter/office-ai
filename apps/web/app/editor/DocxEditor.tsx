@@ -21,6 +21,7 @@ import {
   type ToastItem,
 } from "@/lib/shell";
 import { docxActions } from "@officeai/docx";
+import { useTranslator } from "@/lib/i18n";
 import {
   PRODUCT_FILE_TYPES,
   downloadBlob,
@@ -95,6 +96,13 @@ import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
 import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
 import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
+import { applyXlsxEmbed } from "@/lib/embed/xlsxEmbedShared";
+import type { XlsxEmbedMode } from "@/lib/embed/xlsxEmbedShared";
+import {
+  XlsxRangePickerDialog,
+  type XlsxRangePickerResult,
+} from "@/lib/embed/XlsxRangePickerDialog";
+import { installAltKeyTracker, isAltKeyPressed } from "@/lib/embed/altKeyTracker";
 import {
   PresenceSlot,
   readExplicitRoomFromUrl,
@@ -236,6 +244,7 @@ export function DocxEditor({
   initialSource,
   initialBlank,
 }: DocxEditorProps = {}): React.ReactNode {
+  const { t } = useTranslator();
   // The editor host DOM node is exposed via a callback ref so that
   // descendants (e.g. TrackedChangesUI's hover delegation) can read it
   // from React state during render — accessing `hostRef.current`
@@ -277,6 +286,7 @@ export function DocxEditor({
   } | null>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
+  const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
   // Bumped to force re-derivation of toolbar state (active marks /
   // active style) without keeping a redundant copy of the snapshot.
   const [uiTick, setUiTick] = useState(0);
@@ -984,6 +994,33 @@ export function DocxEditor({
     imageInputRef.current?.click();
   }, []);
 
+  const handleXlsxPickerSubmit = useCallback(
+    async (result: XlsxRangePickerResult) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      setXlsxPickerOpen(null);
+      if (!agent) return;
+      const idx = mount ? currentParagraphIndex(mount.view.state) : 0;
+      try {
+        await applyXlsxEmbed({
+          target: { kind: "docx", agent, paragraphIndex: idx },
+          snapshot: result.snapshot,
+          mode: result.mode,
+        });
+        const label =
+          result.mode === "live"
+            ? "embedded spreadsheet"
+            : result.mode === "chart"
+              ? "chart"
+              : "table";
+        pushToast("info", `Inserted ${label} from xlsx.`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
   const insertTable = useCallback(
     async (rows: number, cols: number) => {
       const agent = agentRef.current;
@@ -1195,12 +1232,20 @@ export function DocxEditor({
           e.preventDefault();
           e.stopPropagation();
           const paragraphIndex = mount ? currentParagraphIndex(mount.view.state) : 0;
+          // Alt held → embed as a live OLE Excel object instead of a
+          // materialised table. Mirrors PowerPoint's "Paste Special →
+          // Microsoft Excel Worksheet Object" shortcut so power users
+          // can opt-in without round-tripping through a dialog. Alt
+          // state is tracked separately because `ClipboardEvent`
+          // doesn't expose modifier keys directly.
+          const mode = isAltKeyPressed() ? "live" : "materialized";
           void (async () => {
             try {
               await applyXlsxRangeToDocx({
                 agent,
                 snapshot: env.payload.kind === "xlsx-range" ? env.payload.snapshot : (() => { throw new Error("unreachable"); })(),
                 paragraphIndex: Math.max(0, paragraphIndex),
+                mode,
               });
             } catch (err) {
               pushToast("error", err instanceof Error ? err.message : String(err));
@@ -1218,10 +1263,12 @@ export function DocxEditor({
     hostEl.addEventListener("dragover", onDragOver);
     hostEl.addEventListener("drop", onDrop);
     hostEl.addEventListener("paste", onPaste);
+    const uninstallAlt = installAltKeyTracker();
     return () => {
       hostEl.removeEventListener("dragover", onDragOver);
       hostEl.removeEventListener("drop", onDrop);
       hostEl.removeEventListener("paste", onPaste);
+      uninstallAlt();
     };
   }, [hostEl, handleImageFile, pushToast]);
 
@@ -1535,21 +1582,41 @@ export function DocxEditor({
     const runners: PaletteRunners = {
       "docx.add-comment": { run: () => openCommentComposer() },
       "docx.page-setup": { run: () => setPageSetupOpen(true) },
+      "docx.insert-image": { run: insertImageFromFile },
       "docx.insert-table-3x3": { run: () => void insertTable(3, 3) },
       "docx.insert-table-2x2": { run: () => void insertTable(2, 2) },
-      "docx.insert-hyperlink": { run: () => openHyperlinkPopover() },
-      "docx.toggle-marks": { run: () => handleToggleFormattingMarks() },
+      "docx.insert-table-from-xlsx": { run: () => setXlsxPickerOpen("materialized") },
+      "docx.insert-spreadsheet-from-xlsx": { run: () => setXlsxPickerOpen("live") },
+      "docx.insert-chart-from-xlsx": { run: () => setXlsxPickerOpen("chart") },
+      "docx.insert-hyperlink": { run: openHyperlinkPopover },
+      "docx.toggle-marks": { run: handleToggleFormattingMarks },
+      "docx.bullet-list": { run: () => void toggleList("bullet") },
+      "docx.ordered-list": { run: () => void toggleList("ordered") },
+      "docx.align-left": { run: () => void setAlignment("left") },
+      "docx.align-center": { run: () => void setAlignment("center") },
+      "docx.align-right": { run: () => void setAlignment("right") },
+      "docx.align-justify": { run: () => void setAlignment("justify") },
+      "docx.indent-increase": { run: () => void adjustIndent(360) },
+      "docx.indent-decrease": { run: () => void adjustIndent(-360) },
+      "docx.section-break-next-page": { run: () => void insertSectionBreak("nextPage") },
+      "docx.section-break-continuous": { run: () => void insertSectionBreak("continuous") },
       "docx.set-mode-edit": { run: () => setEditMode("edit"), enabled: editMode !== "edit" },
       "docx.set-mode-suggest": { run: () => setEditMode("suggest"), enabled: editMode !== "suggest" },
       "docx.set-mode-view": { run: () => setEditMode("view"), enabled: editMode !== "view" },
     };
-    return buildPaletteFromCatalogue(docxActions, runners);
+    return buildPaletteFromCatalogue(docxActions, runners, t);
   }, [
+    t,
+    adjustIndent,
     editMode,
     handleToggleFormattingMarks,
+    insertImageFromFile,
+    insertSectionBreak,
     insertTable,
     openCommentComposer,
     openHyperlinkPopover,
+    setAlignment,
+    toggleList,
   ]);
 
   const selectionText = useMemo<string>(() => {
@@ -1701,6 +1768,7 @@ export function DocxEditor({
             styleOptions={styleOptions}
             onInsertImage={insertImageFromFile}
             onInsertTable={(r, c) => void insertTable(r, c)}
+            onInsertFromXlsx={() => setXlsxPickerOpen("materialized")}
             onSetParagraphStyle={(s) => void setParagraphStyle(s)}
             onSetAlignment={(a) => void setAlignment(a)}
             onAdjustIndent={(d) => void adjustIndent(d)}
@@ -1884,6 +1952,12 @@ export function DocxEditor({
         initial={altTextRequest?.initial ?? ""}
         onClose={() => setAltTextRequest(null)}
         onSubmit={(id, alt) => void submitAltText(id, alt)}
+      />
+      <XlsxRangePickerDialog
+        open={xlsxPickerOpen !== null}
+        defaultMode={xlsxPickerOpen ?? "materialized"}
+        onCancel={() => setXlsxPickerOpen(null)}
+        onSubmit={(result) => void handleXlsxPickerSubmit(result)}
       />
       <GotoDialog
         open={gotoOpen}

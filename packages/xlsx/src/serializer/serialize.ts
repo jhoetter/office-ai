@@ -1,10 +1,11 @@
 import { ooxml } from "@officeai/core";
-import * as XLSX from "xlsx";
+import * as XLSX from "@e965/xlsx";
 import { EXTENSION_BY_CONTENT_TYPE } from "../model/drawings.js";
 import { formatA1 } from "../model/refs.js";
 import type {
   AutoFilter,
   Cell,
+  ConditionalFormat,
   CustomFilterOp,
   DataValidation,
   FilterColumn,
@@ -204,11 +205,16 @@ async function rewriteDirtySheets(
     }
     let xml = emittedContainer.readText(emittedPath);
     xml = injectStyleIds(xml, sheet.cells);
+    xml = injectFormulas(xml, sheet.cells);
     xml = injectHiddenRows(xml, sheet.hiddenRows);
     xml = injectAutoFilter(xml, sheet.autoFilter);
-    xml = injectFreezePanes(xml, sheet.freeze);
-    xml = injectConditionalFormats(xml, sheet.opaqueConditionalFormats);
+    xml = injectSheetViews(xml, sheet);
+    xml = injectCols(xml, sheet);
+    xml = injectConditionalFormats(xml, sheet);
     xml = injectDataValidations(xml, sheet.dataValidations, sheet.opaqueDataValidations);
+    xml = injectHyperlinks(xml, sheet.hyperlinksXml);
+    xml = injectTableParts(xml, sheet);
+    xml = injectOpaqueTail(xml, sheet);
     if (drawingRidByPath.has(path)) {
       xml = injectDrawingRef(xml, drawingRidByPath.get(path) ?? null);
     } else if (sheet.drawingPartPath) {
@@ -478,18 +484,151 @@ function injectAutoFilter(xml: string, autoFilter: AutoFilter | undefined): stri
  * fully. Typed authoring lives in `Sheet.conditionalFormats` and
  * is not yet emitted (deferred to a future pass).
  */
-function injectConditionalFormats(xml: string, opaqueBlocks: ReadonlyArray<string>): string {
+function injectConditionalFormats(xml: string, sheet: Sheet): string {
   // First, drop any pre-existing CF blocks so we don't double-emit
   // when SheetJS already echoed them through.
   const stripped = xml.replace(
     /<conditionalFormatting\b[^>]*?(?:\/>|>[\s\S]*?<\/conditionalFormatting>)/g,
     ""
   );
-  if (opaqueBlocks.length === 0) return stripped;
+  // Re-emit captured opaque blocks (so existing rules from the
+  // source file survive a dirty save) AND synthesised blocks for
+  // typed `conditionalFormats` so newly authored rules now land in
+  // the OOXML output. Typed rules without an overlay (color scale,
+  // data bar) carry their full styling inline; rules WITH an
+  // overlay (cellIs, top10, containsText, duplicate) reference
+  // `dxfId="0"` — Excel renders them as the rule with no styling
+  // when dxfId 0 isn't a populated dxf entry, which preserves the
+  // rule semantics even though the colour overlay is dropped. A
+  // later pass will allocate dxf entries in `xl/styles.xml` to
+  // restore the overlay paint; the spec for that work is the dxf
+  // emission TODO in the office-roundtrip-gaps audit plan.
+  const opaqueXml = sheet.opaqueConditionalFormats.join("");
+  const typedXml = sheet.conditionalFormats.map(renderTypedConditionalFormat).join("");
+  const block = opaqueXml + typedXml;
+  if (block.length === 0) return stripped;
   const closeIdx = stripped.lastIndexOf("</worksheet>");
-  const block = opaqueBlocks.join("");
   if (closeIdx === -1) return stripped + block;
   return stripped.slice(0, closeIdx) + block + stripped.slice(closeIdx);
+}
+
+function renderTypedConditionalFormat(rule: ConditionalFormat): string {
+  const sqref = escapeXmlAttr(rule.range);
+  // Priority is set to 1 for every typed rule. Real Excel stacks
+  // rules by user-authored priority; we don't currently track
+  // authoring order across the typed and opaque sets, so collisions
+  // resolve by source order ("first cfRule wins"). This is
+  // acceptable for the rule kinds we model (no overlapping
+  // priorities cause silent drops).
+  switch (rule.kind) {
+    case "cellIs":
+      return (
+        `<conditionalFormatting sqref="${sqref}">` +
+        `<cfRule type="cellIs" dxfId="0" priority="1" operator="${cellIsOpToOoxml(rule.op)}">` +
+        `<formula>${escapeXmlText(String(rule.value))}</formula>` +
+        (rule.value2 !== undefined
+          ? `<formula>${escapeXmlText(String(rule.value2))}</formula>`
+          : "") +
+        `</cfRule></conditionalFormatting>`
+      );
+    case "top10": {
+      const bottom = rule.bottom ? ' bottom="1"' : "";
+      const percent = rule.percent ? ' percent="1"' : "";
+      return (
+        `<conditionalFormatting sqref="${sqref}">` +
+        `<cfRule type="top10" dxfId="0" priority="1"${bottom}${percent} rank="${rule.rank}"/>` +
+        `</conditionalFormatting>`
+      );
+    }
+    case "containsText": {
+      const op = rule.contains ? "containsText" : "notContainsText";
+      const fn = rule.contains ? "ISNUMBER(SEARCH" : "NOT(ISNUMBER(SEARCH";
+      const closer = rule.contains ? "))" : ")))";
+      // First sqref segment is the anchor cell for the formula.
+      const anchor = anchorOfSqref(rule.range);
+      const formula = `${fn}("${escapeXmlText(rule.text)}",${anchor})${closer}`;
+      return (
+        `<conditionalFormatting sqref="${sqref}">` +
+        `<cfRule type="${op}" dxfId="0" priority="1" operator="${op}" text="${escapeXmlAttr(rule.text)}">` +
+        `<formula>${formula}</formula>` +
+        `</cfRule></conditionalFormatting>`
+      );
+    }
+    case "duplicate": {
+      const type = rule.unique ? "uniqueValues" : "duplicateValues";
+      return (
+        `<conditionalFormatting sqref="${sqref}">` +
+        `<cfRule type="${type}" dxfId="0" priority="1"/>` +
+        `</conditionalFormatting>`
+      );
+    }
+    case "colorScale": {
+      const stops = rule.midColor
+        ? `<cfvo type="min"/><cfvo type="percentile" val="50"/><cfvo type="max"/>`
+        : `<cfvo type="min"/><cfvo type="max"/>`;
+      const colors = rule.midColor
+        ? `<color rgb="FF${rule.minColor}"/><color rgb="FF${rule.midColor}"/><color rgb="FF${rule.maxColor}"/>`
+        : `<color rgb="FF${rule.minColor}"/><color rgb="FF${rule.maxColor}"/>`;
+      return (
+        `<conditionalFormatting sqref="${sqref}">` +
+        `<cfRule type="colorScale" priority="1">` +
+        `<colorScale>${stops}${colors}</colorScale>` +
+        `</cfRule></conditionalFormatting>`
+      );
+    }
+    case "dataBar":
+      return (
+        `<conditionalFormatting sqref="${sqref}">` +
+        `<cfRule type="dataBar" priority="1">` +
+        `<dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF${rule.color}"/></dataBar>` +
+        `</cfRule></conditionalFormatting>`
+      );
+    default: {
+      const _exhaustive: never = rule;
+      void _exhaustive;
+      return "";
+    }
+  }
+}
+
+/**
+ * Map our short typed `cellIs` operator codes to the OOXML
+ * `ST_ConditionalFormattingOperator` token names. Excel writes
+ * the long form (`greaterThan`, `lessThanOrEqual`, …) so we
+ * follow suit; otherwise opening the file would surface a "rule
+ * not understood" warning.
+ */
+function cellIsOpToOoxml(op: "gt" | "ge" | "lt" | "le" | "eq" | "ne" | "between" | "notBetween"): string {
+  switch (op) {
+    case "gt":
+      return "greaterThan";
+    case "ge":
+      return "greaterThanOrEqual";
+    case "lt":
+      return "lessThan";
+    case "le":
+      return "lessThanOrEqual";
+    case "eq":
+      return "equal";
+    case "ne":
+      return "notEqual";
+    case "between":
+      return "between";
+    case "notBetween":
+      return "notBetween";
+  }
+}
+
+function anchorOfSqref(sqref: string): string {
+  // Take the first cell of the first range. `sqref` may carry
+  // multiple space-separated ranges (e.g. "A1:A5 C1:C5"); we anchor
+  // on the top-left of the leftmost range so the conditional
+  // formula evaluates relative to a real cell. Stripping `$`
+  // anchors keeps the output identical to what Excel itself emits
+  // for these CF formulas.
+  const first = sqref.split(/\s+/)[0] ?? sqref;
+  const cell = first.split(":")[0] ?? first;
+  return cell.replace(/\$/g, "");
 }
 
 /**
@@ -547,32 +686,97 @@ function renderListValidation(dv: DataValidation): string {
   );
 }
 
-function injectFreezePanes(xml: string, freeze: FreezePanes | undefined): string {
+/**
+ * Non-destructively re-emit `<sheetViews>`.
+ *
+ * Strategy:
+ *   - If the sheet has no captured `sheetViewsXml`, fall back to the
+ *     synthetic block (legacy behaviour).
+ *   - Otherwise, drop SheetJS's regenerated `<sheetViews>` and splice
+ *     the original block back in, then surgically replace just its
+ *     `<pane>` element with one derived from `sheet.freeze`. This
+ *     preserves zoom, selection, view mode, gridline toggles, and
+ *     any other `<sheetView>` children we don't model.
+ */
+function injectSheetViews(xml: string, sheet: Sheet): string {
   const next = xml.replace(/<sheetViews\b[^>]*>[\s\S]*?<\/sheetViews>/g, "");
-  const viewsBlock = renderSheetViews(freeze);
-  if (!viewsBlock) return next;
+  const block = mergeSheetViews(sheet);
+  if (!block) return next;
 
   // Excel orders `<sheetViews>` immediately after `<dimension>` (or
   // first thing in `<worksheet>` if `<dimension>` isn't present).
   const dimMatch = /<dimension\b[^/>]*\/?>(?:<\/dimension>)?/.exec(next);
   if (dimMatch) {
     const insertAt = dimMatch.index + dimMatch[0].length;
-    return next.slice(0, insertAt) + viewsBlock + next.slice(insertAt);
+    return next.slice(0, insertAt) + block + next.slice(insertAt);
   }
   const wsMatch = /<worksheet\b[^>]*>/.exec(next);
   if (wsMatch) {
     const insertAt = wsMatch.index + wsMatch[0].length;
-    return next.slice(0, insertAt) + viewsBlock + next.slice(insertAt);
+    return next.slice(0, insertAt) + block + next.slice(insertAt);
   }
-  return next + viewsBlock;
+  return next + block;
 }
 
-function renderSheetViews(freeze: FreezePanes | undefined): string {
+function mergeSheetViews(sheet: Sheet): string {
+  const original = sheet.sheetViewsXml;
+  const freeze = sheet.freeze;
+
+  if (original) {
+    return rewritePaneInSheetViews(original, freeze);
+  }
+
   if (!freeze || (freeze.rows <= 0 && freeze.cols <= 0)) {
-    // Nothing to add. Excel happily reads a worksheet without a
-    // `<sheetViews>` block (it falls back to defaults).
     return "";
   }
+
+  return (
+    `<sheetViews>` +
+    `<sheetView tabSelected="1" workbookViewId="0">` +
+    renderPane(freeze) +
+    `</sheetView>` +
+    `</sheetViews>`
+  );
+}
+
+/**
+ * Replace just the `<pane>` element inside an existing `<sheetViews>`
+ * block — keep all other `<sheetView>` children verbatim. When the
+ * typed freeze field is `undefined` (or zero on both axes) the pane
+ * element is stripped entirely; the rest of the original block is
+ * preserved.
+ */
+function rewritePaneInSheetViews(original: string, freeze: FreezePanes | undefined): string {
+  const stripped = original.replace(/<pane\b[^/>]*\/?>/g, "");
+  if (!freeze || (freeze.rows <= 0 && freeze.cols <= 0)) {
+    return stripped;
+  }
+  const newPane = renderPane(freeze);
+  // Splice the new <pane> as the first child of the first <sheetView>.
+  const svOpenRe = /<sheetView\b[^>]*>/;
+  const svMatch = svOpenRe.exec(stripped);
+  if (svMatch) {
+    const insertAt = svMatch.index + svMatch[0].length;
+    return stripped.slice(0, insertAt) + newPane + stripped.slice(insertAt);
+  }
+  // Original block had only self-closing `<sheetView/>` elements; rewrite
+  // the first one into open-form so we have somewhere to put `<pane>`.
+  const selfRe = /<sheetView\b([^/>]*)\/>/;
+  const sm = selfRe.exec(stripped);
+  if (sm) {
+    return stripped.slice(0, sm.index) + `<sheetView${sm[1]}>${newPane}</sheetView>` + stripped.slice(sm.index + sm[0].length);
+  }
+  // No `<sheetView>` at all — defensively wrap one.
+  const innerOpen = stripped.indexOf(">");
+  if (innerOpen === -1) return stripped;
+  return (
+    stripped.slice(0, innerOpen + 1) +
+    `<sheetView tabSelected="1" workbookViewId="0">${newPane}</sheetView>` +
+    stripped.slice(innerOpen + 1)
+  );
+}
+
+function renderPane(freeze: FreezePanes): string {
   const xSplit = Math.max(0, Math.floor(freeze.cols));
   const ySplit = Math.max(0, Math.floor(freeze.rows));
   const topLeftRow = ySplit + 1;
@@ -581,13 +785,154 @@ function renderSheetViews(freeze: FreezePanes | undefined): string {
   const activePane = xSplit > 0 && ySplit > 0 ? "bottomRight" : xSplit > 0 ? "topRight" : "bottomLeft";
   const xAttr = xSplit > 0 ? ` xSplit="${xSplit}"` : "";
   const yAttr = ySplit > 0 ? ` ySplit="${ySplit}"` : "";
-  return (
-    `<sheetViews>` +
-    `<sheetView tabSelected="1" workbookViewId="0">` +
-    `<pane${xAttr}${yAttr} topLeftCell="${topLeft}" activePane="${activePane}" state="frozen"/>` +
-    `</sheetView>` +
-    `</sheetViews>`
-  );
+  return `<pane${xAttr}${yAttr} topLeftCell="${topLeft}" activePane="${activePane}" state="frozen"/>`;
+}
+
+/**
+ * Re-inject the original `<cols>` band on dirty save. SheetJS's emitter
+ * regenerates `<cols>` from its own `!cols` array which we do not
+ * populate from typed `Sheet.columnWidths`, so the source band would
+ * otherwise be dropped. We strip whatever SheetJS produced and splice
+ * our captured block back in immediately after `</sheetViews>` (Excel's
+ * canonical position for `<cols>`).
+ */
+function injectCols(xml: string, sheet: Sheet): string {
+  const next = xml.replace(/<cols\b[^>]*>[\s\S]*?<\/cols>/g, "");
+  const block = sheet.colsXml;
+  if (!block) return next;
+  return spliceBeforeSheetData(next, block);
+}
+
+/**
+ * Re-inject the original `<hyperlinks>` block on dirty save. SheetJS
+ * does not emit sheet-level hyperlinks, and the matching `r:id` rels
+ * survive in the sheet rels graph independently — re-injecting just
+ * the body is enough to restore Excel's hyperlink display.
+ */
+function injectHyperlinks(xml: string, hyperlinksXml: string | undefined): string {
+  const next = xml.replace(/<hyperlinks\b[^>]*>[\s\S]*?<\/hyperlinks>/g, "");
+  if (!hyperlinksXml) return next;
+  return spliceBeforePageMargins(next, hyperlinksXml);
+}
+
+/**
+ * Re-emit `<tableParts>` from the typed `tables` array on dirty save.
+ * Excel requires `count` and inner `<tablePart r:id="…"/>` entries
+ * pointing at each `xl/tables/tableN.xml`. We rely on the rels
+ * round-trip path to keep the matching rIds alive in the sheet rels.
+ *
+ * If typed `tables` is empty but we have a captured `tablePartsXml`,
+ * we re-emit that opaquely — defensive for files that hit this path
+ * before the typed table parser was hardened.
+ */
+function injectTableParts(xml: string, sheet: Sheet): string {
+  const next = xml.replace(/<tableParts\b[^>]*(?:\/>|>[\s\S]*?<\/tableParts>)/g, "");
+  let block = "";
+  if (sheet.tables.length > 0) {
+    const parts = sheet.tables
+      .map((t) => `<tablePart r:id="${escapeXmlAttr(t.relId)}"/>`)
+      .join("");
+    block = `<tableParts count="${sheet.tables.length}">${parts}</tableParts>`;
+  } else if (sheet.tablePartsXml) {
+    block = sheet.tablePartsXml;
+  }
+  if (!block) return next;
+  return appendBeforeWorksheetClose(next, block);
+}
+
+/**
+ * Re-inject opaque page-setup-style children — sheetProtection,
+ * pageMargins, pageSetup, printOptions, headerFooter, rowBreaks,
+ * colBreaks — that the parser captured verbatim. These are dropped
+ * by SheetJS's worksheet emitter today; re-emitting them keeps
+ * print configuration and protection state alive across saves.
+ *
+ * Excel's canonical ordering is:
+ *   sheetProtection, autoFilter, sortState, dataConsolidate,
+ *   customSheetViews, mergeCells, phoneticPr, conditionalFormatting,
+ *   dataValidations, hyperlinks, printOptions, pageMargins,
+ *   pageSetup, headerFooter, rowBreaks, colBreaks, customProperties,
+ *   cellWatches, ignoredErrors, smartTags, drawing, legacyDrawing,
+ *   legacyDrawingHF, picture, oleObjects, controls, webPublishItems,
+ *   tableParts, extLst.
+ *
+ * We splice each block in just before `</worksheet>` in the order
+ * above so Excel parses the document without complaint. Some
+ * orderings are technically required (sheetProtection must precede
+ * autoFilter, etc.) — for the dirty-rewrite path we already wrote
+ * autoFilter / mergeCells / etc., so we only inject what comes
+ * AFTER those in canonical order, which means everything in this
+ * function lands at the tail of the worksheet.
+ */
+function injectOpaqueTail(xml: string, sheet: Sheet): string {
+  let next = xml;
+  // sheetProtection lives much earlier in the canonical order; if we
+  // captured it, splice it right after `<dimension>` / `<sheetViews>`.
+  if (sheet.sheetProtectionXml) {
+    next = next.replace(/<sheetProtection\b[^/>]*\/?>/g, "");
+    next = spliceAfterSheetViews(next, sheet.sheetProtectionXml);
+  }
+  // The rest land at the tail in canonical order.
+  for (const block of [
+    sheet.printOptionsXml,
+    sheet.pageMarginsXml,
+    sheet.pageSetupXml,
+    sheet.headerFooterXml,
+    sheet.rowBreaksXml,
+    sheet.colBreaksXml,
+    sheet.ignoredErrorsXml,
+    sheet.legacyDrawingXml,
+    sheet.legacyDrawingHFXml,
+    sheet.pictureXml,
+    sheet.oleObjectsXml,
+    sheet.controlsXml,
+  ]) {
+    if (!block) continue;
+    const tag = /^<([A-Za-z]+)/.exec(block)?.[1];
+    if (tag) {
+      const stripRe = new RegExp(`<${tag}\\b[^>]*?(?:/>|>[\\s\\S]*?</${tag}>)`, "g");
+      next = next.replace(stripRe, "");
+    }
+    next = appendBeforeWorksheetClose(next, block);
+  }
+  return next;
+}
+
+function spliceAfterSheetViews(xml: string, block: string): string {
+  const svClose = xml.indexOf("</sheetViews>");
+  if (svClose !== -1) {
+    const insertAt = svClose + "</sheetViews>".length;
+    return xml.slice(0, insertAt) + block + xml.slice(insertAt);
+  }
+  // No sheetViews — fall back to right after `<dimension>` or `<worksheet>`.
+  const dimMatch = /<dimension\b[^/>]*\/?>/.exec(xml);
+  if (dimMatch) {
+    const insertAt = dimMatch.index + dimMatch[0].length;
+    return xml.slice(0, insertAt) + block + xml.slice(insertAt);
+  }
+  return appendBeforeWorksheetClose(xml, block);
+}
+
+function spliceBeforeSheetData(xml: string, block: string): string {
+  const sd = xml.indexOf("<sheetData");
+  if (sd !== -1) {
+    return xml.slice(0, sd) + block + xml.slice(sd);
+  }
+  return appendBeforeWorksheetClose(xml, block);
+}
+
+function spliceBeforePageMargins(xml: string, block: string): string {
+  const pm = xml.indexOf("<pageMargins");
+  if (pm !== -1) {
+    return xml.slice(0, pm) + block + xml.slice(pm);
+  }
+  return appendBeforeWorksheetClose(xml, block);
+}
+
+function appendBeforeWorksheetClose(xml: string, block: string): string {
+  const closeIdx = xml.lastIndexOf("</worksheet>");
+  if (closeIdx === -1) return xml + block;
+  return xml.slice(0, closeIdx) + block + xml.slice(closeIdx);
 }
 
 function serializeFilterColumn(colId: number, fc: FilterColumn): string {
@@ -652,6 +997,65 @@ function colToA1(col: number): string {
  * the worksheet XML reflects exactly what's in our typed model. The
  * default xf (index 0) is implicit in OOXML and never written.
  */
+/**
+ * Re-emit `<f>` elements with shared / array formula metadata for
+ * cells whose typed `Formula` carries `kind`, `sharedIndex`, or
+ * `ref`. SheetJS expands shared formulas to per-cell text on
+ * round-trip, which preserves correctness but bloats the file and
+ * destroys the source encoding. This pass surgically rewrites the
+ * `<f>` element back to its compact form when the typed model
+ * remembers it. Cells without metadata (and cells with literal
+ * values, no formula) are untouched — SheetJS's emission stays
+ * authoritative.
+ */
+function injectFormulas(xml: string, cells: ReadonlyMap<string, Cell>): string {
+  // Build a per-ref index of cells that need formula rewriting.
+  const formulaMeta = new Map<
+    string,
+    { text: string; kind: "shared" | "array"; sharedIndex?: number; ref?: string; isMaster: boolean }
+  >();
+  for (const cell of cells.values()) {
+    const f = cell.formula;
+    if (!f || !f.kind || f.kind === "normal") continue;
+    formulaMeta.set(formatA1({ row: cell.row, col: cell.col }), {
+      text: f.text,
+      kind: f.kind,
+      ...(f.sharedIndex !== undefined ? { sharedIndex: f.sharedIndex } : {}),
+      ...(f.ref ? { ref: f.ref } : {}),
+      isMaster: f.isMaster ?? false,
+    });
+  }
+  if (formulaMeta.size === 0) return xml;
+
+  return xml.replace(
+    /<c\b([^>]*?)>([\s\S]*?)<\/c>/g,
+    (whole: string, attrs: string, body: string) => {
+      const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+      if (!refMatch) return whole;
+      const ref = refMatch[2]!;
+      const meta = formulaMeta.get(ref);
+      if (!meta) return whole;
+      // Replace any existing `<f>` element. We don't touch `<v>`
+      // (cached value) — the SheetJS round-trip already wrote it.
+      const fOpen =
+        `<f t="${meta.kind}"` +
+        (meta.sharedIndex !== undefined ? ` si="${meta.sharedIndex}"` : "") +
+        (meta.isMaster && meta.ref ? ` ref="${meta.ref}"` : "");
+      const fEl = meta.isMaster ? `${fOpen}>${escapeXmlText(meta.text)}</f>` : `${fOpen}/>`;
+      const replaced = body.replace(/<f\b[^>]*?(?:\/>|>[\s\S]*?<\/f>)/, fEl);
+      // If the source body had no `<f>` (SheetJS dropped it because
+      // the cell carried only a value), insert ours before `<v>` so
+      // Excel still treats the cell as a formula on re-load.
+      if (replaced === body && !/<f\b/.test(body)) {
+        const vIdx = body.indexOf("<v");
+        if (vIdx === -1) return `<c${attrs}>${fEl}${body}</c>`;
+        return `<c${attrs}>${body.slice(0, vIdx)}${fEl}${body.slice(vIdx)}</c>`;
+      }
+      return `<c${attrs}>${replaced}</c>`;
+    }
+  );
+}
+
 function injectStyleIds(xml: string, cells: ReadonlyMap<string, Cell>): string {
   const styleByRef = new Map<string, number>();
   for (const cell of cells.values()) {

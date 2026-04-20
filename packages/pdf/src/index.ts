@@ -33,3 +33,16 @@ export {
   type PdfSearchResult,
   snapshotToMarkdown,
 } from "./agent/index.js";
+export {
+  type StructuredBlock,
+  type StructuredBlockKind,
+  type StructuredGlyph,
+  type StructuredLine,
+  type StructuredPage,
+  buildStructuredPage,
+} from "./text/structured.js";
+export {
+  collectTextWithinRegions,
+  serializeMarkdown,
+  serializeReadingOrder,
+} from "./text/serialize.js";

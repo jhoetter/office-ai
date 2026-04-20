@@ -20,7 +20,7 @@ function firstSlide(agent: PptxAgent): Slide {
 }
 
 describe("F4: pptx:set-slide-transition", () => {
-  it("replaces an existing transition kind+speed", async () => {
+  it("replaces an existing transition kind+speed (delta-merging the raw blob)", async () => {
     const agent = await loadAgent(ANIM_FIXTURE);
     const before = firstSlide(agent).transition;
     expect(before?.kind).toBe("fade");
@@ -31,7 +31,16 @@ describe("F4: pptx:set-slide-transition", () => {
     const after = firstSlide(agent).transition!;
     expect(after.kind).toBe("push");
     expect(after.speed).toBe("fast");
-    expect(after.raw).toBeUndefined();
+    // Delta-merge: raw is patched in-place, not dropped, so unmodeled
+    // attrs/children survive. The patched raw must reflect the new
+    // kind tag and the new speed attribute.
+    expect(after.raw).toBeDefined();
+    expect(after.raw!.attrs.spd).toBe("fast");
+    const childTags = (after.raw!.subtree as ReadonlyArray<Record<string, unknown>>).map(
+      (n) => Object.keys(n).find((k) => !k.startsWith(":") && !k.startsWith("#"))
+    );
+    expect(childTags).toContain("p:push");
+    expect(childTags).not.toContain("p:fade");
   });
 
   it("removes the transition when kind=none", async () => {
@@ -87,7 +96,8 @@ describe("F4: pptx:add-shape-animation / remove / reorder", () => {
     const after = firstSlide(agent);
     expect(after.animations.length).toBe(1);
     expect(after.animations[0]).toMatchObject({
-      effect: "fly-in",
+      category: "entrance",
+      preset: "flyIn",
       targetCNvPrId: target.cNvPrId,
       durationMs: 750,
       order: 0,
@@ -156,9 +166,11 @@ describe("F4: pptx:add-shape-animation / remove / reorder", () => {
     const reparsed = await parsePptx(out);
     const slide2 = reparsed.root.slides[0]!;
     expect(slide2.animations.length).toBe(2);
-    expect(slide2.animations[0]!.effect).toBe("appear");
+    expect(slide2.animations[0]!.preset).toBe("appear");
+    expect(slide2.animations[0]!.category).toBe("entrance");
     expect(slide2.animations[1]!).toMatchObject({
-      effect: "fade",
+      category: "entrance",
+      preset: "fade",
       durationMs: 400,
       targetCNvPrId: target.cNvPrId,
     });

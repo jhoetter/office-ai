@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@e965/xlsx':
+        specifier: ^0.20.3
+        version: 0.20.3
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@9.39.4(jiti@2.6.1))
@@ -41,9 +44,6 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.3
-      xlsx:
-        specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
-        version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
 
   apps/realtime-server:
     dependencies:
@@ -285,9 +285,15 @@ importers:
       '@officeai/core':
         specifier: workspace:*
         version: link:../core
+      '@officeai/xlsx':
+        specifier: workspace:*
+        version: link:../xlsx
       docx:
         specifier: ^9.1.0
         version: 9.6.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       prosemirror-commands:
         specifier: ^1.6.2
         version: 1.7.1
@@ -313,9 +319,6 @@ importers:
       jsdom:
         specifier: ^29.0.2
         version: 29.0.2
-      jszip:
-        specifier: ^3.10.1
-        version: 3.10.1
       typescript:
         specifier: ^5
         version: 5.9.3
@@ -445,6 +448,9 @@ importers:
       '@officeai/core':
         specifier: workspace:*
         version: link:../core
+      '@officeai/xlsx':
+        specifier: workspace:*
+        version: link:../xlsx
     devDependencies:
       '@types/node':
         specifier: ^22
@@ -541,6 +547,9 @@ importers:
 
   packages/xlsx:
     dependencies:
+      '@e965/xlsx':
+        specifier: ^0.20.3
+        version: 0.20.3
       '@officeai/core':
         specifier: workspace:*
         version: link:../core
@@ -560,9 +569,6 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.17)(jsdom@29.0.2)(lightningcss@1.32.0)
-      xlsx:
-        specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
-        version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
 
   tests:
     dependencies:
@@ -731,6 +737,11 @@ packages:
   '@csstools/css-tokenizer@4.0.0':
     resolution: {integrity: sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==}
     engines: {node: '>=20.19.0'}
+
+  '@e965/xlsx@0.20.3':
+    resolution: {integrity: sha512-703RN/3OdsRD5mtse2HBX7Um7xwaP9tlswEG6svOtjqokXoX7rJdQj7DyabD2I+xk22RgaIIU+R6BHgkpZGB/w==}
+    engines: {node: '>=0.8'}
+    hasBin: true
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -3773,12 +3784,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz:
-    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
-    version: 0.20.3
-    engines: {node: '>=0.8'}
-    hasBin: true
-
   xml-js@1.6.11:
     resolution: {integrity: sha512-7rVi2KMfwfWFl+GpPg6m80IVMWXLRjO+PxTq7V2CDhoGak0wzYzFgUY2m4XJ47OGdXd8eLE8EmwfAmdjw7lC1g==}
     hasBin: true
@@ -3994,6 +3999,8 @@ snapshots:
       css-tree: 3.2.1
 
   '@csstools/css-tokenizer@4.0.0': {}
+
+  '@e965/xlsx@0.20.3': {}
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -7261,8 +7268,6 @@ snapshots:
     optional: true
 
   ws@8.20.0: {}
-
-  xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz: {}
 
   xml-js@1.6.11:
     dependencies:

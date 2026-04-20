@@ -10,6 +10,20 @@ export interface PdfEngineLoadOptions {
   password?: string;
   /** Override engine selection (otherwise auto-picked via selectEngine). */
   forceEngine?: PdfEngineKind;
+  /**
+   * Base URL (or `file://` path for Node) under which PDF.js worker
+   * assets can be fetched. The backend appends `/cmaps/` and
+   * `/standard_fonts/` to this base. Strongly recommended in the
+   * browser — without it, CJK/Arabic CMaps and Type-1/Type-3 fallback
+   * fonts are silently dropped, which makes selectable text disappear
+   * for whole categories of real-world PDFs.
+   *
+   * Trailing slash is normalised; pass `/pdfjs` or `/pdfjs/` either
+   * way. Default: undefined (no asset loading; PDF.js falls back to
+   * the embedded heuristics, with the well-known correctness
+   * limitations).
+   */
+  assetsBase?: string;
 }
 
 export interface PdfEngineDocument {
@@ -72,11 +86,72 @@ export interface PdfEngineTextContent {
   readonly plain: string;
 }
 
+/**
+ * One contiguous text run (typically corresponds to a single
+ * `TextItem` from PDF.js or one block from PDFium's
+ * `FPDFText_GetText`). The `glyphs` array provides per-character
+ * bounding boxes in PDF user-space (origin bottom-left), which is
+ * what the Structured Text service needs for reading-order grouping
+ * and glyph-precise search highlights.
+ */
+export interface PdfEngineGlyphRun {
+  readonly chars: string;
+  /** Per-character rect in PDF user-space (origin bottom-left). */
+  readonly glyphs: ReadonlyArray<readonly [number, number, number, number]>;
+  /** Baseline Y in PDF user-space. */
+  readonly baselineY: number;
+  /** Run-level bounding box (axis-aligned union of glyph rects). */
+  readonly bbox: readonly [number, number, number, number];
+  /** Approximate cap-height (font ascent ~ size). */
+  readonly fontHeight: number;
+  /** Stable font key (e.g. `"Helvetica"`); falls back to "default". */
+  readonly fontKey: string;
+  /** Logical reading direction inferred from the matrix. */
+  readonly dir: "ltr" | "rtl";
+  /** True when the engine reports an end-of-line break after this run. */
+  readonly hasEol: boolean;
+}
+
+/**
+ * Native viewport descriptor passed to PDF.js's official `TextLayer`
+ * class (and PDFium's equivalent renderer). Treated as opaque by
+ * everything except the engine and the viewer's text-layer wrapper.
+ */
+export interface PdfEngineViewport {
+  readonly scale: number;
+  readonly rotation: 0 | 90 | 180 | 270;
+  /** Canvas width in CSS pixels. */
+  readonly width: number;
+  /** Canvas height in CSS pixels. */
+  readonly height: number;
+  /** Engine-specific raw viewport (PDF.js `PageViewport`). */
+  readonly raw: unknown;
+}
+
 export interface PdfEnginePage {
   readonly info: PdfEnginePageInfo;
   /** Render the page; returns rendered bytes for headless / canvas for browser. */
   render(opts?: PdfEngineRenderOptions): Promise<Uint8Array | undefined>;
   getTextContent(): Promise<PdfEngineTextContent>;
+  /**
+   * Per-character glyph runs with bounding boxes in PDF user-space.
+   * Backbone of the structured text service (reading-order blocks,
+   * column detection, glyph-precise search highlights).
+   */
+  getGlyphRuns(): Promise<ReadonlyArray<PdfEngineGlyphRun>>;
+  /**
+   * Native viewport for use with the engine's canonical text layer.
+   * For PDF.js this wraps `PDFPageProxy.getViewport({ scale, rotation })`
+   * and exposes the raw `PageViewport` so the official `TextLayer`
+   * class can be constructed from the viewer.
+   */
+  getViewport(opts: { scale: number; rotation?: 0 | 90 | 180 | 270 }): PdfEngineViewport;
+  /**
+   * Source for PDF.js's `TextLayer` constructor. Returns either a
+   * `ReadableStream` (preferred — streams glyphs as the worker emits
+   * them) or a fully resolved `TextContent` payload. Treat as opaque.
+   */
+  getTextContentSource(opts?: { includeMarkedContent?: boolean }): Promise<unknown>;
   getAnnotations(): Promise<ReadonlyArray<PdfEngineAnnotationLite>>;
   getFormFields(): Promise<ReadonlyArray<PdfEngineFormFieldLite>>;
   destroy(): void;

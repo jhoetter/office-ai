@@ -1,5 +1,5 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
-import type * as XLSX from "xlsx";
+import type * as XLSX from "@e965/xlsx";
 import type { Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
 import { buildDiff, evolveSnapshot } from "./helpers.js";
 import type { AddSheetPayload } from "./payloads.js";
@@ -63,6 +63,7 @@ export const addSheetHandler: CommandHandler<AddSheetPayload, XlsxSnapshot> = {
       columnWidths: new Map(),
       rowHeights: new Map(),
       hiddenRows: new Set(),
+      hiddenCols: new Set(),
       images: [],
       conditionalFormats: [],
       opaqueConditionalFormats: [],

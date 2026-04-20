@@ -4,13 +4,12 @@ import * as React from "react";
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import type { PdfEngineDocument, PdfEnginePage, PdfEngineTextItem } from "@officeai/pdf-engine";
+import type { PdfEngineDocument, PdfEnginePage } from "@officeai/pdf-engine";
 import type {
   AddAnnotationPayload,
   PdfAnnotation,
@@ -19,12 +18,23 @@ import type {
   PdfRotation,
   PdfSnapshot,
 } from "@officeai/pdf";
+import { collectTextWithinRegions } from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";
 import { darkModeCssFilter } from "./darkMode";
 import type { PdfAnnotationTool } from "./PdfToolbar";
+import "./textLayer.css";
 
 /** Canvas-side view modes — 1:1 with the toolbar enum. */
 export type PdfViewMode = "single" | "continuous" | "two-up";
+
+/**
+ * Gap between the two facing pages of a two-up spread, in CSS
+ * pixels. Kept tiny so the spread reads as an open book with a
+ * binding seam rather than two unrelated pages floating apart.
+ * The value is also subtracted from the per-page fit budget in
+ * `baseScale` so the spread always fits the container.
+ */
+const BOOK_BINDING_GAP = 2;
 
 /**
  * Binary dark-mode toggle. CSS-filter based, no per-pixel pass.
@@ -33,8 +43,18 @@ export type PdfDarkModeStrategy = "off" | "on";
 
 export interface PdfHighlight {
   readonly pageNumber: number;
-  /** Normalized rect [x1, y1, x2, y2] (0..1, origin top-left). */
+  /** Normalized fallback rect [x1, y1, x2, y2] (0..1, origin top-left).
+   * Used when `quads` are unavailable (regex hits across paragraphs,
+   * scanned pages, etc.) — the canvas paints a soft full-width pulse. */
   readonly rect: readonly [number, number, number, number];
+  /**
+   * Per-line bounding boxes of the matched glyphs in PDF user-space
+   * (origin bottom-left). When set, the canvas paints these over the
+   * actual text instead of the page-level pulse — i.e. real
+   * find-in-page highlights instead of "we found something on this
+   * page somewhere".
+   */
+  readonly quads?: ReadonlyArray<PdfRect>;
   /** Bumped by the caller to re-trigger the flash animation. */
   readonly nonce: number;
 }
@@ -175,21 +195,44 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
   }, []);
 
   const pages = snapshot?.root.pages ?? [];
-  const baseScale = useMemo(() => {
-    if (!pages.length || containerWidth === 0) return 1;
+  const widestPageDim = useMemo(() => {
     let widest = 0;
     for (const p of pages) {
       const w = effectiveWidth(p, viewportRotation);
       if (w > widest) widest = w;
     }
-    if (widest === 0) return 1;
-    // Fit the widest page into the container with a small gutter on
-    // each side. The user's `zoom` then multiplies on top.
+    return widest;
+  }, [pages, viewportRotation]);
+  const baseScale = useMemo(() => {
+    if (!pages.length || containerWidth === 0 || widestPageDim === 0) return 1;
+    // Fit the widest page (or a side-by-side pair, in two-up mode)
+    // into the container with a small gutter on each side. The
+    // user's `zoom` then multiplies on top.
+    //
+    // In two-up the row places two pages touching at the binding
+    // (separated by `BOOK_BINDING_GAP`), so the available width
+    // *per page* is (container − gutter − gap) / 2. Without
+    // dividing by 2 here a pair would render at roughly 2× the
+    // container width, overflow horizontally, and (combined with
+    // flex `min-width: auto` on the ancestor wrappers) feed back
+    // into ResizeObserver — `containerWidth` would explode to the
+    // browser's layout cap and the `<canvas>` would die as a
+    // broken image icon.
     const gutter = viewMode === "two-up" ? 24 : 48;
     const target = Math.max(120, containerWidth - gutter);
-    return target / widest;
-  }, [pages, containerWidth, viewportRotation, viewMode]);
+    if (viewMode === "two-up") {
+      const perPage = Math.max(60, (target - BOOK_BINDING_GAP) / 2);
+      return perPage / widestPageDim;
+    }
+    return target / widestPageDim;
+  }, [pages.length, widestPageDim, containerWidth, viewMode]);
   const scale = baseScale * zoom;
+  // The slot width every two-up page (and every spacer) takes up.
+  // Pinning all rows to this value keeps the spread visually
+  // aligned even when individual page sizes differ across the
+  // document — narrower pages just inherit the slot, the canvas
+  // itself is still drawn at its native ratio.
+  const twoUpSlotWidth = Math.max(1, Math.round(widestPageDim * scale));
 
   // Surface fit-page / actual-size targets back to the editor so
   // the toolbar's preset callbacks set a real `zoom` instead of a
@@ -366,9 +409,17 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
   const isFullyScanned = pages.length > 0 && pages.every((p) => !p.hasTextLayer);
 
   return (
+    // `min-w-0` defeats the default `min-width: auto` on flex
+    // children: without it, a row that briefly renders wider than
+    // the container (e.g. mid-resize, before `baseScale` settles)
+    // would push the flex parent — and therefore `clientWidth` —
+    // out, feeding back into `baseScale` and snowballing until the
+    // browser's 2²⁴-px layout cap clamps the canvas to a broken
+    // image. `overflow-x-hidden` belt-and-braces the same guard
+    // for non-flex ancestors.
     <div
       ref={containerRef}
-      className="h-full w-full overflow-y-auto bg-[var(--page-backdrop)]"
+      className="h-full w-full min-w-0 overflow-y-auto overflow-x-hidden bg-[var(--page-backdrop)]"
       data-testid="pdf-canvas"
     >
       {isFullyScanned ? (
@@ -381,33 +432,65 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
         </div>
       ) : null}
       <div className="mx-auto flex max-w-full flex-col items-center gap-4 py-6">
-        {renderTargets.map((row) => (
-          <div
-            key={row.key}
-            className={row.kind === "two-up" ? "flex items-start gap-3" : ""}
-          >
-            {row.pages.map((p) => (
-              <PdfPageRender
-                key={p.id}
-                page={p}
-                totalPages={totalPages}
-                engineDoc={engineDoc}
-                scale={scale}
-                visible={visibleRef.current.has(p.pageNumber)}
-                viewportRotation={viewportRotation}
-                darkMode={darkMode}
-                onClick={() => onCurrentPageChange(p.pageNumber)}
-                highlight={
-                  highlight && highlight.pageNumber === p.pageNumber ? highlight : null
-                }
-                annotations={pageAnnotations(snapshot, p.pageNumber)}
-                armedTool={armedTool}
-                onAddAnnotation={onAddAnnotation}
-                onAnnotationCreated={onAnnotationCreated}
-              />
-            ))}
-          </div>
-        ))}
+        {renderTargets.map((row) => {
+          const renderPage = (p: PdfPage): ReactNode => (
+            <PdfPageRender
+              key={p.id}
+              page={p}
+              totalPages={totalPages}
+              engineDoc={engineDoc}
+              scale={scale}
+              visible={visibleRef.current.has(p.pageNumber)}
+              viewportRotation={viewportRotation}
+              darkMode={darkMode}
+              onClick={() => onCurrentPageChange(p.pageNumber)}
+              highlight={
+                highlight && highlight.pageNumber === p.pageNumber ? highlight : null
+              }
+              annotations={pageAnnotations(snapshot, p.pageNumber)}
+              armedTool={armedTool}
+              onAddAnnotation={onAddAnnotation}
+              onAnnotationCreated={onAnnotationCreated}
+            />
+          );
+          if (row.kind !== "two-up") {
+            return <div key={row.key}>{row.pages.map(renderPage)}</div>;
+          }
+          // Two-up rows render at a fixed spread width regardless of
+          // how many pages are in the slot, so the cover, the
+          // trailing lone page, and the full spreads all share the
+          // same horizontal axis. Empty slots are filled with a
+          // transparent placeholder of the same dimensions; that
+          // also gives the cover its "right side of an open book"
+          // offset for free.
+          const spreadWidth = twoUpSlotWidth * 2 + BOOK_BINDING_GAP;
+          const leftPage = row.slot === "right" ? null : row.pages[0] ?? null;
+          const rightPage =
+            row.slot === "spread"
+              ? row.pages[1] ?? null
+              : row.slot === "right"
+              ? row.pages[0] ?? null
+              : null;
+          return (
+            <div
+              key={row.key}
+              data-testid={`pdf-spread-${row.slot}`}
+              className="flex items-start"
+              style={{ width: spreadWidth, gap: BOOK_BINDING_GAP }}
+            >
+              {leftPage ? (
+                renderPage(leftPage)
+              ) : (
+                <div aria-hidden style={{ width: twoUpSlotWidth, flexShrink: 0 }} />
+              )}
+              {rightPage ? (
+                renderPage(rightPage)
+              ) : (
+                <div aria-hidden style={{ width: twoUpSlotWidth, flexShrink: 0 }} />
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -524,8 +607,8 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
   }, [stickyArmed]);
   const { t } = useTranslator();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
   const renderTokenRef = useRef(0);
-  const [textItems, setTextItems] = useState<ReadonlyArray<PdfEngineTextItem>>([]);
   const [renderError, setRenderError] = useState<string | null>(null);
 
   const cssWidth = Math.max(1, Math.round(effectiveWidth(page, viewportRotation) * scale));
@@ -541,6 +624,7 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     const token = ++renderTokenRef.current;
     let cancelled = false;
     let enginePage: PdfEnginePage | null = null;
+    let textLayerHandle: TextLayerHandle | null = null;
     setRenderError(null);
 
     void (async () => {
@@ -561,19 +645,32 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         });
         if (cancelled || token !== renderTokenRef.current) return;
 
-        try {
-          const text = await enginePage.getTextContent();
-          if (cancelled || token !== renderTokenRef.current) return;
-          setTextItems(text.items);
-        } catch {
-          // Text extraction failures are non-fatal — selectable text
-          // simply won't appear for this page. The toast is reserved
-          // for whole-page render failures below.
+        const layerEl = textLayerRef.current;
+        if (layerEl) {
+          try {
+            textLayerHandle = await mountOfficialTextLayer({
+              enginePage,
+              container: layerEl,
+              scale,
+              rotation: viewportRotation,
+            });
+            if (cancelled || token !== renderTokenRef.current) {
+              textLayerHandle?.cancel();
+              textLayerHandle = null;
+            }
+          } catch {
+            // Text-layer failures are non-fatal — selectable text
+            // simply won't appear for this page. The toast is
+            // reserved for whole-page render failures below.
+          }
         }
       } catch (err) {
         if (cancelled) return;
         setRenderError(err instanceof Error ? err.message : String(err));
       } finally {
+        // Hold engine page open for the layer's lifetime, but it's
+        // safe to release here because PDF.js's TextLayer keeps its
+        // own references to the streaming text content.
         try {
           enginePage?.destroy();
         } catch {
@@ -584,6 +681,8 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
 
     return () => {
       cancelled = true;
+      textLayerHandle?.cancel();
+      textLayerHandle = null;
     };
   }, [visible, engineDoc, page.pageNumber, scale, cssWidth, cssHeight, darkMode, viewportRotation]);
 
@@ -612,16 +711,16 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         }}
         aria-label={t("pdf.pageOf", { n: page.pageNumber, total: totalPages })}
       />
-      {visible && textItems.length > 0 ? (
-        <PdfTextLayer
-          items={textItems}
-          scale={scale}
-          pageWidth={page.width}
-          pageHeight={page.height}
-          rotation={viewportRotation}
-          onSelectionPdfRects={highlightArmed ? onHighlightSelection : undefined}
-        />
-      ) : null}
+      <OfficialPdfTextLayer
+        ref={textLayerRef}
+        scale={scale}
+        pageWidth={page.width}
+        pageHeight={page.height}
+        rotation={viewportRotation}
+        page={page}
+        onSelectionPdfRects={highlightArmed ? onHighlightSelection : undefined}
+      />
+
       {visible && annotations.length > 0 ? (
         <PdfAnnotationOverlay
           annotations={annotations}
@@ -655,7 +754,15 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
           onCancel={() => setStickyDraft(null)}
         />
       ) : null}
-      {highlight ? <PdfMatchHighlight highlight={highlight} /> : null}
+      {highlight ? (
+        <PdfMatchHighlight
+          highlight={highlight}
+          pageWidth={page.width}
+          pageHeight={page.height}
+          scale={scale}
+          rotation={viewportRotation}
+        />
+      ) : null}
       {renderError ? (
         <div className="absolute inset-0 flex items-center justify-center rounded-md bg-surface/90 p-3 text-center text-xs text-tertiary">
           {t("pdf.loadError")}: {renderError}
@@ -669,12 +776,14 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
   );
 }
 
-interface PdfTextLayerProps {
-  readonly items: ReadonlyArray<PdfEngineTextItem>;
+interface OfficialPdfTextLayerProps {
   readonly scale: number;
   readonly pageWidth: number;
   readonly pageHeight: number;
   readonly rotation: PdfRotation;
+  /** The owning page — needed to project a selection into the
+   * structured text for column-aware copy interception. */
+  readonly page: PdfPage;
   /**
    * If provided, mouseup events whose selection ends inside this
    * text layer fire this callback with the selection's per-line
@@ -686,147 +795,143 @@ interface PdfTextLayerProps {
 }
 
 /**
- * Selectable, transparent text overlay on top of the rasterised
- * page. We synthesise one absolutely-positioned `<span>` per
- * `PdfEngineTextItem` placed at the item's PDF user-space
- * coordinates, scaled into CSS pixels and y-flipped to the DOM's
- * top-left origin. The font size is taken from the item transform
- * so the synthesised glyphs roughly cover the rendered ones — that
- * makes click-and-drag selection feel native even though the
- * actual glyph shapes are rasterised by the engine.
+ * Selectable, transparent text overlay backed by PDF.js's official
+ * `TextLayer` class. The container `<div>` is the same DOM node
+ * PDF.js writes its `<span>`s into; positioning, font matching,
+ * baseline ascent and per-glyph width compensation are all handled
+ * by the canonical layer instead of the bespoke approximation we
+ * used to ship.
  *
- * The inner box is sized to the un-rotated page dimensions and
- * then CSS-rotated to match the viewport rotation that the engine
- * baked into the canvas, so spans always land on top of the
- * corresponding glyphs.
+ * The CSS variable `--scale-factor` is what PDF.js's TextLayer
+ * uses for its internal CSS calc()s — without it the spans render
+ * at fixed (1.0) scale and drift the moment the user zooms.
  */
-function PdfTextLayer({
-  items,
-  scale,
-  pageWidth,
-  pageHeight,
-  rotation,
-  onSelectionPdfRects,
-}: PdfTextLayerProps): ReactNode {
-  const innerWidth = pageWidth * scale;
-  const innerHeight = pageHeight * scale;
-  const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
-  const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
-  const transform = textLayerTransform(rotation, innerWidth, innerHeight);
-  const innerRef = useRef<HTMLDivElement | null>(null);
+const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLayerProps>(
+  function OfficialPdfTextLayer(
+    { scale, pageWidth, pageHeight, rotation, page, onSelectionPdfRects },
+    ref,
+  ) {
+    const innerWidth = pageWidth * scale;
+    const innerHeight = pageHeight * scale;
+    const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
+    const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
 
-  const onMouseUp = useCallback(() => {
-    if (!onSelectionPdfRects) return;
-    const inner = innerRef.current;
-    if (!inner) return;
-    const sel = typeof window !== "undefined" ? window.getSelection() : null;
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-    const range = sel.getRangeAt(0);
-    if (!inner.contains(range.commonAncestorContainer)) return;
-    const innerRect = inner.getBoundingClientRect();
-    if (innerRect.width === 0 || innerRect.height === 0) return;
-    const clientRects = Array.from(range.getClientRects()).filter(
-      (r) => r.width > 0 && r.height > 0
+    /**
+     * Reorder copied text along the structured-page reading order
+     * before letting the clipboard event ship. Without this, selecting
+     * across columns on academic PDFs pastes interleaved garbage
+     * because the browser concatenates `<span>`s in DOM order — which
+     * is also stream order, i.e. left-column-line-1, right-column-
+     * line-1, left-column-line-2, ... For single-column pages and
+     * intra-paragraph selections we leave the browser's text alone
+     * (it's already correct and faster).
+     */
+    const onCopy = useCallback(
+      (e: React.ClipboardEvent<HTMLDivElement>) => {
+        const inner =
+          typeof ref === "object" && ref ? ref.current : null;
+        if (!inner) return;
+        const sel = typeof window !== "undefined" ? window.getSelection() : null;
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        if (!inner.contains(range.commonAncestorContainer)) return;
+        if (page.structured.blocks.length === 0) return;
+
+        const innerRect = inner.getBoundingClientRect();
+        if (innerRect.width === 0 || innerRect.height === 0) return;
+        const clientRects = Array.from(range.getClientRects()).filter(
+          (r) => r.width > 0 && r.height > 0,
+        );
+        if (clientRects.length === 0) return;
+        // Convert the selection's pixel rects into PDF user-space
+        // and ask the structured page which glyphs land inside.
+        const pdfRegions = clientRects.map((r) => {
+          const x_css = r.left - innerRect.left;
+          const y_css = r.top - innerRect.top;
+          const w_css = r.width;
+          const h_css = r.height;
+          const x1 = x_css / scale;
+          const x2 = (x_css + w_css) / scale;
+          const y2 = pageHeight - y_css / scale;
+          const y1 = pageHeight - (y_css + h_css) / scale;
+          return [x1, y1, x2, y2] as PdfRect;
+        });
+        const text = collectTextWithinRegions(page.structured, pdfRegions);
+        const browserText = sel.toString();
+        // Only override when the structured projection meaningfully
+        // differs (multi-column selection, or row-wise jumble).
+        // For single-column intra-paragraph selections both texts
+        // agree, in which case we let the browser do its thing for
+        // free.
+        if (text.length === 0) return;
+        if (collapseWhitespace(text) === collapseWhitespace(browserText)) return;
+        e.clipboardData.setData("text/plain", text);
+        e.preventDefault();
+      },
+      [ref, scale, pageHeight, page.structured],
     );
-    if (clientRects.length === 0) return;
-    const merged = mergeRectsByLine(clientRects);
-    const pdfRects: PdfRect[] = merged.map((r) => {
-      const x_css = r.left - innerRect.left;
-      const y_css = r.top - innerRect.top;
-      const w_css = r.width;
-      const h_css = r.height;
-      const x1 = x_css / scale;
-      const x2 = (x_css + w_css) / scale;
-      const y2 = pageHeight - y_css / scale;
-      const y1 = pageHeight - (y_css + h_css) / scale;
-      return [x1, y1, x2, y2] as PdfRect;
-    });
-    sel.removeAllRanges();
-    onSelectionPdfRects(pdfRects);
-  }, [onSelectionPdfRects, scale, pageHeight]);
 
-  // PDF.js's reference text layer measures each synthesised span's
-  // browser-rendered width against the desired (rasterised) glyph
-  // width and applies a per-span `transform: scaleX(target/measured)`
-  // so the invisible selection rect lines up with the visible
-  // letters. We do the same: without it, click-drag selection
-  // floats noticeably to the right of the rasterised text on most
-  // body fonts because the platform's default sans-serif is wider
-  // than the PDF's embedded font.
-  useLayoutEffect(() => {
-    const root = innerRef.current;
-    if (!root) return;
-    const spans = root.querySelectorAll<HTMLSpanElement>("[data-text-span]");
-    spans.forEach((span) => {
-      span.style.transform = "";
-      const target = Number(span.dataset.targetWidth ?? "0");
-      if (!target) return;
-      const measured = span.getBoundingClientRect().width;
-      if (measured <= 0) return;
-      const ratio = target / measured;
-      // Only correct when the discrepancy matters; tiny ratios just
-      // burn paint cycles for sub-pixel adjustments invisible to
-      // the eye but expensive on long documents.
-      if (Math.abs(ratio - 1) < 0.01) return;
-      span.style.transform = `scaleX(${ratio.toFixed(4)})`;
-    });
-  }, [items, scale, rotation]);
+    const onMouseUp = useCallback(() => {
+      if (!onSelectionPdfRects) return;
+      const inner =
+        typeof ref === "object" && ref ? ref.current : null;
+      if (!inner) return;
+      const sel = typeof window !== "undefined" ? window.getSelection() : null;
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      if (!inner.contains(range.commonAncestorContainer)) return;
+      const innerRect = inner.getBoundingClientRect();
+      if (innerRect.width === 0 || innerRect.height === 0) return;
+      const clientRects = Array.from(range.getClientRects()).filter(
+        (r) => r.width > 0 && r.height > 0,
+      );
+      if (clientRects.length === 0) return;
+      const merged = mergeRectsByLine(clientRects);
+      const pdfRects: PdfRect[] = merged.map((r) => {
+        const x_css = r.left - innerRect.left;
+        const y_css = r.top - innerRect.top;
+        const w_css = r.width;
+        const h_css = r.height;
+        const x1 = x_css / scale;
+        const x2 = (x_css + w_css) / scale;
+        const y2 = pageHeight - y_css / scale;
+        const y1 = pageHeight - (y_css + h_css) / scale;
+        return [x1, y1, x2, y2] as PdfRect;
+      });
+      sel.removeAllRanges();
+      onSelectionPdfRects(pdfRects);
+    }, [onSelectionPdfRects, scale, pageHeight, ref]);
 
-  return (
-    <div
-      aria-hidden
-      onMouseUp={onMouseUp}
-      className="pointer-events-auto absolute inset-0 select-text overflow-hidden text-transparent"
-      style={{ lineHeight: 1, width: rotatedW, height: rotatedH }}
-    >
+    return (
       <div
-        ref={innerRef}
+        ref={ref}
+        onMouseUp={onMouseUp}
+        onCopy={onCopy}
+        className="officeai-pdf-text-layer pointer-events-auto select-text"
         style={{
-          position: "absolute",
-          left: 0,
-          top: 0,
-          width: innerWidth,
-          height: innerHeight,
-          transform,
-          transformOrigin: "0 0",
+          width: rotatedW,
+          height: rotatedH,
+          // PDF.js's `TextLayer` reads `--scale-factor` for its
+          // internal CSS calc()s. Without this every zoom would
+          // require a full re-layout via `update()`; with it the
+          // spans hot-reflow without rebuilding.
+          ["--scale-factor" as unknown as string]: String(scale),
+          ["--total-scale-factor" as unknown as string]: String(scale),
         }}
-      >
-        {items.map((it, idx) => {
-          if (!it.str) return null;
-          const tx = it.transform;
-          const fontHeight = Math.abs(tx[3]) || it.height || 1;
-          const left = tx[4] * scale;
-          const top = (pageHeight - tx[5] - fontHeight) * scale;
-          const targetWidth = it.width * scale;
-          const height = fontHeight * scale;
-          return (
-            <span
-              key={idx}
-              data-text-span
-              data-target-width={targetWidth}
-              style={{
-                position: "absolute",
-                left,
-                top,
-                height,
-                fontSize: height,
-                whiteSpace: "pre",
-                transformOrigin: "0 0",
-              }}
-            >
-              {it.str}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
+      />
+    );
+  },
+);
+
+function collapseWhitespace(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
 }
 
 /**
- * CSS transform that maps the un-rotated text-layer box onto the
- * rotated visual frame. Mirrors PDF.js's viewport rotation so
- * synthesised spans line up with the rasterised glyphs.
+ * CSS transform that maps an un-rotated overlay box onto the
+ * rotated visual frame. Mirrors PDF.js's viewport rotation so the
+ * annotation / sticky-note overlays line up with the rasterised
+ * page even when the user rotated the viewport.
  */
 function textLayerTransform(rotation: PdfRotation, width: number, height: number): string {
   switch (rotation) {
@@ -843,6 +948,70 @@ function textLayerTransform(rotation: PdfRotation, width: number, height: number
       return _exhaustive;
     }
   }
+}
+
+/**
+ * Internal handle returned by `mountOfficialTextLayer` so the
+ * `useEffect` cleanup path can cancel an in-flight render.
+ */
+interface TextLayerHandle {
+  cancel(): void;
+}
+
+/**
+ * Construct PDF.js's canonical `TextLayer` against a container
+ * element and the engine's native viewport. Returns a handle the
+ * caller can cancel on unmount / rerender.
+ */
+async function mountOfficialTextLayer(opts: {
+  enginePage: PdfEnginePage;
+  container: HTMLElement;
+  scale: number;
+  rotation: PdfRotation;
+}): Promise<TextLayerHandle> {
+  const { enginePage, container, scale, rotation } = opts;
+  // Lazy-load via dynamic import to keep the SSR bundle clean — the
+  // `pdfjs-dist` ESM module imports browser-only globals at the top
+  // level and can't be statically required by Next.js's server side.
+  const pdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as unknown as {
+    TextLayer: new (params: {
+      textContentSource: unknown;
+      container: HTMLElement;
+      viewport: unknown;
+    }) => { render(): Promise<unknown>; cancel(): void };
+  };
+  if (typeof pdfjs.TextLayer !== "function") {
+    throw new Error(
+      "pdfjs-dist: TextLayer export missing. Required pdfjs-dist >= 4.0.",
+    );
+  }
+  // Clear any previous content so re-mounting is safe.
+  while (container.firstChild) container.removeChild(container.firstChild);
+  const viewport = enginePage.getViewport({ scale, rotation });
+  const textContentSource = await enginePage.getTextContentSource({
+    includeMarkedContent: true,
+  });
+  const layer = new pdfjs.TextLayer({
+    textContentSource,
+    container,
+    viewport: viewport.raw,
+  });
+  let cancelled = false;
+  const renderPromise = layer.render();
+  void renderPromise.catch(() => {
+    /* swallow; cancellation surfaces here */
+  });
+  return {
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      try {
+        layer.cancel();
+      } catch {
+        /* noop */
+      }
+    },
+  };
 }
 
 interface PdfAnnotationOverlayProps {
@@ -1159,7 +1328,64 @@ function PdfStickyComposer({ x, y, onCommit, onCancel }: PdfStickyComposerProps)
   );
 }
 
-function PdfMatchHighlight({ highlight }: { readonly highlight: PdfHighlight }): ReactNode {
+function PdfMatchHighlight({
+  highlight,
+  pageWidth,
+  pageHeight,
+  scale,
+  rotation,
+}: {
+  readonly highlight: PdfHighlight;
+  readonly pageWidth: number;
+  readonly pageHeight: number;
+  readonly scale: number;
+  readonly rotation: PdfRotation;
+}): ReactNode {
+  const quads = highlight.quads ?? [];
+  if (quads.length > 0) {
+    const innerWidth = pageWidth * scale;
+    const innerHeight = pageHeight * scale;
+    const rotatedW =
+      rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
+    const rotatedH =
+      rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
+    const transform = textLayerTransform(rotation, innerWidth, innerHeight);
+    return (
+      <div
+        key={highlight.nonce}
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ width: rotatedW, height: rotatedH }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            width: innerWidth,
+            height: innerHeight,
+            transform,
+            transformOrigin: "0 0",
+          }}
+        >
+          {quads.map((q, i) => {
+            const [x1, y1, x2, y2] = q;
+            const left = x1 * scale;
+            const top = (pageHeight - y2) * scale;
+            const width = Math.max(2, (x2 - x1) * scale);
+            const height = Math.max(2, (y2 - y1) * scale);
+            return (
+              <div
+                key={i}
+                className="rounded-sm bg-[var(--accent-light)] ring-2 ring-[var(--accent)]/70"
+                style={{ position: "absolute", left, top, width, height, mixBlendMode: "multiply" }}
+              />
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
   const [x1, y1, x2, y2] = highlight.rect;
   const left = `${x1 * 100}%`;
   const top = `${y1 * 100}%`;
@@ -1208,10 +1434,21 @@ function effectiveHeight(page: PdfPage, viewportRotation: PdfRotation): number {
   return viewportRotation === 90 || viewportRotation === 270 ? page.width : page.height;
 }
 
+/**
+ * How a two-up row places its page(s) inside the spread:
+ * - `right`   – single page on the right slot (front cover).
+ * - `left`    – single page on the left slot (lone trailing page
+ *               of an odd-page document).
+ * - `spread`  – two pages, left + right, touching at the binding.
+ */
+type TwoUpSlot = "left" | "right" | "spread";
+
 interface RenderRow {
   readonly key: string;
   readonly kind: "single" | "two-up";
   readonly pages: ReadonlyArray<PdfPage>;
+  /** Only meaningful when `kind === "two-up"`. */
+  readonly slot: TwoUpSlot;
 }
 
 function collectRenderTargets(
@@ -1221,21 +1458,49 @@ function collectRenderTargets(
 ): ReadonlyArray<RenderRow> {
   if (viewMode === "single") {
     const p = pages.find((x) => x.pageNumber === currentPage) ?? pages[0];
-    return p ? [{ key: `single-${p.id}`, kind: "single", pages: [p] }] : [];
+    return p ? [{ key: `single-${p.id}`, kind: "single", pages: [p], slot: "spread" }] : [];
   }
   if (viewMode === "two-up") {
     const rows: RenderRow[] = [];
+    // The cover (page 1) sits alone in the right slot — same
+    // convention as a real book where the front cover is the
+    // right-hand page when the book lies open.
     if (pages[0]) {
-      rows.push({ key: `cover-${pages[0].id}`, kind: "two-up", pages: [pages[0]] });
+      rows.push({
+        key: `cover-${pages[0].id}`,
+        kind: "two-up",
+        pages: [pages[0]],
+        slot: "right",
+      });
     }
     for (let i = 1; i < pages.length; i += 2) {
       const left = pages[i];
       if (!left) break;
       const right = pages[i + 1];
-      const inRow = right ? [left, right] : [left];
-      rows.push({ key: `pair-${left.id}`, kind: "two-up", pages: inRow });
+      if (right) {
+        rows.push({
+          key: `pair-${left.id}`,
+          kind: "two-up",
+          pages: [left, right],
+          slot: "spread",
+        });
+      } else {
+        // Odd page count → final page sits alone in the left slot
+        // (back cover position) so the spread above stays aligned.
+        rows.push({
+          key: `pair-${left.id}`,
+          kind: "two-up",
+          pages: [left],
+          slot: "left",
+        });
+      }
     }
     return rows;
   }
-  return pages.map((p) => ({ key: `cont-${p.id}`, kind: "single", pages: [p] }));
+  return pages.map((p) => ({
+    key: `cont-${p.id}`,
+    kind: "single",
+    pages: [p],
+    slot: "spread",
+  }));
 }

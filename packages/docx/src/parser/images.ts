@@ -1,5 +1,6 @@
 import { ooxml, type IdMinter } from "@officeai/core";
 import type {
+  ChartDrawing,
   DrawingLeaf,
   InlineImageDrawing,
   InlineImageProperties,
@@ -22,10 +23,73 @@ import { attrOf, captureOpaque, elementEntries, findElementEntry } from "./xml-h
  * intentionally one drawing class at a time — adding `subkind`s in
  * future workstreams must not require changing the un-promoted parts.
  */
-export function parseDrawing(entry: Record<string, unknown>, mintNodeId: IdMinter): DrawingLeaf {
+export function parseDrawing(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter,
+  resolveChartPart?: (relId: string) => string | undefined
+): DrawingLeaf {
   const inline = parseInlineImage(entry, mintNodeId);
   if (inline) return inline;
+  if (resolveChartPart) {
+    const chart = parseChartDrawing(entry, mintNodeId, resolveChartPart);
+    if (chart) return chart;
+  }
   return parseOpaqueDrawing(entry, mintNodeId);
+}
+
+const CHART_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+
+function parseChartDrawing(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter,
+  resolveChartPart: (relId: string) => string | undefined
+): ChartDrawing | null {
+  const drawingChildren = (entry["w:drawing"] as unknown[] | undefined) ?? [];
+  const wpInline = findElementEntry(drawingChildren, "wp:inline");
+  if (!wpInline) return null;
+  const inlineChildren = (wpInline["wp:inline"] as unknown[] | undefined) ?? [];
+
+  const extent = findElementEntry(inlineChildren, "wp:extent");
+  if (!extent) return null;
+  const cx = numAttr(extent, "cx");
+  const cy = numAttr(extent, "cy");
+  if (cx === null || cy === null || cx <= 0 || cy <= 0) return null;
+
+  const docPrEntry = findElementEntry(inlineChildren, "wp:docPr");
+  if (!docPrEntry) return null;
+  const docPrId = numAttr(docPrEntry, "id");
+  if (docPrId === null) return null;
+  const name = attrOf(docPrEntry, "name") ?? "";
+  const descr = attrOf(docPrEntry, "descr");
+
+  const graphic = findElementEntry(inlineChildren, "a:graphic");
+  if (!graphic) return null;
+  const graphicChildren = (graphic["a:graphic"] as unknown[] | undefined) ?? [];
+  const graphicData = findElementEntry(graphicChildren, "a:graphicData");
+  if (!graphicData) return null;
+  if (attrOf(graphicData, "uri") !== CHART_GRAPHIC_DATA_URI) return null;
+
+  const graphicDataChildren = (graphicData["a:graphicData"] as unknown[] | undefined) ?? [];
+  const chartRef = findElementEntry(graphicDataChildren, "c:chart");
+  if (!chartRef) return null;
+  const relId = attrOf(chartRef, "r:id");
+  if (!relId) return null;
+  const partPath = resolveChartPart(relId);
+  if (!partPath) return null;
+
+  return {
+    kind: "drawing",
+    subkind: "chart",
+    id: mintNodeId(),
+    relId,
+    chartPartPath: partPath,
+    cx,
+    cy,
+    docPrId,
+    name,
+    ...(descr !== undefined ? { descr } : {}),
+    raw: captureOpaque(entry),
+  };
 }
 
 function parseOpaqueDrawing(entry: Record<string, unknown>, mintNodeId: IdMinter): OpaqueDrawing {

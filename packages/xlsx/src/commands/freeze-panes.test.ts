@@ -20,6 +20,7 @@ function makeSheet(name: string, freeze?: { rows: number; cols: number }): Sheet
     columnWidths: new Map(),
     rowHeights: new Map(),
     hiddenRows: new Set(),
+    hiddenCols: new Set(),
     images: [],
     conditionalFormats: [],
     opaqueConditionalFormats: [],

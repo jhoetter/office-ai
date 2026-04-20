@@ -88,4 +88,46 @@ describe("serializeCommentsPart ↔ parseCommentsPart round-trip", () => {
     const re = parseCommentsPart(xml);
     expect(re.comments[0].text).toBe("  padded  ");
   });
+
+  it("preserves rich-text run formatting on a no-edit round-trip", () => {
+    // Source uses <rPr> children to carry run-level styling — bold,
+    // a custom font, and a color. The typed model only flattens to
+    // plain text, so without textXml capture we'd silently drop all
+    // three on save. With the capture in place, an unedited comment
+    // re-emits the original `<text>` block byte-for-byte.
+    const richXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <authors><author>OfficeAI</author></authors>
+  <commentList>
+    <comment ref="A1" authorId="0">
+      <text><r><rPr><b/><sz val="11"/><color rgb="FFFF0000"/><rFont val="Calibri"/></rPr><t>bold red</t></r><r><t xml:space="preserve"> normal</t></r></text>
+    </comment>
+  </commentList>
+</comments>`;
+    const { authors, comments } = parseCommentsPart(richXml);
+    expect(comments[0].text).toBe("bold red normal");
+    expect(comments[0].textXml).toBeDefined();
+    expect(comments[0].textXml).toContain("<b/>");
+    expect(comments[0].textXml).toContain('rgb="FFFF0000"');
+
+    const out = serializeCommentsPart(authors, comments);
+    expect(out).toContain("<b/>");
+    expect(out).toContain('rgb="FFFF0000"');
+    expect(out).toContain('<rFont val="Calibri"/>');
+
+    const re = parseCommentsPart(out);
+    expect(re.comments[0].text).toBe("bold red normal");
+    expect(re.comments[0].textXml).toContain("<b/>");
+  });
+
+  it("falls back to single-run rebuild when the comment text is edited", () => {
+    const richXml = `<?xml version="1.0"?><comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors><author>x</author></authors><commentList><comment ref="A1" authorId="0"><text><r><rPr><b/></rPr><t>bold original</t></r></text></comment></commentList></comments>`;
+    const { authors, comments } = parseCommentsPart(richXml);
+    const edited = comments.map((c) => ({ ...c, text: "edited body" }));
+    const out = serializeCommentsPart(authors, edited);
+    // The edit invalidates the captured textXml; rebuild from text.
+    expect(out).toContain("edited body");
+    expect(out).not.toContain("bold original");
+    expect(out).not.toContain("<b/>");
+  });
 });

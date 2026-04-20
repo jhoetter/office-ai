@@ -1,7 +1,6 @@
 {
   "name": "@officeai/text-formatting",
   "version": "0.1.0",
-  "private": true,
   "description": "Format-agnostic text-formatting contract: TextFormat, units, MIXED-state, and provider interface shared by DOCX, XLSX, and PPTX.",
   "type": "module",
   "main": "./src/index.ts",
@@ -18,5 +17,19 @@
   "devDependencies": {
     "typescript": "^5",
     "vitest": "^2.1.9"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/text-formatting"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
 }

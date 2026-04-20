@@ -715,14 +715,6 @@
     "image": {
       "imageUnavailable": "(Bild nicht verfügbar)",
       "imageFallback": "Bild"
-    },
-    "numberFormat": {
-      "general": "Standard",
-      "number": "Zahl (1.234,56)",
-      "currencyEur": "Währung (€)",
-      "currencyUsd": "Währung ($)",
-      "percent": "Prozent (12,34 %)",
-      "date": "Datum (jjjj-mm-tt)"
     }
   },
   "pptx": {
@@ -790,10 +782,69 @@
       "noSlide": "Keine Folie ausgewählt.",
       "slideTransition": "Folienübergang",
       "transitionSubtitle": "Wird beim Erscheinen dieser Folie abgespielt.",
-      "entranceAnimations": "Eingangsanimationen",
+      "addAnimation": "Animation hinzufügen",
+      "animationsOnSlide": "Animationen auf dieser Folie",
       "selectedShape": "Ausgewählte Form: {name}",
-      "selectShapeHint": "Wähle eine Form auf der Folie, um eine Eingangsanimation hinzuzufügen.",
-      "addEntranceAnimation": "Eingangsanimation hinzufügen",
+      "selectShapeHint": "Wähle eine Form auf der Folie, um eine Animation hinzuzufügen.",
+      "noAnimations": "Noch keine Animationen auf dieser Folie.",
+      "noAnimationsHint": "Wähle oben einen Effekt aus, um die erste hinzuzufügen.",
+      "animationCount": "{count} Animation in der Sequenz.",
+      "animationCountPlural": "{count} Animationen in der Sequenz.",
+      "categoryAriaLabel": "Animationskategorie",
+      "categoryEntrance": "Eingang",
+      "categoryEmphasis": "Hervorhebung",
+      "categoryExit": "Ausgang",
+      "categoryMotionPath": "Animationspfade",
+      "addCategoryAriaLabel": "{category}-Animation hinzufügen",
+      "trigger": "Auslöser",
+      "triggerOnClick": "Beim Klicken",
+      "triggerWithPrevious": "Mit vorheriger",
+      "triggerAfterPrevious": "Nach vorheriger",
+      "direction": "Richtung",
+      "directionLeft": "Links",
+      "directionRight": "Rechts",
+      "directionUp": "Oben",
+      "directionDown": "Unten",
+      "directionIn": "Hinein",
+      "directionOut": "Heraus",
+      "directionHorizontal": "Horizontal",
+      "directionVertical": "Vertikal",
+      "directionClockwise": "Im Uhrzeigersinn",
+      "directionCounterclockwise": "Gegen den Uhrzeigersinn",
+      "duration": "Dauer (ms)",
+      "delay": "Verzögerung (ms)",
+      "preview": "Vorschau",
+      "previewAll": "Komplette Sequenz abspielen",
+      "previewStep": "Diesen Schritt abspielen",
+      "presetAppear": "Erscheinen",
+      "presetFade": "Überblenden",
+      "presetFlyIn": "Einfliegen",
+      "presetFloatIn": "Einschweben",
+      "presetSplit": "Teilen",
+      "presetWipe": "Wischen",
+      "presetShape": "Form",
+      "presetWheel": "Rad",
+      "presetRandomBars": "Zufällige Balken",
+      "presetGrowAndTurn": "Wachsen & drehen",
+      "presetZoom": "Zoom",
+      "presetSwivel": "Schwenken",
+      "presetBounce": "Springen",
+      "presetPulse": "Pulsieren",
+      "presetColorPulse": "Farbpuls",
+      "presetTeeter": "Wackeln",
+      "presetSpin": "Drehen",
+      "presetGrowShrink": "Wachsen / schrumpfen",
+      "presetDesaturate": "Entsättigen",
+      "presetFontColor": "Schriftfarbe",
+      "presetLineColor": "Linienfarbe",
+      "presetDisappear": "Verschwinden",
+      "presetFlyOut": "Hinausfliegen",
+      "presetFloatOut": "Hinausschweben",
+      "presetLine": "Linie",
+      "presetArc": "Bogen",
+      "presetTurn": "Wenden",
+      "presetLoops": "Schleifen",
+      "presetCustom": "Benutzerdefiniert",
       "effect": "Effekt",
       "speed": "Geschwindigkeit",
       "transitionNone": "Keiner",
@@ -805,16 +856,11 @@
       "speedSlow": "Langsam",
       "speedMedium": "Mittel",
       "speedFast": "Schnell",
-      "effectAppear": "Erscheinen",
-      "effectFade": "Überblenden",
-      "effectFlyIn": "Einfliegen",
-      "effectWipe": "Wischen",
       "moveEarlier": "Früher abspielen",
       "moveLater": "Später abspielen",
       "removeAnimation": "Animation entfernen",
-      "noAnimations": "Noch keine Eingangsanimationen auf dieser Folie.",
       "shapeFallback": "Form #{id}",
-      "listAriaLabel": "Eingangsanimationen"
+      "listAriaLabel": "Animationen auf dieser Folie"
     },
     "present": {
       "ariaLabel": "Präsentation",
@@ -910,5 +956,524 @@
     "engineDefault": "Standard-Engine (PDF.js)",
     "engineFidelity": "Hochpräzise Engine (PDFium)",
     "engineSwitchHint": "Engine wechseln, falls Glyphen ersetzt dargestellt werden."
+  },
+  "actions": {
+    "docx": {
+      "sections": {
+        "Comments": "Kommentare",
+        "Insert": "Einfügen",
+        "Tables": "Tabellen",
+        "Hyperlinks": "Hyperlinks",
+        "Lists": "Listen",
+        "Layout": "Layout",
+        "View": "Ansicht",
+        "Mode": "Modus"
+      },
+      "add-comment": {
+        "label": "Kommentar hinzufügen",
+        "description": "Fügt einen Kommentar zu einer Bereichsauswahl hinzu."
+      },
+      "insert-image": {
+        "label": "Bild einfügen",
+        "description": "Fügt ein Inline-Bild an einer Position ein. Liest die Bilddaten aus --image."
+      },
+      "insert-chart": {
+        "label": "Diagramm einfügen",
+        "description": "Fügt ein Inline-Diagramm an einer Position ein. Bettet eine .xlsx-Arbeitsmappe ein, damit „Daten bearbeiten“ in Word funktioniert."
+      },
+      "insert-spreadsheet": {
+        "label": "Tabelle einfügen",
+        "description": "Fügt eine eingebettete Excel-Arbeitsmappe (OLE) an einer Position ein. Doppelklick öffnet die Arbeitsmappe in Excel."
+      },
+      "insert-table": {
+        "label": "Tabelle einfügen",
+        "description": "Fügt eine leere Tabelle (Zeilen × Spalten) an einer Position ein."
+      },
+      "insert-table-from-xlsx": {
+        "label": "Tabelle aus xlsx einfügen",
+        "description": "Bereich aus einer .xlsx-Datei wählen und als native Word-Tabelle einfügen."
+      },
+      "insert-spreadsheet-from-xlsx": {
+        "label": "Live-Tabelle einfügen",
+        "description": "Bereich aus einer .xlsx-Datei wählen und die Arbeitsmappe als eingebettetes OLE-Objekt einbetten."
+      },
+      "insert-chart-from-xlsx": {
+        "label": "Diagramm aus xlsx einfügen",
+        "description": "Bereich aus einer .xlsx-Datei wählen und als Diagramm einfügen (erste Zeile = Datenreihen, erste Spalte = Kategorien)."
+      },
+      "insert-hyperlink": {
+        "label": "Hyperlink einfügen",
+        "description": "Versieht einen Textbereich mit einem Hyperlink."
+      },
+      "bullet-list": {
+        "label": "Aufzählungsliste",
+        "description": "Aufzählungsliste für den aktuellen Absatz umschalten."
+      },
+      "ordered-list": {
+        "label": "Nummerierte Liste",
+        "description": "Nummerierte Liste für den aktuellen Absatz umschalten."
+      },
+      "align-left": {
+        "label": "Linksbündig",
+        "description": "Aktuellen Absatz linksbündig ausrichten."
+      },
+      "align-center": {
+        "label": "Zentriert",
+        "description": "Aktuellen Absatz zentriert ausrichten."
+      },
+      "align-right": {
+        "label": "Rechtsbündig",
+        "description": "Aktuellen Absatz rechtsbündig ausrichten."
+      },
+      "align-justify": {
+        "label": "Blocksatz",
+        "description": "Aktuellen Absatz im Blocksatz ausrichten."
+      },
+      "indent-increase": {
+        "label": "Einzug vergrößern",
+        "description": "Aktuellen Absatz um eine Stufe (¼ Zoll) einrücken."
+      },
+      "indent-decrease": {
+        "label": "Einzug verkleinern",
+        "description": "Einzug des aktuellen Absatzes um eine Stufe (¼ Zoll) verringern."
+      },
+      "section-break-next-page": {
+        "label": "Abschnittswechsel (nächste Seite)",
+        "description": "Fügt einen Abschnittswechsel auf der nächsten Seite nach dem aktuellen Absatz ein."
+      },
+      "section-break-continuous": {
+        "label": "Abschnittswechsel (fortlaufend)",
+        "description": "Fügt einen fortlaufenden Abschnittswechsel nach dem aktuellen Absatz ein."
+      },
+      "insert-table-3x3": {
+        "label": "Tabelle einfügen (3 × 3)",
+        "description": "Fügt eine 3 × 3-Tabelle an der aktuellen Auswahl ein."
+      },
+      "insert-table-2x2": {
+        "label": "Tabelle einfügen (2 × 2)",
+        "description": "Fügt eine 2 × 2-Tabelle an der aktuellen Auswahl ein."
+      },
+      "page-setup": {
+        "label": "Seite einrichten…",
+        "description": "Öffnet den Dialog zum Konfigurieren von Rändern, Papiergröße und Ausrichtung."
+      },
+      "toggle-marks": {
+        "label": "Formatierungszeichen anzeigen",
+        "description": "Nicht-druckbare Zeichen (Absatzmarken, Tabs, Leerzeichen) ein- oder ausblenden."
+      },
+      "set-mode-edit": {
+        "label": "In Bearbeitungsmodus wechseln",
+        "description": "Direkte Änderungen werden sofort übernommen."
+      },
+      "set-mode-suggest": {
+        "label": "In Vorschlagsmodus wechseln",
+        "description": "Änderungen werden als nachverfolgbare Änderungen aufgezeichnet."
+      },
+      "set-mode-view": {
+        "label": "In Lesemodus wechseln",
+        "description": "Schreibgeschützt — alle Mutationen blockiert."
+      }
+    },
+    "xlsx": {
+      "sections": {
+        "Edit": "Bearbeiten",
+        "Format": "Format",
+        "Sheet": "Tabellenblatt",
+        "Comments": "Kommentare",
+        "Data": "Daten",
+        "Insert": "Einfügen"
+      },
+      "set-cell": {
+        "label": "Zellwert setzen",
+        "description": "Setzt den Wert einer einzelnen Zelle (Text/Zahl/Boolean/null/Fehler)."
+      },
+      "set-formula": {
+        "label": "Formel setzen",
+        "description": "Setzt die Formel einer einzelnen Zelle (mit oder ohne führendes '=')."
+      },
+      "set-format": {
+        "label": "Zellformat anwenden",
+        "description": "Wendet ein Format-Patch auf einen Bereich an (Schrift/Füllung/Rahmen/Ausrichtung/Zahlenformat)."
+      },
+      "add-sheet": {
+        "label": "Tabellenblatt hinzufügen",
+        "description": "Hängt ein neues Tabellenblatt an (oder fügt es bei --at ein)."
+      },
+      "rename-sheet": {
+        "label": "Tabellenblatt umbenennen",
+        "description": "Benennt ein Tabellenblatt anhand des aktuellen Namens um."
+      },
+      "delete-sheet": {
+        "label": "Tabellenblatt löschen",
+        "description": "Löscht ein Tabellenblatt nach Name (mind. 1 sichtbares Blatt muss verbleiben)."
+      },
+      "insert-row": {
+        "label": "Zeilen einfügen",
+        "description": "Fügt N leere Zeilen vor einem 1-basierten Zeilenindex ein."
+      },
+      "insert-column": {
+        "label": "Spalten einfügen",
+        "description": "Fügt N leere Spalten vor einem 1-basierten Spaltenindex ein."
+      },
+      "delete-row": {
+        "label": "Zeilen löschen",
+        "description": "Löscht N Zeilen ab einem 1-basierten Zeilenindex."
+      },
+      "delete-column": {
+        "label": "Spalten löschen",
+        "description": "Löscht N Spalten ab einem 1-basierten Spaltenindex."
+      },
+      "merge-cells": {
+        "label": "Zellen verbinden",
+        "description": "Verbindet einen A1-Bereich mit ≥2 Zellen."
+      },
+      "unmerge-cells": {
+        "label": "Zellverbund aufheben",
+        "description": "Hebt einen bestehenden verbundenen Bereich auf (muss exakt übereinstimmen)."
+      },
+      "add-comment": {
+        "label": "Kommentar hinzufügen",
+        "description": "Hängt eine klassische Notiz an (Einzelzellen-Anker)."
+      },
+      "toggle-filter": {
+        "label": "Auto-Filter umschalten",
+        "description": "Wendet einen Auto-Filter auf das aktive Blatt an oder entfernt ihn."
+      },
+      "format-cells": {
+        "label": "Zellen formatieren…",
+        "description": "Öffnet den Dialog „Zellen formatieren\" (Tab Zahl)."
+      },
+      "format-cells-alignment": {
+        "label": "Zellen formatieren: Ausrichtung",
+        "description": "Öffnet den Dialog „Zellen formatieren\" auf dem Tab Ausrichtung."
+      },
+      "format-cells-font": {
+        "label": "Zellen formatieren: Schrift",
+        "description": "Öffnet den Dialog „Zellen formatieren\" auf dem Tab Schrift."
+      },
+      "format-cells-border": {
+        "label": "Zellen formatieren: Rahmen",
+        "description": "Öffnet den Dialog „Zellen formatieren\" auf dem Tab Rahmen."
+      },
+      "format-cells-fill": {
+        "label": "Zellen formatieren: Füllung",
+        "description": "Öffnet den Dialog „Zellen formatieren\" auf dem Tab Füllung."
+      },
+      "format-cells-protection": {
+        "label": "Zellen formatieren: Schutz",
+        "description": "Öffnet den Dialog „Zellen formatieren\" auf dem Tab Schutz."
+      },
+      "borders-all": {
+        "label": "Rahmen: Alle",
+        "description": "Wendet Rahmen auf jede Zelle der Auswahl an."
+      },
+      "borders-outside": {
+        "label": "Rahmen: Außen",
+        "description": "Wendet Rahmen nur auf den Außenrand der Auswahl an."
+      },
+      "borders-thick-outside": {
+        "label": "Rahmen: Dick außen",
+        "description": "Wendet einen dicken Rahmen auf den Außenrand der Auswahl an."
+      },
+      "borders-none": {
+        "label": "Rahmen: Entfernen",
+        "description": "Entfernt alle Rahmen aus der Auswahl."
+      },
+      "paste-special": {
+        "label": "Inhalte einfügen…",
+        "description": "Öffnet den Dialog „Inhalte einfügen\"."
+      },
+      "format-painter": {
+        "label": "Format übertragen",
+        "description": "Aktiviert das Format-Übertragen-Werkzeug."
+      },
+      "hide-sheet": {
+        "label": "Tabellenblatt ausblenden",
+        "description": "Blendet das aktive Tabellenblatt aus (Daten bleiben erhalten)."
+      },
+      "conditional-format": {
+        "label": "Bedingte Formatierung…",
+        "description": "Öffnet den Dialog für die bedingte Formatierung."
+      },
+      "conditional-format-clear": {
+        "label": "Bedingte Formatierung dieses Blatts löschen",
+        "description": "Entfernt jede Regel zur bedingten Formatierung auf dem aktiven Blatt."
+      },
+      "data-validation": {
+        "label": "Datenüberprüfung…",
+        "description": "Öffnet den Dialog zur Datenüberprüfung für die aktive Auswahl."
+      },
+      "data-validation-clear": {
+        "label": "Datenüberprüfung dieses Blatts löschen",
+        "description": "Entfernt jede Datenüberprüfungsregel auf dem aktiven Blatt."
+      },
+      "name-manager": {
+        "label": "Namens-Manager…",
+        "description": "Öffnet den Namens-Manager zum Anzeigen und Bearbeiten definierter Namen."
+      },
+      "define-name": {
+        "label": "Namen aus Auswahl definieren…",
+        "description": "Öffnet den Namens-Manager mit Bezug auf die aktuelle Auswahl."
+      },
+      "merge": {
+        "label": "Zellen verbinden",
+        "description": "Verbindet die aktuelle Auswahl zu einer Zelle."
+      },
+      "unmerge": {
+        "label": "Zellverbund aufheben",
+        "description": "Trennt zuvor verbundene Zellen in der aktuellen Auswahl."
+      },
+      "insert-image": {
+        "label": "Bild einfügen",
+        "description": "Wählt ein Bild aus und fügt es verankert an der aktiven Auswahl ein."
+      },
+      "format-as-table": {
+        "label": "Als Tabelle formatieren…",
+        "description": "Wandelt die aktuelle Auswahl in eine strukturierte Tabelle um."
+      },
+      "insert-chart": {
+        "label": "Diagramm einfügen…",
+        "description": "Öffnet den Diagramm-Dialog für die aktuelle Auswahl."
+      },
+      "edit-chart": {
+        "label": "Diagramm bearbeiten…",
+        "description": "Bearbeitet den Datenbereich, Typ und Titel des aktuell ausgewählten Diagramms."
+      }
+    },
+    "pptx": {
+      "sections": {
+        "Slide": "Folie",
+        "Format": "Format",
+        "Insert": "Einfügen",
+        "View": "Ansicht"
+      },
+      "add-slide": {
+        "label": "Folie hinzufügen",
+        "description": "Hängt eine neue Folie an (oder fügt sie bei --at ein)."
+      },
+      "delete-slide": {
+        "label": "Folie löschen",
+        "description": "Löscht eine Folie über einen 0-basierten Index."
+      },
+      "duplicate-slide": {
+        "label": "Folie duplizieren",
+        "description": "Dupliziert eine Folie; die Kopie wird direkt nach der Quelle eingefügt."
+      },
+      "move-slide": {
+        "label": "Folie verschieben",
+        "description": "Sortiert eine Folie um."
+      },
+      "set-slide-transition": {
+        "label": "Folienübergang festlegen",
+        "description": "Setzt den Eingangsübergang einer Folie."
+      },
+      "format-text": {
+        "label": "Textlauf formatieren",
+        "description": "Wendet Schrift / Größe / fett / kursiv / unterstrichen / Farbe auf einen Textlauf an."
+      },
+      "add-text-box": {
+        "label": "Textfeld hinzufügen",
+        "description": "Fügt ein neues Textfeld auf einer Folie ein."
+      },
+      "insert-image": {
+        "label": "Bild einfügen",
+        "description": "Fügt ein Bild auf einer Folie ein."
+      },
+      "insert-chart": {
+        "label": "Diagramm einfügen",
+        "description": "Fügt ein Diagramm auf einer Folie ein. Bettet eine .xlsx-Arbeitsmappe ein, damit „Daten bearbeiten“ in PowerPoint funktioniert."
+      },
+      "insert-spreadsheet": {
+        "label": "Tabelle einfügen",
+        "description": "Fügt eine eingebettete Excel-Arbeitsmappe (OLE) auf einer Folie ein. Doppelklick öffnet die Arbeitsmappe in Excel."
+      },
+      "insert-table": {
+        "label": "Tabelle einfügen",
+        "description": "Fügt auf einer Folie eine native PowerPoint-Tabelle aus einem 2D-Raster ein (z. B. einer xlsx-Einfügung)."
+      },
+      "insert-table-from-xlsx": {
+        "label": "Tabelle aus xlsx einfügen",
+        "description": "Bereich aus einer .xlsx-Datei wählen und als native PowerPoint-Tabelle einfügen."
+      },
+      "insert-spreadsheet-from-xlsx": {
+        "label": "Live-Tabelle einfügen",
+        "description": "Bereich aus einer .xlsx-Datei wählen und die Arbeitsmappe als eingebettetes OLE-Objekt auf der Folie einbetten."
+      },
+      "insert-chart-from-xlsx": {
+        "label": "Diagramm aus xlsx einfügen",
+        "description": "Bereich aus einer .xlsx-Datei wählen und als Diagramm auf der Folie einfügen."
+      },
+      "add-shape-animation": {
+        "label": "Form-Animation hinzufügen",
+        "description": "Fügt einer Form eine Eingangs-/Hervorhebungs-/Ausgangsanimation hinzu."
+      },
+      "remove-shape-animation": {
+        "label": "Form-Animation entfernen",
+        "description": "Entfernt eine Form-Animation von einer Folie."
+      },
+      "add-rect": {
+        "label": "Rechteck einfügen",
+        "description": "Fügt eine Rechteck-Form auf der aktiven Folie ein."
+      },
+      "add-ellipse": {
+        "label": "Ellipse einfügen",
+        "description": "Fügt eine Ellipse-Form auf der aktiven Folie ein."
+      },
+      "add-arrow": {
+        "label": "Pfeil einfügen",
+        "description": "Fügt eine Rechtspfeil-Form auf der aktiven Folie ein."
+      },
+      "add-connector-elbow": {
+        "label": "Winkelverbinder zeichnen",
+        "description": "Aktiviert das Werkzeug für Winkelverbinder."
+      },
+      "add-connector-straight": {
+        "label": "Geraden Verbinder zeichnen",
+        "description": "Aktiviert das Werkzeug für gerade Verbinder."
+      },
+      "add-connector-curved": {
+        "label": "Gebogenen Verbinder zeichnen",
+        "description": "Aktiviert das Werkzeug für gebogene Verbinder."
+      },
+      "zoom-reset": {
+        "label": "Zoom auf 100% zurücksetzen",
+        "description": "Setzt den Zoom der Leinwand auf 100% zurück."
+      },
+      "present-from-start": {
+        "label": "Präsentation von Beginn starten",
+        "description": "Startet den Präsentationsmodus bei Folie 1."
+      },
+      "present-from-current": {
+        "label": "Präsentation ab aktueller Folie starten",
+        "description": "Startet den Präsentationsmodus bei der aktiven Folie."
+      }
+    },
+    "pdf": {
+      "sections": {
+        "Pages": "Seiten",
+        "Document": "Dokument",
+        "Forms": "Formulare",
+        "OCR": "OCR",
+        "Navigate": "Navigation",
+        "View": "Ansicht",
+        "File": "Datei"
+      },
+      "rotate-pages": {
+        "label": "Seiten drehen",
+        "description": "Dreht eine oder mehrere Seiten um 90/180/270°."
+      },
+      "reorder-pages": {
+        "label": "Seiten neu anordnen",
+        "description": "Ordnet die Seiten des Dokuments neu an."
+      },
+      "delete-pages": {
+        "label": "Seiten löschen",
+        "description": "Löscht eine oder mehrere Seiten aus dem Dokument."
+      },
+      "merge": {
+        "label": "PDFs zusammenführen",
+        "description": "Führt zwei oder mehr PDFs in Reihenfolge zusammen; schreibt ein neues PDF nach --out."
+      },
+      "split": {
+        "label": "PDF teilen",
+        "description": "Teilt ein PDF nach Seitenbereich oder alle N Seiten; schreibt ein PDF pro Teil."
+      },
+      "extract-pages": {
+        "label": "Seiten extrahieren",
+        "description": "Extrahiert einen Seitenbereich in ein neues PDF."
+      },
+      "add-watermark": {
+        "label": "Wasserzeichen hinzufügen",
+        "description": "Stempelt ein Text- oder Bildwasserzeichen über einen Seitenbereich."
+      },
+      "add-page-numbers": {
+        "label": "Seitenzahlen hinzufügen",
+        "description": "Stempelt Seitenzahlen über einen Seitenbereich."
+      },
+      "set-metadata": {
+        "label": "Metadaten setzen",
+        "description": "Setzt oder löscht Metadatenfelder (Titel, Autor, Thema, Stichwörter)."
+      },
+      "fill-form": {
+        "label": "Formular ausfüllen",
+        "description": "Füllt ein interaktives Formular aus einer JSON-Map (Feld → Wert) aus."
+      },
+      "flatten-form": {
+        "label": "Formular reduzieren",
+        "description": "Wandelt ein interaktives Formular in statischen PDF-Inhalt um."
+      },
+      "reset-form": {
+        "label": "Formular zurücksetzen",
+        "description": "Setzt jedes interaktive Formularfeld auf seinen Standardwert zurück."
+      },
+      "add-text-layer": {
+        "label": "OCR-Textebene hinzufügen",
+        "description": "Führt OCR über jede Seite aus und bettet eine unsichtbare, auswählbare Textebene ein."
+      },
+      "next-page": {
+        "label": "Nächste Seite",
+        "description": "Navigiert im Viewer zur nächsten Seite."
+      },
+      "prev-page": {
+        "label": "Vorherige Seite",
+        "description": "Navigiert im Viewer zur vorherigen Seite."
+      },
+      "first-page": {
+        "label": "Erste Seite",
+        "description": "Springt zur ersten Seite."
+      },
+      "last-page": {
+        "label": "Letzte Seite",
+        "description": "Springt zur letzten Seite."
+      },
+      "zoom-in": {
+        "label": "Vergrößern",
+        "description": "Erhöht die Zoomstufe des Viewers."
+      },
+      "zoom-out": {
+        "label": "Verkleinern",
+        "description": "Verringert die Zoomstufe des Viewers."
+      },
+      "fit-width": {
+        "label": "An Breite anpassen",
+        "description": "Passt die Seitenbreite an den Viewer an."
+      },
+      "fit-page": {
+        "label": "Ganze Seite anpassen",
+        "description": "Passt eine ganze Seite in den Viewer ein."
+      },
+      "actual-size": {
+        "label": "Tatsächliche Größe (100 %)",
+        "description": "Setzt den Viewer-Zoom auf 100% zurück."
+      },
+      "rotate-cw": {
+        "label": "Ansicht im Uhrzeigersinn drehen",
+        "description": "Dreht die Bildschirmansicht im Uhrzeigersinn (verändert das PDF nicht)."
+      },
+      "rotate-ccw": {
+        "label": "Ansicht gegen den Uhrzeigersinn drehen",
+        "description": "Dreht die Bildschirmansicht gegen den Uhrzeigersinn (verändert das PDF nicht)."
+      },
+      "toggle-dark": {
+        "label": "Dunkelmodus umschalten",
+        "description": "Wechselt zwischen hell, sepia und dunkel."
+      },
+      "toggle-reflow": {
+        "label": "Umbruch umschalten",
+        "description": "Schaltet den umfließenden Lesemodus (einspaltig) ein/aus."
+      },
+      "rotate-page": {
+        "label": "Aktuelle Seite um 90° drehen",
+        "description": "Dreht die aktuelle Seite um 90° (schreibt ins Dokument; siehe auch pdf.rotate-pages)."
+      },
+      "delete-page": {
+        "label": "Aktuelle Seite löschen",
+        "description": "Löscht die aktuelle Seite aus dem Dokument (siehe auch pdf.delete-pages)."
+      },
+      "print": {
+        "label": "Drucken…",
+        "description": "Öffnet den nativen Druckdialog des Browsers für das PDF."
+      }
+    }
   }
 }

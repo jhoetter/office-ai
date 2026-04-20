@@ -15,6 +15,8 @@ import type {
   RunProperties,
 } from "../model/types.js";
 import { ATTR_KEY, opaqueToEntry } from "../parser/xml-helpers.js";
+import { serializeChartDrawing, serializeChartParts } from "./charts.js";
+import { serializeEmbeddingParts } from "./embeddings.js";
 import { DocxSerializeError } from "./errors.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
 import { serializeInlineImageDrawing } from "./images.js";
@@ -114,6 +116,29 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
   } catch (err) {
     if (err instanceof DocxSerializeError) throw err;
     throw new DocxSerializeError("rels-failed", "Failed to write relationships parts", { cause: err });
+  }
+
+  // Chart parts: regenerate `word/charts/chartN.xml` from the typed
+  // model and (re)materialise the embedded xlsx package + its
+  // per-chart relationships so Office's "Edit Data" UI sees a real,
+  // round-trippable workbook rather than a dangling reference.
+  try {
+    await serializeChartParts(container, snapshot);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("chart-failed", "Failed to write chart parts", { cause: err });
+  }
+
+  // Embedded binary parts (`word/embeddings/*.xlsx`, …). Authored by
+  // OLE-Excel-spreadsheet inserts and re-materialised here so Office
+  // sees the live `.xlsx` package on double-click. Untouched embeds
+  // ride the container's part cache; only entries in `dirty.embeddings`
+  // are re-written.
+  try {
+    await serializeEmbeddingParts(container, snapshot);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("embedding-failed", "Failed to write embedding parts", { cause: err });
   }
 
   // Numbering definitions (`word/numbering.xml`). Skipped unless
@@ -461,8 +486,9 @@ function serializeRunOrFieldWrapper(r: Run): unknown {
 
 function serializeRunProperties(props: RunProperties): unknown | null {
   const out: unknown[] = [];
-  if (props.fontFamily) {
-    out.push(makeEl("w:rFonts", { "w:ascii": props.fontFamily, "w:hAnsi": props.fontFamily }));
+  const rFontsAttrs = buildRFontsAttrs(props);
+  if (rFontsAttrs) {
+    out.push(makeEl("w:rFonts", rFontsAttrs));
   }
   if (props.bold !== undefined) {
     out.push(props.bold ? makeEl("w:b") : makeEl("w:b", { "w:val": "false" }));
@@ -494,13 +520,44 @@ function serializeRunProperties(props: RunProperties): unknown | null {
   }
   if (props.opaqueProps) {
     for (const o of props.opaqueProps) {
-      // Skip opaque rFonts since we already emitted a typed one if fontFamily set
-      if (o.tag === "w:rFonts" && props.fontFamily) continue;
+      // Skip opaque rFonts when we emitted a typed one. Any of the
+      // typed font slots being set is enough to drop the captured
+      // duplicate; otherwise the parser already round-tripped the
+      // raw element verbatim.
+      if (o.tag === "w:rFonts" && rFontsAttrs) continue;
       out.push(opaqueToEntry(o));
     }
   }
   if (out.length === 0) return null;
   return { "w:rPr": out };
+}
+
+/**
+ * Build the `<w:rFonts>` attribute map from the typed multi-script
+ * font slots on `props`. Returns `null` when no typed slot has been
+ * set so the serializer can fall back to round-tripping the opaque
+ * `w:rFonts` element via `opaqueProps`.
+ *
+ * `fontFamily` is mirrored to `w:ascii` AND `w:hAnsi` only when
+ * `fontFamilyHAnsi` is unset — matches Word's behaviour for
+ * single-script edits while still honouring an explicit hAnsi slot
+ * coming from the source document.
+ */
+function buildRFontsAttrs(props: RunProperties): Record<string, string> | null {
+  const attrs: Record<string, string> = {};
+  if (props.fontFamily) attrs["w:ascii"] = props.fontFamily;
+  if (props.fontFamilyHAnsi) {
+    attrs["w:hAnsi"] = props.fontFamilyHAnsi;
+  } else if (props.fontFamily) {
+    attrs["w:hAnsi"] = props.fontFamily;
+  }
+  if (props.fontFamilyEastAsia) attrs["w:eastAsia"] = props.fontFamilyEastAsia;
+  if (props.fontFamilyComplexScript) attrs["w:cs"] = props.fontFamilyComplexScript;
+  if (props.fontFamilyAsciiTheme) attrs["w:asciiTheme"] = props.fontFamilyAsciiTheme;
+  if (props.fontFamilyHAnsiTheme) attrs["w:hAnsiTheme"] = props.fontFamilyHAnsiTheme;
+  if (props.fontFamilyEastAsiaTheme) attrs["w:eastAsiaTheme"] = props.fontFamilyEastAsiaTheme;
+  if (props.fontFamilyComplexScriptTheme) attrs["w:cstheme"] = props.fontFamilyComplexScriptTheme;
+  return Object.keys(attrs).length === 0 ? null : attrs;
 }
 
 function serializeRunChild(c: RunChild): unknown {
@@ -546,6 +603,14 @@ function serializeRunChild(c: RunChild): unknown {
           // typed model has not been touched since parse.
           if (c.raw) return opaqueToEntry(c.raw);
           return serializeInlineImageDrawing(c);
+        case "chart":
+          // The chart payload itself lives in `word/charts/chartN.xml`
+          // and is rewritten by the dirty-charts pass below; the inline
+          // drawing wrapper round-trips via the captured `raw` subtree
+          // for parsed charts and via a synthesized envelope for newly
+          // inserted charts.
+          if (c.raw) return opaqueToEntry(c.raw);
+          return serializeChartDrawing(c);
         case "opaque":
           return opaqueToEntry(c.raw);
         default: {
@@ -557,6 +622,8 @@ function serializeRunChild(c: RunChild): unknown {
         }
       }
     }
+    case "embedded-spreadsheet":
+      return serializeEmbeddedSpreadsheet(c);
     case "opaque":
       return opaqueToEntry(c.raw);
     default: {
@@ -567,6 +634,38 @@ function serializeRunChild(c: RunChild): unknown {
       );
     }
   }
+}
+
+/**
+ * Re-emit `<w:object>` for a typed OLE Excel embed. Existing embeds
+ * round-trip via the captured `raw` subtree (same byte-preservation
+ * fast path images use). Authored embeds with no captured raw fall
+ * back to a minimal `<w:object>` envelope carrying the rebuilt
+ * `<o:OLEObject>` and a `<v:shape>` preview wrapper. The full
+ * `<v:imagedata>` / preview-image authoring lives in the serializer
+ * companion that runs alongside `docx:insert-spreadsheet`.
+ */
+function serializeEmbeddedSpreadsheet(leaf: import("../model/types.js").EmbeddedSpreadsheet): unknown {
+  if (leaf.raw) return opaqueToEntry(leaf.raw);
+  const oleAttrs: Record<string, string> = { ...leaf.oleObjectAttrs };
+  oleAttrs["ProgID"] = leaf.progId;
+  oleAttrs["r:id"] = leaf.oleRelId;
+  if (!oleAttrs["Type"]) oleAttrs["Type"] = "Embed";
+  if (!oleAttrs["DrawAspect"]) oleAttrs["DrawAspect"] = "Content";
+  const oleObj = makeEntry("o:OLEObject", [], oleAttrs);
+  const objectChildren: unknown[] = [];
+  if (leaf.previewImageRelId) {
+    const shapeAttrs: Record<string, string> = {
+      "id": `_x0000_i${leaf.id}`,
+      "type": "#_x0000_t75",
+      "style": "width:240pt;height:180pt",
+    };
+    const imagedata = makeEntry("v:imagedata", [], { "r:id": leaf.previewImageRelId, "o:title": "" });
+    const shape = makeEntry("v:shape", [imagedata], shapeAttrs);
+    objectChildren.push(shape);
+  }
+  objectChildren.push(oleObj);
+  return makeEntry("w:object", objectChildren, {});
 }
 
 function serializeHyperlink(h: Hyperlink): unknown {

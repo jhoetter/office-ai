@@ -38,6 +38,7 @@ import {
   Spline,
   Square,
   StickyNote,
+  Table2,
   Trash2,
   Triangle,
   Type,
@@ -76,6 +77,13 @@ export interface PptxToolbarProps {
    */
   readonly connectorToolType: "straight" | "elbow" | "curved" | null;
   readonly onInsertImage: (file: File) => void;
+  /**
+   * Open the XlsxRangePicker dialog so the user can pick a .xlsx
+   * file + sheet + range and decide whether to insert it as a
+   * native table, a live-OLE embedded workbook, or a chart. Mirrors
+   * the three "Insert from xlsx" entries in the action catalogue.
+   */
+  readonly onInsertFromXlsx: () => void;
   /**
    * D9 — replace the picture's bitmap behind the currently-selected
    * `Picture` shape. Only enabled when `selectedIsPicture` is true.
@@ -249,6 +257,12 @@ export function PptxToolbar(props: PptxToolbarProps) {
       <PictureReplaceButton
         onReplace={props.onReplacePicture}
         disabled={disabled || !props.selectedIsPicture}
+      />
+      <ToolbarButton
+        onClick={props.onInsertFromXlsx}
+        icon={<Table2 size={14} />}
+        label="From xlsx"
+        disabled={disabled}
       />
       <ToolbarButton
         onClick={props.onDeleteShape}

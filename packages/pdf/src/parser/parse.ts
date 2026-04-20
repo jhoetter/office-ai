@@ -19,6 +19,8 @@ import type {
   PdfRotation,
   PdfSnapshot,
 } from "../model/types.js";
+import { buildStructuredPage } from "../text/structured.js";
+import { serializeReadingOrder } from "../text/serialize.js";
 import { PdfParseError } from "./errors.js";
 
 export interface PdfParseOptions extends PdfEngineLoadOptions {
@@ -62,6 +64,7 @@ export const parsePdf = async (
     doc = await loadDocument(buffer, {
       ...(opts.password !== undefined ? { password: opts.password } : {}),
       ...(forceEngine !== undefined ? { forceEngine } : {}),
+      ...(opts.assetsBase !== undefined ? { assetsBase: opts.assetsBase } : {}),
     });
   } catch (err) {
     throw new PdfParseError(
@@ -78,9 +81,21 @@ export const parsePdf = async (
 
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
-      const text = await page.getTextContent();
+      const runs = await page.getGlyphRuns();
       const annots = await page.getAnnotations();
       const fields = await page.getFormFields();
+
+      const structured = buildStructuredPage(runs, page.info.width, page.info.height);
+      // The structured walker reconstructs reading order from glyph
+      // bboxes (column-aware, baseline-bucketed). We fall back to
+      // the raw stream-order plain text only when the structured
+      // pass yielded nothing (e.g. PDFium-style pages whose text
+      // items lack per-character metrics).
+      const readingOrderText = serializeReadingOrder(structured);
+      const text = readingOrderText.length > 0
+        ? readingOrderText
+        : (await page.getTextContent()).plain;
+      const hasTextLayer = runs.length > 0;
 
       pages.push({
         id: mint(),
@@ -90,8 +105,9 @@ export const parsePdf = async (
         height: page.info.height,
         rotation: page.info.rotation as PdfRotation,
         ...(page.info.label !== undefined ? { label: page.info.label } : {}),
-        text: text.plain,
-        hasTextLayer: text.items.length > 0,
+        text,
+        structured,
+        hasTextLayer,
         hasAnnotations: annots.length > 0,
         hasFormFields: fields.length > 0,
       });

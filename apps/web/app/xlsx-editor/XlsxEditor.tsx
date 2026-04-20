@@ -88,8 +88,8 @@ import { ConditionalFormatDialog } from "./ConditionalFormatDialog";
 import { DataValidationDialog } from "./DataValidationDialog";
 import { NameBox } from "./NameBox";
 import { NameManagerDialog } from "./NameManagerDialog";
-import { InsertChartDialog } from "./InsertChartDialog";
-import type { ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
+import { ChartDialog, InsertChartDialog } from "./InsertChartDialog";
+import type { ChartKind, ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import {
@@ -337,6 +337,14 @@ export function XlsxEditor({
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [selectedChartId, setSelectedChartId] = useState<string | null>(null);
   const [insertChartOpen, setInsertChartOpen] = useState(false);
+  /**
+   * `editChartId !== null` opens the Edit-chart dialog pre-filled
+   * from `activeSheet.charts.find(...)`. We keep an id (not the
+   * chart object) here so the dialog always reflects the latest
+   * snapshot if the chart was mutated by another command in the
+   * background while the dialog is open.
+   */
+  const [editChartId, setEditChartId] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [toasts, setToasts] = useState<ReadonlyArray<ToastItem>>([]);
   const [formulaDraft, setFormulaDraft] = useState("");
@@ -843,6 +851,7 @@ export function XlsxEditor({
           return singleSelection(pos);
         });
         setSelectedImageId(null);
+        setSelectedChartId(null);
         surfaceRef.current?.focus({ preventScroll: true });
         return;
       }
@@ -864,6 +873,7 @@ export function XlsxEditor({
         }
       }
       setSelectedImageId(null);
+      setSelectedChartId(null);
       // Pull keyboard focus back to the surface so the next printable
       // key starts type-to-edit on the new anchor. Focus synchronously
       // so the active element is already the surface by the time the
@@ -1550,6 +1560,16 @@ export function XlsxEditor({
           setMarchingAnts(null);
           return;
         }
+        // Floating-object selection (image / chart) takes priority
+        // over collapsing the cell range — Excel parity, and
+        // matches the user's mental model that Escape "drops" the
+        // currently-armed thing.
+        if (selectedChartId !== null || selectedImageId !== null) {
+          e.preventDefault();
+          setSelectedChartId(null);
+          setSelectedImageId(null);
+          return;
+        }
         if (!selection) return;
         e.preventDefault();
         setSelection(singleSelection(selection.anchor));
@@ -1787,6 +1807,7 @@ export function XlsxEditor({
       moveSelection,
       pushToast,
       selectedCell,
+      selectedChartId,
       selectedImageId,
       selection,
       wholeColSelection,
@@ -1915,6 +1936,69 @@ export function XlsxEditor({
     },
     [activeSheet, pushToast]
   );
+
+  /**
+   * Chart move/resize mirror their image counterparts: the overlay
+   * commits final geometry on mouse-up, we forward to the typed
+   * command bus. Single dispatch per gesture keeps undo single-step.
+   */
+  const onMoveChart = useCallback(
+    (
+      chartId: string,
+      anchor: { fromRow: number; fromCol: number; fromOffsetXPx: number; fromOffsetYPx: number }
+    ) => {
+      if (!activeSheet) return;
+      const a = agentRef.current;
+      if (!a) return;
+      void a
+        .applyCommand({
+          type: "xlsx:move-chart",
+          payload: {
+            sheet: activeSheet.name,
+            chartId,
+            fromRow: anchor.fromRow,
+            fromCol: anchor.fromCol,
+            fromOffsetXPx: anchor.fromOffsetXPx,
+            fromOffsetYPx: anchor.fromOffsetYPx,
+          },
+          source: "human",
+        })
+        .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
+    },
+    [activeSheet, pushToast]
+  );
+
+  const onResizeChart = useCallback(
+    (chartId: string, size: { widthPx: number; heightPx: number }) => {
+      if (!activeSheet) return;
+      const a = agentRef.current;
+      if (!a) return;
+      void a
+        .applyCommand({
+          type: "xlsx:resize-chart",
+          payload: {
+            sheet: activeSheet.name,
+            chartId,
+            widthPx: size.widthPx,
+            heightPx: size.heightPx,
+          },
+          source: "human",
+        })
+        .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
+    },
+    [activeSheet, pushToast]
+  );
+
+  /**
+   * Resolve the chart currently targeted by the Edit dialog from the
+   * live snapshot. Returning `null` (rather than reading the dialog's
+   * stale copy) means the dialog auto-closes if the chart got removed
+   * out from under it via `xlsx:remove-chart` (e.g. by the agent).
+   */
+  const editingChart = useMemo(() => {
+    if (editChartId === null || !activeSheet) return null;
+    return activeSheet.charts.find((c) => c.id === editChartId) ?? null;
+  }, [editChartId, activeSheet]);
 
   const onSave = useCallback(async () => {
     const a = agentRef.current;
@@ -2103,7 +2187,8 @@ export function XlsxEditor({
         | "xlsx:add-chart"
         | "xlsx:remove-chart"
         | "xlsx:move-chart"
-        | "xlsx:resize-chart",
+        | "xlsx:resize-chart"
+        | "xlsx:update-chart",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -2115,6 +2200,23 @@ export function XlsxEditor({
         });
     },
     [pushToast]
+  );
+
+  /**
+   * Quick chart-type switch from the chart toolbar. Goes through
+   * `xlsx:update-chart` so undo/redo + diff tracking pick it up the
+   * same way as data-range edits made via the dialog.
+   */
+  const onChangeChartKind = useCallback(
+    (chartId: string, kind: ChartKind) => {
+      if (!activeSheet) return;
+      dispatchOrToast("xlsx:update-chart", {
+        sheet: activeSheet.name,
+        chartId,
+        kind,
+      });
+    },
+    [activeSheet, dispatchOrToast]
   );
 
   // Range eligible for merge: at least 2 cells.
@@ -3674,10 +3776,17 @@ export function XlsxEditor({
         enabled: Boolean(activeSheet && selection),
       },
       "xlsx.insert-chart": { run: () => setInsertChartOpen(true), enabled: Boolean(activeSheet && selection) },
+      "xlsx.edit-chart": {
+        run: () => {
+          if (selectedChartId !== null) setEditChartId(selectedChartId);
+        },
+        enabled: Boolean(activeSheet && selectedChartId),
+      },
       "xlsx.add-comment": { run: () => focusCommentComposer(), enabled: Boolean(selection) },
     };
-    return buildPaletteFromCatalogue(xlsxActions, runners);
+    return buildPaletteFromCatalogue(xlsxActions, runners, t);
   }, [
+    t,
     agent,
     canMerge,
     canTextToColumns,
@@ -4161,6 +4270,10 @@ export function XlsxEditor({
                           });
                           setSelectedChartId(null);
                         }}
+                        onMoveChart={onMoveChart}
+                        onResizeChart={onResizeChart}
+                        onChangeChartKind={onChangeChartKind}
+                        onRequestEditChart={(id) => setEditChartId(id)}
                         remotePeers={realtimeRoom.remotePeers}
                       />
                     ) : null}
@@ -4235,8 +4348,39 @@ export function XlsxEditor({
             hasHeaderRow: args.hasHeaderRow,
             hasCategoryColumn: args.hasCategoryColumn,
             ...(args.title ? { title: args.title } : {}),
+            palette: args.palette,
+            showLegend: args.showLegend,
+            showDataLabels: args.showDataLabels,
+            showGridlines: args.showGridlines,
+            ...(args.xAxisTitle ? { xAxisTitle: args.xAxisTitle } : {}),
+            ...(args.yAxisTitle ? { yAxisTitle: args.yAxisTitle } : {}),
           });
           setInsertChartOpen(false);
+        }}
+      />
+      <ChartDialog
+        open={editChartId !== null && !!editingChart}
+        mode="edit"
+        initial={editingChart ?? undefined}
+        onCancel={() => setEditChartId(null)}
+        onSubmit={(args) => {
+          if (!activeSheet || !editingChart) return;
+          dispatchOrToast("xlsx:update-chart", {
+            sheet: activeSheet.name,
+            chartId: editingChart.id,
+            kind: args.kind,
+            dataRange: args.dataRange,
+            hasHeaderRow: args.hasHeaderRow,
+            hasCategoryColumn: args.hasCategoryColumn,
+            title: args.title ?? null,
+            palette: args.palette,
+            showLegend: args.showLegend,
+            showDataLabels: args.showDataLabels,
+            showGridlines: args.showGridlines,
+            xAxisTitle: args.xAxisTitle ?? null,
+            yAxisTitle: args.yAxisTitle ?? null,
+          });
+          setEditChartId(null);
         }}
       />
     </>

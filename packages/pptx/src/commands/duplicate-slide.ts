@@ -247,6 +247,17 @@ function deepCloneShape(s: Shape, nextCNvPrId: () => number, mintNodeId: () => s
       };
       return c;
     }
+    case "ole-spreadsheet": {
+      const c: Shape = {
+        ...s,
+        id,
+        cNvPrId,
+        nvGraphicFramePrTail: s.nvGraphicFramePrTail.map(cloneOpaque),
+        oleObjAttrs: { ...s.oleObjAttrs },
+        oleObjChildrenRaw: s.oleObjChildrenRaw.map(cloneOpaque),
+      };
+      return c;
+    }
     case "connector": {
       const c: ConnectorShape = {
         ...s,

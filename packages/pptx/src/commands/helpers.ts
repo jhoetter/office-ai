@@ -21,9 +21,22 @@ export interface DirtyMutator {
   slides?: ReadonlyArray<string>;
   removeSlides?: ReadonlyArray<string>;
   notesSlides?: ReadonlyArray<string>;
+  /**
+   * Slide-master parts (`ppt/slideMasters/slideMasterN.xml`) whose
+   * raw XML has been mutated since parse. The serializer flushes
+   * each entry by re-emitting `OpaquePart.raw`. Future master-edit
+   * commands populate this — today no built-in command sets it.
+   */
+  masters?: ReadonlyArray<string>;
   layouts?: ReadonlyArray<string>;
+  /**
+   * Theme parts (`ppt/theme/themeN.xml`) whose raw XML has been
+   * mutated since parse. Same flush pattern as `masters`.
+   */
+  theme?: ReadonlyArray<string>;
   media?: ReadonlyArray<string>;
   charts?: ReadonlyArray<string>;
+  embeddings?: ReadonlyArray<string>;
   comments?: ReadonlyArray<string>;
   commentAuthors?: boolean;
   relationships?: ReadonlyArray<string>;
@@ -43,11 +56,12 @@ export function evolveSnapshot(
     presentation: snapshot.dirty.presentation || (mut.presentation ?? false),
     slides: extendSet(snapshot.dirty.slides, mut.slides ?? []),
     notesSlides: extendSet(snapshot.dirty.notesSlides, mut.notesSlides ?? []),
-    masters: snapshot.dirty.masters,
+    masters: extendSet(snapshot.dirty.masters, mut.masters ?? []),
     layouts: extendSet(snapshot.dirty.layouts, mut.layouts ?? []),
-    theme: snapshot.dirty.theme,
+    theme: extendSet(snapshot.dirty.theme, mut.theme ?? []),
     media: extendSet(snapshot.dirty.media, mut.media ?? []),
     charts: extendSet(snapshot.dirty.charts, mut.charts ?? []),
+    embeddings: extendSet(snapshot.dirty.embeddings, mut.embeddings ?? []),
     comments: extendSet(snapshot.dirty.comments, mut.comments ?? []),
     commentAuthors: snapshot.dirty.commentAuthors || (mut.commentAuthors ?? false),
     relationships: extendSet(snapshot.dirty.relationships, mut.relationships ?? []),

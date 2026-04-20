@@ -125,12 +125,14 @@ describe("parsePptx", () => {
 
     expect(slide.animations.length).toBe(2);
     expect(slide.animations[0]).toMatchObject({
-      effect: "appear",
+      category: "entrance",
+      preset: "appear",
       targetCNvPrId: 2,
       order: 0,
     });
     expect(slide.animations[1]).toMatchObject({
-      effect: "fly-in",
+      category: "entrance",
+      preset: "flyIn",
       targetCNvPrId: 3,
       order: 1,
       durationMs: 500,

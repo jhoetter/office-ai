@@ -17,6 +17,11 @@ export {
   type PaletteRunner,
   type PaletteRunners,
 } from "./buildPaletteFromCatalogue";
+export {
+  translateAction,
+  type TranslateFn,
+  type TranslatedActionStrings,
+} from "./translateAction";
 export { useAction, getAction, type ResolvedAction } from "./useAction";
 export type {
   CommentsBadge,

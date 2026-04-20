@@ -40,7 +40,11 @@ function renderSlide(num: number, slide: Slide, charts: ReadonlyMap<string, Char
     out.push(`- _animations_:`);
     for (const a of slide.animations) {
       const dur = a.durationMs !== undefined ? ` ${a.durationMs}ms` : "";
-      out.push(`  - \`${a.id}\` ${a.order + 1}. **${a.effect}**${dur} → cNvPr=${a.targetCNvPrId}`);
+      const dir = a.direction ? ` ${a.direction}` : "";
+      const trig = a.trigger && a.trigger !== "onClick" ? ` (${a.trigger})` : "";
+      out.push(
+        `  - \`${a.id}\` ${a.order + 1}. **${a.category}/${a.preset}**${dir}${dur}${trig} → cNvPr=${a.targetCNvPrId}`
+      );
     }
   }
   if (slide.transition || slide.animations.length > 0) out.push("");

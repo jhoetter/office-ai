@@ -64,6 +64,26 @@ export interface DocxDirtyFlags {
    * write to `StylesPart` (R10 / P4) would flip it.
    */
   styles: boolean;
+  /**
+   * Set of chart part paths (e.g. `"word/charts/chart1.xml"`) that have
+   * been added or mutated since load. Untouched chart parts ride the
+   * container's part cache; only entries in this set are re-emitted by
+   * the serializer (which also (re)builds the embedded
+   * `word/embeddings/Microsoft_Excel_WorksheetN.xlsx` so Office's
+   * "Edit Data" UI keeps working). Added alongside the typed chart
+   * model.
+   */
+  charts: ReadonlySet<string>;
+  /**
+   * Set of embedded-binary part paths (e.g.
+   * `"word/embeddings/oleObject1.xlsx"`) that have been added or
+   * mutated since load. Untouched embedded parts ride the container's
+   * part cache; only entries in this set are re-emitted by the
+   * serializer (which also registers the matching content-type
+   * override). Used by `docx:insert-spreadsheet` and any future
+   * OLE-package authoring path.
+   */
+  embeddings: ReadonlySet<string>;
 }
 
 export interface DocxDocument {
@@ -134,7 +154,98 @@ export interface DocxDocument {
    * workstream when font-scheme authoring lands.
    */
   readonly theme?: ThemePart;
+  /**
+   * Typed projection of every `word/charts/chart*.xml` part referenced
+   * from `word/document.xml.rels`. Keyed by the chart part path. The
+   * Word DrawingML chart schema is identical to PowerPoint's, so the
+   * shape mirrors PPTX's `ChartPart` — categories, series, type, title,
+   * plus optional pointers to the embedded xlsx workbook that powers
+   * Office's "Edit Data" round-trip.
+   *
+   * Round-trip contract: untouched chart parts re-emit from cached
+   * bytes via the container; mutating commands (insert/edit chart) add
+   * the part path to {@link DocxDirtyFlags.charts} and the serializer
+   * regenerates both the chart XML and the embedded workbook from this
+   * typed model.
+   */
+  readonly charts: ReadonlyMap<string, ChartPart>;
+  /**
+   * Embedded binary parts (xlsx packages, OLE blobs, …) keyed by part
+   * path. Used by OLE-Excel-spreadsheet authoring (`docx:insert-spreadsheet`)
+   * to ship the live `.xlsx` workbook bytes that Office activates on
+   * double-click. Mirrors {@link DocxDocument.media} but for the
+   * `word/embeddings/` directory, which uses the
+   * `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+   * content type rather than image MIME types.
+   *
+   * Round-trip contract: untouched embedded parts re-emit byte-identical
+   * via the container's part cache; entries in `dirty.embeddings` are
+   * (re-)written by the serializer.
+   */
+  readonly embeddings: ReadonlyMap<string, EmbeddedBinaryPart>;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+}
+
+/* ── Chart parts (DOCX, mirrors PPTX shape) ─────────────────────────────── */
+
+/** One series in a `<c:chart>`'s active plot type. */
+export interface ChartSeries {
+  readonly id: NodeId;
+  /** Series ordering, emitted as both `c:idx` and `c:order`. */
+  readonly idx: number;
+  /** Optional series legend label. */
+  readonly name?: string;
+  readonly values: ReadonlyArray<number>;
+}
+
+export type ChartType = "bar" | "line" | "pie" | "area" | "unsupported";
+
+/**
+ * Typed `word/charts/chart*.xml` projection. `ChartPart` carries the
+ * minimum needed to re-emit a self-consistent chart XML document plus
+ * pointers back to the embedded xlsx workbook (when present). Existing
+ * Office-authored charts that we don't yet model fully end up with
+ * `chartType: "unsupported"` and ride the container's byte cache.
+ */
+export interface ChartPart {
+  readonly partPath: string;
+  readonly contentType: string;
+  readonly chartType: ChartType;
+  readonly title?: string;
+  readonly categories: ReadonlyArray<string>;
+  readonly series: ReadonlyArray<ChartSeries>;
+  /** Path to the embedded xlsx workbook backing this chart, if any. */
+  readonly embeddingPartPath?: string;
+  /** Relationship id from this chart to its embedded workbook. */
+  readonly embeddingRelId?: string;
+  /** Sheet name inside the embedded workbook (defaults to `Sheet1`). */
+  readonly embeddingSheetName?: string;
+}
+
+/**
+ * A `<w:drawing>` leaf containing a `<c:chart>` reference. Captures the
+ * chart's relationship id (resolved through `word/document.xml.rels`),
+ * EMU display dimensions, and `<wp:docPr>` metadata so the serializer
+ * can rebuild the wrapper from the typed model. The actual chart
+ * payload (categories, series, type, title) lives in
+ * {@link DocxDocument.charts} keyed by part path.
+ */
+export interface ChartDrawing {
+  readonly kind: "drawing";
+  readonly subkind: "chart";
+  readonly id: NodeId;
+  /** `r:id` of the chart relationship in `word/document.xml.rels`. */
+  readonly relId: string;
+  /** Resolved part path (e.g. `"word/charts/chart1.xml"`). */
+  readonly chartPartPath: string;
+  /** Display width in OOXML EMUs (`<wp:extent cx>`). */
+  readonly cx: number;
+  /** Display height in OOXML EMUs. */
+  readonly cy: number;
+  readonly docPrId: number;
+  readonly name: string;
+  readonly descr?: string;
+  readonly raw?: OpaqueXml;
 }
 
 /* ── Styles part (P3.1) ──────────────────────────────────────────────────── */
@@ -261,6 +372,38 @@ export interface MediaPart {
   readonly mimeType: string;
   readonly bytes: Uint8Array;
   readonly digest: string;
+}
+
+/**
+ * Embedded binary part stored under `word/embeddings/`. Currently only
+ * used for OLE-Excel `.xlsx` packages but kept generic so future OLE
+ * binaries (`.bin`, `.docx`, `.pptx` embeds) can ride the same map.
+ *
+ * `contentType` is the OOXML override registered in
+ * `[Content_Types].xml` for the part — usually
+ * `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+ */
+export interface EmbeddedBinaryPart {
+  readonly partPath: string;
+  readonly contentType: string;
+  /**
+   * Materialised bytes. Always present for parts loaded from an
+   * existing package; absent for fresh parts authored by
+   * `docx:insert-spreadsheet`, where the serializer builds the bytes
+   * lazily from `pendingGrid` (so the command-handler stays sync and
+   * doesn't have to await `JSZip.generateAsync`).
+   */
+  readonly bytes?: Uint8Array;
+  /**
+   * Source 2D grid for a freshly-authored OLE-Excel embed. The
+   * serializer reads this via `buildEmbeddedXlsx` to produce the real
+   * `.xlsx` bytes the first time the part is flushed. Mutually
+   * exclusive with `bytes` for fresh inserts; once the embed has been
+   * round-tripped through `serializeDocx` the bytes field is filled.
+   */
+  readonly pendingGrid?: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
+  /** Worksheet name used when materialising `pendingGrid`. */
+  readonly pendingSheetName?: string;
 }
 
 /**
@@ -694,6 +837,30 @@ export interface RunProperties {
   readonly fontFamilyAsciiTheme?: string;
   /** Companion to {@link fontFamilyAsciiTheme}; from `w:hAnsiTheme`. */
   readonly fontFamilyHAnsiTheme?: string;
+  /**
+   * Literal high-ANSI typeface from `<w:rFonts w:hAnsi="…"/>`. Excel
+   * mirrors this from `w:ascii` for most western documents; it is
+   * tracked separately so {@link fontFamily} edits do not destroy
+   * source documents that set it explicitly.
+   */
+  readonly fontFamilyHAnsi?: string;
+  /**
+   * Literal East-Asian typeface from `<w:rFonts w:eastAsia="…"/>`.
+   * Required for CJK documents; the default mapping rule (per the
+   * OOXML spec) is "use this font for any character whose Unicode
+   * block falls under the East Asian set". Editing `fontFamily`
+   * should NOT silently overwrite this slot.
+   */
+  readonly fontFamilyEastAsia?: string;
+  /**
+   * Literal complex-script typeface from `<w:rFonts w:cs="…"/>`.
+   * Used for Arabic, Hebrew, Indic, etc.
+   */
+  readonly fontFamilyComplexScript?: string;
+  /** Theme reference from `<w:rFonts w:eastAsiaTheme="…"/>`. */
+  readonly fontFamilyEastAsiaTheme?: string;
+  /** Theme reference from `<w:rFonts w:cstheme="…"/>`. */
+  readonly fontFamilyComplexScriptTheme?: string;
   readonly fontSize?: number;
   readonly color?: string;
   readonly highlight?: string;
@@ -708,7 +875,46 @@ export type RunChild =
   | PageBreakLeaf
   | LastRenderedPageBreakLeaf
   | PageNumberFieldLeaf
+  | EmbeddedSpreadsheet
   | OpaqueRunChild;
+
+/**
+ * `<w:object>` whose `<o:OLEObject ProgID>` matches `Excel.Sheet.*`
+ * (typically `Excel.Sheet.12`). The "live" Excel embed in Word —
+ * double-click in Word pops the embedded `.xlsx` open in Excel for
+ * editing. Symmetric to PPTX's `OleSpreadsheetShape`.
+ *
+ * We type just enough to (a) detect the embed, (b) round-trip the
+ * embedded workbook + preview image relationships, and (c) author
+ * fresh embeds via `docx:insert-spreadsheet`. Everything else (VML
+ * shape attrs, `<o:OLEObject>` tail children, `<w:objectEmbed>`
+ * variants) is captured opaquely so existing files survive
+ * byte-identical no-touch saves.
+ */
+export interface EmbeddedSpreadsheet {
+  readonly kind: "embedded-spreadsheet";
+  readonly id: NodeId;
+  /** `<o:OLEObject r:id>` — relationship pointing at the embedded part. */
+  readonly oleRelId: string;
+  /** Resolved package-absolute path of the embedded `.xlsx` (or `.bin`). */
+  readonly embeddingPartPath: string;
+  /** `<o:OLEObject ProgID>` — e.g. `Excel.Sheet.12`. */
+  readonly progId: string;
+  /** Embedded part kind: `xlsx` (true Excel package) or `bin` (legacy CFB). */
+  readonly embeddingKind: "xlsx" | "bin";
+  /** `<v:imagedata r:id>` — preview image relationship id, if known. */
+  readonly previewImageRelId?: string;
+  /** Resolved preview image part path, if `previewImageRelId` was wired. */
+  readonly previewImagePartPath?: string;
+  /** `<o:OLEObject>` attribute bag (Type, ShapeID, DrawAspect, ObjectID, …). */
+  readonly oleObjectAttrs: Readonly<Record<string, string>>;
+  /**
+   * Original `<w:object>` subtree captured at parse time. When present
+   * AND no typed field has changed, the serializer re-emits these
+   * bytes verbatim (byte-preservation fast path).
+   */
+  readonly raw?: OpaqueXml;
+}
 
 /**
  * `<w:fldSimple w:instr=" PAGE \* MERGEFORMAT "/>` and the equivalent
@@ -807,7 +1013,7 @@ export interface TabLeaf {
  *   and round-tripped verbatim. The typed promotion lands one drawing
  *   class at a time; this is the catch-all bucket.
  */
-export type DrawingLeaf = InlineImageDrawing | OpaqueDrawing;
+export type DrawingLeaf = InlineImageDrawing | ChartDrawing | OpaqueDrawing;
 
 export interface InlineImageDrawing {
   readonly kind: "drawing";

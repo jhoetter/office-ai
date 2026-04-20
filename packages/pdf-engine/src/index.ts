@@ -17,6 +17,8 @@ export type {
   PdfEngineRenderOptions,
   PdfEngineTextItem,
   PdfEngineTextContent,
+  PdfEngineGlyphRun,
+  PdfEngineViewport,
   PdfEngineOutlineNode,
   PdfEngineAnnotationLite,
   PdfEngineFormFieldLite,

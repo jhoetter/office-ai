@@ -18,6 +18,7 @@ import {
 import { PdfAgent } from "@officeai/pdf/agent";
 import type {
   AddAnnotationPayload as AddAnnotationInput,
+  PdfRect,
   PdfRotation,
   PdfSnapshot,
 } from "@officeai/pdf";
@@ -105,6 +106,17 @@ async function ensurePdfjsWorker(): Promise<void> {
   return pdfjsWorkerSetup;
 }
 
+/**
+ * Public asset base for PDF.js's CMap and standard-font payloads.
+ * Mirrors the destination of `apps/web/scripts/copy-pdfjs-assets.mjs`.
+ * Both the engine document and the headless agent's parser need
+ * this — without it CJK PDFs fail to extract selectable text and
+ * any PDF that references one of the 14 base fonts without
+ * embedding it falls back to a hard-coded sans-serif (visible drift
+ * in the text layer at every zoom).
+ */
+const PDFJS_ASSETS_BASE = "/pdfjs/";
+
 export interface PdfEditorProps {
   /** Page-level splash listens on this — see `pdf-viewer/page.tsx`.
    * Stays `false` until the agent + engine document are both
@@ -154,7 +166,9 @@ export function PdfEditor({
   // The find-replace panel renders matches incrementally — keeping
   // the latest results around lets `gotoMatch` flash the right
   // highlight rect without re-running the search.
-  const lastSearchResultsRef = useRef<Map<string, { pageNumber: number }>>(new Map());
+  const lastSearchResultsRef = useRef<
+    Map<string, { pageNumber: number; rects: ReadonlyArray<PdfRect> }>
+  >(new Map());
 
   useEffect(() => {
     onBootstrapReady?.(ready);
@@ -204,8 +218,8 @@ export function PdfEditor({
       const engineBuf = new Uint8Array(buf.byteLength);
       engineBuf.set(buf);
       const [nextAgent, nextEngine] = await Promise.all([
-        PdfAgent.fromBuffer(agentBuf),
-        loadDocument(engineBuf),
+        PdfAgent.fromBuffer(agentBuf, { assetsBase: PDFJS_ASSETS_BASE }),
+        loadDocument(engineBuf, { assetsBase: PDFJS_ASSETS_BASE }),
       ]);
       await teardownEngineDoc();
       agentRef.current = nextAgent;
@@ -636,10 +650,10 @@ export function PdfEditor({
             ...(opts.regex ? { regex: true } : {}),
           });
           const out: FindMatch[] = [];
-          const map = new Map<string, { pageNumber: number }>();
+          const map = new Map<string, { pageNumber: number; rects: ReadonlyArray<PdfRect> }>();
           for (const r of results) {
             const id = `${r.pageNumber}:${r.start}:${r.end}`;
-            map.set(id, { pageNumber: r.pageNumber });
+            map.set(id, { pageNumber: r.pageNumber, rects: r.rects });
             out.push({ id, preview: r.preview });
             if (out.length >= 5000) break;
           }
@@ -657,11 +671,12 @@ export function PdfEditor({
         goToPage(meta.pageNumber);
         setHighlight({
           pageNumber: meta.pageNumber,
-          // Without re-tokenising the page we can't compute a real
-          // glyph-aligned rect; the canvas paints a soft full-page
-          // pulse instead so the user sees "yes, it found a match
-          // on this page".
+          // Glyph-precise quads when the structured-text pass found
+          // them; falls back to a soft top-of-page pulse for hits
+          // that span paragraphs / scanned pages where there's no
+          // structured layer to project onto.
           rect: [0.05, 0.05, 0.95, 0.12],
+          ...(meta.rects.length > 0 ? { quads: meta.rects } : {}),
           nonce: Date.now(),
         });
       },
@@ -760,8 +775,9 @@ export function PdfEditor({
       "pdf.delete-page": { run: () => void onDeletePages(), enabled: totalPages > 1 },
       "pdf.print": { run: () => void onPrint(), enabled: totalPages > 0 },
     };
-    return buildPaletteFromCatalogue(pdfActions, runners);
+    return buildPaletteFromCatalogue(pdfActions, runners, t);
   }, [
+    t,
     currentPage,
     onActualSize,
     onDeletePages,
@@ -921,7 +937,7 @@ export function PdfEditor({
                   onJumpToPage={onJumpToPage}
                   onJumpToComment={onJumpToComment}
                 />
-                <section className="relative min-h-0 flex-1">
+                <section className="relative min-h-0 min-w-0 flex-1">
                   <PdfCanvas
                     engineDoc={engineDoc}
                     snapshot={snap}

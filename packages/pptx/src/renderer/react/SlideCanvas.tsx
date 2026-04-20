@@ -12,6 +12,7 @@ import type {
 import { resolveEndpoint } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
+import { resolveRotatedResize } from "../layout/resize.js";
 import { computeStageLayout, slideStageViewBox } from "../layout/slide.js";
 import { resolvePlaceholderTextDefaults, resolvedShapeBoundingBox } from "../layout/placeholder-defaults.js";
 import { computeSnap, type SnapGuide } from "../layout/snap.js";
@@ -260,8 +261,18 @@ type DragMode = "move" | { resize: ResizeHandle };
 
 interface DragState {
   readonly mode: DragMode;
-  /** Shapes participating in the drag with their pre-drag bounding boxes. */
-  readonly targets: ReadonlyArray<{ readonly id: string; readonly origin: BoundingBox }>;
+  /**
+   * Shapes participating in the drag with their pre-drag bounding
+   * boxes and rotation. `originDeg` is captured at pointerdown so
+   * the rotation-aware resize math can run without a fresh snapshot
+   * lookup mid-gesture (and to keep the math stable if the user's
+   * own commands somehow re-enter while the drag is live).
+   */
+  readonly targets: ReadonlyArray<{
+    readonly id: string;
+    readonly origin: BoundingBox;
+    readonly originDeg: number;
+  }>;
   readonly startX: number;
   readonly startY: number;
   readonly emuPerPx: number;
@@ -393,6 +404,51 @@ interface WaypointDraft {
   readonly currentValueEmu: number;
 }
 
+interface RotateDraftTarget {
+  readonly id: string;
+  /** Pre-rotation (axis-aligned) bbox in EMU; needed to draw the ghost
+   * at the original position with the new rotation applied. */
+  readonly origin: BoundingBox;
+  /** Rotation the shape carried before the gesture started. */
+  readonly originDeg: number;
+  /** Captured shape so the ghost layer can re-emit it cheaply. */
+  readonly shape: Shape;
+}
+
+/**
+ * Live state while the user drags the rotation grip. We capture the
+ * pre-rotation rotation per shape on pointerdown and only commit on
+ * pointerup, so the gesture round-trips through one `pptx:set-rotation`
+ * per selected shape — the snapshot stays untouched until release,
+ * keeping undo a single step regardless of how much the user wiggled
+ * during the gesture. The pivot is the union-bbox centre (also where
+ * the cursor angle is measured from). Each shape rotates around its
+ * OWN centre by the cursor's angular delta — matching what the
+ * `pptx:set-rotation` handler does, and what users expect from a
+ * "rotate the selection by N degrees" gesture (vs. PowerPoint's
+ * "rotate the whole group around the union centre", which would
+ * require also moving each shape's position).
+ */
+interface RotateDraft {
+  readonly targets: ReadonlyArray<RotateDraftTarget>;
+  /** Pivot for cursor-angle math, in slide EMU. */
+  readonly pivotX: number;
+  readonly pivotY: number;
+  /** Pointer angle (radians, atan2) at gesture start. */
+  readonly startAngleRad: number;
+  readonly currentAngleRad: number;
+  readonly emuPerPx: number;
+  /** Holding shift snaps to 15° increments — same convention as Figma / Keynote. */
+  readonly shiftSnap: boolean;
+}
+
+/** Shared formula so pointermove preview, ghost layer, and pointerup
+ * commit all derive the same delta from the draft state. */
+function rotateDraftDeltaDeg(draft: RotateDraft): number {
+  const raw = ((draft.currentAngleRad - draft.startAngleRad) * 180) / Math.PI;
+  return draft.shiftSnap ? Math.round(raw / 15) * 15 : raw;
+}
+
 export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null {
   const snap = useAgentSnapshot(props.agent);
   const slide: Slide | undefined = snap.root.slides[props.slideIndex];
@@ -423,6 +479,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
   const [connectorDraft, setConnectorDraft] = React.useState<ConnectorDraft | null>(null);
   const [endpointDraft, setEndpointDraft] = React.useState<EndpointEditDraft | null>(null);
   const [waypointDraft, setWaypointDraft] = React.useState<WaypointDraft | null>(null);
+  const [rotateDraft, setRotateDraft] = React.useState<RotateDraft | null>(null);
   const [selectedIds, setSelectedIdsState] = React.useState<ReadonlyArray<string>>([]);
   const onSelectionChange = props.onSelectionChange;
   const setSelectedIds = React.useCallback(
@@ -466,8 +523,27 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
     const set = new Set<string>();
     if (editingId) set.add(editingId);
     if (drag) for (const t of drag.targets) set.add(t.id);
+    // The rotate ghost layer paints rotated copies of every target;
+    // hide the underlying shapes so we don't double-render the static
+    // (pre-rotation) version underneath the live one.
+    if (rotateDraft) for (const t of rotateDraft.targets) set.add(t.id);
     return set;
-  }, [editingId, drag]);
+  }, [editingId, drag, rotateDraft]);
+
+  // Per-shape rotation override published while the rotation grip is
+  // being dragged. Consumed by the selection overlay so the dashed
+  // outline + handles + grip rotate frame-by-frame in step with the
+  // ghost layer; null at rest so the chrome falls back to each
+  // shape's saved `rotation` (which is also what the static SVG
+  // renderer uses, so chrome and shape stay locked together
+  // post-commit).
+  const liveRotations = React.useMemo(() => {
+    if (!rotateDraft) return null;
+    const delta = rotateDraftDeltaDeg(rotateDraft);
+    const map = new Map<string, number>();
+    for (const t of rotateDraft.targets) map.set(t.id, t.originDeg + delta);
+    return map;
+  }, [rotateDraft]);
 
   const svgInner = React.useMemo(() => {
     if (!slide) return "";
@@ -695,6 +771,62 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         return;
       }
 
+      // Rotation grip — single dedicated handle above the union bbox.
+      // We branch BEFORE the generic resize/move dispatch so the
+      // gesture never gets confused with a corner drag, and we take
+      // the existing selection verbatim (the grip only renders when
+      // there's already a selection).
+      if (handleEl?.dataset.handle === "rotate") {
+        const ids = selectedIds.length > 0 ? selectedIds : [shapeId];
+        const targets: RotateDraftTarget[] = [];
+        let unionBox: BoundingBox | null = null;
+        for (const id of ids) {
+          const sh = findShape(slide.shapes, id);
+          if (!sh) continue;
+          // The same kinds the `pptx:set-rotation` handler refuses.
+          // Rotating their wrapper would desync the model from what
+          // PowerPoint reads back, so we exclude them from the gesture
+          // entirely (no ghost, no commit).
+          if (sh.kind === "connector" || sh.kind === "group" || sh.kind === "opaque") continue;
+          const box = shapeBoundingBox(sh);
+          if (!box) continue;
+          const originDeg =
+            "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
+          targets.push({ id, origin: box, originDeg, shape: sh });
+          if (!unionBox) {
+            unionBox = box;
+          } else {
+            const x = Math.min(unionBox.x, box.x);
+            const y = Math.min(unionBox.y, box.y);
+            const right = Math.max(unionBox.x + unionBox.cx, box.x + box.cx);
+            const bottom = Math.max(unionBox.y + unionBox.cy, box.y + box.cy);
+            unionBox = { x, y, cx: right - x, cy: bottom - y };
+          }
+        }
+        if (!unionBox || targets.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const pivotX = unionBox.x + unionBox.cx / 2;
+        const pivotY = unionBox.y + unionBox.cy / 2;
+        const cursorEmuX = (e.clientX - rect.left) * emuPerPx;
+        const cursorEmuY = (e.clientY - rect.top) * emuPerPx;
+        const startAngleRad = Math.atan2(cursorEmuY - pivotY, cursorEmuX - pivotX);
+        setRotateDraft({
+          targets,
+          pivotX,
+          pivotY,
+          startAngleRad,
+          currentAngleRad: startAngleRad,
+          emuPerPx,
+          shiftSnap: e.shiftKey,
+        });
+        containerRef.current.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
       // Compute the next selection set up-front so the drag uses it.
       let nextSelection: ReadonlyArray<string>;
       if (shiftHeld) {
@@ -717,7 +849,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       const handle = handleEl?.dataset.handle as ResizeHandle | "move" | undefined;
       const isResize = !!handle && handle !== "move";
       const dragIds = isResize ? (nextSelection.length > 1 ? nextSelection : [shapeId]) : nextSelection;
-      const targets: { id: string; origin: BoundingBox }[] = [];
+      const targets: { id: string; origin: BoundingBox; originDeg: number }[] = [];
       for (const id of dragIds) {
         const sh = findShape(slide.shapes, id);
         if (!sh) continue;
@@ -733,7 +865,9 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         // moves it as a unit and breaks the connections — the user can
         // then re-snap each endpoint by dragging the dots.
         if (sh.kind === "connector" && isResize) continue;
-        targets.push({ id, origin: box });
+        const originDeg =
+          "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
+        targets.push({ id, origin: box, originDeg });
       }
       if (targets.length === 0) {
         // The selection update already ran; nothing else to do (e.g.
@@ -825,6 +959,22 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         });
         return;
       }
+      if (rotateDraft) {
+        const rect = slideRectRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const cursorEmuX = (e.clientX - rect.left) * rotateDraft.emuPerPx;
+        const cursorEmuY = (e.clientY - rect.top) * rotateDraft.emuPerPx;
+        const angle = Math.atan2(
+          cursorEmuY - rotateDraft.pivotY,
+          cursorEmuX - rotateDraft.pivotX
+        );
+        setRotateDraft({
+          ...rotateDraft,
+          currentAngleRad: angle,
+          shiftSnap: e.shiftKey,
+        });
+        return;
+      }
       if (drag) {
         const dxEmu = Math.round((e.clientX - drag.startX) * drag.emuPerPx);
         const dyEmu = Math.round((e.clientY - drag.startY) * drag.emuPerPx);
@@ -855,7 +1005,17 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       }
       setHoveredShapeId(id);
     },
-    [connectorDraft, endpointDraft, waypointDraft, drag, marquee, slide, slideSize, hoveredShapeId]
+    [
+      connectorDraft,
+      endpointDraft,
+      waypointDraft,
+      rotateDraft,
+      drag,
+      marquee,
+      slide,
+      slideSize,
+      hoveredShapeId,
+    ]
   );
 
   const onPointerUp = React.useCallback(
@@ -942,6 +1102,39 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
               endpoint: endpointPayload,
             },
           });
+        } catch (err) {
+          props.onError?.(err as Error);
+        }
+        return;
+      }
+      if (rotateDraft) {
+        const draft = rotateDraft;
+        setRotateDraft(null);
+        const deltaDeg = rotateDraftDeltaDeg(draft);
+        // Tiny wiggles (< 0.05°) are a no-op — round-tripping near-zero
+        // deltas through `set-rotation` would still bump the snapshot
+        // revision and pollute undo with empty steps.
+        if (Math.abs(deltaDeg) < 0.05) return;
+        try {
+          for (const t of draft.targets) {
+            try {
+              await props.agent.applyCommand({
+                type: "pptx:set-rotation",
+                source: "human",
+                payload: {
+                  slideIndex: props.slideIndex,
+                  shapeId: t.id,
+                  degrees: t.originDeg + deltaDeg,
+                },
+              });
+            } catch (innerErr) {
+              // Per-shape "not-applicable" (the handler refuses
+              // connectors/groups/opaque) is a best-effort skip in a
+              // mixed selection — unexpected errors still propagate.
+              const code = (innerErr as { code?: string } | null)?.code;
+              if (code !== "not-applicable") throw innerErr;
+            }
+          }
         } catch (err) {
           props.onError?.(err as Error);
         }
@@ -1132,6 +1325,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
       connectorDraft,
       endpointDraft,
       waypointDraft,
+      rotateDraft,
       drag,
       marquee,
       props,
@@ -1207,13 +1401,17 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         setWaypointDraft(null);
         return;
       }
+      if (rotateDraft) {
+        setRotateDraft(null);
+        return;
+      }
       if (props.connectorTool) {
         onConnectorToolExit?.();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [connectorDraft, endpointDraft, waypointDraft, props.connectorTool, onConnectorToolExit]);
+  }, [connectorDraft, endpointDraft, waypointDraft, rotateDraft, props.connectorTool, onConnectorToolExit]);
 
   if (!slide) {
     return null;
@@ -1254,15 +1452,17 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           // (e.g. Storybook, isolated tests, embedded preview).
           background: "var(--page-backdrop, #ecebe8)",
           userSelect: "none",
-          cursor: drag
-            ? cursorForDrag(drag.mode)
-            : connectorDraft && connectorDraft.snapped
-              ? "copy"
-              : endpointDraft && endpointDraft.snapped
+          cursor: rotateDraft
+            ? "grabbing"
+            : drag
+              ? cursorForDrag(drag.mode)
+              : connectorDraft && connectorDraft.snapped
                 ? "copy"
-                : isToolMode || connectorDraft || endpointDraft
-                  ? "crosshair"
-                  : "default",
+                : endpointDraft && endpointDraft.snapped
+                  ? "copy"
+                  : isToolMode || connectorDraft || endpointDraft
+                    ? "crosshair"
+                    : "default",
           touchAction: "none",
         }}
         onPointerDown={onPointerDown}
@@ -1322,6 +1522,9 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         {drag && preview ? (
           <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} ctx={ctx} />
         ) : null}
+        {rotateDraft ? (
+          <RotateGhostLayer slideSize={slideSize} draft={rotateDraft} ctx={ctx} />
+        ) : null}
         {drag && preview && preview.guides.length > 0 ? (
           <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
         ) : null}
@@ -1355,6 +1558,8 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           editingId={editingId}
           endpointDraft={endpointDraft}
           waypointDraft={waypointDraft}
+          isRotating={rotateDraft !== null}
+          liveRotations={liveRotations}
         />
         {marquee && containerRef.current ? (
           <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
@@ -1866,6 +2071,35 @@ function computePreview(
   // "thicken" it. Use 0 as the floor for lines and let the user drag
   // freely.
   const minSize = drag.primaryIsLine ? 0 : MIN;
+
+  // Rotated single-shape resize routes through `resolveRotatedResize`
+  // so the dragged handle tracks the cursor in screen space while the
+  // OPPOSITE corner of the rotated body stays anchored — PowerPoint
+  // semantics. We bypass anchor-snap here: it expects axis-aligned
+  // endpoint coords and connectors (the only line shapes that snap)
+  // aren't user-rotatable in our model anyway.
+  if (t.originDeg !== 0) {
+    const resized = resolveRotatedResize({
+      o,
+      rotDeg: t.originDeg,
+      h,
+      dxEmu,
+      dyEmu,
+      minSize,
+    });
+    boxes.set(t.id, resized);
+    return {
+      boxes,
+      dx: resized.x - o.x,
+      dy: resized.y - o.y,
+      dw: resized.cx - o.cx,
+      dh: resized.cy - o.cy,
+      guides: [],
+      anchorCandidates: [],
+      anchorSnap: null,
+    };
+  }
+
   let nx = o.x;
   let ny = o.y;
   let nw = o.cx;
@@ -2018,18 +2252,74 @@ interface DragGhostLayerProps {
  * at the new width. `shapeToSvg` is just string concat, so the cost
  * is negligible compared to the visual quality win.
  */
+interface RotateGhostLayerProps {
+  readonly slideSize: SlideSize;
+  readonly draft: RotateDraft;
+  readonly ctx: SvgRenderCtx;
+}
+
+/**
+ * Live preview while the user drags the rotation grip. We re-emit each
+ * target's SVG with the new rotation baked into `shape.rotation`, so
+ * the existing `<g transform="rotate(deg cx cy)">` wrapper that
+ * `shapeToSvg` already produces does the visual work — no parallel
+ * code path that could drift from the post-commit render. The
+ * underlying static layer hides these shapes (`hiddenIds`) so the
+ * user only sees the rotated copy.
+ *
+ * `shapeToSvg` is plain string concat and runs at most a few times per
+ * pointermove (one per selected rotatable shape), so cost is the same
+ * order as the resize ghost path.
+ */
+function RotateGhostLayer({ slideSize, draft, ctx }: RotateGhostLayerProps): React.ReactElement {
+  const stageViewBox = useStageViewBox(slideSize);
+  const deltaDeg = rotateDraftDeltaDeg(draft);
+  const inner = draft.targets
+    .map((t) => {
+      const synth = { ...t.shape, rotation: t.originDeg + deltaDeg } as Shape;
+      return shapeToSvg(synth, ctx);
+    })
+    .join("");
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={stageViewBox}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        opacity: 0.95,
+      }}
+      dangerouslySetInnerHTML={{ __html: inner }}
+    />
+  );
+}
+
 function DragGhostLayer({ slideSize, ghosts, preview, ctx }: DragGhostLayerProps): React.ReactElement {
   const stageViewBox = useStageViewBox(slideSize);
   const inner = ghosts
     .map((g) => {
       const box = preview.boxes.get(g.id);
       if (!box) return "";
-      if (g.shape.kind === "text") {
-        const synth: TextShape = {
+      const rot =
+        "rotation" in g.shape && typeof g.shape.rotation === "number"
+          ? g.shape.rotation
+          : 0;
+      if (g.shape.kind === "text" || rot !== 0) {
+        // Text and rotated shapes both need a fresh `shapeToSvg` so
+        // word-wrap (text) and the rotation pivot (rotated) recalc
+        // around the new centre. Wrapping the baked SVG in a
+        // translate+scale would scale the rotated body along screen
+        // axes and break the screen-space anchor invariant the
+        // rotation-aware resize math relies on.
+        const synth = {
           ...g.shape,
           position: { xEmu: box.x, yEmu: box.y },
           size: { cxEmu: box.cx, cyEmu: box.cy },
-        };
+        } as Shape;
         return shapeToSvg(synth, ctx);
       }
       const tx = px(box.x - g.origin.x);
@@ -2078,6 +2368,18 @@ interface SelectionOverlayProps {
   readonly endpointDraft: EndpointEditDraft | null;
   /** Active waypoint-slide gesture so the elbow preview uses live offsets. */
   readonly waypointDraft: WaypointDraft | null;
+  /** True while the rotation grip is being dragged — dims resize handles
+   * and keeps the grip styled "engaged" until pointerup commits. */
+  readonly isRotating: boolean;
+  /**
+   * Per-shape rotation override (degrees) used while the rotation grip
+   * is being dragged. When provided, takes precedence over the
+   * snapshot's `shape.rotation` so the chrome tracks the live ghost
+   * frame-by-frame instead of snapping back to the pre-gesture pose.
+   * `null` (the common case) means "use the saved rotation on each
+   * shape", which is what we want once the gesture has committed.
+   */
+  readonly liveRotations: ReadonlyMap<string, number> | null;
 }
 
 /**
@@ -2098,6 +2400,8 @@ function SelectionOverlaySvg({
   editingId,
   endpointDraft,
   waypointDraft,
+  isRotating,
+  liveRotations,
 }: SelectionOverlayProps): React.ReactElement | null {
   const stageViewBox = useStageViewBox(slideSize);
   if (selectedIds.length === 0) return null;
@@ -2132,18 +2436,32 @@ function SelectionOverlaySvg({
     }
   }
 
-  const entries: { id: string; box: BoundingBox }[] = [];
+  const entries: { id: string; box: BoundingBox; rotatable: boolean; rotation: number }[] = [];
   for (const id of visibleIds) {
     const sh = findShape(slide.shapes, id);
     if (!sh) continue;
     const base = shapeBoundingBox(sh);
     if (!base) continue;
     const previewBox = previewBoxes?.get(id) ?? null;
-    entries.push({ id, box: previewBox ?? base });
+    // Same kinds the `pptx:set-rotation` handler refuses; the rotation
+    // grip skips rendering for selections that contain no rotatable
+    // shapes so we don't tease an affordance the gesture would no-op.
+    const rotatable = sh.kind !== "connector" && sh.kind !== "group" && sh.kind !== "opaque";
+    // The rotate-grip drag publishes a `liveRotations` map so the
+    // chrome tracks the ghost. When that's absent we fall back to the
+    // committed rotation from the snapshot — which the renderer uses
+    // for the static SVG layer too, so chrome and shape stay in sync
+    // post-commit.
+    const liveRot = liveRotations?.get(id);
+    const savedRot =
+      "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
+    const rotation = liveRot ?? savedRot;
+    entries.push({ id, box: previewBox ?? base, rotatable, rotation });
   }
   if (entries.length === 0) return null;
   const isMulti = entries.length > 1;
   const isResizing = dragMode !== null && dragMode !== "move";
+  const hasRotatable = entries.some((e) => e.rotatable);
   // For single-shape resizes the union/handles should track the live
   // preview box; for moves they follow the single shape too.
   const primary = entries[0];
@@ -2197,92 +2515,192 @@ function SelectionOverlaySvg({
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
     >
       {/* Per-shape outlines (visible in multi-select; redundant in single
-          select but kept consistent for clarity). */}
+          select but kept consistent for clarity). Each shape's outline
+          rotates with its own `rotation` so the dashed box stays
+          glued to the rotated body — pivot is the shape's
+          (axis-aligned, pre-rotation) bbox centre, the same pivot
+          `wrapWithRotation` in `svg/shapes.ts` uses for the static
+          SVG layer so chrome and shape stay locked frame-by-frame. */}
       {isMulti
-        ? entries.map((e) => (
+        ? entries.map((e) => {
+            const cxPx = px(e.box.x + e.box.cx / 2);
+            const cyPx = px(e.box.y + e.box.cy / 2);
+            const rotAttr =
+              e.rotation !== 0 ? `rotate(${e.rotation} ${cxPx} ${cyPx})` : undefined;
+            return (
+              <g key={`outline-${e.id}`} transform={rotAttr}>
+                <rect
+                  x={px(e.box.x)}
+                  y={px(e.box.y)}
+                  width={px(e.box.cx)}
+                  height={px(e.box.cy)}
+                  fill="none"
+                  stroke="#7c3aed"
+                  strokeOpacity={0.5}
+                  strokeWidth={1}
+                  strokeDasharray="3 2"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              </g>
+            );
+          })
+        : null}
+      {/* Move hit-zones — one per selected shape so a click on any of
+          them moves the entire group. We deliberately use per-shape
+          rects (not the union) so the user can click between two
+          selected shapes without grabbing the gap. Each rect rotates
+          with its shape so the click target follows the rotated body
+          rather than its axis-aligned bbox (otherwise the user would
+          have to chase the original pose to start a move). */}
+      {entries.map((e) => {
+        const cxPx = px(e.box.x + e.box.cx / 2);
+        const cyPx = px(e.box.y + e.box.cy / 2);
+        const rotAttr =
+          e.rotation !== 0 ? `rotate(${e.rotation} ${cxPx} ${cyPx})` : undefined;
+        return (
+          <g key={`move-${e.id}`} transform={rotAttr}>
             <rect
-              key={`outline-${e.id}`}
+              data-shape-id={escAttr(e.id)}
+              data-handle="move"
               x={px(e.box.x)}
               y={px(e.box.y)}
               width={px(e.box.cx)}
               height={px(e.box.cy)}
+              fill="transparent"
+              pointerEvents="auto"
+              style={{ cursor: "move" }}
+            />
+          </g>
+        );
+      })}
+      {/*
+       * Union outline + 8 resize handles + rotate grip.
+       *
+       * For single-shape selections the "union" IS the shape, so we
+       * wrap the whole bundle in the shape's rotation transform and
+       * the chrome stays glued to the rotated body — handles appear
+       * at the rotated corners, the grip floats above the rotated
+       * top edge.
+       *
+       * For multi-shape we keep the union/handles/grip axis-aligned
+       * around the combined bbox: per-shape rotations differ so a
+       * rotated union would mislead about which axis the resize
+       * handles act along, and PowerPoint matches this behaviour.
+       */}
+      {(() => {
+        const wrapRot =
+          !isMulti && primary.rotation !== 0
+            ? `rotate(${primary.rotation} ${ux + ucx / 2} ${uy + ucy / 2})`
+            : undefined;
+        const handleCursor = (h: ResizeHandle): string =>
+          !isMulti && primary.rotation !== 0
+            ? cursorForRotatedHandle(h, primary.rotation)
+            : cursorForHandle(h);
+        return (
+          <g transform={wrapRot}>
+            <rect
+              x={ux}
+              y={uy}
+              width={ucx}
+              height={ucy}
               fill="none"
               stroke="#7c3aed"
-              strokeOpacity={0.5}
-              strokeWidth={1}
-              strokeDasharray="3 2"
+              strokeWidth={1.5}
+              strokeDasharray={isMulti ? "6 3" : "4 2"}
               vectorEffect="non-scaling-stroke"
               pointerEvents="none"
             />
-          ))
-        : null}
-      {/* Union / single-shape outline */}
-      <rect
-        x={ux}
-        y={uy}
-        width={ucx}
-        height={ucy}
-        fill="none"
-        stroke="#7c3aed"
-        strokeWidth={1.5}
-        strokeDasharray={isMulti ? "6 3" : "4 2"}
-        vectorEffect="non-scaling-stroke"
-        pointerEvents="none"
-      />
-      {/* Move hit-zones — one per selected shape so a click on any of
-          them moves the entire group. We deliberately use per-shape
-          rects (not the union) so the user can click between two
-          selected shapes without grabbing the gap. */}
-      {entries.map((e) => (
-        <rect
-          key={`move-${e.id}`}
-          data-shape-id={escAttr(e.id)}
-          data-handle="move"
-          x={px(e.box.x)}
-          y={px(e.box.y)}
-          width={px(e.box.cx)}
-          height={px(e.box.cy)}
-          fill="transparent"
-          pointerEvents="auto"
-          style={{ cursor: "move" }}
-        />
-      ))}
-      {/* Resize handles. On multi-select they wrap the union box and
-          scale every selected shape proportionally; on single-select
-          they wrap the shape itself. During a resize gesture we keep
-          them rendered so the user sees the corner they're pulling.
-          We render two rects per handle: an invisible larger hit-zone
-          on top so pointer capture is forgiving, and the visible
-          purple-bordered square underneath. */}
-      {handles.map((it) => (
-        <g key={it.h}>
-          <rect
-            x={it.hx}
-            y={it.hy}
-            width={handleSize}
-            height={handleSize}
-            transform={`translate(${-handleSize / 2} ${-handleSize / 2})`}
-            fill="#ffffff"
-            stroke="#7c3aed"
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-            opacity={isResizing ? 0.6 : 1}
-          />
-          <rect
-            data-shape-id={escAttr(primary.id)}
-            data-handle={it.h}
-            x={it.hx}
-            y={it.hy}
-            width={handleHitSize}
-            height={handleHitSize}
-            transform={`translate(${-handleHitSize / 2} ${-handleHitSize / 2})`}
-            fill="transparent"
-            pointerEvents="auto"
-            style={{ cursor: cursorForHandle(it.h) }}
-          />
-        </g>
-      ))}
+            {/* Resize handles. On multi-select they wrap the union
+                box and scale every selected shape proportionally; on
+                single-select they wrap the shape itself (and inherit
+                the wrapper's rotation). During a resize gesture we
+                keep them rendered so the user sees the corner they're
+                pulling. We render two rects per handle: an invisible
+                larger hit-zone on top so pointer capture is forgiving,
+                and the visible purple-bordered square underneath. */}
+            {handles.map((it) => (
+              <g key={it.h}>
+                <rect
+                  x={it.hx}
+                  y={it.hy}
+                  width={handleSize}
+                  height={handleSize}
+                  transform={`translate(${-handleSize / 2} ${-handleSize / 2})`}
+                  fill="#ffffff"
+                  stroke="#7c3aed"
+                  strokeWidth={1.5}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                  opacity={isResizing || isRotating ? 0.6 : 1}
+                />
+                <rect
+                  data-shape-id={escAttr(primary.id)}
+                  data-handle={it.h}
+                  x={it.hx}
+                  y={it.hy}
+                  width={handleHitSize}
+                  height={handleHitSize}
+                  transform={`translate(${-handleHitSize / 2} ${-handleHitSize / 2})`}
+                  fill="transparent"
+                  pointerEvents="auto"
+                  style={{ cursor: handleCursor(it.h) }}
+                />
+              </g>
+            ))}
+            {/* Rotation grip — single circle floating above the union
+                top edge with a short tether line. Skipped when the
+                selection contains nothing rotatable (e.g. only a
+                connector) so we don't dangle an affordance the
+                gesture would no-op. */}
+            {hasRotatable
+              ? (() => {
+                  const gripGap = 24;
+                  const gripR = 7;
+                  const gripHitR = 14;
+                  const gx = ux + ucx / 2;
+                  const gy = uy - gripGap;
+                  return (
+                    <g key="rotate-grip">
+                      <line
+                        x1={gx}
+                        y1={uy}
+                        x2={gx}
+                        y2={gy + gripR}
+                        stroke="#7c3aed"
+                        strokeWidth={1.5}
+                        vectorEffect="non-scaling-stroke"
+                        pointerEvents="none"
+                        opacity={isResizing ? 0.6 : 1}
+                      />
+                      <circle
+                        cx={gx}
+                        cy={gy}
+                        r={gripR}
+                        fill={isRotating ? "#7c3aed" : "#ffffff"}
+                        stroke="#7c3aed"
+                        strokeWidth={1.5}
+                        vectorEffect="non-scaling-stroke"
+                        pointerEvents="none"
+                        opacity={isResizing ? 0.6 : 1}
+                      />
+                      <circle
+                        data-shape-id={escAttr(primary.id)}
+                        data-handle="rotate"
+                        cx={gx}
+                        cy={gy}
+                        r={gripHitR}
+                        fill="transparent"
+                        pointerEvents="auto"
+                        style={{ cursor: "grab" }}
+                      />
+                    </g>
+                  );
+                })()
+              : null}
+          </g>
+        );
+      })()}
     </svg>
   );
 }
@@ -3274,6 +3692,51 @@ function cursorForHandle(h: ResizeHandle): string {
     case "nw":
     case "se":
       return "nwse-resize";
+  }
+}
+
+/**
+ * Browser cursors are static glyphs — there's no way to rotate
+ * `ns-resize` 30°. So for rotated shapes we pick the standard 8-way
+ * cursor whose direction is closest to the rotated handle's screen
+ * direction, matching the affordance Figma/PowerPoint use. The
+ * effective direction is `handleDir + rotation` (CW positive in
+ * both screen coords and our rotation field), snapped to the nearest
+ * 45° bucket. Edge handles map to ns/ew, corners to nesw/nwse.
+ */
+function cursorForRotatedHandle(h: ResizeHandle, rotationDeg: number): string {
+  // Logical screen-space angle of each handle direction relative to
+  // the shape's centre, measured clockwise from screen-up (north = 0).
+  const baseDeg: Record<ResizeHandle, number> = {
+    n: 0,
+    ne: 45,
+    e: 90,
+    se: 135,
+    s: 180,
+    sw: 225,
+    w: 270,
+    nw: 315,
+  };
+  const eff = (((baseDeg[h] + rotationDeg) % 360) + 360) % 360;
+  // Snap to the nearest of n/ne/e/se/s/sw/w/nw (8-way, 45° steps).
+  const bucket = Math.round(eff / 45) % 8;
+  // ns / ew / nesw / nwse repeat every 180° — opposite directions
+  // share a cursor since there's no asymmetric "north only" glyph.
+  switch (bucket) {
+    case 0:
+    case 4:
+      return "ns-resize";
+    case 1:
+    case 5:
+      return "nesw-resize";
+    case 2:
+    case 6:
+      return "ew-resize";
+    case 3:
+    case 7:
+      return "nwse-resize";
+    default:
+      return "default";
   }
 }
 

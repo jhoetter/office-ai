@@ -38,3 +38,13 @@ export { insertSectionBreakHandler } from "./insert-section-break.js";
 export { insertPageBreakHandler, type InsertPageBreakPayload } from "./insert-page-break.js";
 export { insertTextTrackedHandler } from "./insert-text-tracked.js";
 export { deleteRangeTrackedHandler } from "./delete-range-tracked.js";
+export { insertChartHandler } from "./insert-chart.js";
+export {
+  setChartDataHandler,
+  setChartTitleHandler,
+  setChartTypeHandler,
+} from "./chart-edits.js";
+export {
+  insertSpreadsheetHandler,
+  updateSpreadsheetHandler,
+} from "./insert-spreadsheet.js";

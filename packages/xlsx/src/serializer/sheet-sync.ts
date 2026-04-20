@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import * as XLSX from "@e965/xlsx";
 import { cellKey } from "../model/refs.js";
 import type { Cell, CellErrorCode, MergedCell, Sheet } from "../model/types.js";
 

@@ -182,7 +182,7 @@ function walkTsFiles(dir, visit) {
  *     gate's job here is structural: the catalogue declares the
  *     intent.
  */
-function checkFormat(format, handlerTypes, entries) {
+function checkFormat(format, handlerTypes, entries, i18nKeys) {
   const violations = [];
 
   const seenIds = new Set();
@@ -224,7 +224,63 @@ function checkFormat(format, handlerTypes, entries) {
     }
   }
 
+  // i18n parity: every palette-surfaced action must have an English
+  // label + description in messages/en.json. Without these, the Cmd+K
+  // palette would render the catalogue's English fallback even when
+  // the user has switched locales — a half-translated palette is
+  // worse than a fully untranslated one. DE is intentionally not
+  // checked: translators flesh it out independently and the resolver
+  // falls back per-key.
+  for (const e of entries) {
+    if (e.hidden) continue;
+    if (!e.surfaces.includes("palette")) continue;
+    const localId = e.id.startsWith(`${format}.`)
+      ? e.id.slice(format.length + 1)
+      : e.id;
+    const labelKey = `actions.${format}.${localId}.label`;
+    const descKey = `actions.${format}.${localId}.description`;
+    if (!i18nKeys.has(labelKey)) {
+      violations.push({
+        format,
+        kind: "missing-i18n-label",
+        message: `palette action "${e.id}" has no English translation — add ${labelKey} to apps/web/app/lib/i18n/messages/en.json`,
+      });
+    }
+    if (!i18nKeys.has(descKey)) {
+      violations.push({
+        format,
+        kind: "missing-i18n-description",
+        message: `palette action "${e.id}" has no English description — add ${descKey} to apps/web/app/lib/i18n/messages/en.json`,
+      });
+    }
+  }
+
   return violations;
+}
+
+/**
+ * Flatten the messages JSON tree into a Set of dotted keys so the
+ * parity check can do O(1) presence lookups without re-walking the
+ * tree. Only string leaves are recorded; arrays and other shapes
+ * (the i18n catalogue uses neither today) are skipped.
+ */
+function loadI18nKeys(path) {
+  const abs = join(ROOT, path);
+  const tree = JSON.parse(readFileSync(abs, "utf8"));
+  const keys = new Set();
+  const walk = (node, prefix) => {
+    if (node === null || typeof node !== "object") return;
+    for (const [k, v] of Object.entries(node)) {
+      const dotted = prefix ? `${prefix}.${k}` : k;
+      if (typeof v === "string") {
+        keys.add(dotted);
+      } else if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        walk(v, dotted);
+      }
+    }
+  };
+  walk(tree, "");
+  return keys;
 }
 
 /* ── Entry point ────────────────────────────────────────────────── */
@@ -233,10 +289,12 @@ function main() {
   const allViolations = [];
   const summary = [];
 
+  const i18nKeys = loadI18nKeys("apps/web/app/lib/i18n/messages/en.json");
+
   for (const f of FORMATS) {
     const handlerTypes = extractHandlerTypes(f.name, f.handlerDirs);
     const entries = extractCatalogueEntries(f.cataloguePath);
-    const violations = checkFormat(f.name, handlerTypes, entries);
+    const violations = checkFormat(f.name, handlerTypes, entries, i18nKeys);
     summary.push({
       format: f.name,
       handlers: handlerTypes.size,

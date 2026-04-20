@@ -68,6 +68,22 @@ describe("PdfAgent", () => {
     expect(hits.every((h) => h.match.toLowerCase() === "fox")).toBe(true);
   });
 
+  it("returns glyph-precise rects when the structured layer is available", async () => {
+    const buf = await buildSamplePdf();
+    agent = await PdfAgent.fromBuffer(buf);
+    const hits = agent.search({ query: "fox" });
+    // pdf-lib + pdfjs together should give us at least one hit
+    // with rects on the structured page projection.
+    const withRects = hits.filter((h) => h.rects.length > 0);
+    expect(withRects.length).toBeGreaterThan(0);
+    for (const h of withRects) {
+      for (const [x1, y1, x2, y2] of h.rects) {
+        expect(x2).toBeGreaterThan(x1);
+        expect(y2).toBeGreaterThan(y1);
+      }
+    }
+  });
+
   it("supports range queries", async () => {
     const buf = await buildSamplePdf();
     agent = await PdfAgent.fromBuffer(buf);

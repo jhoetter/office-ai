@@ -365,6 +365,39 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
     );
 
   pptx
+    .command("set-rotation")
+    .description(
+      "Rotate a shape by --degrees clockwise around its bounding-box centre. Value is normalised to [0,360); 0 clears the OOXML rot attr."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--shape <id>", "Shape NodeId")
+    .requiredOption("--degrees <n>", "Rotation in degrees clockwise", parseFloatArg)
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        shape: string;
+        degrees: number;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-rotation",
+            payload: {
+              slideIndex: opts.slide,
+              shapeId: opts.shape,
+              degrees: opts.degrees,
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
     .command("format-text")
     .description("Apply formatting (bold/italic/underline/strike/color/font/size) to a text range.")
     .requiredOption("--file <path>", "Path to a .pptx file")
@@ -1153,7 +1186,8 @@ export interface PptxSnapshotProjection {
     transition?: { kind: string; speed?: string };
     animations?: ReadonlyArray<{
       id: string;
-      effect: string;
+      category: string;
+      preset: string;
       targetCNvPrId: number;
       durationMs?: number;
       order: number;
@@ -1208,7 +1242,8 @@ export function snapshotToJsonProjection(
         ? {
             animations: s.animations.map((a) => ({
               id: a.id,
-              effect: a.effect,
+              category: a.category,
+              preset: a.preset,
               targetCNvPrId: a.targetCNvPrId,
               ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}),
               order: a.order,
@@ -1434,6 +1469,9 @@ function bumpShapeKind(
       counts.connector++;
       return;
     case "opaque":
+      counts.opaque++;
+      return;
+    case "ole-spreadsheet":
       counts.opaque++;
       return;
     default: {

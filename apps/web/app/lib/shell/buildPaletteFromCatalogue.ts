@@ -28,6 +28,7 @@
 
 import type { ActionDescriptor } from "@officeai/core";
 import type { PaletteCommand } from "./types";
+import { translateAction, type TranslateFn } from "./translateAction";
 
 export interface PaletteRunner {
   readonly run: () => void | Promise<void>;
@@ -38,9 +39,18 @@ export interface PaletteRunner {
 
 export type PaletteRunners = Record<string, PaletteRunner | undefined>;
 
+/**
+ * Build the palette command list from a per-format catalogue.
+ *
+ * Pass `t` from `useTranslator()` to localise labels, descriptions, and
+ * section headers via the convention-based keys documented in
+ * `translateAction.ts`. Calls without `t` (legacy / tests) keep the
+ * catalogue's English strings.
+ */
 export function buildPaletteFromCatalogue(
   catalogue: ReadonlyArray<ActionDescriptor>,
-  runners: PaletteRunners
+  runners: PaletteRunners,
+  t?: TranslateFn
 ): ReadonlyArray<PaletteCommand> {
   const byId = new Map<string, ActionDescriptor>();
   for (const a of catalogue) byId.set(a.id, a);
@@ -59,12 +69,15 @@ export function buildPaletteFromCatalogue(
     if (!action.surfaces.includes("palette")) continue;
     const runner = runners[action.id];
     if (!runner) continue;
+    const strings = t
+      ? translateAction(action, t)
+      : { label: action.label, description: action.description, section: action.section };
     out.push({
       id: action.id,
-      label: action.label,
-      section: action.section,
+      label: strings.label,
+      section: strings.section,
       ...(action.shortcut ? { shortcut: action.shortcut } : {}),
-      ...(action.description ? { hint: action.description } : {}),
+      ...(strings.description ? { hint: strings.description } : {}),
       run: runner.run,
       ...(runner.enabled !== undefined ? { enabled: runner.enabled } : {}),
     });

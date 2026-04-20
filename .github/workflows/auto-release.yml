@@ -1,0 +1,224 @@
+name: Auto Release
+
+# Mirrors hof-engine's auto-release flow, adapted for a Node monorepo
+# distributed via GitHub Releases (NOT npm — see docs/release-pipeline.md):
+#
+#   1. CI gate (`pnpm verify`) on every push to main.
+#   2. If green, compute the next patch version from the latest `vX.Y.Z`
+#      tag, bump every publishable package in lockstep, commit, tag, push.
+#   3. Build a self-contained `@officeai/agent` bundle via `pnpm deploy`
+#      (resolves all `workspace:*` deps), tar it, and attach the tarball
+#      to a new GitHub Release vX.Y.Z. Uses the standard GITHUB_TOKEN —
+#      no npm org, no Trusted Publishers, no GHCR.
+#   4. Notify hof-os by committing the new version into
+#      `infra/officeai.lock.json` on jhoetter/hof-os, which kicks off
+#      hof-os's own deploy pipeline (which curls the tarball from the
+#      Release URL when building hof-skill-base-officeai).
+#
+# To bypass a release for a doc-only commit, append `[skip ci]` or
+# `[skip release]` to the commit message.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+
+jobs:
+  check:
+    name: Verify (quality gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run quality gate
+        run: pnpm verify
+
+  release:
+    name: Bump, Tag & Release
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[skip release]')"
+    permissions:
+      contents: write
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Check if current commit already tagged
+        id: check_tag
+        run: |
+          if git tag --points-at HEAD | grep -q '^v'; then
+            echo "already_tagged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync main, bump version, commit, push
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        id: bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          release_commit_push() {
+            git fetch origin main --tags
+            git merge origin/main --no-edit
+            LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+            if [ -z "$LATEST_TAG" ]; then
+              NEW_VERSION="0.1.0"
+            else
+              VERSION="${LATEST_TAG#v}"
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+              NEW_PATCH=$((PATCH + 1))
+              NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+            fi
+            echo "Releasing ${NEW_VERSION}"
+            node scripts/bump-version.mjs "${NEW_VERSION}"
+            git add package.json packages/*/package.json
+            if git diff --cached --quiet; then
+              echo "ERROR: expected version bump in workspace package.json files"
+              exit 1
+            fi
+            git commit -m "chore: bump to ${NEW_VERSION} [skip ci]"
+            git push origin HEAD:main
+            echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "new_tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          }
+
+          if ! release_commit_push; then
+            echo "First attempt failed (e.g. non-fast-forward); reset to origin/main and retry once"
+            git fetch origin main --tags
+            git reset --hard origin/main
+            release_commit_push || exit 1
+          fi
+
+      - name: Tag and push
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        run: |
+          git tag "${{ steps.bump.outputs.new_tag }}"
+          git push origin "${{ steps.bump.outputs.new_tag }}"
+
+      # The lockfile reflects the previous version's `workspace:*` linkage
+      # in the resolved entries. After bumping, refresh it so `pnpm deploy`
+      # resolves cleanly against the new versions.
+      - name: Refresh lockfile after bump
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build workspace
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        run: pnpm build
+
+      # Resolve every `workspace:*` dep of @officeai/agent into a fully
+      # self-contained directory (with populated node_modules/) and tar it.
+      # This is what the hof-os sandbox Dockerfile downloads + extracts —
+      # no npm registry interaction needed at consume time.
+      - name: Build release bundle (officeai-agent)
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.bump.outputs.new_version }}"
+          DEPLOY_DIR="${RUNNER_TEMP}/officeai-agent"
+          rm -rf "${DEPLOY_DIR}"
+          pnpm --filter @officeai/agent --prod deploy "${DEPLOY_DIR}"
+          # Sanity check: bundled cli.js must exist + be a Node program.
+          test -f "${DEPLOY_DIR}/dist/cli.js"
+          head -1 "${DEPLOY_DIR}/dist/cli.js" | grep -q '^#!.*node'
+          tar czf "officeai-agent-${VERSION}.tgz" -C "${RUNNER_TEMP}" officeai-agent
+          ls -lh "officeai-agent-${VERSION}.tgz"
+
+      - name: Publish GitHub Release
+        if: steps.check_tag.outputs.already_tagged == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.bump.outputs.new_version }}"
+          gh release create "v${VERSION}" \
+            "officeai-agent-${VERSION}.tgz" \
+            --title "v${VERSION}" \
+            --generate-notes
+
+  notify-hof-os:
+    name: Notify hof-os of new release
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: needs.release.outputs.new_version != ''
+    steps:
+      - name: Checkout hof-os
+        uses: actions/checkout@v4
+        with:
+          repository: jhoetter/hof-os
+          token: ${{ secrets.OFFICEAI_SYNC_TOKEN }}
+          ref: main
+
+      - name: Update officeai lockfile
+        env:
+          NEW_VERSION: ${{ needs.release.outputs.new_version }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p infra
+          PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > infra/officeai.lock.json <<EOF
+          {
+            "version": "${NEW_VERSION}",
+            "published_at": "${PUBLISHED_AT}",
+            "source_repo": "jhoetter/office-ai",
+            "source_sha": "${GIT_SHA}"
+          }
+          EOF
+          cat infra/officeai.lock.json
+
+      - name: Commit and push
+        env:
+          NEW_VERSION: ${{ needs.release.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add infra/officeai.lock.json
+          if git diff --cached --quiet; then
+            echo "officeai.lock.json already at ${NEW_VERSION}; nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(officeai): bump to ${NEW_VERSION}"
+          git pull --rebase origin main
+          git push origin main

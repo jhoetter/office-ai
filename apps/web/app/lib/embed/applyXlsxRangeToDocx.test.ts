@@ -54,6 +54,29 @@ describe("applyXlsxRangeToDocx", () => {
     expect(cellText(2, 1)).toBe("42");
   });
 
+  it("inserts an OLE-embedded spreadsheet when mode='live'", async () => {
+    const agent = await DocxAgent.empty({ idMinter: deterministicIdMinter() });
+    const snap = snapshot([
+      ["Name", "Score"],
+      ["Ada", 99],
+    ]);
+    await applyXlsxRangeToDocx({ agent, snapshot: snap, paragraphIndex: 0, mode: "live" });
+    // The insert-spreadsheet handler registers a new oleObject + image
+    // rel against `word/document.xml.rels`, so that path becomes dirty.
+    expect(agent.getSnapshot().dirty.relationships.has("word/document.xml")).toBe(true);
+  });
+
+  it("inserts a chart when mode='chart'", async () => {
+    const agent = await DocxAgent.empty({ idMinter: deterministicIdMinter() });
+    const snap = snapshot([
+      ["", "EU", "US"],
+      ["Q1", 10, 20],
+      ["Q2", 15, 25],
+    ]);
+    await applyXlsxRangeToDocx({ agent, snapshot: snap, paragraphIndex: 0, mode: "chart" });
+    expect(agent.getSnapshot().dirty.relationships.has("word/document.xml")).toBe(true);
+  });
+
   it("is a no-op for an empty snapshot", async () => {
     const agent = await DocxAgent.empty({ idMinter: deterministicIdMinter() });
     const before = agent.getSnapshot().root.body.length;

@@ -1,6 +1,6 @@
 import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core";
-import * as XLSX from "xlsx";
-import { cellKey, formatA1, parseRange } from "../model/refs.js";
+import * as XLSX from "@e965/xlsx";
+import { cellKey, formatA1, parseA1, parseRange } from "../model/refs.js";
 import { defaultStyleTable, type StyleTable } from "../model/style-table.js";
 import {
   emptyDirty,
@@ -346,14 +346,23 @@ function resolveSheet(
   const ws = sheetjsBook.Sheets[entry.name];
   const sheetXml = kind === "worksheet" && container.has(partPath) ? container.readText(partPath) : undefined;
   const styleIdByRef = sheetXml ? extractStyleIdsFromXml(sheetXml) : undefined;
-  const { cells, merges } =
+  // `cells` is reassigned below to fold in shared/array formula
+  // metadata; `merges` stays referentially stable.
+  // eslint-disable-next-line prefer-const
+  let { cells, merges } =
     kind === "worksheet" && ws ? extractCellsAndMerges(ws, styleIdByRef) : EMPTY_CELL_DATA;
 
   const { commentsPartPath, comments, commentAuthors } = resolveComments(container, partPath);
 
-  const { autoFilter, hiddenRows } = sheetXml
+  const { autoFilter, hiddenRows, rowHeights } = sheetXml
     ? extractAutoFilterAndHiddenRows(sheetXml)
-    : { autoFilter: undefined, hiddenRows: new Set<number>() };
+    : { autoFilter: undefined, hiddenRows: new Set<number>(), rowHeights: new Map<number, number>() };
+
+  const { columnWidths, hiddenCols } = sheetXml
+    ? extractColumnWidthsAndHidden(sheetXml)
+    : { columnWidths: new Map<number, number>(), hiddenCols: new Set<number>() };
+
+  const sheetDefaults = sheetXml ? extractSheetFormatPr(sheetXml) : {};
 
   const freeze = sheetXml ? extractFreezePanes(sheetXml) : undefined;
   const opaqueConditionalFormats = sheetXml ? extractConditionalFormatBlocks(sheetXml) : [];
@@ -376,6 +385,61 @@ function resolveSheet(
   const tables =
     kind === "worksheet" && sheetXml ? resolveTables(container, partPath, sheetXml, mintNodeId) : [];
 
+  const opaqueSheetParts = sheetXml ? extractOpaqueSheetParts(sheetXml) : EMPTY_OPAQUE_SHEET_PARTS;
+
+  // Shared / array formula metadata. SheetJS expands shared
+  // formulas to per-cell text on parse, which loses the source
+  // grouping. We re-scan the worksheet XML directly to recover the
+  // `t="shared"` / `t="array"` attributes plus their `si` and
+  // `ref` so the serializer can re-emit the compact form. Cells
+  // that lack metadata are normal formulas and round-trip via
+  // SheetJS unchanged.
+  if (kind === "worksheet" && sheetXml) {
+    const meta = extractFormulaMetadata(sheetXml);
+    if (meta.size > 0) {
+      const next = new Map(cells);
+      // Map of follower-ref → master text so we can backfill formula
+      // text on followers that SheetJS dropped (because their `<f>`
+      // was self-closing with no body).
+      const masterTextBySi = new Map<number, string>();
+      for (const [, m] of meta) {
+        if (m.isMaster && m.si !== undefined) {
+          // We need the master cell's text — pull it after the loop;
+          // cache the marker for now.
+          masterTextBySi.set(m.si, "");
+        }
+      }
+      for (const [a1Ref, m] of meta) {
+        const addr = parseA1(a1Ref);
+        const key = cellKey(addr.row, addr.col);
+        const existing = next.get(key);
+        if (m.isMaster && m.si !== undefined && existing?.formula) {
+          masterTextBySi.set(m.si, existing.formula.text);
+        }
+      }
+      for (const [a1Ref, m] of meta) {
+        const addr = parseA1(a1Ref);
+        const key = cellKey(addr.row, addr.col);
+        const existing = next.get(key);
+        if (!existing) continue;
+        const fallbackText =
+          existing.formula?.text ??
+          (m.si !== undefined ? masterTextBySi.get(m.si) ?? "" : "");
+        next.set(key, {
+          ...existing,
+          formula: {
+            text: fallbackText,
+            ...(m.kind ? { kind: m.kind } : {}),
+            ...(m.si !== undefined ? { sharedIndex: m.si } : {}),
+            ...(m.ref ? { ref: m.ref } : {}),
+            ...(m.isMaster ? { isMaster: true } : {}),
+          },
+        });
+      }
+      cells = next;
+    }
+  }
+
   return {
     id: mintNodeId(),
     sheetId: entry.sheetId,
@@ -389,9 +453,16 @@ function resolveSheet(
     merges,
     comments,
     commentAuthors,
-    columnWidths: new Map(),
-    rowHeights: new Map(),
+    columnWidths,
+    rowHeights,
+    hiddenCols,
     hiddenRows,
+    ...(sheetDefaults.defaultColWidthPx !== undefined
+      ? { defaultColWidthPx: sheetDefaults.defaultColWidthPx }
+      : {}),
+    ...(sheetDefaults.defaultRowHeightPx !== undefined
+      ? { defaultRowHeightPx: sheetDefaults.defaultRowHeightPx }
+      : {}),
     images: drawings.images,
     conditionalFormats: [],
     opaqueConditionalFormats,
@@ -405,7 +476,149 @@ function resolveSheet(
     ...(commentsPartPath ? { commentsPartPath } : {}),
     tables,
     charts: [],
+    ...(opaqueSheetParts.hyperlinksXml ? { hyperlinksXml: opaqueSheetParts.hyperlinksXml } : {}),
+    ...(opaqueSheetParts.tablePartsXml ? { tablePartsXml: opaqueSheetParts.tablePartsXml } : {}),
+    ...(opaqueSheetParts.colsXml ? { colsXml: opaqueSheetParts.colsXml } : {}),
+    ...(opaqueSheetParts.sheetViewsXml ? { sheetViewsXml: opaqueSheetParts.sheetViewsXml } : {}),
+    ...(opaqueSheetParts.sheetProtectionXml
+      ? { sheetProtectionXml: opaqueSheetParts.sheetProtectionXml }
+      : {}),
+    ...(opaqueSheetParts.pageMarginsXml ? { pageMarginsXml: opaqueSheetParts.pageMarginsXml } : {}),
+    ...(opaqueSheetParts.pageSetupXml ? { pageSetupXml: opaqueSheetParts.pageSetupXml } : {}),
+    ...(opaqueSheetParts.printOptionsXml ? { printOptionsXml: opaqueSheetParts.printOptionsXml } : {}),
+    ...(opaqueSheetParts.headerFooterXml ? { headerFooterXml: opaqueSheetParts.headerFooterXml } : {}),
+    ...(opaqueSheetParts.rowBreaksXml ? { rowBreaksXml: opaqueSheetParts.rowBreaksXml } : {}),
+    ...(opaqueSheetParts.colBreaksXml ? { colBreaksXml: opaqueSheetParts.colBreaksXml } : {}),
+    ...(opaqueSheetParts.ignoredErrorsXml
+      ? { ignoredErrorsXml: opaqueSheetParts.ignoredErrorsXml }
+      : {}),
+    ...(opaqueSheetParts.legacyDrawingXml
+      ? { legacyDrawingXml: opaqueSheetParts.legacyDrawingXml }
+      : {}),
+    ...(opaqueSheetParts.legacyDrawingHFXml
+      ? { legacyDrawingHFXml: opaqueSheetParts.legacyDrawingHFXml }
+      : {}),
+    ...(opaqueSheetParts.pictureXml ? { pictureXml: opaqueSheetParts.pictureXml } : {}),
+    ...(opaqueSheetParts.oleObjectsXml ? { oleObjectsXml: opaqueSheetParts.oleObjectsXml } : {}),
+    ...(opaqueSheetParts.controlsXml ? { controlsXml: opaqueSheetParts.controlsXml } : {}),
   };
+}
+
+/**
+ * Capture per-worksheet OOXML blocks that the typed model does not
+ * own but that a dirty rewrite via SheetJS would otherwise drop.
+ *
+ * Each capture is a verbatim string slice of the input XML so the
+ * serializer can re-inject it into the regenerated worksheet XML
+ * with no shape transformations. The injection order matters
+ * (see `serializer/serialize.ts#injectOpaqueSheetParts`); the
+ * extractor is order-agnostic.
+ */
+interface OpaqueSheetParts {
+  readonly hyperlinksXml?: string;
+  readonly tablePartsXml?: string;
+  readonly colsXml?: string;
+  readonly sheetViewsXml?: string;
+  readonly sheetProtectionXml?: string;
+  readonly pageMarginsXml?: string;
+  readonly pageSetupXml?: string;
+  readonly printOptionsXml?: string;
+  readonly headerFooterXml?: string;
+  readonly rowBreaksXml?: string;
+  readonly colBreaksXml?: string;
+  readonly ignoredErrorsXml?: string;
+  readonly legacyDrawingXml?: string;
+  readonly legacyDrawingHFXml?: string;
+  readonly pictureXml?: string;
+  readonly oleObjectsXml?: string;
+  readonly controlsXml?: string;
+}
+
+const EMPTY_OPAQUE_SHEET_PARTS: OpaqueSheetParts = {};
+
+function extractFirstBlock(xml: string, tag: string): string | undefined {
+  const re = new RegExp(`<${tag}\\b[^>]*?(?:/>|>[\\s\\S]*?</${tag}>)`);
+  const m = re.exec(xml);
+  return m ? m[0] : undefined;
+}
+
+export function extractOpaqueSheetParts(xml: string): OpaqueSheetParts {
+  return {
+    ...optional("hyperlinksXml", extractFirstBlock(xml, "hyperlinks")),
+    ...optional("tablePartsXml", extractFirstBlock(xml, "tableParts")),
+    ...optional("colsXml", extractFirstBlock(xml, "cols")),
+    ...optional("sheetViewsXml", extractFirstBlock(xml, "sheetViews")),
+    ...optional("sheetProtectionXml", extractFirstBlock(xml, "sheetProtection")),
+    ...optional("pageMarginsXml", extractFirstBlock(xml, "pageMargins")),
+    ...optional("pageSetupXml", extractFirstBlock(xml, "pageSetup")),
+    ...optional("printOptionsXml", extractFirstBlock(xml, "printOptions")),
+    ...optional("headerFooterXml", extractFirstBlock(xml, "headerFooter")),
+    ...optional("rowBreaksXml", extractFirstBlock(xml, "rowBreaks")),
+    ...optional("colBreaksXml", extractFirstBlock(xml, "colBreaks")),
+    ...optional("ignoredErrorsXml", extractFirstBlock(xml, "ignoredErrors")),
+    ...optional("legacyDrawingXml", extractFirstBlock(xml, "legacyDrawing")),
+    ...optional("legacyDrawingHFXml", extractFirstBlock(xml, "legacyDrawingHF")),
+    ...optional("pictureXml", extractFirstBlock(xml, "picture")),
+    ...optional("oleObjectsXml", extractFirstBlock(xml, "oleObjects")),
+    ...optional("controlsXml", extractFirstBlock(xml, "controls")),
+  };
+}
+
+function optional<K extends string>(key: K, value: string | undefined): Partial<Record<K, string>> {
+  return value ? ({ [key]: value } as Record<K, string>) : {};
+}
+
+interface FormulaMeta {
+  readonly kind?: "shared" | "array";
+  readonly si?: number;
+  readonly ref?: string;
+  readonly isMaster?: boolean;
+}
+
+/**
+ * Scan worksheet XML for `<c r="…"><f t="shared|array" si="…"
+ * ref="…">…</f></c>` patterns and produce a per-cell map of the
+ * shared / array formula metadata. SheetJS exposes the resolved
+ * formula text on every cell but loses the encoding metadata, so
+ * we recover it directly from the XML to drive the serializer's
+ * `<f>` rewrite.
+ *
+ * Master vs follower:
+ * - Master cells are the ones whose `<f>` element carries the
+ *   formula body (and, for shared groups, the `ref` attribute).
+ * - Follower cells reference the master via the same `si` and have
+ *   either a self-closing `<f t="shared" si=…/>` or a redundant
+ *   body that Excel ignores.
+ */
+export function extractFormulaMetadata(xml: string): Map<string, FormulaMeta> {
+  const out = new Map<string, FormulaMeta>();
+  const cellRe = /<c\b([^>]*?)>([\s\S]*?)<\/c>/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = cellRe.exec(xml))) {
+    const attrs = cm[1] ?? "";
+    const body = cm[2] ?? "";
+    const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+    if (!refMatch) continue;
+    const ref = refMatch[2]!;
+    const fMatch = /<f\b([^>]*?)(?:\/>|>([\s\S]*?)<\/f>)/.exec(body);
+    if (!fMatch) continue;
+    const fAttrs = fMatch[1] ?? "";
+    const fBody = fMatch[2];
+    const tMatch = /\bt=("|')([^"']+)\1/.exec(fAttrs);
+    const kind = tMatch?.[2] === "shared" ? "shared" : tMatch?.[2] === "array" ? "array" : undefined;
+    if (!kind) continue;
+    const siMatch = /\bsi=("|')(\d+)\1/.exec(fAttrs);
+    const refMatchInF = /\bref=("|')([^"']+)\1/.exec(fAttrs);
+    const isMaster = (fBody !== undefined && fBody.length > 0) || refMatchInF !== null;
+    const meta: FormulaMeta = {
+      kind,
+      ...(siMatch ? { si: Number.parseInt(siMatch[2]!, 10) } : {}),
+      ...(refMatchInF ? { ref: refMatchInF[2]! } : {}),
+      ...(isMaster ? { isMaster: true } : {}),
+    };
+    out.set(ref, meta);
+  }
+  return out;
 }
 
 /**
@@ -814,8 +1027,14 @@ function extractStyleIdsFromXml(xml: string): Map<string, number> {
 export function extractAutoFilterAndHiddenRows(xml: string): {
   autoFilter: AutoFilter | undefined;
   hiddenRows: Set<number>;
+  rowHeights: Map<number, number>;
 } {
   const hiddenRows = new Set<number>();
+  const rowHeights = new Map<number, number>();
+  // `<row …>` carries `r`, `hidden`, `ht`, `customHeight` — we only
+  // honour `ht` when `customHeight="1"` (matches Excel: a `ht`
+  // without `customHeight` is a hint, not an override). Heights are
+  // points; convert to CSS px at 96 dpi.
   const rowRe = /<row\b([^/>]*)\/?>/g;
   let rm: RegExpExecArray | null;
   while ((rm = rowRe.exec(xml)) !== null) {
@@ -824,10 +1043,22 @@ export function extractAutoFilterAndHiddenRows(xml: string): {
     if (!rMatch) continue;
     const rowNum = Number(rMatch[2]);
     if (!Number.isInteger(rowNum) || rowNum < 1) continue;
+    const rowIdx = rowNum - 1;
     const hMatch = /\bhidden=("|')([^"']+)\1/.exec(attrs);
-    if (!hMatch) continue;
-    const hVal = hMatch[2];
-    if (hVal === "1" || hVal === "true") hiddenRows.add(rowNum - 1);
+    if (hMatch) {
+      const hVal = hMatch[2];
+      if (hVal === "1" || hVal === "true") hiddenRows.add(rowIdx);
+    }
+    const customHeight = /\bcustomHeight=("|')(1|true)\1/.test(attrs);
+    if (customHeight) {
+      const htMatch = /\bht=("|')([^"']+)\1/.exec(attrs);
+      if (htMatch) {
+        const ptVal = Number(htMatch[2]);
+        if (Number.isFinite(ptVal) && ptVal >= 0) {
+          rowHeights.set(rowIdx, ptToPx(ptVal));
+        }
+      }
+    }
   }
 
   const afMatch = /<autoFilter\b([^>]*)(?:\/>|>([\s\S]*?)<\/autoFilter>)/.exec(xml);
@@ -855,7 +1086,109 @@ export function extractAutoFilterAndHiddenRows(xml: string): {
     }
   }
 
-  return { autoFilter, hiddenRows };
+  return { autoFilter, hiddenRows, rowHeights };
+}
+
+/**
+ * Excel column widths are stored in "character units" — the width of
+ * a `0` in the workbook's default font. The OOXML reference formula
+ * for converting back to CSS pixels at the workbook's max-digit
+ * width is involved enough to need the theme font metrics; for our
+ * render-time approximation `Math.round(width * 7 + 5)` is within
+ * a pixel of Excel for the typical Calibri 11pt default and avoids
+ * a theme lookup. Hidden columns and explicit `width="0"` collapse
+ * to 0 px so the renderer's hidden-column rule paints them as
+ * zero-width.
+ */
+function charWidthToPx(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  return Math.round(width * 7 + 5);
+}
+
+/** Excel point sizes → CSS px at 96 dpi. */
+function ptToPx(pt: number): number {
+  return Math.round(pt * (96 / 72));
+}
+
+/**
+ * Parse `<cols><col min="N" max="M" width="X" hidden="…"/></cols>`
+ * into a per-column-index map of pixel widths plus a set of hidden
+ * column indices. Each `<col>` covers the inclusive 1-based range
+ * `[min, max]`; we expand it to flat 0-based entries so the
+ * renderer doesn't have to know about Excel's range encoding — it
+ * just looks up `columnWidths.get(c)` / `hiddenCols.has(c)`.
+ *
+ * Hidden columns are also entered into `columnWidths` (set to 0) so
+ * the Grid's axis-index treats them uniformly with non-hidden
+ * overrides.
+ */
+export function extractColumnWidthsAndHidden(xml: string): {
+  columnWidths: Map<number, number>;
+  hiddenCols: Set<number>;
+} {
+  const columnWidths = new Map<number, number>();
+  const hiddenCols = new Set<number>();
+  const blockMatch = /<cols\b[^>]*>([\s\S]*?)<\/cols>/.exec(xml);
+  if (!blockMatch) return { columnWidths, hiddenCols };
+  const inner = blockMatch[1] ?? "";
+  const colRe = /<col\b([^/>]*)\/?>/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = colRe.exec(inner)) !== null) {
+    const attrs = cm[1] ?? "";
+    const minMatch = /\bmin=("|')([^"']+)\1/.exec(attrs);
+    const maxMatch = /\bmax=("|')([^"']+)\1/.exec(attrs);
+    if (!minMatch || !maxMatch) continue;
+    const min = Number(minMatch[2]);
+    const max = Number(maxMatch[2]);
+    if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || max < min) continue;
+    const widthMatch = /\bwidth=("|')([^"']+)\1/.exec(attrs);
+    const widthChars = widthMatch ? Number(widthMatch[2]) : Number.NaN;
+    const hidden = /\bhidden=("|')(1|true)\1/.test(attrs);
+    const widthPx = Number.isFinite(widthChars) ? charWidthToPx(widthChars) : NaN;
+    for (let one = min; one <= max; one++) {
+      const c = one - 1;
+      if (hidden) {
+        hiddenCols.add(c);
+        columnWidths.set(c, 0);
+      } else if (Number.isFinite(widthPx)) {
+        columnWidths.set(c, Math.max(0, widthPx));
+      }
+    }
+  }
+  return { columnWidths, hiddenCols };
+}
+
+/**
+ * Parse `<sheetFormatPr defaultColWidth="…" defaultRowHeight="…"/>`
+ * into per-sheet pixel defaults. Both attributes are optional; we
+ * leave the corresponding field unset when missing so the renderer
+ * falls through to its built-in defaults.
+ *
+ * `baseColWidth` (Excel's "standard" column width) is intentionally
+ * ignored here because Excel itself derives `defaultColWidth` from
+ * it via a font-metric formula we don't replicate; the explicit
+ * `defaultColWidth` is what Excel stores when the user has nudged
+ * the sheet-wide width.
+ */
+export function extractSheetFormatPr(xml: string): {
+  defaultColWidthPx?: number;
+  defaultRowHeightPx?: number;
+} {
+  const m = /<sheetFormatPr\b([^/>]*)\/?>/.exec(xml);
+  if (!m) return {};
+  const attrs = m[1] ?? "";
+  const colMatch = /\bdefaultColWidth=("|')([^"']+)\1/.exec(attrs);
+  const rowMatch = /\bdefaultRowHeight=("|')([^"']+)\1/.exec(attrs);
+  const out: { defaultColWidthPx?: number; defaultRowHeightPx?: number } = {};
+  if (colMatch) {
+    const v = Number(colMatch[2]);
+    if (Number.isFinite(v) && v > 0) out.defaultColWidthPx = charWidthToPx(v);
+  }
+  if (rowMatch) {
+    const v = Number(rowMatch[2]);
+    if (Number.isFinite(v) && v > 0) out.defaultRowHeightPx = ptToPx(v);
+  }
+  return out;
 }
 
 function parseFilterColumns(body: string): Map<number, FilterColumn> {

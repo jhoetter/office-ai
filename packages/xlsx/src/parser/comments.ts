@@ -54,6 +54,18 @@ export function parseCommentsPart(
       const author =
         Number.isInteger(authorIdx) && authorIdx >= 0 && authorIdx < authors.length ? authors[authorIdx] : "";
       const text = extractCommentText(c);
+      // Capture the entire `<text>…</text>` element as a verbatim
+      // string so the serializer can re-emit it when the user
+      // hasn't actually edited the comment body. This preserves
+      // rich-text runs (multiple `<r>` children with their own
+      // `<rPr>` font/color/etc.), arbitrary whitespace, and any
+      // unmodeled run children that the typed flattening would
+      // otherwise discard. Extracted from the original XML by
+      // pinpointing the `<text>` tag inside this comment's `<comment>`
+      // element. We use a scoped regex (anchored on the comment's
+      // ref attr) because we don't have direct access to the
+      // serialized form of `c` from the `XmlElement` wrapper.
+      const textXml = extractTextElementForComment(xml, ref, c.attrs.authorId);
       // P1: round-trip threaded-comment metadata that
       // `serializer/comments.ts` writes as `officeai-*` attributes.
       // Excel preserves unknown attributes, so this survives a real
@@ -69,11 +81,53 @@ export function parseCommentsPart(
         ...(parentId ? { parentId } : {}),
         ...(resolvedRaw === "1" ? { resolved: true } : {}),
         ...(createdAt ? { createdAt } : {}),
+        ...(textXml ? { textXml } : {}),
       });
     }
   }
 
   return { authors, comments };
+}
+
+/**
+ * Pull the `<text>…</text>` element verbatim for a single comment.
+ *
+ * Scoped via the comment's `ref` attribute (and `authorId` as a
+ * tiebreaker when two comments share a ref). Returns `undefined`
+ * when no match is found — the caller falls back to flattening
+ * via {@link extractCommentText}, which is lossy but safe.
+ *
+ * NOTE: This is a regex-based scan so it tolerates the various
+ * orderings of `ref`, `authorId`, and our `officeai-*` attrs that
+ * different writers emit. The scoped open tag uses the actual
+ * attribute order from the source so a `comment` element with both
+ * `ref="A1"` and `ref="A1"` (impossible per spec) wouldn't match the
+ * wrong block.
+ */
+function extractTextElementForComment(
+  commentsXml: string,
+  ref: string,
+  authorId: string | undefined
+): string | undefined {
+  if (!ref) return undefined;
+  const refEsc = escapeForRegex(ref);
+  const idEsc = authorId !== undefined ? escapeForRegex(authorId) : undefined;
+  const idAttrPart = idEsc !== undefined ? `\\s+authorId="${idEsc}"` : "";
+  const re = new RegExp(
+    `<comment\\s+ref="${refEsc}"${idAttrPart}[^>]*>([\\s\\S]*?)<\\/comment>`,
+    "g"
+  );
+  const m = re.exec(commentsXml);
+  if (!m) return undefined;
+  const inner = m[1] ?? "";
+  const textRe = /<text\b[^>]*>([\s\S]*?)<\/text>|<text\s*\/>/;
+  const tm = textRe.exec(inner);
+  if (!tm) return undefined;
+  return tm[0];
+}
+
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function extractCommentText(commentEl: ooxml.XmlElement): string {

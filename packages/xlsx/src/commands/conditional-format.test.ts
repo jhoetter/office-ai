@@ -24,6 +24,7 @@ function makeSheet(rules: ReadonlyArray<ConditionalFormat> = []): Sheet {
     columnWidths: new Map(),
     rowHeights: new Map(),
     hiddenRows: new Set(),
+    hiddenCols: new Set(),
     images: [],
     conditionalFormats: rules,
     opaqueConditionalFormats: [],

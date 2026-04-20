@@ -170,6 +170,58 @@ describe("targeted-edit roundtrip", () => {
     expect(partB.categories).toEqual(partA.categories);
   });
 
+  it("authors an embedded xlsx + c:externalData when a chart is dirty", async () => {
+    const path = join(FIXTURES_DIR.pathname, "09-with-chart.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+
+    const slide = snap.root.slides[0];
+    const chartA = slide.shapes.find((s) => s.kind === "chart");
+    expect(chartA).toBeDefined();
+    if (!chartA || chartA.kind !== "chart") return;
+
+    const dirtied: PptxSnapshot = {
+      ...snap,
+      dirty: {
+        ...snap.dirty,
+        slides: new Set([slide.partPath]),
+        charts: new Set([chartA.chartPartPath]),
+      },
+    };
+
+    const out = await serializePptx(dirtied);
+    const reload = await ooxml.OoxmlContainer.load(out);
+
+    // (1) chart rels reference an embedded package under ppt/embeddings/.
+    const chartRels = ooxml.RelationshipGraph.loadFor(reload, chartA.chartPartPath);
+    const pkgRel = chartRels.relationships.find((r) => r.type === ooxml.REL_TYPE_PACKAGE);
+    expect(pkgRel, "chart should advertise a package relationship").toBeDefined();
+    if (!pkgRel) return;
+    expect(pkgRel.target).toMatch(/embeddings\/[^/]+\.xlsx$/);
+
+    // (2) the embedded part exists and parses as a real xlsx package.
+    const embeddedPath = pkgRel.target.startsWith("/")
+      ? pkgRel.target.slice(1)
+      : new URL(pkgRel.target, `file:///${chartA.chartPartPath}`).pathname.slice(1);
+    expect(reload.has(embeddedPath), `embedded xlsx missing at ${embeddedPath}`).toBe(true);
+    const inner = await ooxml.OoxmlContainer.load(reload.readBytes(embeddedPath));
+    expect(inner.has("xl/workbook.xml")).toBe(true);
+
+    // (3) the chart XML emits c:externalData wired to the new rId, and
+    // its formulas point into the embedded sheet (not the legacy
+    // placeholder Sheet1!$A$2:$A$N strings, which we still allow but
+    // expect to be derived from the embedded layout).
+    const chartXml = new TextDecoder().decode(reload.readBytes(chartA.chartPartPath));
+    expect(chartXml).toContain(`r:id="${pkgRel.id}"`);
+    expect(chartXml).toContain("c:externalData");
+    expect(chartXml).toMatch(/<c:f>[^<]*\$A\$2:\$A\$/);
+
+    // (4) [Content_Types].xml advertises the spreadsheetml override for it.
+    const ct = ooxml.ContentTypes.load(reload);
+    const partName = embeddedPath.startsWith("/") ? embeddedPath : `/${embeddedPath}`;
+    expect(ct.hasOverride(partName)).toBe(true);
+  });
+
   it("rebuilds a slide with typed transition + animations and preserves them", async () => {
     const path = join(FIXTURES_DIR.pathname, "10-with-anim.pptx");
     const buf = await readFile(path);
@@ -191,9 +243,14 @@ describe("targeted-edit roundtrip", () => {
     expect(slide2.transition?.kind).toBe("fade");
     expect(slide2.transition?.speed).toBe("med");
     expect(slide2.animations.length).toBe(2);
-    expect(slide2.animations[0]).toMatchObject({ effect: "appear", targetCNvPrId: 2 });
+    expect(slide2.animations[0]).toMatchObject({
+      category: "entrance",
+      preset: "appear",
+      targetCNvPrId: 2,
+    });
     expect(slide2.animations[1]).toMatchObject({
-      effect: "fly-in",
+      category: "entrance",
+      preset: "flyIn",
       targetCNvPrId: 3,
       durationMs: 500,
     });
@@ -255,5 +312,49 @@ describe("targeted-edit roundtrip", () => {
       const after = sha256Hex(reload.readBytes(partPath));
       expect(after, `${partPath} changed unexpectedly`).toBe(before);
     }
+  });
+
+  it("flushes a dirty slide-master through the new dirty.masters path", async () => {
+    const path = join(FIXTURES_DIR.pathname, "04-multi-shape.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+    const masterPath = [...snap.root.masters.keys()][0]!;
+    expect(masterPath).toBeDefined();
+
+    const dirtied: PptxSnapshot = {
+      ...snap,
+      dirty: { ...snap.dirty, masters: new Set([masterPath]) },
+    };
+    const out = await serializePptx(dirtied);
+    const reload = await ooxml.OoxmlContainer.load(out);
+
+    expect(reload.has(masterPath)).toBe(true);
+    // Re-emitted from raw — content survives, even if formatting diverges.
+    const xml = reload.readText(masterPath);
+    expect(xml).toMatch(/<p:sldMaster\b/);
+    // Re-parsing the produced container must succeed.
+    const snap2 = await parsePptx(out);
+    expect(snap2.root.masters.has(masterPath)).toBe(true);
+  });
+
+  it("flushes a dirty theme part through the new dirty.theme path", async () => {
+    const path = join(FIXTURES_DIR.pathname, "04-multi-shape.pptx");
+    const buf = await readFile(path);
+    const snap = await parsePptx(buf);
+    const themePath = [...snap.root.theme.keys()][0]!;
+    expect(themePath).toBeDefined();
+
+    const dirtied: PptxSnapshot = {
+      ...snap,
+      dirty: { ...snap.dirty, theme: new Set([themePath]) },
+    };
+    const out = await serializePptx(dirtied);
+    const reload = await ooxml.OoxmlContainer.load(out);
+
+    expect(reload.has(themePath)).toBe(true);
+    const xml = reload.readText(themePath);
+    expect(xml).toMatch(/<a:theme\b/);
+    const snap2 = await parsePptx(out);
+    expect(snap2.root.theme.has(themePath)).toBe(true);
   });
 });

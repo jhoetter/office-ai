@@ -39,6 +39,12 @@ export const DOCX_COMMAND_TYPES = [
   "docx:apply-list-format",
   "docx:accept-all-changes",
   "docx:reject-all-changes",
+  "docx:insert-chart",
+  "docx:set-chart-data",
+  "docx:set-chart-title",
+  "docx:set-chart-type",
+  "docx:insert-spreadsheet",
+  "docx:update-spreadsheet",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -137,6 +143,108 @@ export interface InsertImagePayload {
   altText?: string;
   /** Optional `<wp:docPr name>`. Defaults to `"Picture {docPrId}"`. */
   name?: string;
+}
+
+/* ── Chart authoring ─────────────────────────────────────────────────────── */
+
+export type DocxChartKind = "bar" | "line" | "pie" | "area";
+
+export interface ChartSeriesInput {
+  /** Optional series legend label, displayed by Office's legend slot. */
+  readonly name?: string;
+  /** Numeric series data, one entry per category. */
+  readonly values: ReadonlyArray<number>;
+}
+
+/**
+ * Insert a typed chart at the given paragraph position. The handler:
+ *
+ *   1. Creates a new `word/charts/chartN.xml` part and a paired
+ *      `word/embeddings/Microsoft_Excel_WorksheetN.xlsx` workbook so
+ *      Office's "Edit Data" UI works on round-trip.
+ *   2. Adds an `image`-style relationship from `word/document.xml.rels`
+ *      to the chart part, plus a `package` relationship from the chart
+ *      part to its embedded workbook (created by the serializer).
+ *   3. Splices a typed `ChartDrawing` leaf into the targeted paragraph
+ *      via the same run-splitting rules used by `docx:insert-image`.
+ */
+export interface InsertChartPayload {
+  at: DocxPosition;
+  chartType: DocxChartKind;
+  categories: ReadonlyArray<string>;
+  series: ReadonlyArray<ChartSeriesInput>;
+  /** Optional chart title rendered above the plot area. */
+  title?: string;
+  /** Display width in **pixels** (96 DPI). Defaults to 480. */
+  width?: number;
+  /** Display height in **pixels**. Defaults to 320. */
+  height?: number;
+  /** Optional `<wp:docPr name>`. Defaults to `"Chart {docPrId}"`. */
+  name?: string;
+  /** Optional alt text for accessibility. */
+  altText?: string;
+}
+
+/** Replace categories + series of an existing typed chart. */
+export interface SetChartDataPayload {
+  /** Part path of the chart, e.g. `"word/charts/chart1.xml"`. */
+  chartPartPath: string;
+  categories: ReadonlyArray<string>;
+  series: ReadonlyArray<ChartSeriesInput>;
+}
+
+/** Set or clear the title of an existing typed chart. */
+export interface SetChartTitlePayload {
+  chartPartPath: string;
+  /** `null` removes the title; a string sets it. */
+  title: string | null;
+}
+
+/** Switch the active plot type of an existing typed chart. */
+export interface SetChartTypePayload {
+  chartPartPath: string;
+  chartType: DocxChartKind;
+}
+
+/**
+ * Insert an OLE-embedded Excel spreadsheet at the given position.
+ *
+ * The handler writes a new `word/embeddings/oleObjectN.xlsx` package
+ * (built from the supplied 2D grid via `buildEmbeddedXlsx`) and a
+ * paired `word/media/imageN.png` preview image (rendered from the
+ * grid via `gridToPng`). It then registers an `oleObject` rel + an
+ * `image` rel in `word/document.xml.rels` and splices a typed
+ * `EmbeddedSpreadsheet` leaf into the targeted paragraph so Office
+ * shows the preview until the user double-clicks to activate Excel.
+ */
+export interface InsertSpreadsheetPayload {
+  at: DocxPosition;
+  /**
+   * 2D grid of cell values. Numbers become numeric `<v>` cells;
+   * non-numeric values become inline strings. The first row is the
+   * header band of the preview.
+   */
+  data: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
+  /** Optional worksheet name. Defaults to `"Sheet1"`. */
+  sheetName?: string;
+  /** Optional `<wp:docPr name>` analog. Defaults to `"Spreadsheet"`. */
+  name?: string;
+}
+
+/**
+ * Replace the embedded `.xlsx` bytes for an existing OLE spreadsheet
+ * leaf. Used by the editor's "double-click → edit in transient
+ * XlsxAgent → save" flow to push the modified workbook back into the
+ * host document. The preview image is regenerated from `previewGrid`
+ * when supplied; otherwise the previous preview is left in place.
+ */
+export interface UpdateSpreadsheetPayload {
+  /** Part path of the embedded xlsx, e.g. `"word/embeddings/oleObject1.xlsx"`. */
+  embeddingPartPath: string;
+  /** Replacement xlsx package bytes. */
+  bytes: Uint8Array;
+  /** Optional new preview grid (re-renders the cached PNG). */
+  previewGrid?: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
 }
 
 export interface ResolveCommentPayload {

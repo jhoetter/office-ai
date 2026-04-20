@@ -1,12 +1,14 @@
 import { ooxml } from "@officeai/core";
+import { buildChartGrid, buildEmbeddedXlsx } from "@officeai/xlsx";
 import type {
   ChartPart,
   ChartShape,
+  ConnectorDashStyle,
   ConnectorEndpoint,
   ConnectorShape,
   ConnectorSide,
-  EntranceAnimation,
   GroupShape,
+  OleSpreadsheetShape,
   OpaqueShape,
   OpaqueXml,
   Picture,
@@ -14,6 +16,7 @@ import type {
   PptxSnapshot,
   RelationshipsSnap,
   Shape,
+  ShapeAnimation,
   Slide,
   SlideTransition,
   TableShape,
@@ -24,6 +27,7 @@ import type {
 } from "../model/types.js";
 import { connectorXfrm, resolveEndpoint } from "../model/connector-geometry.js";
 import { ATTR_KEY, ATTR_PREFIX, opaqueToEntry } from "../parser/xml-helpers.js";
+import { findPreset, subtypeFor, type EmitHelpers } from "../animation/presets.js";
 import { PptxSerializeError } from "./errors.js";
 
 const PRESENTATION_PART = "ppt/presentation.xml";
@@ -64,6 +68,38 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
     }
   }
 
+  // 3b) Rewrite dirty embedded binary parts (OLE-Excel `.xlsx`
+  // packages, …) and register the matching content-type override so
+  // Office recognises the part. Newly-authored parts carry a
+  // `pendingGrid` instead of `bytes`; we materialise those via
+  // `buildEmbeddedXlsx` here so command handlers stay synchronous.
+  // Owning relationships are produced by `pptx:insert-spreadsheet`
+  // and round-trip through the existing rels-write pass.
+  if (snapshot.dirty.embeddings.size > 0) {
+    const embedContentTypes = ooxml.ContentTypes.load(container);
+    let touchedEmbedCt = false;
+    for (const partPath of snapshot.dirty.embeddings) {
+      const part = snapshot.root.embeddings.get(partPath);
+      if (!part) continue;
+      let bytes = part.bytes;
+      if (!bytes && part.pendingGrid) {
+        const built = await buildEmbeddedXlsx(part.pendingGrid, {
+          sheetName: part.pendingSheetName ?? "Sheet1",
+        });
+        bytes = built.bytes;
+      }
+      if (!bytes) continue;
+      if (container.has(partPath)) container.writeBytes(partPath, bytes);
+      else container.addPart(partPath, bytes);
+      const overrideName = partPath.startsWith("/") ? partPath : `/${partPath}`;
+      if (!embedContentTypes.hasOverride(overrideName)) {
+        embedContentTypes.addOverride(overrideName, part.contentType);
+        touchedEmbedCt = true;
+      }
+    }
+    if (touchedEmbedCt) embedContentTypes.writeBack(container);
+  }
+
   // 3a) Rewrite dirty layout parts. We always emit the layout's verbatim
   // `raw` blob — the typed fields (`kind`, `name`, `placeholders`) are
   // derived, so there's nothing to serialise from the typed model that
@@ -78,6 +114,45 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
     } catch (err) {
       throw new PptxSerializeError("layout-failed", `Failed to serialize ${layoutPath}`, {
         partPath: layoutPath,
+        cause: err,
+      });
+    }
+  }
+
+  // 3a1a) Rewrite dirty master parts. Slide masters are typed as
+  // `OpaquePart` (the typed model never edits master XML directly —
+  // future master/theme commands will mutate the raw blob and set
+  // this dirty flag). Same emit shape as layouts: the captured raw
+  // tree is the single source of truth.
+  for (const masterPath of snapshot.dirty.masters) {
+    const master = snapshot.root.masters.get(masterPath);
+    if (!master) continue;
+    try {
+      const xml = serializeLayoutXml(master.raw);
+      if (container.has(masterPath)) container.writeText(masterPath, xml);
+      else container.addPart(masterPath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError("layout-failed", `Failed to serialize ${masterPath}`, {
+        partPath: masterPath,
+        cause: err,
+      });
+    }
+  }
+
+  // 3a1b) Rewrite dirty theme parts (`ppt/theme/themeN.xml`). Same
+  // shape as masters — the typed model treats them as opaque, but
+  // a future theme-color command can mutate `raw` and set this flag
+  // to flush the change back to disk.
+  for (const themePath of snapshot.dirty.theme) {
+    const theme = snapshot.root.theme.get(themePath);
+    if (!theme) continue;
+    try {
+      const xml = serializeLayoutXml(theme.raw);
+      if (container.has(themePath)) container.writeText(themePath, xml);
+      else container.addPart(themePath, new TextEncoder().encode(xml));
+    } catch (err) {
+      throw new PptxSerializeError("layout-failed", `Failed to serialize ${themePath}`, {
+        partPath: themePath,
         cause: err,
       });
     }
@@ -132,14 +207,27 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
     }
   }
 
-  // 3b) Rewrite dirty chart parts (F3).
+  // 3b) Rewrite dirty chart parts (F3) + refresh embedded xlsx.
+  // We materialise the live ContentTypes once so chart serialisation can
+  // register `<Override>` entries for newly authored embedded packages
+  // without races against the dirty-flag block below.
+  const liveContentTypes = new ooxml.ContentTypes(
+    snapshot.contentTypes.defaults.map((d) => ({
+      extension: d.extension,
+      contentType: d.contentType,
+    })),
+    snapshot.contentTypes.overrides.map((o) => ({
+      partName: o.partName,
+      contentType: o.contentType,
+    }))
+  );
+  let contentTypesTouchedByCharts = false;
   for (const chartPath of snapshot.dirty.charts) {
     const part = snapshot.root.charts.get(chartPath);
     if (!part) continue;
     try {
-      const xml = serializeChartPartXml(part);
-      if (container.has(chartPath)) container.writeText(chartPath, xml);
-      else container.addPart(chartPath, new TextEncoder().encode(xml));
+      const result = await serializeChartWithEmbedding(container, liveContentTypes, part);
+      if (result.contentTypesChanged) contentTypesTouchedByCharts = true;
     } catch (err) {
       throw new PptxSerializeError("chart-failed", `Failed to serialize ${chartPath}`, {
         partPath: chartPath,
@@ -173,21 +261,75 @@ export async function serializePptx(snapshot: PptxSnapshot): Promise<ArrayBuffer
   }
 
   // 6) Rewrite content types if dirty.
-  if (snapshot.dirty.contentTypes) {
-    const ct = new ooxml.ContentTypes(
-      snapshot.contentTypes.defaults.map((d) => ({
-        extension: d.extension,
-        contentType: d.contentType,
-      })),
-      snapshot.contentTypes.overrides.map((o) => ({
-        partName: o.partName,
-        contentType: o.contentType,
-      }))
-    );
-    ct.writeBack(container);
+  if (snapshot.dirty.contentTypes || contentTypesTouchedByCharts) {
+    liveContentTypes.writeBack(container);
   }
 
   return container.serialize();
+}
+
+/**
+ * Serialise one chart part. When the chart references (or implicitly
+ * needs) an embedded xlsx package — which is what Word/PowerPoint
+ * authors for `Insert > Chart` and what enables "Edit Data" round-trip
+ * — we (re)build the workbook bytes from the typed model, register
+ * the part + content-type override + `package` relationship from the
+ * chart, and emit `<c:externalData>` pointing at it.
+ */
+async function serializeChartWithEmbedding(
+  container: ooxml.OoxmlContainer,
+  contentTypes: ooxml.ContentTypes,
+  part: ChartPart
+): Promise<{ contentTypesChanged: boolean }> {
+  const sheetName = part.embeddingSheetName ?? "Sheet1";
+  const chartGrid = buildChartGrid(
+    [...part.categories],
+    part.series.map((s) => ({ values: [...s.values], ...(s.name !== undefined ? { name: s.name } : {}) })),
+    { sheetName }
+  );
+
+  const embeddingPath =
+    part.embeddingPartPath ?? mintChartEmbeddingPath(container, part.partPath);
+
+  const built = await buildEmbeddedXlsx(chartGrid.grid, { sheetName });
+
+  const chartRels = ooxml.RelationshipGraph.loadFor(container, part.partPath);
+  const relTarget = ooxml.relativeTarget(part.partPath, embeddingPath);
+  const added = ooxml.addEmbeddedPart({
+    container,
+    contentTypes,
+    ownerRels: chartRels,
+    partPath: embeddingPath,
+    bytes: built.bytes,
+    contentType: ooxml.CT_SPREADSHEETML_SHEET,
+    relTarget,
+    relType: ooxml.REL_TYPE_PACKAGE,
+    ...(part.embeddingRelId ? { relId: part.embeddingRelId } : {}),
+  });
+  chartRels.writeBack(container);
+
+  const xml = serializeChartPartXml(part, {
+    embeddingRelId: added.relId,
+    categoryRef: chartGrid.categoryRef,
+    valueRefs: chartGrid.valueRefs,
+    nameRefs: chartGrid.nameRefs,
+  });
+  if (container.has(part.partPath)) container.writeText(part.partPath, xml);
+  else container.addPart(part.partPath, new TextEncoder().encode(xml));
+
+  return { contentTypesChanged: true };
+}
+
+/**
+ * Pick the next free `ppt/embeddings/Microsoft_Excel_WorksheetN.xlsx`
+ * path. Mirrors PowerPoint's own naming so an opened-then-saved file
+ * stays human-grokable when inspecting the package.
+ */
+function mintChartEmbeddingPath(container: ooxml.OoxmlContainer, chartPartPath: string): string {
+  const root = chartPartPath.startsWith("ppt/") ? "ppt" : chartPartPath.split("/")[0] ?? "ppt";
+  let n = 1;
+  while (container.has(`${root}/embeddings/Microsoft_Excel_Worksheet${n}.xlsx`)) n++;
+  return `${root}/embeddings/Microsoft_Excel_Worksheet${n}.xlsx`;
 }
 
 // ─── Slide serialization ──────────────────────────────────────────────────
@@ -237,10 +379,9 @@ function transitionToEntry(t: SlideTransition): Record<string, unknown> {
   return makeEntry("p:transition", inner, t.speed ? { spd: t.speed } : {});
 }
 
-// ─── F4: Build a fresh <p:timing> tree from typed entrance animations ───
+// ─── F4 v2: Build a fresh <p:timing> tree from typed shape animations ───
 //
-// Mirrors the structure PowerPoint emits for click-effect entrance
-// sequences and what `parseSlideTiming` expects:
+// Mirrors the structure PowerPoint emits for the main timing sequence:
 //
 //   <p:timing>
 //     <p:tnLst>
@@ -251,8 +392,10 @@ function transitionToEntry(t: SlideTransition): Record<string, unknown> {
 //               <p:cTn id=2 dur="indefinite" nodeType="mainSeq">
 //                 <p:childTnLst>
 //                   <p:par>          ← per typed animation
-//                     <p:cTn id=N presetID=X presetClass="entr" …>
-//                       <p:childTnLst><p:set>…<p:spTgt spid="…"/>…</p:set></p:childTnLst>
+//                     <p:cTn id=N presetID=X presetClass="…" nodeType="clickEffect|withEffect|afterEffect">
+//                       <p:childTnLst>
+//                         …per-preset behaviour bodies (set / anim / animEffect / animRot / animScale / animMotion)…
+//                       </p:childTnLst>
 //                     </p:cTn>
 //                   </p:par>
 //                 </p:childTnLst>
@@ -263,43 +406,41 @@ function transitionToEntry(t: SlideTransition): Record<string, unknown> {
 //       </p:par>
 //     </p:tnLst>
 //   </p:timing>
-const ENTRANCE_EFFECT_PRESET_ID: Readonly<Record<string, number>> = {
-  appear: 1,
-  "fly-in": 2,
-  fade: 3,
-  wipe: 10,
-};
-
-function timingFromAnimations(animations: ReadonlyArray<EntranceAnimation>): Record<string, unknown> {
+//
+// The per-preset emitters live in `animation/presets.ts`; this function
+// only owns the envelope (mainSeq / per-animation `<p:par>` / `<p:cTn>`
+// attributes / trigger node types). When an animation carries a
+// captured `raw` blob we re-emit it verbatim so byte-perfect
+// round-trip survives unrelated edits.
+function timingFromAnimations(animations: ReadonlyArray<ShapeAnimation>): Record<string, unknown> {
   let cTnId = 3; // 1 = tmRoot, 2 = mainSeq, ≥3 = per-animation cTn ids
   const animPars: unknown[] = [];
   for (const a of animations) {
-    const presetId = ENTRANCE_EFFECT_PRESET_ID[a.effect] ?? 1;
+    if (a.raw) {
+      animPars.push(opaqueToEntry(a.raw));
+      continue;
+    }
+    const spec = findPreset(a.category, a.preset);
     const animCTnId = cTnId++;
-    const innerCTnId = cTnId++;
-    const setEntry = makeEntry("p:set", [
-      makeEntry("p:cBhvr", [
-        makeEntry("p:cTn", [], {
-          id: String(innerCTnId),
-          dur: "1",
-          fill: "hold",
-        }),
-        makeEntry("p:tgtEl", [makeEntry("p:spTgt", [], { spid: String(a.targetCNvPrId) })]),
-        makeEntry("p:attrNameLst", [makeEntry("p:attrName", [{ "#text": "style.visibility" }])]),
-      ]),
-      makeEntry("p:to", [makeEntry("p:strVal", [], { val: "visible" })]),
+    const helpers = makeEmitHelpers(() => cTnId++);
+    const body = spec ? spec.emitBody(a, helpers) : helpers.childTnLst([
+      helpers.setAttr(a.targetCNvPrId, "style.visibility", "visible", a.durationMs ?? 1),
     ]);
+    const presetClass = spec?.presetClass ?? "entr";
+    const presetId = spec?.presetId ?? 1;
+    const subtype = spec ? subtypeFor(spec, a.direction) : 0;
     const animCTnAttrs: Record<string, string> = {
       id: String(animCTnId),
       presetID: String(presetId),
-      presetClass: "entr",
-      presetSubtype: "0",
+      presetClass,
+      presetSubtype: String(subtype),
       fill: "hold",
-      nodeType: "clickEffect",
+      nodeType: triggerNodeType(a.trigger ?? "onClick"),
     };
     if (a.durationMs !== undefined) animCTnAttrs.dur = String(a.durationMs);
+    if (a.delayMs !== undefined) animCTnAttrs.delay = String(a.delayMs);
     animPars.push(
-      makeEntry("p:par", [makeEntry("p:cTn", [makeEntry("p:childTnLst", [setEntry])], animCTnAttrs)])
+      makeEntry("p:par", [makeEntry("p:cTn", [body], animCTnAttrs)])
     );
   }
   const seq = makeEntry(
@@ -324,6 +465,111 @@ function timingFromAnimations(animations: ReadonlyArray<EntranceAnimation>): Rec
   return makeEntry("p:timing", [makeEntry("p:tnLst", [tmRoot])]);
 }
 
+function triggerNodeType(trigger: ShapeAnimation["trigger"]): string {
+  switch (trigger) {
+    case "withPrevious":
+      return "withEffect";
+    case "afterPrevious":
+      return "afterEffect";
+    case "onClick":
+      return "clickEffect";
+    default: {
+      const _exhaustive: never = trigger;
+      void _exhaustive;
+      return "clickEffect";
+    }
+  }
+}
+
+/**
+ * Build an `EmitHelpers` bag for a single animation. The shared `id`
+ * counter is passed in so behaviour-level `<p:cTn>` ids stay unique
+ * across helpers within the same animation.
+ */
+function makeEmitHelpers(nextId: () => number): EmitHelpers {
+  const cBhvr = (
+    spid: number,
+    durMs: number,
+    attrName: string | null,
+    extra?: Record<string, string>
+  ): unknown => {
+    const attrs: Record<string, string> = {
+      id: String(nextId()),
+      dur: String(Math.max(1, durMs)),
+      fill: "hold",
+      ...(extra ?? {}),
+    };
+    const children: unknown[] = [makeEntry("p:cTn", [], attrs)];
+    children.push(makeEntry("p:tgtEl", [makeEntry("p:spTgt", [], { spid: String(spid) })]));
+    if (attrName) {
+      children.push(
+        makeEntry("p:attrNameLst", [makeEntry("p:attrName", [{ "#text": attrName }])])
+      );
+    }
+    return makeEntry("p:cBhvr", children);
+  };
+
+  return {
+    setAttr: (spid, attrName, value, durMs) =>
+      makeEntry("p:set", [
+        cBhvr(spid, durMs, attrName),
+        makeEntry("p:to", [makeEntry("p:strVal", [], { val: value })]),
+      ]),
+    anim: (spid, attrName, durMs, fromTo, extra) => {
+      const tavLst = makeEntry("p:tavLst", [
+        ...(fromTo.from !== undefined
+          ? [makeEntry("p:tav", [makeEntry("p:val", [makeEntry("p:strVal", [], { val: fromTo.from })])], { tm: "0" })]
+          : []),
+        makeEntry(
+          "p:tav",
+          [makeEntry("p:val", [makeEntry("p:strVal", [], { val: fromTo.to })])],
+          { tm: "100000" }
+        ),
+      ]);
+      const animAttrs: Record<string, string> = { calcmode: "lin", valueType: "num" };
+      if (extra) Object.assign(animAttrs, extra);
+      return makeEntry("p:anim", [cBhvr(spid, durMs, attrName), tavLst], animAttrs);
+    },
+    animEffect: (spid, durMs, transition, filter, extra) => {
+      const attrs: Record<string, string> = { transition, filter };
+      if (extra) Object.assign(attrs, extra);
+      return makeEntry("p:animEffect", [cBhvr(spid, durMs, null)], attrs);
+    },
+    animRot: (spid, durMs, fromDeg, toDeg, extra) => {
+      const attrs: Record<string, string> = {
+        by: String(Math.round((toDeg - fromDeg) * 60000)),
+        from: String(Math.round(fromDeg * 60000)),
+        to: String(Math.round(toDeg * 60000)),
+      };
+      if (extra) Object.assign(attrs, extra);
+      return makeEntry("p:animRot", [cBhvr(spid, durMs, null)], attrs);
+    },
+    animScale: (spid, durMs, from, to, extra) => {
+      const attrs: Record<string, string> = {};
+      if (extra) Object.assign(attrs, extra);
+      return makeEntry(
+        "p:animScale",
+        [
+          cBhvr(spid, durMs, null),
+          makeEntry("p:from", [], { x: String(from.x * 1000), y: String(from.y * 1000) }),
+          makeEntry("p:to", [], { x: String(to.x * 1000), y: String(to.y * 1000) }),
+        ],
+        attrs
+      );
+    },
+    animMotion: (spid, durMs, path, extra) => {
+      const attrs: Record<string, string> = {
+        origin: "layout",
+        path,
+        pathEditMode: "relative",
+      };
+      if (extra) Object.assign(attrs, extra);
+      return makeEntry("p:animMotion", [cBhvr(spid, durMs, null)], attrs);
+    },
+    childTnLst: (children) => makeEntry("p:childTnLst", children),
+  };
+}
+
 function shapeToEntry(shape: Shape, shapesByCNvPrId: ReadonlyMap<number, Shape>): Record<string, unknown> {
   switch (shape.kind) {
     case "text":
@@ -336,6 +582,8 @@ function shapeToEntry(shape: Shape, shapesByCNvPrId: ReadonlyMap<number, Shape>)
       return tableShapeToEntry(shape);
     case "chart":
       return chartShapeToEntry(shape);
+    case "ole-spreadsheet":
+      return oleSpreadsheetShapeToEntry(shape);
     case "connector":
       return connectorToEntry(shape, shapesByCNvPrId);
     case "opaque":
@@ -373,14 +621,14 @@ function textShapeToEntry(shape: TextShape): Record<string, unknown> {
   let emittedXfrm = false;
   for (const o of shape.spPrTail) {
     if (o.tag === "a:xfrm") {
-      spPrChildren.push(buildXfrm(shape.position, shape.size, o));
+      spPrChildren.push(buildXfrm(shape.position, shape.size, o, shape.rotation));
       emittedXfrm = true;
     } else {
       spPrChildren.push(opaqueToEntry(o));
     }
   }
-  if (!emittedXfrm && (shape.position || shape.size)) {
-    spPrChildren.unshift(buildXfrm(shape.position, shape.size, undefined));
+  if (!emittedXfrm && (shape.position || shape.size || shape.rotation !== undefined)) {
+    spPrChildren.unshift(buildXfrm(shape.position, shape.size, undefined, shape.rotation));
   }
   const spPr = makeEntry("p:spPr", spPrChildren);
 
@@ -426,14 +674,14 @@ function pictureToEntry(shape: Picture): Record<string, unknown> {
   let emittedXfrm = false;
   for (const o of shape.spPrTail) {
     if (o.tag === "a:xfrm") {
-      spPrChildren.push(buildXfrm(shape.position, shape.size, o));
+      spPrChildren.push(buildXfrm(shape.position, shape.size, o, shape.rotation));
       emittedXfrm = true;
     } else {
       spPrChildren.push(opaqueToEntry(o));
     }
   }
-  if (!emittedXfrm && (shape.position || shape.size)) {
-    spPrChildren.unshift(buildXfrm(shape.position, shape.size, undefined));
+  if (!emittedXfrm && (shape.position || shape.size || shape.rotation !== undefined)) {
+    spPrChildren.unshift(buildXfrm(shape.position, shape.size, undefined, shape.rotation));
   }
   const spPr = makeEntry("p:spPr", spPrChildren);
 
@@ -636,7 +884,17 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
   }
   const lnChildren: unknown[] = [];
   if (shape.stroke) {
-    lnChildren.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: shape.stroke.color })]));
+    // Prefer theme color references over literal hex when both are
+    // present (theme refs are how PowerPoint expresses "follow the
+    // theme palette" — collapsing to the literal RGB would freeze
+    // the rendered color and break theme switches).
+    if (shape.stroke.colorTheme) {
+      lnChildren.push(
+        makeEntry("a:solidFill", [makeEntry("a:schemeClr", [], { val: shape.stroke.colorTheme })])
+      );
+    } else {
+      lnChildren.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: shape.stroke.color })]));
+    }
   }
   if (shape.stroke?.dash && shape.stroke.dash !== "solid") {
     // PowerPoint canonicalises the dash via `<a:prstDash>` after the
@@ -654,20 +912,28 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
   return makeEntry("a:ln", lnChildren, lnAttrs);
 }
 
-function prstDashValue(dash: "dashed" | "dotted" | "longDash" | "dashDot"): string {
-  // OOXML preset names live in `ST_PresetLineDashVal`. We pick the
-  // closest match for each editor-exposed style; `mapPrstDash` in the
-  // parser maps these back to the same enum on re-load so a save→load
-  // round-trip is stable.
+function prstDashValue(dash: Exclude<ConnectorDashStyle, "solid">): string {
+  // OOXML `ST_PresetLineDashVal` round-trip table. New canonical
+  // tokens map to themselves; the legacy short aliases are folded
+  // back to their canonical token so we don't emit non-spec values.
   switch (dash) {
+    case "dot":
+    case "dash":
+    case "lgDash":
+    case "dashDot":
+    case "lgDashDot":
+    case "lgDashDotDot":
+    case "sysDash":
+    case "sysDot":
+    case "sysDashDot":
+    case "sysDashDotDot":
+      return dash;
     case "dashed":
       return "dash";
     case "dotted":
       return "dot";
     case "longDash":
       return "lgDash";
-    case "dashDot":
-      return "dashDot";
   }
 }
 
@@ -837,9 +1103,17 @@ function serializeLayoutXml(raw: import("../model/types.js").OpaqueXml): string 
   return ooxml.serializeXml([root]);
 }
 
-function serializeChartPartXml(part: ChartPart): string {
+interface ChartSerializeContext {
+  readonly embeddingRelId: string;
+  readonly categoryRef: string;
+  readonly valueRefs: ReadonlyArray<string>;
+  readonly nameRefs: ReadonlyArray<string>;
+}
+
+function serializeChartPartXml(part: ChartPart, ctx?: ChartSerializeContext): string {
   const subtree = part.chartSpaceRaw.subtree as unknown[];
   const out: unknown[] = [];
+  let externalDataEmitted = false;
   for (const node of subtree) {
     if (!node || typeof node !== "object" || Array.isArray(node)) {
       out.push(node);
@@ -848,22 +1122,49 @@ function serializeChartPartXml(part: ChartPart): string {
     const obj = node as Record<string, unknown>;
     const tag = ooxml.getTag(obj);
     if (tag === "c:chart") {
-      out.push(rebuildChartElement(part, obj));
+      out.push(rebuildChartElement(part, obj, ctx));
+    } else if (tag === "c:externalData" && ctx) {
+      out.push(rebuildExternalData(ctx.embeddingRelId));
+      externalDataEmitted = true;
     } else {
       out.push(obj);
     }
   }
+  if (ctx && !externalDataEmitted) {
+    out.push(rebuildExternalData(ctx.embeddingRelId));
+  }
   const chartSpace: Record<string, unknown> = { "c:chartSpace": out };
   if (Object.keys(part.chartSpaceRaw.rawAttrs).length > 0) {
     chartSpace[ATTR_KEY] = { ...part.chartSpaceRaw.rawAttrs };
+  } else {
+    // Synthetic chart parts may have no captured attrs; emit canonical
+    // namespace declarations so the XML validates against the schema
+    // referenced by Office.
+    chartSpace[ATTR_KEY] = makeRawAttrs({
+      "xmlns:c": "http://schemas.openxmlformats.org/drawingml/2006/chart",
+      "xmlns:a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+      "xmlns:r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    });
   }
   return ooxml.serializeXml([chartSpace]);
 }
 
-function rebuildChartElement(part: ChartPart, chart: Record<string, unknown>): Record<string, unknown> {
+function rebuildExternalData(relId: string): Record<string, unknown> {
+  const auto = makeEntry("c:autoUpdate", [], { val: "0" });
+  const entry: Record<string, unknown> = { "c:externalData": [auto] };
+  entry[ATTR_KEY] = makeRawAttrs({ "r:id": relId });
+  return entry;
+}
+
+function rebuildChartElement(
+  part: ChartPart,
+  chart: Record<string, unknown>,
+  ctx?: ChartSerializeContext
+): Record<string, unknown> {
   const chartChildren = (chart["c:chart"] as unknown[] | undefined) ?? [];
   const out: unknown[] = [];
   let titleEmitted = false;
+  let plotAreaEmitted = false;
   for (const node of chartChildren) {
     if (!node || typeof node !== "object" || Array.isArray(node)) {
       out.push(node);
@@ -878,13 +1179,18 @@ function rebuildChartElement(part: ChartPart, chart: Record<string, unknown>): R
       continue;
     }
     if (tag === "c:plotArea") {
-      out.push(rebuildPlotArea(part));
+      out.push(rebuildPlotArea(part, ctx));
+      plotAreaEmitted = true;
       continue;
     }
     out.push(obj);
   }
   if (!titleEmitted && part.title !== undefined) {
     out.unshift(rebuildChartTitle(part.title));
+  }
+  if (!plotAreaEmitted) {
+    // Synthetic chart with no captured plotArea — emit one from typed data.
+    out.push(rebuildPlotArea(part, ctx));
   }
   const result: Record<string, unknown> = { "c:chart": out };
   const attrs = (chart[ATTR_KEY] as Record<string, unknown> | undefined) ?? undefined;
@@ -902,23 +1208,24 @@ function rebuildChartTitle(title: string): Record<string, unknown> {
   return makeEntry("c:title", [cTx, cOverlay]);
 }
 
-function rebuildPlotArea(part: ChartPart): Record<string, unknown> {
+function rebuildPlotArea(part: ChartPart, ctx?: ChartSerializeContext): Record<string, unknown> {
   const out: unknown[] = [];
   out.push(makeEntry("c:layout", []));
-  out.push(rebuildChartTypeElement(part));
+  out.push(rebuildChartTypeElement(part, ctx));
   for (const tail of part.plotAreaTailRaw) out.push(opaqueToEntry(tail));
   return makeEntry("c:plotArea", out);
 }
 
-function rebuildChartTypeElement(part: ChartPart): Record<string, unknown> {
+function rebuildChartTypeElement(part: ChartPart, ctx?: ChartSerializeContext): Record<string, unknown> {
   const tag = chartTypeTag(part.chartType);
   const children: unknown[] = [];
   if (part.chartType === "bar") {
     children.push(makeEntry("c:barDir", [], { val: "col" }));
     children.push(makeEntry("c:grouping", [], { val: "clustered" }));
   }
-  for (const s of part.series) {
-    children.push(rebuildSeries(part, s));
+  for (let i = 0; i < part.series.length; i++) {
+    const s = part.series[i]!;
+    children.push(rebuildSeries(part, s, ctx, i));
   }
   return makeEntry(tag, children);
 }
@@ -938,38 +1245,63 @@ function chartTypeTag(t: ChartPart["chartType"]): string {
   }
 }
 
-function rebuildSeries(part: ChartPart, s: ChartPart["series"][number]): Record<string, unknown> {
+function rebuildSeries(
+  part: ChartPart,
+  s: ChartPart["series"][number],
+  ctx: ChartSerializeContext | undefined,
+  seriesIndex: number
+): Record<string, unknown> {
   const children: unknown[] = [];
   children.push(makeEntry("c:idx", [], { val: String(s.idx) }));
   children.push(makeEntry("c:order", [], { val: String(s.idx) }));
   if (s.name !== undefined) {
-    children.push(makeEntry("c:tx", [makeEntry("c:v", [{ "#text": s.name }])]));
+    const nameRef = ctx?.nameRefs[seriesIndex];
+    if (nameRef) {
+      children.push(rebuildSeriesNameRef(s.name, nameRef));
+    } else {
+      children.push(makeEntry("c:tx", [makeEntry("c:v", [{ "#text": s.name }])]));
+    }
   }
   if (part.categories.length > 0) {
-    children.push(rebuildCategoryRef(part.categories));
+    children.push(rebuildCategoryRef(part.categories, ctx?.categoryRef));
   }
-  children.push(rebuildValueRef(s.values));
+  children.push(rebuildValueRef(s.values, ctx?.valueRefs[seriesIndex]));
   return makeEntry("c:ser", children);
 }
 
-function rebuildCategoryRef(categories: ReadonlyArray<string>): Record<string, unknown> {
+function rebuildSeriesNameRef(name: string, ref: string): Record<string, unknown> {
+  const cache = makeEntry("c:strCache", [
+    makeEntry("c:ptCount", [], { val: "1" }),
+    makeEntry("c:pt", [makeEntry("c:v", [{ "#text": name }])], { idx: "0" }),
+  ]);
+  return makeEntry("c:tx", [
+    makeEntry("c:strRef", [makeEntry("c:f", [{ "#text": ref }]), cache]),
+  ]);
+}
+
+function rebuildCategoryRef(
+  categories: ReadonlyArray<string>,
+  ref: string | undefined
+): Record<string, unknown> {
   const ptCount = makeEntry("c:ptCount", [], { val: String(categories.length) });
   const pts: unknown[] = [ptCount];
   for (let i = 0; i < categories.length; i++) {
     pts.push(makeEntry("c:pt", [makeEntry("c:v", [{ "#text": categories[i] }])], { idx: String(i) }));
   }
   // Use c:strRef + c:strCache (standard PowerPoint shape) so reparse
-  // round-trips cleanly. The `<c:f>` reference is a placeholder; the
-  // typed cache is the source of truth at our level of fidelity.
+  // round-trips cleanly. When an embedded XLSX is available the `<c:f>`
+  // reference points at the real workbook range; otherwise a synthetic
+  // Sheet1 reference is used as a fallback.
+  const formula = ref ?? "Sheet1!$A$2:$A$" + (categories.length + 1);
   const cache = makeEntry("c:strCache", pts);
-  const ref = makeEntry("c:strRef", [
-    makeEntry("c:f", [{ "#text": "Sheet1!$A$2:$A$" + (categories.length + 1) }]),
-    cache,
-  ]);
-  return makeEntry("c:cat", [ref]);
+  const refNode = makeEntry("c:strRef", [makeEntry("c:f", [{ "#text": formula }]), cache]);
+  return makeEntry("c:cat", [refNode]);
 }
 
-function rebuildValueRef(values: ReadonlyArray<number>): Record<string, unknown> {
+function rebuildValueRef(
+  values: ReadonlyArray<number>,
+  ref: string | undefined
+): Record<string, unknown> {
   const ptCount = makeEntry("c:ptCount", [], { val: String(values.length) });
   const pts: unknown[] = [ptCount];
   for (let i = 0; i < values.length; i++) {
@@ -977,12 +1309,10 @@ function rebuildValueRef(values: ReadonlyArray<number>): Record<string, unknown>
       makeEntry("c:pt", [makeEntry("c:v", [{ "#text": String(values[i] ?? 0) }])], { idx: String(i) })
     );
   }
+  const formula = ref ?? "Sheet1!$B$2:$B$" + (values.length + 1);
   const cache = makeEntry("c:numCache", [makeEntry("c:formatCode", [{ "#text": "General" }]), ...pts]);
-  const ref = makeEntry("c:numRef", [
-    makeEntry("c:f", [{ "#text": "Sheet1!$B$2:$B$" + (values.length + 1) }]),
-    cache,
-  ]);
-  return makeEntry("c:val", [ref]);
+  const refNode = makeEntry("c:numRef", [makeEntry("c:f", [{ "#text": formula }]), cache]);
+  return makeEntry("c:val", [refNode]);
 }
 
 function chartShapeToEntry(shape: ChartShape): Record<string, unknown> {
@@ -1035,6 +1365,64 @@ function chartShapeToEntry(shape: ChartShape): Record<string, unknown> {
   return makeEntry("p:graphicFrame", [nvGraphicFramePr, xfrm, graphic]);
 }
 
+/**
+ * Re-emit `<p:graphicFrame>` for an OLE spreadsheet shape. The
+ * `<p:oleObj>` payload (preview `<p:pic>`, `<p:embed>` flags, follow
+ * content) was captured opaquely at parse time so untouched files
+ * round-trip byte-identically; we only patch the rebuilt cNvPr id/name
+ * and re-emit the frame's xfrm from the typed model.
+ */
+function oleSpreadsheetShapeToEntry(shape: OleSpreadsheetShape): Record<string, unknown> {
+  const nvChildren: unknown[] = [];
+  let emittedCNvPr = false;
+  for (const o of shape.nvGraphicFramePrTail) {
+    if (o.tag === "p:cNvPr" && !emittedCNvPr) {
+      nvChildren.push(rebuildCNvPr(shape.cNvPrId, shape.name, o));
+      emittedCNvPr = true;
+    } else {
+      nvChildren.push(opaqueToEntry(o));
+    }
+  }
+  if (!emittedCNvPr) {
+    nvChildren.unshift(makeEntry("p:cNvPr", [], { id: String(shape.cNvPrId), name: shape.name }));
+  }
+  const nvGraphicFramePr = makeEntry("p:nvGraphicFramePr", nvChildren);
+
+  const xfrmChildren: unknown[] = [];
+  if (shape.position) {
+    xfrmChildren.push(
+      makeEntry("a:off", [], {
+        x: String(shape.position.xEmu),
+        y: String(shape.position.yEmu),
+      })
+    );
+  }
+  if (shape.size) {
+    xfrmChildren.push(
+      makeEntry("a:ext", [], {
+        cx: String(shape.size.cxEmu),
+        cy: String(shape.size.cyEmu),
+      })
+    );
+  }
+  const xfrm = makeEntry("p:xfrm", xfrmChildren);
+
+  // Patch r:id (the rel pointing at the embedded xlsx) into the
+  // captured oleObj attribute bag. Everything else (spid, name, imgW,
+  // imgH, …) is preserved as-is.
+  const oleAttrs: Record<string, string> = { ...shape.oleObjAttrs };
+  oleAttrs["r:id"] = shape.oleRelId;
+  oleAttrs["progId"] = shape.progId;
+  const oleObjEntry: Record<string, unknown> = {
+    "p:oleObj": shape.oleObjChildrenRaw.map((o) => opaqueToEntry(o)),
+  };
+  oleObjEntry[ATTR_KEY] = makeRawAttrs(oleAttrs);
+
+  const graphicData = makeEntry("a:graphicData", [oleObjEntry], { uri: shape.graphicDataUri });
+  const graphic = makeEntry("a:graphic", [graphicData]);
+  return makeEntry("p:graphicFrame", [nvGraphicFramePr, xfrm, graphic]);
+}
+
 function rebuildCNvPr(id: number, name: string, captured: OpaqueXml): Record<string, unknown> {
   // Preserve any sub-children of the original p:cNvPr (e.g. <a:hlinkClick>).
   const attrs: Record<string, string> = { ...captured.attrs };
@@ -1058,10 +1446,26 @@ function rebuildBlip(relId: string, captured: OpaqueXml): Record<string, unknown
 function buildXfrm(
   position: { xEmu: number; yEmu: number } | undefined,
   size: { cxEmu: number; cyEmu: number } | undefined,
-  captured: OpaqueXml | undefined
+  captured: OpaqueXml | undefined,
+  rotation?: number
 ): Record<string, unknown> {
   // Preserve attrs on a:xfrm itself (e.g. flipH, rot).
-  const xfrmAttrs = captured ? captured.attrs : {};
+  const xfrmAttrs: Record<string, string> = captured ? { ...captured.attrs } : {};
+  // The model stores rotation in degrees; OOXML wants 60000ths of a
+  // degree. `undefined`/`0` clear the attr so an unrotated shape
+  // serialises identically to PowerPoint's own (no `rot=`), and a
+  // previously-set rotation can be removed without leaving stale
+  // attrs from the captured `<a:xfrm>` behind.
+  if (rotation !== undefined && Number.isFinite(rotation)) {
+    const normalised = ((rotation % 360) + 360) % 360;
+    if (normalised === 0) {
+      delete xfrmAttrs.rot;
+    } else {
+      xfrmAttrs.rot = String(Math.round(normalised * 60000));
+    }
+  } else {
+    delete xfrmAttrs.rot;
+  }
   const subChildren: unknown[] = [];
   // Re-emit a:off and a:ext from model when present; else fall back to captured subtree.
   if (position) {
@@ -1070,7 +1474,7 @@ function buildXfrm(
   if (size) {
     subChildren.push(makeEntry("a:ext", [], { cx: String(size.cxEmu), cy: String(size.cyEmu) }));
   }
-  if (!position && !size && captured) {
+  if (!position && !size && captured && Object.keys(xfrmAttrs).length === 0) {
     return opaqueToEntry(captured);
   }
   const entry: Record<string, unknown> = { "a:xfrm": subChildren };
@@ -1177,13 +1581,30 @@ function buildRPrChildren(r: TextRun): unknown[] {
   const out: unknown[] = [];
   const captured = r.properties.opaqueChildren ?? [];
   const wantsSolidFill = r.properties.color !== undefined;
-  const wantsLatin = r.properties.fontFamily !== undefined;
   const wantsHighlight = r.properties.highlight !== undefined;
   const dropHighlight = r.properties.highlight === "";
 
-  // Emit fill first, then highlight, then other children, then latin,
-  // matching OOXML's preferred a:rPr child order
-  // (a:ln, a:solidFill, a:highlight, a:effectLst, …, a:latin, …).
+  // Effective typeface per script. The literal slot wins over the
+  // theme ref at the same level (mirrors PowerPoint's resolution
+  // rule). When neither typed slot is set we fall through to the
+  // captured opaque element so source presentations that only
+  // declare e.g. `a:cs` survive unchanged.
+  const latinTypeface =
+    r.properties.fontFamily ?? r.properties.fontFamilyLatinTheme ?? undefined;
+  const eaTypeface =
+    r.properties.fontFamilyEastAsia ?? r.properties.fontFamilyEastAsiaTheme ?? undefined;
+  const csTypeface =
+    r.properties.fontFamilyComplexScript ?? r.properties.fontFamilyComplexScriptTheme ?? undefined;
+  const symTypeface = r.properties.fontFamilySymbol ?? undefined;
+  const wantsLatin = latinTypeface !== undefined;
+  const wantsEa = eaTypeface !== undefined;
+  const wantsCs = csTypeface !== undefined;
+  const wantsSym = symTypeface !== undefined;
+
+  // Emit fill first, then highlight, then other children, then the
+  // typeface elements, matching OOXML's preferred a:rPr child order
+  // (a:ln, a:solidFill, a:highlight, a:effectLst, …,
+  // a:latin, a:ea, a:cs, a:sym, …).
   if (wantsSolidFill) {
     out.push(makeEntry("a:solidFill", [makeEntry("a:srgbClr", [], { val: String(r.properties.color) })]));
   }
@@ -1191,17 +1612,18 @@ function buildRPrChildren(r: TextRun): unknown[] {
     out.push(makeEntry("a:highlight", [makeEntry("a:srgbClr", [], { val: String(r.properties.highlight) })]));
   }
   for (const c of captured) {
-    // Drop captured a:solidFill / a:latin / a:highlight when the model
-    // overrides them; otherwise pass through verbatim (preserves
-    // a:schemeClr etc.).
     if (c.tag === "a:solidFill" && wantsSolidFill) continue;
     if (c.tag === "a:latin" && wantsLatin) continue;
+    if (c.tag === "a:ea" && wantsEa) continue;
+    if (c.tag === "a:cs" && wantsCs) continue;
+    if (c.tag === "a:sym" && wantsSym) continue;
     if (c.tag === "a:highlight" && wantsHighlight) continue;
     out.push(opaqueToEntry(c));
   }
-  if (wantsLatin) {
-    out.push(makeEntry("a:latin", [], { typeface: String(r.properties.fontFamily) }));
-  }
+  if (wantsLatin) out.push(makeEntry("a:latin", [], { typeface: String(latinTypeface) }));
+  if (wantsEa) out.push(makeEntry("a:ea", [], { typeface: String(eaTypeface) }));
+  if (wantsCs) out.push(makeEntry("a:cs", [], { typeface: String(csTypeface) }));
+  if (wantsSym) out.push(makeEntry("a:sym", [], { typeface: String(symTypeface) }));
   return out;
 }
 

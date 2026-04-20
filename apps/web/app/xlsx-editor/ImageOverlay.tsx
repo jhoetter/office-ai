@@ -33,11 +33,24 @@ export function anchorToBodyPx(
   colXs: AxisLike,
   rowYs: AxisLike
 ): { x: number; y: number } {
-  const c = clamp(image.anchor.fromCol, 0, colXs.length - 2);
-  const r = clamp(image.anchor.fromRow, 0, rowYs.length - 2);
+  return rawAnchorToBodyPx(image.anchor, colXs, rowYs);
+}
+
+/**
+ * Anchor-only variant for callers that don't have a `SheetImage`
+ * handy (e.g. the chart overlay, which carries the same
+ * {@link import("@officeai/xlsx").ImageAnchor} shape on `SheetChart`).
+ */
+export function rawAnchorToBodyPx(
+  anchor: { fromCol: number; fromRow: number; fromOffsetXPx: number; fromOffsetYPx: number },
+  colXs: AxisLike,
+  rowYs: AxisLike
+): { x: number; y: number } {
+  const c = clamp(anchor.fromCol, 0, colXs.length - 2);
+  const r = clamp(anchor.fromRow, 0, rowYs.length - 2);
   return {
-    x: (colXs[c] ?? 0) + image.anchor.fromOffsetXPx,
-    y: (rowYs[r] ?? 0) + image.anchor.fromOffsetYPx,
+    x: (colXs[c] ?? 0) + anchor.fromOffsetXPx,
+    y: (rowYs[r] ?? 0) + anchor.fromOffsetYPx,
   };
 }
 

@@ -320,4 +320,77 @@ await multiSlide();
 await largeDeck();
 await withChart();
 await withAnimations();
+await animationsGallery();
 console.log("\nDone. See fixtures/pptx/MANIFEST.md.");
+
+// ─── 11-animations-gallery ───────────────────────────────────────────────
+//
+// F4 v2: a "golden" fixture that exercises representatives of all four
+// animation categories — Entrance, Emphasis, Exit, Motion Path — on a
+// single slide. Useful as a regression bookmark for the typed
+// (category, preset, direction, trigger, delay) round-trip and for
+// manually opening in PowerPoint to verify visual fidelity.
+//
+// The OOXML below is hand-rolled because pptxgenjs has no animations
+// API. It targets two shapes (cNvPrId=2 and cNvPrId=3) and stages:
+//   1. Entrance / Fly In (left)               on shape 2, click
+//   2. Emphasis / Spin (clockwise)            on shape 2, withPrev
+//   3. Exit / Fade                            on shape 2, afterPrev
+//   4. Entrance / Wipe (up)                   on shape 3, click, delay 500
+//   5. Motion Path / Arc                      on shape 3, withPrev
+async function animationsGallery() {
+  await write(
+    "11-animations-gallery",
+    async (pptx) => {
+      const slide = pptx.addSlide();
+      slide.addText("Animation gallery", {
+        x: 0.5, y: 0.5, w: 12, h: 1.5,
+        fontSize: 44, bold: true, color: "111827",
+      });
+      slide.addText("Hover targets for emphasis + exit + motion paths.", {
+        x: 0.5, y: 2.5, w: 12, h: 1.0,
+        fontSize: 24, color: "1F2937",
+      });
+    },
+    async (zip) => {
+      const slidePath = "ppt/slides/slide1.xml";
+      const slideXml = await zip.file(slidePath)?.async("string");
+      if (!slideXml) return;
+      const par = (id, presetClass, presetID, subtype, nodeType, body, extraAttrs = "") =>
+        `<p:par><p:cTn id="${id}" presetID="${presetID}" presetClass="${presetClass}" presetSubtype="${subtype}" fill="hold" nodeType="${nodeType}"${extraAttrs}>` +
+        `<p:childTnLst>${body}</p:childTnLst></p:cTn></p:par>`;
+      const setVis = (childId, spid, value) =>
+        `<p:set><p:cBhvr><p:cTn id="${childId}" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl>` +
+        `<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr>` +
+        `<p:to><p:strVal val="${value}"/></p:to></p:set>`;
+      const animMotion = (childId, spid, dur, path) =>
+        `<p:animMotion origin="layout" path="${path}" pathEditMode="relative">` +
+        `<p:cBhvr><p:cTn id="${childId}" dur="${dur}" fill="hold"/><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl></p:cBhvr></p:animMotion>`;
+      const animRot = (childId, spid, dur, fromDeg, toDeg) =>
+        `<p:animRot by="${(toDeg - fromDeg) * 60000}"><p:cBhvr><p:cTn id="${childId}" dur="${dur}" fill="hold"/>` +
+        `<p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl></p:cBhvr></p:animRot>`;
+      const insert =
+        `<p:timing>` +
+        `<p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">` +
+        `<p:childTnLst><p:seq concurrent="1" nextAc="seek">` +
+        `<p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>` +
+        // 1. Entrance / Fly In (left) on shape 2
+        par(3, "entr", 2, 4, "clickEffect", setVis(4, 2, "visible"), ` dur="500"`) +
+        // 2. Emphasis / Spin clockwise on shape 2
+        par(5, "emph", 8, 0, "withEffect", animRot(6, 2, 1500, 0, 360), ` dur="1500"`) +
+        // 3. Exit / Fade on shape 2
+        par(7, "exit", 10, 0, "afterEffect", setVis(8, 2, "hidden"), ` dur="500"`) +
+        // 4. Entrance / Wipe (up) on shape 3, delayed
+        par(9, "entr", 10, 8, "clickEffect", setVis(10, 3, "visible"), ` dur="500" delay="500"`) +
+        // 5. Motion Path / Arc on shape 3
+        par(11, "path", 2, 0, "withEffect",
+          animMotion(12, 3, 2000, "M 0 0 C 0 -0.15 0.15 -0.25 0.3 -0.25 E"),
+          ` dur="2000"`) +
+        `</p:childTnLst></p:cTn>` +
+        `</p:seq></p:childTnLst></p:cTn></p:par></p:tnLst>` +
+        `</p:timing>`;
+      const patched = slideXml.replace("</p:sld>", `${insert}</p:sld>`);
+      zip.file(slidePath, patched);
+    }
+  );
+}

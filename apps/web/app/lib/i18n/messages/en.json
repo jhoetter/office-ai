@@ -715,14 +715,6 @@
     "image": {
       "imageUnavailable": "(image unavailable)",
       "imageFallback": "Image"
-    },
-    "numberFormat": {
-      "general": "General",
-      "number": "Number (1,234.56)",
-      "currencyEur": "Currency (€)",
-      "currencyUsd": "Currency ($)",
-      "percent": "Percent (12.34%)",
-      "date": "Date (yyyy-mm-dd)"
     }
   },
   "pptx": {
@@ -790,10 +782,69 @@
       "noSlide": "No slide selected.",
       "slideTransition": "Slide transition",
       "transitionSubtitle": "Plays as this slide enters.",
-      "entranceAnimations": "Entrance animations",
+      "addAnimation": "Add animation",
+      "animationsOnSlide": "Animations on this slide",
       "selectedShape": "Selected shape: {name}",
-      "selectShapeHint": "Select a shape on the slide to add an entrance animation.",
-      "addEntranceAnimation": "Add entrance animation",
+      "selectShapeHint": "Select a shape on the slide to add an animation.",
+      "noAnimations": "No animations on this slide yet.",
+      "noAnimationsHint": "Pick a preset above to add the first one.",
+      "animationCount": "{count} animation in sequence.",
+      "animationCountPlural": "{count} animations in sequence.",
+      "categoryAriaLabel": "Animation category",
+      "categoryEntrance": "Entrance",
+      "categoryEmphasis": "Emphasis",
+      "categoryExit": "Exit",
+      "categoryMotionPath": "Motion paths",
+      "addCategoryAriaLabel": "Add {category} animation",
+      "trigger": "Trigger",
+      "triggerOnClick": "On click",
+      "triggerWithPrevious": "With previous",
+      "triggerAfterPrevious": "After previous",
+      "direction": "Direction",
+      "directionLeft": "Left",
+      "directionRight": "Right",
+      "directionUp": "Up",
+      "directionDown": "Down",
+      "directionIn": "In",
+      "directionOut": "Out",
+      "directionHorizontal": "Horizontal",
+      "directionVertical": "Vertical",
+      "directionClockwise": "Clockwise",
+      "directionCounterclockwise": "Counter-clockwise",
+      "duration": "Duration (ms)",
+      "delay": "Delay (ms)",
+      "preview": "Preview",
+      "previewAll": "Preview the full sequence",
+      "previewStep": "Preview this step",
+      "presetAppear": "Appear",
+      "presetFade": "Fade",
+      "presetFlyIn": "Fly in",
+      "presetFloatIn": "Float in",
+      "presetSplit": "Split",
+      "presetWipe": "Wipe",
+      "presetShape": "Shape",
+      "presetWheel": "Wheel",
+      "presetRandomBars": "Random bars",
+      "presetGrowAndTurn": "Grow & turn",
+      "presetZoom": "Zoom",
+      "presetSwivel": "Swivel",
+      "presetBounce": "Bounce",
+      "presetPulse": "Pulse",
+      "presetColorPulse": "Color pulse",
+      "presetTeeter": "Teeter",
+      "presetSpin": "Spin",
+      "presetGrowShrink": "Grow / shrink",
+      "presetDesaturate": "Desaturate",
+      "presetFontColor": "Font color",
+      "presetLineColor": "Line color",
+      "presetDisappear": "Disappear",
+      "presetFlyOut": "Fly out",
+      "presetFloatOut": "Float out",
+      "presetLine": "Line",
+      "presetArc": "Arc",
+      "presetTurn": "Turn",
+      "presetLoops": "Loops",
+      "presetCustom": "Custom",
       "effect": "Effect",
       "speed": "Speed",
       "transitionNone": "None",
@@ -805,16 +856,11 @@
       "speedSlow": "Slow",
       "speedMedium": "Medium",
       "speedFast": "Fast",
-      "effectAppear": "Appear",
-      "effectFade": "Fade",
-      "effectFlyIn": "Fly in",
-      "effectWipe": "Wipe",
       "moveEarlier": "Move earlier",
       "moveLater": "Move later",
       "removeAnimation": "Remove animation",
-      "noAnimations": "No entrance animations on this slide yet.",
       "shapeFallback": "Shape #{id}",
-      "listAriaLabel": "Entrance animations"
+      "listAriaLabel": "Animations on this slide"
     },
     "present": {
       "ariaLabel": "Presentation",
@@ -910,5 +956,524 @@
     "engineDefault": "Default engine (PDF.js)",
     "engineFidelity": "High-fidelity engine (PDFium)",
     "engineSwitchHint": "Switch the rendering engine if pages render with substituted glyphs."
+  },
+  "actions": {
+    "docx": {
+      "sections": {
+        "Comments": "Comments",
+        "Insert": "Insert",
+        "Tables": "Tables",
+        "Hyperlinks": "Hyperlinks",
+        "Lists": "Lists",
+        "Layout": "Layout",
+        "View": "View",
+        "Mode": "Mode"
+      },
+      "add-comment": {
+        "label": "Add comment",
+        "description": "Add a comment to a range selector and write the result."
+      },
+      "insert-image": {
+        "label": "Insert image",
+        "description": "Insert an inline image at a position selector. Reads image bytes from --image."
+      },
+      "insert-chart": {
+        "label": "Insert chart",
+        "description": "Insert an inline chart at a position selector. Embeds a backing .xlsx workbook so 'Edit Data' works in Word."
+      },
+      "insert-spreadsheet": {
+        "label": "Insert spreadsheet",
+        "description": "Insert a live OLE-embedded Excel workbook at a position selector. Double-clicking the embed in Word opens the underlying .xlsx in Excel."
+      },
+      "insert-table": {
+        "label": "Insert table",
+        "description": "Insert an empty rows × cols table at a position selector."
+      },
+      "insert-table-from-xlsx": {
+        "label": "Insert table from xlsx",
+        "description": "Pick a range from an .xlsx file and insert it as a native Word table."
+      },
+      "insert-spreadsheet-from-xlsx": {
+        "label": "Insert spreadsheet (live)",
+        "description": "Pick a range from an .xlsx file and embed the workbook as a live OLE object."
+      },
+      "insert-chart-from-xlsx": {
+        "label": "Insert chart from xlsx",
+        "description": "Pick a range from an .xlsx file and project it into a chart (first row = series, first column = categories)."
+      },
+      "insert-hyperlink": {
+        "label": "Insert hyperlink",
+        "description": "Wrap a flat-text range in a paragraph with a hyperlink."
+      },
+      "bullet-list": {
+        "label": "Bullet list",
+        "description": "Toggle a bullet list on the current paragraph."
+      },
+      "ordered-list": {
+        "label": "Numbered list",
+        "description": "Toggle a numbered list on the current paragraph."
+      },
+      "align-left": {
+        "label": "Align left",
+        "description": "Left-align the current paragraph."
+      },
+      "align-center": {
+        "label": "Align center",
+        "description": "Center-align the current paragraph."
+      },
+      "align-right": {
+        "label": "Align right",
+        "description": "Right-align the current paragraph."
+      },
+      "align-justify": {
+        "label": "Justify",
+        "description": "Justify the current paragraph."
+      },
+      "indent-increase": {
+        "label": "Increase indent",
+        "description": "Indent the current paragraph by one step (¼ inch)."
+      },
+      "indent-decrease": {
+        "label": "Decrease indent",
+        "description": "Outdent the current paragraph by one step (¼ inch)."
+      },
+      "section-break-next-page": {
+        "label": "Insert section break (next page)",
+        "description": "Insert a next-page section break after the current paragraph."
+      },
+      "section-break-continuous": {
+        "label": "Insert section break (continuous)",
+        "description": "Insert a continuous section break after the current paragraph."
+      },
+      "insert-table-3x3": {
+        "label": "Insert table (3 × 3)",
+        "description": "Insert a 3 × 3 table at the current selection."
+      },
+      "insert-table-2x2": {
+        "label": "Insert table (2 × 2)",
+        "description": "Insert a 2 × 2 table at the current selection."
+      },
+      "page-setup": {
+        "label": "Page setup…",
+        "description": "Open the page setup dialog to configure margins, paper size, and orientation."
+      },
+      "toggle-marks": {
+        "label": "Toggle formatting marks",
+        "description": "Show or hide non-printing characters (paragraph marks, tabs, spaces)."
+      },
+      "set-mode-edit": {
+        "label": "Switch to Editing mode",
+        "description": "Direct edits commit to the document."
+      },
+      "set-mode-suggest": {
+        "label": "Switch to Suggesting mode",
+        "description": "Edits land as tracked changes for review."
+      },
+      "set-mode-view": {
+        "label": "Switch to Viewing mode",
+        "description": "Read-only mode — block all mutations."
+      }
+    },
+    "xlsx": {
+      "sections": {
+        "Edit": "Edit",
+        "Format": "Format",
+        "Sheet": "Sheet",
+        "Comments": "Comments",
+        "Data": "Data",
+        "Insert": "Insert"
+      },
+      "set-cell": {
+        "label": "Set cell value",
+        "description": "Set a single cell's literal value (string/number/boolean/null/error)."
+      },
+      "set-formula": {
+        "label": "Set formula",
+        "description": "Set a single cell's formula (with or without leading '=')."
+      },
+      "set-format": {
+        "label": "Apply cell format",
+        "description": "Apply a format patch to a range (font/fill/border/alignment/numberFormat)."
+      },
+      "add-sheet": {
+        "label": "Add sheet",
+        "description": "Append (or insert at --at) a new worksheet."
+      },
+      "rename-sheet": {
+        "label": "Rename sheet",
+        "description": "Rename a sheet by current name."
+      },
+      "delete-sheet": {
+        "label": "Delete sheet",
+        "description": "Delete a worksheet by name (the workbook must keep ≥1 visible sheet)."
+      },
+      "insert-row": {
+        "label": "Insert rows",
+        "description": "Insert N blank rows BEFORE a 1-based row index."
+      },
+      "insert-column": {
+        "label": "Insert columns",
+        "description": "Insert N blank columns BEFORE a 1-based column index."
+      },
+      "delete-row": {
+        "label": "Delete rows",
+        "description": "Delete N rows starting at a 1-based row index."
+      },
+      "delete-column": {
+        "label": "Delete columns",
+        "description": "Delete N columns starting at a 1-based column index."
+      },
+      "merge-cells": {
+        "label": "Merge cells",
+        "description": "Merge an A1 range covering ≥2 cells."
+      },
+      "unmerge-cells": {
+        "label": "Unmerge cells",
+        "description": "Unmerge an existing merged range (must match exactly)."
+      },
+      "add-comment": {
+        "label": "Add comment",
+        "description": "Attach a classic note (single-cell anchor)."
+      },
+      "toggle-filter": {
+        "label": "Toggle auto-filter",
+        "description": "Apply or remove an auto-filter on the active sheet."
+      },
+      "format-cells": {
+        "label": "Format cells…",
+        "description": "Open the Format Cells dialog (Number tab)."
+      },
+      "format-cells-alignment": {
+        "label": "Format cells: Alignment",
+        "description": "Open the Format Cells dialog on the Alignment tab."
+      },
+      "format-cells-font": {
+        "label": "Format cells: Font",
+        "description": "Open the Format Cells dialog on the Font tab."
+      },
+      "format-cells-border": {
+        "label": "Format cells: Border",
+        "description": "Open the Format Cells dialog on the Border tab."
+      },
+      "format-cells-fill": {
+        "label": "Format cells: Fill",
+        "description": "Open the Format Cells dialog on the Fill tab."
+      },
+      "format-cells-protection": {
+        "label": "Format cells: Protection",
+        "description": "Open the Format Cells dialog on the Protection tab."
+      },
+      "borders-all": {
+        "label": "Borders: All",
+        "description": "Apply borders to every cell in the selection."
+      },
+      "borders-outside": {
+        "label": "Borders: Outside",
+        "description": "Apply borders only to the perimeter of the selection."
+      },
+      "borders-thick-outside": {
+        "label": "Borders: Thick outside",
+        "description": "Apply a thick border to the perimeter of the selection."
+      },
+      "borders-none": {
+        "label": "Borders: Clear",
+        "description": "Remove all borders from the selection."
+      },
+      "paste-special": {
+        "label": "Paste Special…",
+        "description": "Open the Paste Special dialog."
+      },
+      "format-painter": {
+        "label": "Format Painter",
+        "description": "Activate the Format Painter to copy cell formatting."
+      },
+      "hide-sheet": {
+        "label": "Hide sheet",
+        "description": "Hide the active sheet (preserves data; toggle via the sheet tab menu)."
+      },
+      "conditional-format": {
+        "label": "Conditional Formatting…",
+        "description": "Open the Conditional Formatting manager dialog."
+      },
+      "conditional-format-clear": {
+        "label": "Clear conditional formatting from this sheet",
+        "description": "Drop every conditional-formatting rule on the active sheet."
+      },
+      "data-validation": {
+        "label": "Data Validation…",
+        "description": "Open the Data Validation dialog for the active selection."
+      },
+      "data-validation-clear": {
+        "label": "Clear data validation from this sheet",
+        "description": "Drop every data-validation rule on the active sheet."
+      },
+      "name-manager": {
+        "label": "Name Manager…",
+        "description": "Open the Name Manager dialog to inspect and edit defined names."
+      },
+      "define-name": {
+        "label": "Define name from selection…",
+        "description": "Open the Name Manager scoped to the current selection."
+      },
+      "merge": {
+        "label": "Merge cells",
+        "description": "Merge the current selection into one cell."
+      },
+      "unmerge": {
+        "label": "Unmerge cells",
+        "description": "Split previously merged cells in the current selection."
+      },
+      "insert-image": {
+        "label": "Insert image",
+        "description": "Pick and insert an image anchored to the active selection."
+      },
+      "format-as-table": {
+        "label": "Format as Table…",
+        "description": "Convert the current selection into a structured table."
+      },
+      "insert-chart": {
+        "label": "Insert chart…",
+        "description": "Open the Insert Chart dialog for the current selection."
+      },
+      "edit-chart": {
+        "label": "Edit chart…",
+        "description": "Edit the currently selected chart's data range, type, and title."
+      }
+    },
+    "pptx": {
+      "sections": {
+        "Slide": "Slide",
+        "Format": "Format",
+        "Insert": "Insert",
+        "View": "View"
+      },
+      "add-slide": {
+        "label": "Add slide",
+        "description": "Append (or insert at --at) a new slide."
+      },
+      "delete-slide": {
+        "label": "Delete slide",
+        "description": "Delete a slide by 0-based index."
+      },
+      "duplicate-slide": {
+        "label": "Duplicate slide",
+        "description": "Duplicate a slide; the copy is inserted directly after the source."
+      },
+      "move-slide": {
+        "label": "Move slide",
+        "description": "Reorder a slide."
+      },
+      "set-slide-transition": {
+        "label": "Set slide transition",
+        "description": "Set the entry transition for a slide."
+      },
+      "format-text": {
+        "label": "Format text run",
+        "description": "Apply font / size / bold / italic / underline / color to a text run range."
+      },
+      "add-text-box": {
+        "label": "Add text box",
+        "description": "Insert a new text box on a slide."
+      },
+      "insert-image": {
+        "label": "Insert image",
+        "description": "Insert an image on a slide."
+      },
+      "insert-chart": {
+        "label": "Insert chart",
+        "description": "Insert a chart on a slide. Embeds a backing .xlsx workbook so 'Edit Data' works in PowerPoint."
+      },
+      "insert-spreadsheet": {
+        "label": "Insert spreadsheet",
+        "description": "Insert a live OLE-embedded Excel workbook on a slide. Double-clicking the embed opens the underlying .xlsx in Excel."
+      },
+      "insert-table": {
+        "label": "Insert table",
+        "description": "Insert a native PowerPoint table on a slide from a 2D grid (e.g. a paste from xlsx)."
+      },
+      "insert-table-from-xlsx": {
+        "label": "Insert table from xlsx",
+        "description": "Pick a range from an .xlsx file and insert it as a native PowerPoint table."
+      },
+      "insert-spreadsheet-from-xlsx": {
+        "label": "Insert spreadsheet (live)",
+        "description": "Pick a range from an .xlsx file and embed the workbook as a live OLE object on the slide."
+      },
+      "insert-chart-from-xlsx": {
+        "label": "Insert chart from xlsx",
+        "description": "Pick a range from an .xlsx file and project it into a chart on the slide."
+      },
+      "add-shape-animation": {
+        "label": "Add shape animation",
+        "description": "Attach an entry/emphasis/exit animation to a shape."
+      },
+      "remove-shape-animation": {
+        "label": "Remove shape animation",
+        "description": "Remove a shape animation from a slide."
+      },
+      "add-rect": {
+        "label": "Insert rectangle",
+        "description": "Insert a rectangle shape on the active slide."
+      },
+      "add-ellipse": {
+        "label": "Insert ellipse",
+        "description": "Insert an ellipse shape on the active slide."
+      },
+      "add-arrow": {
+        "label": "Insert arrow",
+        "description": "Insert a right-arrow shape on the active slide."
+      },
+      "add-connector-elbow": {
+        "label": "Draw elbow connector",
+        "description": "Activate the elbow-connector tool."
+      },
+      "add-connector-straight": {
+        "label": "Draw straight connector",
+        "description": "Activate the straight-connector tool."
+      },
+      "add-connector-curved": {
+        "label": "Draw curved connector",
+        "description": "Activate the curved-connector tool."
+      },
+      "zoom-reset": {
+        "label": "Reset zoom to 100%",
+        "description": "Restore the canvas zoom level to 100%."
+      },
+      "present-from-start": {
+        "label": "Start presentation from beginning",
+        "description": "Enter presentation mode at slide 1."
+      },
+      "present-from-current": {
+        "label": "Start presentation from current slide",
+        "description": "Enter presentation mode at the active slide."
+      }
+    },
+    "pdf": {
+      "sections": {
+        "Pages": "Pages",
+        "Document": "Document",
+        "Forms": "Forms",
+        "OCR": "OCR",
+        "Navigate": "Navigate",
+        "View": "View",
+        "File": "File"
+      },
+      "rotate-pages": {
+        "label": "Rotate pages",
+        "description": "Rotate one or more pages by 90/180/270°."
+      },
+      "reorder-pages": {
+        "label": "Reorder pages",
+        "description": "Reorder the document's pages."
+      },
+      "delete-pages": {
+        "label": "Delete pages",
+        "description": "Delete one or more pages from the document."
+      },
+      "merge": {
+        "label": "Merge PDFs",
+        "description": "Merge two or more PDFs in order; writes a new PDF to --out."
+      },
+      "split": {
+        "label": "Split PDF",
+        "description": "Split a PDF by page range or every-N-pages; writes one PDF per chunk."
+      },
+      "extract-pages": {
+        "label": "Extract pages",
+        "description": "Extract a page range into a new PDF."
+      },
+      "add-watermark": {
+        "label": "Add watermark",
+        "description": "Stamp a text or image watermark across a page range."
+      },
+      "add-page-numbers": {
+        "label": "Add page numbers",
+        "description": "Stamp page numbers across a page range."
+      },
+      "set-metadata": {
+        "label": "Set metadata",
+        "description": "Set / clear metadata fields (title, author, subject, keywords)."
+      },
+      "fill-form": {
+        "label": "Fill form",
+        "description": "Fill an interactive form from a JSON map of field → value."
+      },
+      "flatten-form": {
+        "label": "Flatten form",
+        "description": "Flatten an interactive form into static PDF content."
+      },
+      "reset-form": {
+        "label": "Reset form",
+        "description": "Reset every interactive form field to its default value."
+      },
+      "add-text-layer": {
+        "label": "Add OCR text layer",
+        "description": "Run OCR over each page and embed an invisible selectable text layer."
+      },
+      "next-page": {
+        "label": "Next page",
+        "description": "Navigate to the next page in the viewer."
+      },
+      "prev-page": {
+        "label": "Previous page",
+        "description": "Navigate to the previous page in the viewer."
+      },
+      "first-page": {
+        "label": "First page",
+        "description": "Jump to the first page."
+      },
+      "last-page": {
+        "label": "Last page",
+        "description": "Jump to the last page."
+      },
+      "zoom-in": {
+        "label": "Zoom in",
+        "description": "Increase the viewer zoom level."
+      },
+      "zoom-out": {
+        "label": "Zoom out",
+        "description": "Decrease the viewer zoom level."
+      },
+      "fit-width": {
+        "label": "Fit width",
+        "description": "Fit the page width to the viewer."
+      },
+      "fit-page": {
+        "label": "Fit page",
+        "description": "Fit a whole page into the viewer."
+      },
+      "actual-size": {
+        "label": "Actual size (100 %)",
+        "description": "Reset the viewer zoom to 100%."
+      },
+      "rotate-cw": {
+        "label": "Rotate view clockwise",
+        "description": "Rotate the on-screen view clockwise (does not modify the PDF)."
+      },
+      "rotate-ccw": {
+        "label": "Rotate view counter-clockwise",
+        "description": "Rotate the on-screen view counter-clockwise (does not modify the PDF)."
+      },
+      "toggle-dark": {
+        "label": "Toggle dark mode",
+        "description": "Cycle the viewer through light, sepia, and dark display modes."
+      },
+      "toggle-reflow": {
+        "label": "Toggle reflow",
+        "description": "Toggle reflowed reading mode (single-column text reflow)."
+      },
+      "rotate-page": {
+        "label": "Rotate current page 90°",
+        "description": "Rotate the current page by 90° (writes to the document; see also pdf.rotate-pages)."
+      },
+      "delete-page": {
+        "label": "Delete current page",
+        "description": "Delete the current page from the document (see also pdf.delete-pages)."
+      },
+      "print": {
+        "label": "Print…",
+        "description": "Open the browser's native print dialog for the PDF."
+      }
+    }
   }
 }

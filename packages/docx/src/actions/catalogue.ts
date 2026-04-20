@@ -277,7 +277,7 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Insert image",
     description: "Insert an inline image at a position selector. Reads image bytes from --image.",
     section: "Insert",
-    surfaces: ["cli", "toolbar"],
+    surfaces: ["cli", "toolbar", "palette"],
     icon: "Image",
     args: [
       { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
@@ -345,6 +345,131 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
       { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index" },
       { name: "col", flag: "--col <n>", kind: "number", required: true, description: "0-based column index" },
       { name: "text", flag: "--text <text>", kind: "string", required: true, description: "Text to place in the cell" },
+    ],
+  },
+
+  // ── Charts ────────────────────────────────────────────────────────
+  {
+    id: "docx.insert-chart",
+    commandType: "docx:insert-chart",
+    label: "Insert chart",
+    description: "Insert an inline chart at a position selector. Embeds a backing .xlsx workbook so 'Edit Data' works in Word.",
+    section: "Insert",
+    surfaces: ["cli", "palette"],
+    icon: "BarChart3",
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
+      { name: "at", flag: "--at <selector>", kind: "selector", required: true, description: "Position selector targeting a paragraph" },
+      { name: "chartType", flag: "--chart-type <type>", kind: "enum", choices: ["bar", "line", "pie", "area"], default: "bar", description: "Chart type" },
+      { name: "title", flag: "--title <text>", kind: "string", description: "Chart title" },
+      { name: "categories", flag: "--categories <csv>", kind: "string", required: true, description: "Comma-separated category labels (x-axis)" },
+      { name: "series", flag: "--series <json>", kind: "string", required: true, description: "JSON array: [{name?, values:number[]}, ...]. Each series.values length must equal --categories length" },
+      { name: "width", flag: "--width <px>", kind: "number", default: 480, description: "Display width in pixels @ 96 DPI" },
+      { name: "height", flag: "--height <px>", kind: "number", default: 320, description: "Display height in pixels @ 96 DPI" },
+    ],
+  },
+  {
+    id: "docx.set-chart-data",
+    commandType: "docx:set-chart-data",
+    label: "Set chart data",
+    description: "Replace categories + series for an existing chart and refresh the embedded workbook.",
+    section: "Insert",
+    surfaces: ["cli"],
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
+      { name: "chartPartPath", flag: "--chart-part-path <path>", kind: "string", required: true, description: "Chart part path, e.g. word/charts/chart1.xml" },
+      { name: "categories", flag: "--categories <csv>", kind: "string", required: true, description: "Comma-separated category labels" },
+      { name: "series", flag: "--series <json>", kind: "string", required: true, description: "JSON array: [{name?, values:number[]}, ...]" },
+    ],
+  },
+  {
+    id: "docx.set-chart-title",
+    commandType: "docx:set-chart-title",
+    label: "Set chart title",
+    description: "Set / clear the title of an existing chart.",
+    section: "Insert",
+    surfaces: ["cli"],
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
+      { name: "chartPartPath", flag: "--chart-part-path <path>", kind: "string", required: true, description: "Chart part path" },
+      { name: "title", flag: "--title <text>", kind: "string", description: "New title text; omit (or pass --clear) to remove" },
+      { name: "clear", flag: "--clear", kind: "boolean", description: "Clear the existing title" },
+    ],
+  },
+  {
+    id: "docx.set-chart-type",
+    commandType: "docx:set-chart-type",
+    label: "Set chart type",
+    description: "Switch the active plot type of an existing chart (bar/line/pie/area).",
+    section: "Insert",
+    surfaces: ["cli"],
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
+      { name: "chartPartPath", flag: "--chart-part-path <path>", kind: "string", required: true, description: "Chart part path" },
+      { name: "chartType", flag: "--chart-type <type>", kind: "enum", choices: ["bar", "line", "pie", "area"], required: true, description: "Chart type" },
+    ],
+  },
+  {
+    id: "docx.insert-spreadsheet",
+    commandType: "docx:insert-spreadsheet",
+    label: "Insert spreadsheet",
+    description: "Insert a live OLE-embedded Excel workbook at a position selector. Double-clicking the embed in Word opens the underlying .xlsx in Excel.",
+    section: "Insert",
+    surfaces: ["cli", "palette"],
+    icon: "Table2",
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
+      { name: "at", flag: "--at <selector>", kind: "selector", required: true, description: "Position selector targeting a paragraph" },
+      { name: "data", flag: "--data <json>", kind: "string", required: true, description: "JSON 2D array of cell values: [[\"A1\", \"B1\"], [1, 2], …]" },
+      { name: "sheetName", flag: "--sheet-name <name>", kind: "string", default: "Sheet1", description: "Worksheet name" },
+    ],
+  },
+  // ── "Insert from xlsx" palette wrappers ──────────────────────────
+  // These three actions don't dispatch a bus command directly; they
+  // open the XlsxRangePickerDialog with a preselected mode and the
+  // dialog's submit handler dispatches the right `docx:insert-*`
+  // command via the shared `applyXlsxEmbed` dispatcher. Catalogued
+  // here purely so they appear in Cmd+K with proper i18n + icons;
+  // CLI users keep using the lower-level `docx:insert-spreadsheet`
+  // / `docx:insert-chart` / `docx:insert-table` commands directly.
+  {
+    id: "docx.insert-table-from-xlsx",
+    commandType: null,
+    label: "Insert table from xlsx",
+    description: "Pick a range from an .xlsx file and insert it as a native Word table.",
+    section: "Insert",
+    surfaces: ["palette"],
+    icon: "Table",
+  },
+  {
+    id: "docx.insert-spreadsheet-from-xlsx",
+    commandType: null,
+    label: "Insert spreadsheet (live)",
+    description: "Pick a range from an .xlsx file and embed the workbook as a live OLE object.",
+    section: "Insert",
+    surfaces: ["palette"],
+    icon: "Table2",
+  },
+  {
+    id: "docx.insert-chart-from-xlsx",
+    commandType: null,
+    label: "Insert chart from xlsx",
+    description: "Pick a range from an .xlsx file and project it into a chart (first row = series, first column = categories).",
+    section: "Insert",
+    surfaces: ["palette"],
+    icon: "BarChart3",
+  },
+  {
+    id: "docx.update-spreadsheet",
+    commandType: "docx:update-spreadsheet",
+    label: "Update spreadsheet",
+    description: "Replace the bytes of an existing OLE-embedded Excel workbook (used by the editor's double-click → edit → save loop).",
+    section: "Insert",
+    surfaces: ["cli"],
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .docx file" },
+      { name: "embeddingPartPath", flag: "--embedding-part-path <path>", kind: "string", required: true, description: "Part path of the embedded workbook, e.g. word/embeddings/oleObject1.xlsx" },
+      { name: "xlsx", flag: "--xlsx <path>", kind: "filepath", required: true, description: "Path to the new .xlsx file whose bytes will replace the embed" },
     ],
   },
 
@@ -483,6 +608,100 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
   },
 
   // ── Palette-only / non-mutating actions (UI surfaces) ─────────────
+  // These wrap toolbar interactions so every toolbar button is also
+  // discoverable via Cmd+K. They piggy-back on existing handlers
+  // (apply-list-format, set-paragraph-alignment, set-paragraph-indent,
+  // insert-section-break) that the CLI exposes via richer subcommands;
+  // the palette versions take no arguments and operate on the current
+  // selection.
+  {
+    id: "docx.bullet-list",
+    commandType: null,
+    label: "Bullet list",
+    description: "Toggle a bullet list on the current paragraph.",
+    section: "Lists",
+    surfaces: ["palette"],
+    icon: "List",
+  },
+  {
+    id: "docx.ordered-list",
+    commandType: null,
+    label: "Numbered list",
+    description: "Toggle a numbered list on the current paragraph.",
+    section: "Lists",
+    surfaces: ["palette"],
+    icon: "ListOrdered",
+  },
+  {
+    id: "docx.align-left",
+    commandType: null,
+    label: "Align left",
+    description: "Left-align the current paragraph.",
+    section: "Layout",
+    surfaces: ["palette"],
+    icon: "AlignLeft",
+  },
+  {
+    id: "docx.align-center",
+    commandType: null,
+    label: "Align center",
+    description: "Center-align the current paragraph.",
+    section: "Layout",
+    surfaces: ["palette"],
+    icon: "AlignCenter",
+  },
+  {
+    id: "docx.align-right",
+    commandType: null,
+    label: "Align right",
+    description: "Right-align the current paragraph.",
+    section: "Layout",
+    surfaces: ["palette"],
+    icon: "AlignRight",
+  },
+  {
+    id: "docx.align-justify",
+    commandType: null,
+    label: "Justify",
+    description: "Justify the current paragraph.",
+    section: "Layout",
+    surfaces: ["palette"],
+    icon: "AlignJustify",
+  },
+  {
+    id: "docx.indent-increase",
+    commandType: null,
+    label: "Increase indent",
+    description: "Indent the current paragraph by one step (¼ inch).",
+    section: "Layout",
+    surfaces: ["palette"],
+    icon: "Indent",
+  },
+  {
+    id: "docx.indent-decrease",
+    commandType: null,
+    label: "Decrease indent",
+    description: "Outdent the current paragraph by one step (¼ inch).",
+    section: "Layout",
+    surfaces: ["palette"],
+    icon: "Outdent",
+  },
+  {
+    id: "docx.section-break-next-page",
+    commandType: null,
+    label: "Insert section break (next page)",
+    description: "Insert a next-page section break after the current paragraph.",
+    section: "Layout",
+    surfaces: ["palette"],
+  },
+  {
+    id: "docx.section-break-continuous",
+    commandType: null,
+    label: "Insert section break (continuous)",
+    description: "Insert a continuous section break after the current paragraph.",
+    section: "Layout",
+    surfaces: ["palette"],
+  },
   {
     id: "docx.insert-table-3x3",
     commandType: null,

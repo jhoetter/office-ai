@@ -75,24 +75,40 @@ const TYPE_OPTIONS: ReadonlyArray<{ type: ConnectorType; label: string; icon: Re
 
 const DASH_OPTIONS: ReadonlyArray<{ dash: ConnectorDashStyle; label: string }> = [
   { dash: "solid", label: "Solid" },
-  { dash: "dashed", label: "Dashed" },
-  { dash: "dotted", label: "Dotted" },
-  { dash: "longDash", label: "Long dash" },
+  { dash: "dash", label: "Dashed" },
+  { dash: "dot", label: "Dotted" },
+  { dash: "lgDash", label: "Long dash" },
   { dash: "dashDot", label: "Dash dot" },
 ];
 
 function dashStrokeArray(dash: ConnectorDashStyle): string | undefined {
+  // Canonical OOXML tokens (`dash`, `dot`, `lgDash`, …) are the
+  // primary cases; the legacy short aliases (`dashed`, `dotted`,
+  // `longDash`) round-trip to canonical so they should not appear
+  // post-load, but we map them anyway so older saved snapshots
+  // still render correctly during the typed-model migration window.
   switch (dash) {
     case "solid":
       return undefined;
+    case "dash":
+    case "sysDash":
     case "dashed":
       return "4 3";
+    case "dot":
+    case "sysDot":
     case "dotted":
       return "1 2";
+    case "lgDash":
     case "longDash":
       return "8 3";
     case "dashDot":
+    case "sysDashDot":
       return "5 2 1 2";
+    case "lgDashDot":
+      return "8 3 1 3";
+    case "lgDashDotDot":
+    case "sysDashDotDot":
+      return "8 3 1 3 1 3";
   }
 }
 

@@ -65,6 +65,7 @@ export {
   type DefinedName,
   type TableDef,
   type ChartKind,
+  type ChartPalette,
   type SheetChart,
   type MergedCell,
   type OpaquePart,
@@ -240,3 +241,16 @@ export {
   type DisplayTokenKind,
   type RefTarget,
 } from "./formula/highlight.js";
+
+export {
+  buildEmbeddedXlsx,
+  buildChartGrid,
+  type BuildEmbeddedXlsxOptions,
+  type BuildEmbeddedXlsxResult,
+  type ChartGridResult,
+  type ChartGridSeries,
+  type EmbeddedGrid,
+  type EmbeddedGridCell,
+} from "./embed/buildEmbeddedXlsx.js";
+
+export { gridToPng, type GridToPngOptions, type GridToPngResult } from "./embed/gridToPng.js";

@@ -21,6 +21,7 @@ import {
   moveChartHandler,
   removeChartHandler,
   resizeChartHandler,
+  updateChartHandler,
 } from "./chart-commands.js";
 import {
   addImageHandler,
@@ -132,6 +133,7 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   removeChartHandler as CommandHandler<unknown, XlsxSnapshot>,
   moveChartHandler as CommandHandler<unknown, XlsxSnapshot>,
   resizeChartHandler as CommandHandler<unknown, XlsxSnapshot>,
+  updateChartHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

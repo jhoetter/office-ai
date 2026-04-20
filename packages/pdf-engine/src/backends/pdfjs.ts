@@ -1,8 +1,10 @@
+import { buildGlyphRuns } from "../text/build-glyph-runs.js";
 import type {
   PdfEngine,
   PdfEngineAnnotationLite,
   PdfEngineDocument,
   PdfEngineFormFieldLite,
+  PdfEngineGlyphRun,
   PdfEngineLoadOptions,
   PdfEngineMetadata,
   PdfEngineOutlineNode,
@@ -11,6 +13,7 @@ import type {
   PdfEngineRenderOptions,
   PdfEngineTextContent,
   PdfEngineTextItem,
+  PdfEngineViewport,
 } from "../types.js";
 
 /**
@@ -108,6 +111,47 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
     return { items, plain };
   };
 
+  const getGlyphRuns = async (): Promise<ReadonlyArray<PdfEngineGlyphRun>> => {
+    const { items } = await getTextContent();
+    return buildGlyphRuns(items);
+  };
+
+  const getViewportApi = (opts: { scale: number; rotation?: 0 | 90 | 180 | 270 }): PdfEngineViewport => {
+    const rotation = opts.rotation ?? 0;
+    const vp = raw.getViewport({ scale: opts.scale, rotation });
+    return {
+      scale: opts.scale,
+      rotation,
+      width: vp.width,
+      height: vp.height,
+      raw: vp,
+    };
+  };
+
+  // PDF.js v4 exposes `streamTextContent()` which yields a
+  // `ReadableStream<TextContent>`; fall back to the eagerly-resolved
+  // `getTextContent()` if the streaming variant isn't available
+  // (older minor versions and the legacy build alias).
+  const getTextContentSource = async (
+    opts: { includeMarkedContent?: boolean } = {},
+  ): Promise<unknown> => {
+    const includeMarkedContent = opts.includeMarkedContent ?? true;
+    const params = {
+      includeMarkedContent,
+      // disableNormalization=false is the v4 default but we set it
+      // explicitly to lock the documented Unicode normalisation
+      // behaviour in.
+      disableNormalization: false,
+    };
+    const streamer = (raw as unknown as {
+      streamTextContent?: (opts: unknown) => ReadableStream;
+    }).streamTextContent;
+    if (typeof streamer === "function") {
+      return streamer.call(raw, params);
+    }
+    return raw.getTextContent(params as never);
+  };
+
   const getAnnotations = async (): Promise<ReadonlyArray<PdfEngineAnnotationLite>> => {
     const raws = await raw.getAnnotations();
     return raws
@@ -201,6 +245,9 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
     info,
     render,
     getTextContent,
+    getGlyphRuns,
+    getViewport: getViewportApi,
+    getTextContentSource,
     getAnnotations,
     getFormFields,
     destroy: () => raw.cleanup(),
@@ -249,16 +296,46 @@ const buildOutline = async (
   return walk(top as never);
 };
 
+/**
+ * Normalise an `assetsBase` value into separate cmap / standard-font
+ * URLs. PDF.js needs both with trailing slashes; consumers shouldn't
+ * have to know that.
+ */
+const resolveAssetUrls = (
+  assetsBase: string | undefined,
+): { cMapUrl?: string; cMapPacked?: boolean; standardFontDataUrl?: string } => {
+  if (!assetsBase) return {};
+  const base = assetsBase.endsWith("/") ? assetsBase : `${assetsBase}/`;
+  return {
+    cMapUrl: `${base}cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${base}standard_fonts/`,
+  };
+};
+
 export const pdfjsBackend: PdfEngine = {
   kind: "pdfjs",
   async load(buffer: Uint8Array, opts: PdfEngineLoadOptions = {}): Promise<PdfEngineDocument> {
     const pdfjs = await loadPdfjs();
+    const assetUrls = resolveAssetUrls(opts.assetsBase);
     const loadingTask = pdfjs.getDocument({
       data: buffer,
       ...(opts.password ? { password: opts.password } : {}),
       isEvalSupported: false,
       // Fonts are typically on a CDN; consumers should configure this.
       disableFontFace: false,
+      // Asset wiring: `cmaps/` is required for any PDF that uses a
+      // non-standard CIDSystemInfo (CJK, custom encodings); without
+      // it `getTextContent()` returns mojibake or empty strings for
+      // entire languages. `standard_fonts/` is required for the 14
+      // PDF base fonts when not embedded — without it pdfjs falls
+      // back to a hard-coded sans-serif and glyph metrics drift.
+      ...assetUrls,
+      // Prefer system fonts when available — better visual fidelity
+      // for unembedded standard fonts and noticeably less drift in
+      // the text layer.
+      useSystemFonts: true,
+      verbosity: 0,
     });
 
     const doc = await loadingTask.promise;

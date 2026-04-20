@@ -2,7 +2,7 @@ import { CommandError, type CommandHandler } from "@officeai/core";
 import type { Sheet, XlsxSnapshot, XlsxWorkbook } from "../model/types.js";
 import { buildDiff, evolveSnapshot } from "./helpers.js";
 import type { MoveSheetPayload } from "./payloads.js";
-import type * as XLSX from "xlsx";
+import type * as XLSX from "@e965/xlsx";
 
 /**
  * `xlsx:move-sheet` — reorder a worksheet within the workbook.

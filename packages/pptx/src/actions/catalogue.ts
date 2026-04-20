@@ -218,6 +218,14 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli"],
   },
   {
+    id: "pptx.set-rotation",
+    commandType: "pptx:set-rotation",
+    label: "Set shape rotation",
+    description: "Rotate a shape by N degrees clockwise around its centre.",
+    section: "Edit",
+    surfaces: ["cli"],
+  },
+  {
     id: "pptx.set-shape-fill",
     commandType: "pptx:set-shape-fill",
     label: "Set shape fill",
@@ -303,6 +311,25 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
 
   // ── Tables ────────────────────────────────────────────────────────
   {
+    id: "pptx.insert-table",
+    commandType: "pptx:insert-table",
+    label: "Insert table",
+    description:
+      "Insert a native PowerPoint table on a slide from a 2D grid (e.g. a paste from xlsx). Cells stay editable as cells; survives theme/font changes.",
+    section: "Insert",
+    surfaces: ["cli", "palette"],
+    icon: "Table",
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .pptx file" },
+      { name: "slide", flag: "--slide <index>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "x", flag: "--x <emu>", kind: "number", required: true, description: "Slide-coord X position in EMU" },
+      { name: "y", flag: "--y <emu>", kind: "number", required: true, description: "Slide-coord Y position in EMU" },
+      { name: "cx", flag: "--cx <emu>", kind: "number", default: 4572000, description: "Display width in EMU" },
+      { name: "cy", flag: "--cy <emu>", kind: "number", description: "Display height in EMU (defaults to ~0.5 inch per row)" },
+      { name: "data", flag: "--data <json>", kind: "string", required: true, description: "JSON 2D array of cell values: [[\"A1\", \"B1\"], [1, 2], …]" },
+    ],
+  },
+  {
     id: "pptx.table-set-cell-text",
     commandType: "pptx:table-set-cell-text",
     label: "Set table cell text",
@@ -345,6 +372,27 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
 
   // ── Charts ────────────────────────────────────────────────────────
   {
+    id: "pptx.insert-chart",
+    commandType: "pptx:insert-chart",
+    label: "Insert chart",
+    description: "Insert a chart on a slide. Embeds a backing .xlsx workbook so 'Edit Data' works in PowerPoint.",
+    section: "Insert",
+    surfaces: ["cli", "palette"],
+    icon: "BarChart3",
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .pptx file" },
+      { name: "slide", flag: "--slide <index>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "x", flag: "--x <emu>", kind: "number", required: true, description: "Slide-coord X position in EMU" },
+      { name: "y", flag: "--y <emu>", kind: "number", required: true, description: "Slide-coord Y position in EMU" },
+      { name: "cx", flag: "--cx <emu>", kind: "number", default: 4572000, description: "Display width in EMU" },
+      { name: "cy", flag: "--cy <emu>", kind: "number", default: 3429000, description: "Display height in EMU" },
+      { name: "chartType", flag: "--chart-type <type>", kind: "enum", choices: ["bar", "line", "pie", "area"], default: "bar", description: "Chart type" },
+      { name: "title", flag: "--title <text>", kind: "string", description: "Chart title" },
+      { name: "categories", flag: "--categories <csv>", kind: "string", required: true, description: "Comma-separated category labels (x-axis)" },
+      { name: "series", flag: "--series <json>", kind: "string", required: true, description: "JSON array: [{name?, values:number[]}, ...]. Each series.values length must equal --categories length" },
+    ],
+  },
+  {
     id: "pptx.chart-set-title",
     commandType: "pptx:set-chart-title",
     label: "Set chart title",
@@ -369,14 +417,88 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli"],
   },
 
+  // ── Embedded spreadsheets (OLE) ───────────────────────────────────
+  {
+    id: "pptx.insert-spreadsheet",
+    commandType: "pptx:insert-spreadsheet",
+    label: "Insert spreadsheet",
+    description: "Insert a live OLE-embedded Excel workbook on a slide. Double-clicking the embed in PowerPoint opens the underlying .xlsx in Excel.",
+    section: "Insert",
+    surfaces: ["cli", "palette"],
+    icon: "Table2",
+    args: [
+      { name: "file", flag: "--file <path>", kind: "filepath", required: true, description: "Path to a .pptx file" },
+      { name: "slide", flag: "--slide <index>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "x", flag: "--x <emu>", kind: "number", required: true, description: "Slide-coord X position in EMU" },
+      { name: "y", flag: "--y <emu>", kind: "number", required: true, description: "Slide-coord Y position in EMU" },
+      { name: "cx", flag: "--cx <emu>", kind: "number", default: 2743200, description: "Display width in EMU" },
+      { name: "cy", flag: "--cy <emu>", kind: "number", default: 1828800, description: "Display height in EMU" },
+      { name: "data", flag: "--data <json>", kind: "string", required: true, description: "JSON 2D array of cell values: [[\"A1\", \"B1\"], [1, 2], …]" },
+      { name: "sheetName", flag: "--sheet-name <name>", kind: "string", default: "Sheet1", description: "Worksheet name" },
+    ],
+  },
+  // ── "Insert from xlsx" palette wrappers ──────────────────────────
+  // These three actions don't dispatch a bus command directly; they
+  // open the XlsxRangePickerDialog with a preselected mode and the
+  // dialog's submit handler routes through the shared
+  // `applyXlsxEmbed` dispatcher to the right `pptx:insert-*`
+  // command. Catalogued here purely so they appear in Cmd+K with
+  // proper i18n + icons; CLI users keep using the lower-level
+  // `pptx:insert-spreadsheet` / `pptx:insert-chart` /
+  // `pptx:insert-table` commands directly.
+  {
+    id: "pptx.insert-table-from-xlsx",
+    commandType: null,
+    label: "Insert table from xlsx",
+    description: "Pick a range from an .xlsx file and insert it as a native PowerPoint table.",
+    section: "Insert",
+    surfaces: ["palette"],
+    icon: "Table",
+  },
+  {
+    id: "pptx.insert-spreadsheet-from-xlsx",
+    commandType: null,
+    label: "Insert spreadsheet (live)",
+    description: "Pick a range from an .xlsx file and embed the workbook as a live OLE object on the slide.",
+    section: "Insert",
+    surfaces: ["palette"],
+    icon: "Table2",
+  },
+  {
+    id: "pptx.insert-chart-from-xlsx",
+    commandType: null,
+    label: "Insert chart from xlsx",
+    description: "Pick a range from an .xlsx file and project it into a chart on the slide (first row = series, first column = categories).",
+    section: "Insert",
+    surfaces: ["palette"],
+    icon: "BarChart3",
+  },
+  {
+    id: "pptx.update-spreadsheet",
+    commandType: "pptx:update-spreadsheet",
+    label: "Update embedded spreadsheet",
+    description: "Replace the bytes of a previously embedded OLE spreadsheet (used by the editor's double-click → edit → save flow).",
+    section: "Edit",
+    surfaces: [],
+    hidden: { reason: "Driven by the embedded-spreadsheet edit-in-place flow." },
+  },
+
   // ── Animations ────────────────────────────────────────────────────
   {
     id: "pptx.add-shape-animation",
     commandType: "pptx:add-shape-animation",
     label: "Add shape animation",
-    description: "Attach an entry/emphasis/exit animation to a shape.",
+    description: "Attach an entry/emphasis/exit/motion-path animation to a shape.",
     section: "Slide",
     surfaces: ["cli", "palette"],
+  },
+  {
+    id: "pptx.set-shape-animation",
+    commandType: "pptx:set-shape-animation",
+    label: "Edit shape animation",
+    description: "Patch trigger / direction / duration / delay on an existing shape animation.",
+    section: "Slide",
+    surfaces: ["cli"],
   },
   {
     id: "pptx.remove-shape-animation",

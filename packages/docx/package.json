@@ -1,7 +1,6 @@
 {
   "name": "@officeai/docx",
   "version": "0.1.0",
-  "private": true,
   "description": "DOCX editor: parser, model, serializer, command handlers, agent API, ProseMirror renderer.",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,7 +25,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -38,7 +38,9 @@
   },
   "dependencies": {
     "@officeai/core": "workspace:*",
+    "@officeai/xlsx": "workspace:*",
     "docx": "^9.1.0",
+    "jszip": "^3.10.1",
     "prosemirror-commands": "^1.6.2",
     "prosemirror-keymap": "^1.2.2",
     "prosemirror-model": "^1.24.1",
@@ -49,8 +51,17 @@
   "devDependencies": {
     "@types/node": "^22",
     "jsdom": "^29.0.2",
-    "jszip": "^3.10.1",
     "typescript": "^5",
     "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/docx"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
   }
 }

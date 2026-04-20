@@ -6,10 +6,11 @@ import {
   type Mutation,
 } from "@officeai/core";
 import { allPdfHandlers } from "../commands/index.js";
-import type { PdfSnapshot } from "../model/types.js";
+import type { PdfRect, PdfSnapshot } from "../model/types.js";
 import { parsePdf, type PdfParseOptions } from "../parser/parse.js";
 import { serializePdf } from "../serializer/serialize.js";
 import { snapshotToMarkdown } from "./markdown.js";
+import { findInStructuredPage } from "../text/search.js";
 
 export interface PdfAgentOptions extends PdfParseOptions {
   readonly sessionId?: string;
@@ -46,6 +47,14 @@ export interface PdfSearchResult {
   readonly end: number;
   readonly preview: string;
   readonly match: string;
+  /**
+   * Per-line bounding boxes of the matched glyphs, in PDF
+   * user-space (origin bottom-left). Empty for matches that
+   * couldn't be projected back onto the structured layout (e.g.
+   * regex hits that span column / paragraph boundaries) — callers
+   * should treat empty as "fall back to a page-level pulse".
+   */
+  readonly rects: ReadonlyArray<PdfRect>;
 }
 
 const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
@@ -154,6 +163,26 @@ export class PdfAgent {
     const endPage = Math.min(pages.length, spec.pageRange?.end ?? pages.length);
     for (let i = startPage; i <= endPage; i++) {
       const page = pages[i - 1];
+      // Glyph-precise hits via the structured page (per-line
+      // bbox quads). Falls back transparently to the legacy
+      // string-only search when the page has no structured layer
+      // (e.g. fully scanned PDF).
+      const structuredHits = page.structured.blocks.length > 0
+        ? findInStructuredPage(page.structured, re, page.text)
+        : null;
+      if (structuredHits) {
+        for (const h of structuredHits) {
+          out.push({
+            pageNumber: i,
+            start: h.start,
+            end: h.end,
+            preview: buildPreview(page.text, h.start, h.end),
+            match: h.match,
+            rects: h.rects,
+          });
+        }
+        continue;
+      }
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(page.text)) !== null) {
@@ -165,6 +194,7 @@ export class PdfAgent {
           end: matchEnd,
           preview: buildPreview(page.text, matchStart, matchEnd),
           match: m[0],
+          rects: [],
         });
         if (m[0].length === 0) re.lastIndex++;
       }

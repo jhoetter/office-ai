@@ -21,6 +21,7 @@ function makeSheet(name: string): Sheet {
     columnWidths: new Map(),
     rowHeights: new Map(),
     hiddenRows: new Set(),
+    hiddenCols: new Set(),
     images: [],
     conditionalFormats: [],
     opaqueConditionalFormats: [],

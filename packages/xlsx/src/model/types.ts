@@ -119,7 +119,7 @@ export interface XlsxWorkbook {
    * a hard dependency on its shape outside `parser/`, `serializer/`,
    * and the Phase 5 model upgrade path.
    */
-  readonly sheetjs: import("xlsx").WorkBook;
+  readonly sheetjs: import("@e965/xlsx").WorkBook;
   /**
    * Image media keyed by `xl/media/...` part path. Sheet-level image
    * placements reference into this map via `SheetImage.mediaRef`, so
@@ -223,6 +223,31 @@ export interface Sheet {
    * default `ROW_HEIGHT`. Populated by `xlsx:set-row-height` (P11g).
    */
   readonly rowHeights: ReadonlyMap<number, number>;
+  /**
+   * 0-based column indices currently hidden via `<col hidden="1"/>`
+   * in the source `<cols>` band, mirroring {@link Sheet.hiddenRows}.
+   * The grid renders these columns at width 0 and the serializer is
+   * expected to keep them hidden through the round-trip via the
+   * captured `colsXml`. Mutating this set is not (yet) wired to a
+   * command — the field exists so opening a workbook with hidden
+   * columns doesn't surface them as full-width data on screen.
+   */
+  readonly hiddenCols: ReadonlySet<number>;
+  /**
+   * Per-sheet default column width in CSS pixels, derived from
+   * `<sheetFormatPr defaultColWidth="..."/>`. When a column has no
+   * explicit `<col>` entry and no `xlsx:set-column-width` override,
+   * the renderer falls back to this (instead of the Grid's hard-coded
+   * default) so workbooks with non-standard defaults look right at
+   * open time. `undefined` = use the renderer's built-in default.
+   */
+  readonly defaultColWidthPx?: number;
+  /**
+   * Per-sheet default row height in CSS pixels, derived from
+   * `<sheetFormatPr defaultRowHeight="..."/>`. Same fallback rules as
+   * {@link Sheet.defaultColWidthPx}.
+   */
+  readonly defaultRowHeightPx?: number;
   /**
    * AutoFilter applied to the sheet, if any. Excel allows at most one
    * `<autoFilter>` per worksheet. The header row is `range.r1`; the
@@ -330,6 +355,83 @@ export interface Sheet {
    * DrawingML chart parts ships in a follow-up.
    */
   readonly charts: ReadonlyArray<SheetChart>;
+  /**
+   * Verbatim `<hyperlinks>…</hyperlinks>` block captured from the
+   * parsed worksheet XML. SheetJS does not surface sheet-level
+   * hyperlinks, and a dirty sheet rewrite would otherwise drop the
+   * block entirely. Re-injected by the serializer when the sheet is
+   * dirty so URL / anchor hyperlinks survive every save. The matching
+   * `r:id` rels live in the sheet rels part (preserved by the rels
+   * round-trip path independently).
+   */
+  readonly hyperlinksXml?: string;
+  /**
+   * Verbatim `<tableParts>…</tableParts>` block captured from the
+   * parsed worksheet XML. We re-emit it from the typed `tables`
+   * array on dirty save so existing `<tableParts>` references
+   * survive even when SheetJS regenerates the worksheet body.
+   * Falls back to the original opaque block when typed `tables`
+   * is empty (defensive).
+   */
+  readonly tablePartsXml?: string;
+  /**
+   * Verbatim `<cols>…</cols>` block captured from the parsed
+   * worksheet XML. Re-injected on dirty save so source column
+   * widths, hidden cols, custom widths, and outline levels survive
+   * a sheet rewrite. When `Sheet.columnWidths` carries explicit
+   * overrides we still re-inject the opaque block; future passes
+   * will merge typed widths into it.
+   */
+  readonly colsXml?: string;
+  /**
+   * Verbatim `<sheetViews>…</sheetViews>` block captured from the
+   * parsed worksheet XML. Re-injected on dirty save so zoom,
+   * selection, gridline toggles, view mode, etc. all survive.
+   * When the typed `freeze` field has been mutated, the serializer
+   * surgically replaces just the `<pane>` element inside this
+   * block instead of dropping it wholesale.
+   */
+  readonly sheetViewsXml?: string;
+  /**
+   * Verbatim `<sheetProtection …/>` element captured from the
+   * parsed worksheet XML, when present. We do not author sheet
+   * protection in this milestone — the value round-trips opaquely
+   * so password-protected sheets do not silently lose protection
+   * after a non-protection edit.
+   */
+  readonly sheetProtectionXml?: string;
+  /**
+   * Verbatim `<pageMargins …/>` element. Same opaque round-trip
+   * pattern as `sheetProtectionXml`.
+   */
+  readonly pageMarginsXml?: string;
+  /**
+   * Verbatim `<pageSetup …/>` element. Page orientation, paper
+   * size, scaling, etc. — preserved opaquely.
+   */
+  readonly pageSetupXml?: string;
+  /**
+   * Verbatim `<printOptions …/>` element. Preserved opaquely.
+   */
+  readonly printOptionsXml?: string;
+  /** Verbatim `<headerFooter …>…</headerFooter>` block. */
+  readonly headerFooterXml?: string;
+  /** Verbatim `<rowBreaks …>…</rowBreaks>` block. */
+  readonly rowBreaksXml?: string;
+  /** Verbatim `<colBreaks …>…</colBreaks>` block. */
+  readonly colBreaksXml?: string;
+  /** Verbatim `<ignoredErrors …>…</ignoredErrors>` block. */
+  readonly ignoredErrorsXml?: string;
+  /** Verbatim `<legacyDrawing r:id="…"/>` element (anchors VML notes). */
+  readonly legacyDrawingXml?: string;
+  /** Verbatim `<legacyDrawingHF r:id="…"/>` element (header/footer VML). */
+  readonly legacyDrawingHFXml?: string;
+  /** Verbatim `<picture r:id="…"/>` element (background picture). */
+  readonly pictureXml?: string;
+  /** Verbatim `<oleObjects>…</oleObjects>` block. */
+  readonly oleObjectsXml?: string;
+  /** Verbatim `<controls>…</controls>` block (form controls / ActiveX). */
+  readonly controlsXml?: string;
 }
 
 /**
@@ -340,12 +442,28 @@ export interface Sheet {
 export type ChartKind = "column" | "bar" | "line" | "pie";
 
 /**
+ * Named color palettes the renderer cycles through for series.
+ *
+ * Round-trips by name (not by raw colors) so tweaking a palette's
+ * hex values later automatically flows to existing charts. `default`
+ * is the historical Office-blue lead palette; `vibrant` /
+ * `pastel` / `warm` / `cool` are theme-style alternatives, and
+ * `mono` is a single-hue ramp for clean print-style charts.
+ */
+export type ChartPalette = "default" | "vibrant" | "pastel" | "warm" | "cool" | "mono";
+
+/**
  * Free-floating chart on a worksheet (C15).
  *
  * Same anchor model as {@link SheetImage}: a from-cell + pixel
  * offset and a CSS-pixel size. The renderer reads `dataRange` out
  * of the sheet's cells at draw time so the chart auto-updates
  * when the underlying values change.
+ *
+ * All `style` fields are optional so charts authored before they
+ * existed render with the historical defaults. The renderer treats
+ * `undefined` as "use the default" (legend on, gridlines on,
+ * data labels off, palette = `"default"`).
  */
 export interface SheetChart {
   readonly id: NodeId;
@@ -358,6 +476,18 @@ export interface SheetChart {
   readonly hasCategoryColumn: boolean;
   readonly title?: string;
   readonly anchor: import("./drawings.js").ImageAnchor;
+  /** Series color theme; defaults to `"default"` when omitted. */
+  readonly palette?: ChartPalette;
+  /** Hide the legend by setting to `false`; default is shown when ≥2 series. */
+  readonly showLegend?: boolean;
+  /** When `true`, paint the value next to each bar/point/slice. Default `false`. */
+  readonly showDataLabels?: boolean;
+  /** When `false`, suppress the value-axis gridlines. Default `true`. */
+  readonly showGridlines?: boolean;
+  /** Optional value-axis label (e.g. "Revenue"). Renders along the Y for column/line, X for bar. */
+  readonly yAxisTitle?: string;
+  /** Optional category-axis label (e.g. "Quarter"). Renders along the X for column/line, Y for bar. */
+  readonly xAxisTitle?: string;
 }
 
 /**
@@ -681,6 +811,18 @@ export interface Comment {
   readonly resolved?: boolean;
   /** ISO-8601 creation timestamp; shown in the comments sidebar. */
   readonly createdAt?: string;
+  /**
+   * Verbatim `<text>…</text>` element captured from the parsed
+   * comments part. Carries the full rich-text run tree (`<r><rPr>…
+   * </rPr><t>…</t></r>`, multiple runs, embedded fonts, colors).
+   * The serializer re-emits this blob when the comment's plain
+   * `text` field is byte-identical to the flattened text in the
+   * blob — i.e., when the user hasn't actually edited the comment
+   * body. When `text` diverges, the serializer falls back to a
+   * single-run `<r><t>` for the new text and the rich formatting is
+   * (intentionally) dropped.
+   */
+  readonly textXml?: string;
 }
 
 export interface Cell {
@@ -726,6 +868,40 @@ export type CellErrorCode =
 export interface Formula {
   /** Original formula text WITHOUT the leading `=`. */
   readonly text: string;
+  /**
+   * Formula kind:
+   *  - `"normal"` (default, omitted): an ordinary per-cell formula.
+   *  - `"shared"`: one of N cells participating in a shared formula
+   *    group identified by {@link sharedIndex}. Only the master
+   *    cell carries `text`; SheetJS expands the followers' text on
+   *    parse so all cells in our typed model carry the resolved
+   *    formula. The serializer re-emits `<f t="shared" si=… ref=…>`
+   *    on the master and `<f t="shared" si=…/>` on followers so the
+   *    compact OOXML encoding is preserved.
+   *  - `"array"`: cell is part of a CSE-array (legacy `Ctrl+Shift+
+   *    Enter`) or modern dynamic-array spill. The master cell holds
+   *    the formula body; followers reference the same `ref`.
+   */
+  readonly kind?: "normal" | "shared" | "array";
+  /**
+   * Shared-formula group index from the source `<f si="…"/>` attr.
+   * Only meaningful when {@link kind} is `"shared"`.
+   */
+  readonly sharedIndex?: number;
+  /**
+   * Spill range for shared / array formulas, exactly as written in
+   * the source `<f ref="…"/>` attribute (A1 notation). Present on
+   * the master cell of the group. Followers are detected by
+   * matching {@link sharedIndex}.
+   */
+  readonly ref?: string;
+  /**
+   * True when this cell is the master of its shared / array group
+   * (the cell that carried the formula body in the source XML).
+   * Followers re-emit `<f t="shared" si=…/>` (no body) so Excel
+   * resolves them via the master.
+   */
+  readonly isMaster?: boolean;
 }
 
 export interface MergedCell {

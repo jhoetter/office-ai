@@ -74,6 +74,27 @@ describe("docx headers/footers — parser + commands", () => {
     expect(snap.dirty.headersAndFooters.size).toBe(0);
   });
 
+  it("promotes a <w:tbl> inside a header part to a typed Table block", async () => {
+    const headerWithTable = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr ${HDR_NS_ATTRS}><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2880"/><w:gridCol w:w="2880"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2880" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Left</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="2880" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:hdr>`;
+    const buf = await makeSyntheticDocx({
+      documentXml: syntheticDocXml(),
+      extra: {
+        "word/_rels/document.xml.rels": syntheticDocRels(),
+        [HEADER_PART]: headerWithTable,
+        [FOOTER_PART]: syntheticFooterXml("plain footer"),
+      },
+    });
+    const snap = await parseDocx(buf);
+    const header = snap.root.headersAndFooters.find((p) => p.kind === "header");
+    expect(header).toBeTruthy();
+    const block = header!.body[0];
+    expect(block.kind).toBe("table");
+    if (block.kind !== "table") throw new Error();
+    expect(block.rows).toHaveLength(1);
+    expect(block.rows[0]!.cells).toHaveLength(2);
+  });
+
   it("parses a real-world fixture (02-report-headers-footers.docx) and reads header/footer text", async () => {
     const buf = await readFile(FIXTURE_PATH);
     const snap = await parseDocx(buf);

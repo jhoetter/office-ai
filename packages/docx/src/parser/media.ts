@@ -1,5 +1,5 @@
 import { ooxml, sha256Hex } from "@officeai/core";
-import type { MediaPart } from "../model/types.js";
+import type { EmbeddedBinaryPart, MediaPart } from "../model/types.js";
 
 /**
  * Walk every part under `word/media/` (case-insensitively, since the OOXML
@@ -62,6 +62,28 @@ export function resolveMimeType(partPath: string, ct: ooxml.ContentTypes): strin
 
 export function isMediaPart(partPath: string): boolean {
   return partPath.toLowerCase().startsWith("word/media/");
+}
+
+/**
+ * Walk every part under `word/embeddings/` and lift it into a typed
+ * `EmbeddedBinaryPart`. Used for OLE-Excel `.xlsx` packages and any
+ * other binary embedded inside the doc package. Mirrors
+ * `parseMediaParts` but for the embeddings directory.
+ */
+export function parseEmbeddingParts(container: ooxml.OoxmlContainer): Map<string, EmbeddedBinaryPart> {
+  const out = new Map<string, EmbeddedBinaryPart>();
+  const ct = ooxml.ContentTypes.load(container);
+  for (const partPath of container.parts.keys()) {
+    if (!isEmbeddingPart(partPath)) continue;
+    const bytes = container.readBytes(partPath);
+    const contentType = resolveMimeType(partPath, ct);
+    out.set(partPath, { partPath, contentType, bytes });
+  }
+  return out;
+}
+
+export function isEmbeddingPart(partPath: string): boolean {
+  return partPath.toLowerCase().startsWith("word/embeddings/");
 }
 
 export function extensionOf(partPath: string): string {

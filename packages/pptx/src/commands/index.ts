@@ -12,11 +12,15 @@ import { duplicateShapeHandler } from "./duplicate-shape.js";
 import { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 import { duplicateSlideHandler } from "./duplicate-slide.js";
 import { formatTextHandler } from "./format-text.js";
+import { insertChartHandler } from "./insert-chart.js";
 import { insertImageHandler } from "./insert-image.js";
+import { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
+import { insertTableFromGridHandler } from "./insert-table-from-grid.js";
 import { replacePictureMediaHandler } from "./replace-picture-media.js";
 import { moveSlideHandler } from "./move-slide.js";
 import { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
 import { setPositionHandler } from "./set-position.js";
+import { setRotationHandler } from "./set-rotation.js";
 import { setSizeHandler } from "./set-size.js";
 import { setTextAnchorHandler } from "./set-text-anchor.js";
 import { setTextHandler } from "./set-text.js";
@@ -32,6 +36,7 @@ import {
   addShapeAnimationHandler,
   removeShapeAnimationHandler,
   reorderShapeAnimationsHandler,
+  setShapeAnimationHandler,
   setSlideTransitionHandler,
 } from "./animation-commands.js";
 import {
@@ -65,11 +70,15 @@ export { duplicateShapeHandler } from "./duplicate-shape.js";
 export { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 export { duplicateSlideHandler } from "./duplicate-slide.js";
 export { formatTextHandler } from "./format-text.js";
+export { insertChartHandler } from "./insert-chart.js";
 export { insertImageHandler } from "./insert-image.js";
+export { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
+export { insertTableFromGridHandler } from "./insert-table-from-grid.js";
 export { replacePictureMediaHandler } from "./replace-picture-media.js";
 export { moveSlideHandler } from "./move-slide.js";
 export { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
 export { setPositionHandler } from "./set-position.js";
+export { setRotationHandler } from "./set-rotation.js";
 export { setSizeHandler } from "./set-size.js";
 export { setTextAnchorHandler } from "./set-text-anchor.js";
 export { setTextHandler } from "./set-text.js";
@@ -85,6 +94,7 @@ export {
   addShapeAnimationHandler,
   removeShapeAnimationHandler,
   reorderShapeAnimationsHandler,
+  setShapeAnimationHandler,
   setSlideTransitionHandler,
 } from "./animation-commands.js";
 export {
@@ -112,11 +122,16 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   moveSlideHandler,
   setTextHandler,
   setPositionHandler,
+  setRotationHandler,
   setSizeHandler,
   formatTextHandler,
   setParagraphAlignmentHandler,
   setTextAnchorHandler,
+  insertChartHandler,
   insertImageHandler,
+  insertSpreadsheetHandler,
+  updateSpreadsheetHandler,
+  insertTableFromGridHandler,
   replacePictureMediaHandler,
   addTextBoxHandler,
   addShapeHandler,
@@ -138,6 +153,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setChartTypeHandler,
   setSlideTransitionHandler,
   addShapeAnimationHandler,
+  setShapeAnimationHandler,
   removeShapeAnimationHandler,
   reorderShapeAnimationsHandler,
   addConnectorHandler,

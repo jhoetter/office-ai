@@ -1,7 +1,6 @@
 {
   "name": "@officeai/xlsx",
   "version": "0.1.0",
-  "private": true,
   "description": "XLSX editor: parser, model, serializer, formula engine, command handlers, agent API, virtualized renderer.",
   "type": "module",
   "main": "./dist/index.js",
@@ -30,7 +29,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -41,6 +41,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@e965/xlsx": "^0.20.3",
     "@officeai/core": "workspace:*",
     "fast-xml-parser": "^4.5.1",
     "jszip": "^3.10.1"
@@ -48,7 +49,16 @@
   "devDependencies": {
     "@types/node": "^22",
     "typescript": "^5",
-    "vitest": "^2.1.9",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/xlsx"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
   }
 }

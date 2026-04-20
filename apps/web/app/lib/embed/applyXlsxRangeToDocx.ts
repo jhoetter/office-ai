@@ -1,13 +1,23 @@
 import type { DocxAgent } from "@officeai/docx";
 import type { XlsxClipboardSnapshot } from "@officeai/xlsx";
+import { snapshotToGrid, snapshotToChartSpec, type XlsxEmbedMode } from "./xlsxEmbedShared";
 
 /**
  * Drop an XLSX range — captured at copy time as a
- * {@link XlsxClipboardSnapshot} — into the open DOCX document as a
- * fully-typed `<w:tbl>` at `paragraphIndex`.
+ * {@link XlsxClipboardSnapshot} — into the open DOCX document.
  *
- * We deliberately go through the public command bus
- * (`docx:insert-table` + N×`docx:set-cell-content`) rather than
+ * Three modes (default `materialized`, mirrors PowerPoint's "Paste
+ * Special" submenu):
+ *   - `materialized`: typed `<w:tbl>` (via `docx:insert-table` +
+ *     N×`docx:set-cell-content`). Best fidelity; cells stay editable
+ *     as Word table cells.
+ *   - `live`: OLE-embedded `.xlsx` package (`docx:insert-spreadsheet`).
+ *     Office activates Excel on double-click; the bytes round-trip.
+ *   - `chart`: typed chart (`docx:insert-chart`) using the snapshot's
+ *     first row as series names and first column as categories. Embeds
+ *     a backing `.xlsx` workbook so "Edit Data" works in Word.
+ *
+ * We deliberately go through the public command bus rather than
  * mutating the snapshot directly so:
  *
  *   - The paste shows up in the undo stack as a single user-visible
@@ -20,7 +30,7 @@ import type { XlsxClipboardSnapshot } from "@officeai/xlsx";
  *   - The headless agent path (`packages/agent`) inherits the
  *     behaviour for free.
  *
- * Cross-format downgrades:
+ * Cross-format downgrades (`materialized` only):
  *   - Cell formulas, style ids and merge regions are not copied
  *     yet. Cells render as their `value` string; numeric values use
  *     `String(v)`. Formulas → text starting with `=`. Booleans →
@@ -33,10 +43,66 @@ export async function applyXlsxRangeToDocx(args: {
   readonly agent: DocxAgent;
   readonly snapshot: XlsxClipboardSnapshot;
   readonly paragraphIndex: number;
+  /** Default `materialized`. */
+  readonly mode?: XlsxEmbedMode;
 }): Promise<void> {
   const { agent, snapshot, paragraphIndex } = args;
+  const mode: XlsxEmbedMode = args.mode ?? "materialized";
   if (snapshot.width <= 0 || snapshot.height <= 0) return;
 
+  if (mode === "live") {
+    const result = await agent.applyCommand({
+      type: "docx:insert-spreadsheet",
+      payload: {
+        at: { paragraph: paragraphIndex, run: 0, offset: 0 },
+        data: snapshotToGrid(snapshot),
+        sheetName: snapshot.origin.sheet,
+        name: `XLSX paste ${snapshot.origin.sheet}!${snapshot.origin.range}`,
+      },
+      source: "human",
+    });
+    if (result.rejection) {
+      throw new Error(
+        `docx:insert-spreadsheet rejected: ${result.rejection.code} ${result.rejection.message ?? ""}`
+      );
+    }
+    return;
+  }
+
+  if (mode === "chart") {
+    const spec = snapshotToChartSpec(snapshot);
+    if (!spec) {
+      // Fall back to materialised when the grid can't be projected
+      // into a chart (e.g. a single column / single row of values).
+      return applyXlsxRangeToDocxAsTable(agent, snapshot, paragraphIndex);
+    }
+    const result = await agent.applyCommand({
+      type: "docx:insert-chart",
+      payload: {
+        at: { paragraph: paragraphIndex, run: 0, offset: 0 },
+        chartType: "bar",
+        categories: spec.categories,
+        series: spec.series,
+        name: `XLSX chart ${snapshot.origin.sheet}!${snapshot.origin.range}`,
+      },
+      source: "human",
+    });
+    if (result.rejection) {
+      throw new Error(
+        `docx:insert-chart rejected: ${result.rejection.code} ${result.rejection.message ?? ""}`
+      );
+    }
+    return;
+  }
+
+  return applyXlsxRangeToDocxAsTable(agent, snapshot, paragraphIndex);
+}
+
+async function applyXlsxRangeToDocxAsTable(
+  agent: DocxAgent,
+  snapshot: XlsxClipboardSnapshot,
+  paragraphIndex: number
+): Promise<void> {
   // 1) Insert the empty table at the requested paragraph index.
   //    Use a uniform 2400 twip column width (~ 1.67 inches) so the
   //    typical 3-4 column XLSX paste fits a Letter portrait body

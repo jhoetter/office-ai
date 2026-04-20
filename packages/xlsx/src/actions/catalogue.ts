@@ -427,6 +427,16 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     hidden: { reason: "Reached via chart resize handles." },
   },
   {
+    id: "xlsx.update-chart",
+    commandType: "xlsx:update-chart",
+    label: "Update chart",
+    description:
+      "Patch a chart's type, data range, header/category toggles, title, palette, legend/data-label/gridline toggles, or axis titles.",
+    section: "Insert",
+    surfaces: [],
+    hidden: { reason: "Reached via the chart toolbar / Edit chart dialog." },
+  },
+  {
     id: "xlsx.add-image",
     commandType: "xlsx:add-image",
     label: "Insert image",
@@ -751,6 +761,14 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     commandType: null,
     label: "Insert chart…",
     description: "Open the Insert Chart dialog for the current selection.",
+    section: "Insert",
+    surfaces: ["palette"],
+  },
+  {
+    id: "xlsx.edit-chart",
+    commandType: null,
+    label: "Edit chart…",
+    description: "Edit the currently selected chart's data range, type, and title.",
     section: "Insert",
     surfaces: ["palette"],
   },

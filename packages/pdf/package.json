@@ -1,7 +1,6 @@
 {
   "name": "@officeai/pdf",
   "version": "0.1.0",
-  "private": true,
   "description": "PDF editor: in-memory document model, parser (engine-delegated), incremental serializer (pdf-lib), command handlers, headless PdfAgent.",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,7 +21,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -42,5 +42,15 @@
     "@types/node": "^22",
     "typescript": "^5",
     "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/pdf"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
   }
 }

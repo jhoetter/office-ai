@@ -41,6 +41,13 @@ export interface PptxDirty {
   readonly media: ReadonlySet<string>;
   /** F3: chart parts to re-emit from the typed model rather than from container bytes. */
   readonly charts: ReadonlySet<string>;
+  /**
+   * Embedded-binary part paths (under `ppt/embeddings/`) that have
+   * been added or mutated since load. Used by `pptx:insert-spreadsheet`
+   * for OLE-Excel `.xlsx` packages; untouched embeddings ride the
+   * container's part cache.
+   */
+  readonly embeddings: ReadonlySet<string>;
   /** Per-slide-comments-part dirty set — keyed by `ppt/comments/commentN.xml`. */
   readonly comments: ReadonlySet<string>;
   /** True when `ppt/commentAuthors.xml` needs to be rebuilt. */
@@ -58,6 +65,7 @@ export const emptyDirty = (): PptxDirty => ({
   theme: new Set<string>(),
   media: new Set<string>(),
   charts: new Set<string>(),
+  embeddings: new Set<string>(),
   comments: new Set<string>(),
   commentAuthors: false,
   relationships: new Set<string>(),
@@ -128,6 +136,13 @@ export interface PptxPresentation {
    * is preserved as `OpaqueXml` inside the part.
    */
   readonly charts: ReadonlyMap<string, ChartPart>;
+  /**
+   * Embedded binary parts under `ppt/embeddings/` keyed by part path.
+   * Currently the home of OLE-Excel `.xlsx` workbooks shipped by
+   * `pptx:insert-spreadsheet`. Mirrors `media` but for embeddings;
+   * untouched parts round-trip byte-identical via the container.
+   */
+  readonly embeddings: ReadonlyMap<string, EmbeddedBinaryPart>;
   readonly presentationRootAttrs: Readonly<Record<string, string>>;
   readonly presentationOpaqueTail: ReadonlyArray<OpaqueXml>;
   /**
@@ -302,6 +317,27 @@ export interface MediaPart {
   readonly sha256: string;
 }
 
+/**
+ * Embedded binary part stored under `ppt/embeddings/`. Currently used
+ * for OLE-Excel `.xlsx` packages (`progId` = `Excel.Sheet.12`) but kept
+ * generic so future OLE binaries can ride the same map.
+ */
+export interface EmbeddedBinaryPart {
+  readonly partPath: string;
+  readonly contentType: string;
+  /**
+   * Materialised bytes. Always present for parts loaded from an
+   * existing package; absent for fresh parts authored by
+   * `pptx:insert-spreadsheet`, where the serializer builds the bytes
+   * lazily from `pendingGrid` so the command handler stays sync.
+   */
+  readonly bytes?: Uint8Array;
+  /** Source 2D grid for a freshly-authored OLE-Excel embed. */
+  readonly pendingGrid?: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
+  /** Worksheet name used when materialising `pendingGrid`. */
+  readonly pendingSheetName?: string;
+}
+
 // ─── Chart parts (F3) ─────────────────────────────────────────────────────
 
 export type ChartType = "bar" | "line" | "pie" | "area" | "unsupported";
@@ -334,6 +370,27 @@ export interface ChartPart {
   readonly plotAreaTailRaw: ReadonlyArray<OpaqueXml>;
   /** Verbatim `<c:ser>` head/tail keyed by series idx. */
   readonly seriesRaw: ReadonlyMap<number, OpaqueXml>;
+  /**
+   * Package-absolute path of the embedded `.xlsx` package backing this
+   * chart's `c:externalData`, if any. Word/PowerPoint always author one
+   * (e.g. `ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx`); we
+   * surface it so the serializer can refresh the bytes when the typed
+   * data model changes. Charts authored without an embedded workbook
+   * leave this `undefined` and the serializer mints one on first save.
+   */
+  readonly embeddingPartPath?: string;
+  /**
+   * Relationship id (relative to the chart part's `_rels/chartN.xml.rels`)
+   * pointing at the embedded workbook. Required for `<c:externalData>`.
+   * Synthesised by the serializer when missing.
+   */
+  readonly embeddingRelId?: string;
+  /**
+   * Worksheet name inside the embedded workbook the chart references in
+   * its `<c:f>` strings (e.g. `"Sheet1"` or PowerPoint's German
+   * `"Tabelle1"`). Defaults to `"Sheet1"` for newly-authored charts.
+   */
+  readonly embeddingSheetName?: string;
 }
 
 // ─── Slide ────────────────────────────────────────────────────────────────
@@ -401,26 +458,152 @@ export interface SlideTransition {
   readonly raw?: OpaqueXml;
 }
 
-export type EntranceEffect = "appear" | "fade" | "fly-in" | "wipe";
+// ─── Expanded animation gallery (F4 v2) ──────────────────────────────────
+//
+// The first iteration of F4 only modelled four entrance effects with a
+// single `<p:set>` body. PowerPoint's animation gallery covers four
+// categories — Entrance, Emphasis, Exit and Motion Paths — driven by
+// the same `<p:cTn @presetClass @presetID>` mechanism. The expanded
+// model below is a discriminated union over all four so the parser /
+// serializer / renderer can dispatch through a single registry.
+
+export type AnimationCategory = "entrance" | "emphasis" | "exit" | "motionPath";
 
 /**
- * F4: typed per-shape entrance animation. Targets a shape by `cNvPrId`
- * (which is what `<p:spTgt @spid>` references). Only the four named
- * effects are typed; anything else stays in `timingTailRaw` verbatim.
+ * Triggering behaviour of an animation step relative to its predecessor.
+ * Maps directly to OOXML `<p:par><p:cTn nodeType="…">`:
+ *   - `onClick`        → `clickEffect` (default; advances on click)
+ *   - `withPrevious`   → `withEffect` (starts simultaneously)
+ *   - `afterPrevious`  → `afterEffect` (starts when previous finishes)
  */
-export interface EntranceAnimation {
+export type AnimationTrigger = "onClick" | "withPrevious" | "afterPrevious";
+
+/**
+ * Effect direction. Mirrors PowerPoint's "Effect Options" submenu and is
+ * preset-specific: only certain presets accept directions and the set of
+ * accepted values varies (FlyIn allows all 4 cardinals, Wipe accepts
+ * `left|right|up|down`, Spin accepts the two rotational directions, …).
+ *
+ * The registry in `animation/presets.ts` declares per-preset valid
+ * directions; the UI hides the picker for presets that don't accept any.
+ */
+export type AnimationDirection =
+  | "left"
+  | "right"
+  | "up"
+  | "down"
+  | "in"
+  | "out"
+  | "horizontal"
+  | "vertical"
+  | "clockwise"
+  | "counterclockwise";
+
+export type EntrancePreset =
+  | "appear"
+  | "fade"
+  | "flyIn"
+  | "floatIn"
+  | "split"
+  | "wipe"
+  | "shape"
+  | "wheel"
+  | "randomBars"
+  | "growAndTurn"
+  | "zoom"
+  | "swivel"
+  | "bounce";
+
+export type EmphasisPreset =
+  | "pulse"
+  | "colorPulse"
+  | "teeter"
+  | "spin"
+  | "growShrink"
+  | "desaturate"
+  | "fontColor"
+  | "lineColor";
+
+export type ExitPreset =
+  | "disappear"
+  | "fade"
+  | "flyOut"
+  | "floatOut"
+  | "split"
+  | "wipe"
+  | "shape"
+  | "wheel"
+  | "zoom";
+
+export type MotionPathPreset = "line" | "arc" | "turn" | "loops" | "custom";
+
+/** Discriminated alias used by the renderer / picker. */
+export type AnimationPreset = EntrancePreset | EmphasisPreset | ExitPreset | MotionPathPreset;
+
+/**
+ * F4 v2 — typed shape animation. Replaces the earlier `EntranceAnimation`
+ * (which is now a thin alias for backward-compat). Targets a shape by
+ * `cNvPrId` (what `<p:spTgt @spid>` references). Only effects listed in
+ * the preset registry round-trip via the typed serializer; anything
+ * else is preserved through `timingTailRaw` (slide-level) or `raw`
+ * (per-animation) blob capture.
+ */
+export interface ShapeAnimation {
   readonly id: NodeId;
   readonly targetCNvPrId: number;
-  readonly effect: EntranceEffect;
-  /** `<p:cTn @dur>` in milliseconds. */
+  readonly category: AnimationCategory;
+  readonly preset: AnimationPreset;
+  /** Defaults to `"onClick"`. */
+  readonly trigger: AnimationTrigger;
+  /** Optional direction (only for direction-aware presets). */
+  readonly direction?: AnimationDirection;
+  /** `<p:cTn @dur>` in milliseconds. Defaults to per-preset value. */
   readonly durationMs?: number;
-  /** Trigger order in the main entrance sequence (0-based). */
+  /** `<p:cTn @delay>` in milliseconds. */
+  readonly delayMs?: number;
+  /** Trigger order in the main entrance/emphasis/exit sequence (0-based). */
   readonly order: number;
+  /**
+   * MotionPath only: SVG-style command string in slide-relative
+   * coordinates (origin = top-left of the bounding rect at start;
+   * 1 unit = full slide width / height). Translates to OOXML's
+   * compact path syntax (`M`, `L`, `C`, `E` for end) when emitted.
+   */
+  readonly motionPath?: string;
+  /**
+   * Captured raw `<p:par>` blob. When present, the serializer re-emits
+   * this verbatim instead of synthesising from the typed fields — used
+   * to preserve byte-perfect round-trip for animations imported from
+   * an existing PPTX. Cleared whenever the typed fields are mutated.
+   */
+  readonly raw?: OpaqueXml;
 }
+
+/**
+ * @deprecated Use `ShapeAnimation`. Retained as a structural alias so
+ * external imports of `EntranceAnimation` keep compiling. New code
+ * should import `ShapeAnimation` directly.
+ */
+export type EntranceAnimation = ShapeAnimation;
+
+/**
+ * @deprecated Use the discriminated `EntrancePreset` union. The legacy
+ * 4-value type is kept for external imports; new code should pull
+ * `EntrancePreset` from this module.
+ */
+export type EntranceEffect = "appear" | "fade" | "fly-in" | "wipe";
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-export type Shape = TextShape | Picture | TableShape | ChartShape | GroupShape | ConnectorShape | OpaqueShape;
+export type Shape =
+  | TextShape
+  | Picture
+  | TableShape
+  | ChartShape
+  | OleSpreadsheetShape
+  | GroupShape
+  | ConnectorShape
+  | OpaqueShape;
 
 export type ShapeKind = Shape["kind"];
 
@@ -456,11 +639,50 @@ export type ConnectorType = "straight" | "elbow" | "curved" | "unsupported";
 
 export type ConnectorEndShape = "none" | "arrow" | "triangle" | "oval";
 
-export type ConnectorDashStyle = "solid" | "dashed" | "dotted" | "longDash" | "dashDot";
+/**
+ * Editor-facing connector dash style. Mirrors PowerPoint's
+ * `ST_PresetLineDashVal` 1:1 so we never lose a preset on round-trip.
+ *
+ * Naming preserves the OOXML token spelling (sysDot, lgDashDotDot, …)
+ * so the parser/serializer mapping is the identity function. The
+ * legacy short names (`dashed`, `dotted`, `longDash`, `dashDot`) are
+ * retained as additional aliases for callers / fixtures that
+ * predated the full preset coverage; the serializer collapses them
+ * to their canonical OOXML form.
+ */
+export type ConnectorDashStyle =
+  | "solid"
+  | "dot"
+  | "dash"
+  | "lgDash"
+  | "dashDot"
+  | "lgDashDot"
+  | "lgDashDotDot"
+  | "sysDash"
+  | "sysDot"
+  | "sysDashDot"
+  | "sysDashDotDot"
+  // Legacy short aliases (kept for callers that predate the full enum).
+  | "dashed"
+  | "dotted"
+  | "longDash";
 
 export interface ConnectorStroke {
-  /** 6-character RRGGBB hex (no `#`). */
+  /**
+   * 6-character RRGGBB hex (no `#`). Always present so the renderer
+   * has a sensible fallback even when {@link colorTheme} drives
+   * the actual paint at render time.
+   */
   readonly color: string;
+  /**
+   * Theme color reference from `<a:schemeClr val="…"/>`. When set,
+   * the serializer emits a `<a:schemeClr>` element instead of the
+   * literal `<a:srgbClr>`, preserving theme indirection across
+   * round-trips. Common values include `accent1`…`accent6`, `tx1`,
+   * `tx2`, `bg1`, `bg2`, `dk1`, `dk2`, `lt1`, `lt2`, and
+   * `phClr`/`folHlink`/`hlink` for hyperlinks.
+   */
+  readonly colorTheme?: string;
   readonly widthEmu: number;
   /** Optional dash pattern. Defaults to "solid" when omitted. */
   readonly dash?: ConnectorDashStyle;
@@ -502,6 +724,16 @@ export interface ShapeBase {
   readonly name: string;
   readonly position?: Position;
   readonly size?: Size;
+  /**
+   * Optional rotation, in degrees, clockwise around the shape's centre.
+   * Mirrors `<a:xfrm rot="…">` (which OOXML stores in 60000ths of a
+   * degree). `undefined` and `0` are equivalent — the renderer skips
+   * the rotation transform in both cases and the serializer omits the
+   * attribute, matching what PowerPoint emits for an unrotated shape.
+   * Values are normalised to `[0, 360)` on commit but the renderer
+   * accepts any finite number.
+   */
+  readonly rotation?: number;
 }
 
 export interface Position {
@@ -589,6 +821,45 @@ export interface ChartShape extends ShapeBase {
   readonly graphicDataUri: string;
 }
 
+/**
+ * `<p:graphicFrame>` whose `<a:graphicData>` hosts a `<p:oleObj>` with
+ * `progId` matching `Excel.Sheet.*` (typically `Excel.Sheet.12`).
+ *
+ * This is the "live" Excel embed: double-click in PowerPoint pops the
+ * embedded `.xlsx` open in Excel for editing. We type just enough of
+ * the frame to (a) detect the embed, (b) keep the embedded workbook
+ * + preview image rels round-trippable, and (c) author fresh embeds
+ * via `pptx:insert-spreadsheet`. Everything else (the original `<p:pic>`
+ * preview subtree, `<p:embed>` flags, OLE follow content) is captured
+ * opaquely so existing files survive byte-identical no-touch saves.
+ */
+export interface OleSpreadsheetShape extends ShapeBase {
+  readonly kind: "ole-spreadsheet";
+  /** `<p:oleObj r:id>` — relationship id pointing at the embedded part. */
+  readonly oleRelId: string;
+  /** Resolved package-absolute path of the embedded `.xlsx` (or `.bin`). */
+  readonly embeddingPartPath: string;
+  /** `<p:oleObj progId>` — e.g. `Excel.Sheet.12`. */
+  readonly progId: string;
+  /** Embedded part kind: `xlsx` (true Excel package) or `bin` (legacy CFB). */
+  readonly embeddingKind: "xlsx" | "bin";
+  /** `<p:pic>` preview image rel (absolute media path), if known. */
+  readonly previewMediaRelId?: string;
+  readonly previewMediaPartPath?: string;
+  /** Captured `<p:oleObj>` attribute bag (spid, name, imgW, imgH, …). */
+  readonly oleObjAttrs: Readonly<Record<string, string>>;
+  /**
+   * Raw `<p:oleObj>` child subtree (`<p:embed>`, `<p:link>`, `<p:pic>`,
+   * follow content). Preserved verbatim so untouched files round-trip
+   * byte-identically.
+   */
+  readonly oleObjChildrenRaw: ReadonlyArray<OpaqueXml>;
+  /** `<p:nvGraphicFramePr>` tail (sans `<p:cNvPr>`). Verbatim. */
+  readonly nvGraphicFramePrTail: ReadonlyArray<OpaqueXml>;
+  /** `<a:graphicData @uri>`. Always the OLE uri for an OleSpreadsheetShape. */
+  readonly graphicDataUri: string;
+}
+
 export interface GroupShape extends ShapeBase {
   readonly kind: "group";
   /** Captured <a:chOff>+<a:chExt> slice for verbatim re-emit. */
@@ -642,6 +913,33 @@ export interface TextRunProperties {
   readonly strike?: boolean;
   readonly fontSizeHundredths?: number;
   readonly fontFamily?: string;
+  /**
+   * East Asian typeface from `<a:ea typeface="…"/>`. Required for
+   * CJK presentations. Editing {@link fontFamily} preserves this
+   * slot — Asian glyphs continue to render in their dedicated face.
+   */
+  readonly fontFamilyEastAsia?: string;
+  /**
+   * Complex-script typeface from `<a:cs typeface="…"/>` (Arabic,
+   * Hebrew, Indic, etc.).
+   */
+  readonly fontFamilyComplexScript?: string;
+  /**
+   * Symbol typeface from `<a:sym typeface="…"/>`. Used for special
+   * glyph maps (Wingdings-class fonts).
+   */
+  readonly fontFamilySymbol?: string;
+  /**
+   * Theme reference for the Latin face. Carried verbatim — the
+   * canonical PowerPoint values are `+mj-lt` (major Latin) and
+   * `+mn-lt` (minor Latin); we don't validate so unknown values
+   * round-trip too.
+   */
+  readonly fontFamilyLatinTheme?: string;
+  /** Theme reference for the East Asian face (`+mj-ea` / `+mn-ea`). */
+  readonly fontFamilyEastAsiaTheme?: string;
+  /** Theme reference for the complex-script face (`+mj-cs` / `+mn-cs`). */
+  readonly fontFamilyComplexScriptTheme?: string;
   readonly color?: string;
   /**
    * Character highlight (background colour behind glyphs). Stored as

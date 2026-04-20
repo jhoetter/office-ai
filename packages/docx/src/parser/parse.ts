@@ -3,15 +3,18 @@ import type {
   BlockNode,
   CommentRangeEnd,
   CommentRangeStart,
+  CommentReference,
   DocxComment,
   DocxDirtyFlags,
   DocxDocument,
   DocxSnapshot,
+  EmbeddedSpreadsheet,
   HeaderFooterPart,
   Hyperlink,
   InlineNode,
   OpaqueBlock,
   OpaqueInline,
+  PageNumberFieldLeaf,
   Paragraph,
   ParagraphProperties,
   RevisionWrapper,
@@ -23,8 +26,9 @@ import type {
 } from "../model/types.js";
 import { DocxParseError } from "./errors.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
+import { parseChartParts } from "./charts.js";
 import { parseDrawing } from "./images.js";
-import { parseMediaParts } from "./media.js";
+import { parseEmbeddingParts, parseMediaParts } from "./media.js";
 import { parseNumberingPart } from "./numbering.js";
 import { parseRelationshipsParts } from "./relationships.js";
 import { parseSectionProperties } from "./sections.js";
@@ -43,6 +47,25 @@ import {
 export interface ParseOptions {
   readonly idMinter?: IdMinter;
 }
+
+/**
+ * Resolver passed to `parseDrawing` so chart drawings get promoted
+ * from `OpaqueDrawing` to the typed `ChartDrawing` shape. Set by
+ * `parseDocx` once relationships have been parsed; cleared at the
+ * end so re-entrant parses don't bleed state. We thread it through
+ * a module-private slot rather than every parse signature because
+ * the resolver is needed only inside the run-child parser, several
+ * call levels deep.
+ */
+let currentChartResolver: ((relId: string) => string | undefined) | undefined;
+/**
+ * Generic relationship resolver scoped to the active main-document
+ * parse. Lets `parseRunChild` look up arbitrary `r:id` targets (OLE
+ * embeds, image preview blips, …) without threading the relationship
+ * list through every intermediate function. Mirrors the chart resolver
+ * pattern; cleared in the same `finally` block.
+ */
+let currentDocRelResolver: ((relId: string) => string | undefined) | undefined;
 
 const MAIN_PART = "word/document.xml";
 const COMMENTS_PART = "word/comments.xml";
@@ -125,20 +148,46 @@ export async function parseDocx(
     throw new DocxParseError("missing-body", "Missing <w:body> in document", { partPath: MAIN_PART });
   }
 
-  const body = parseBody(bodyEntry, mintNodeId);
+  // Parse relationships + chart parts FIRST so the body parser can
+  // promote `<w:drawing>` chart references to typed `ChartDrawing`
+  // leaves via the module-private resolver.
+  const relationships = parseRelationshipsParts(container);
+  const charts = parseChartParts(container, relationships, mintNodeId);
+  const docRels = relationships.get("word/document.xml") ?? [];
+  const chartByRelId = new Map<string, string>();
+  for (const r of docRels) {
+    if (r.type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart") {
+      chartByRelId.set(r.id, resolveDocPath(r.target));
+    }
+  }
+  currentChartResolver = (relId: string) => chartByRelId.get(relId);
+  const docRelTargets = new Map<string, string>();
+  for (const r of docRels) docRelTargets.set(r.id, resolveDocPath(r.target));
+  currentDocRelResolver = (relId: string) => docRelTargets.get(relId);
+
+  let body: BlockNode[];
+  let headersAndFooters: HeaderFooterPart[];
+  try {
+    body = parseBody(bodyEntry, mintNodeId);
+    const headerFooterRefs = discoverHeaderFooterRefs(container, documentTree);
+    headersAndFooters = parseHeaderFooterParts(
+      container,
+      headerFooterRefs,
+      mintNodeId,
+      parseParagraph,
+      (entry, mint) => parseTableTyped(entry, mint, parseParagraph)
+    );
+  } finally {
+    currentChartResolver = undefined;
+    currentDocRelResolver = undefined;
+  }
+
   const baseComments = parseComments(container, mintNodeId);
   const extended = parseCommentsExtended(container);
   const comments = applyCommentsExtended(baseComments, extended);
-  const headerFooterRefs = discoverHeaderFooterRefs(container, documentTree);
-  const headersAndFooters: HeaderFooterPart[] = parseHeaderFooterParts(
-    container,
-    headerFooterRefs,
-    mintNodeId,
-    parseParagraph
-  );
 
   const media = parseMediaParts(container);
-  const relationships = parseRelationshipsParts(container);
+  const embeddings = parseEmbeddingParts(container);
   const numbering = parseNumberingPart(container);
   const styles = parseStylesPart(container);
   const theme = parseThemePart(container);
@@ -150,6 +199,8 @@ export async function parseDocx(
     headersAndFooters,
     media,
     relationships,
+    charts,
+    embeddings,
     ...(numbering ? { numbering } : {}),
     ...(styles ? { styles } : {}),
     ...(theme ? { theme } : {}),
@@ -172,6 +223,8 @@ export async function parseDocx(
     relationships: new Set<string>(),
     numbering: false,
     styles: false,
+    charts: new Set<string>(),
+    embeddings: new Set<string>(),
   };
 
   return {
@@ -182,6 +235,26 @@ export async function parseDocx(
     container,
     dirty,
   };
+}
+
+/**
+ * Resolve a relationship `target` declared in `word/_rels/document.xml.rels`
+ * (which is relative to `word/`) into a full part path under the OOXML
+ * package, with no leading slash.
+ */
+function resolveDocPath(target: string): string {
+  if (target.startsWith("/")) return target.slice(1);
+  const segments = ("word/" + target).split("/");
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      out.pop();
+      continue;
+    }
+    out.push(seg);
+  }
+  return out.join("/");
 }
 
 function readDocRootAttrs(docEntry: Record<string, unknown>): Record<string, string> {
@@ -551,8 +624,11 @@ export function parseParagraphProperties(entry: Record<string, unknown>): Paragr
 function parseInline(entry: Record<string, unknown>, mintNodeId: IdMinter): InlineNode {
   const tag = ooxml.getTag(entry);
   switch (tag) {
-    case "w:r":
+    case "w:r": {
+      const promoted = tryParseRunAsCommentReference(entry, mintNodeId);
+      if (promoted) return promoted;
       return parseRun(entry, mintNodeId);
+    }
     case "w:hyperlink":
       return parseHyperlink(entry, mintNodeId);
     case "w:ins":
@@ -570,9 +646,110 @@ function parseInline(entry: Record<string, unknown>, mintNodeId: IdMinter): Inli
         id: mintNodeId(),
         commentId: attrOf(entry, "w:id") ?? "",
       } satisfies CommentRangeEnd;
+    case "w:fldSimple": {
+      const promoted = tryParseFldSimpleAsPageNumber(entry, mintNodeId);
+      if (promoted) return promoted;
+      return parseOpaqueInline(entry, mintNodeId);
+    }
     default:
       return parseOpaqueInline(entry, mintNodeId);
   }
+}
+
+/**
+ * Promote `<w:fldSimple w:instr=" PAGE \\* MERGEFORMAT "><w:r>…</w:r></w:fldSimple>`
+ * (and the equivalent `NUMPAGES` form) into a typed {@link Run}
+ * carrying a single {@link PageNumberFieldLeaf}.
+ *
+ * Only the simple PAGE / NUMPAGES forms are promoted — anything
+ * else (TOC, REF, MERGEFIELD, …) keeps the existing opaque-inline
+ * round-trip path, which is byte-stable.
+ *
+ * The serializer (`serializeRunOrFieldWrapper`) already reverses
+ * this promotion: a `Run` whose only child is a
+ * `PageNumberFieldLeaf` re-emits as a `<w:fldSimple>` wrapper, so
+ * the parse → serialize → parse cycle stays loss-free.
+ */
+function tryParseFldSimpleAsPageNumber(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter
+): Run | null {
+  const instrRaw = attrOf(entry, "w:instr");
+  if (!instrRaw) return null;
+  const field = detectPageNumberField(instrRaw);
+  if (!field) return null;
+  const children = (entry["w:fldSimple"] as unknown[] | undefined) ?? [];
+  const innerRun = findElementEntry(children, "w:r");
+  let runProps: RunProperties = {};
+  let cachedText: string | undefined;
+  if (innerRun) {
+    const runChildren = (innerRun["w:r"] as unknown[] | undefined) ?? [];
+    const rPr = findElementEntry(runChildren, "w:rPr");
+    if (rPr) runProps = parseRunProperties(rPr);
+    for (const c of elementEntries(runChildren)) {
+      if (ooxml.getTag(c) === "w:t") {
+        const v = (c["w:t"] as unknown[] | undefined) ?? [];
+        const txt = v
+          .map((n) => (typeof n === "object" && n && "#text" in n ? String((n as { "#text": unknown })["#text"] ?? "") : ""))
+          .join("");
+        if (txt.length > 0) cachedText = txt;
+      }
+    }
+  }
+  const leaf: PageNumberFieldLeaf = {
+    kind: "page-number-field",
+    id: mintNodeId(),
+    field,
+    instr: instrRaw,
+    ...(cachedText !== undefined ? { cachedText } : {}),
+  };
+  return {
+    kind: "run",
+    id: mintNodeId(),
+    properties: runProps,
+    children: [leaf],
+  };
+}
+
+/**
+ * Promote `<w:r><w:commentReference w:id="N"/></w:r>` into the
+ * typed {@link CommentReference} inline node. The serializer
+ * (`serializeInline`) inverses this by re-emitting the
+ * `<w:r>` wrapper. We only promote when the run contains exactly
+ * the comment-reference element (no `<w:rPr>` properties, no
+ * sibling text/breaks/etc.) so that authored runs that legitimately
+ * mix a reference with other run content stay opaque.
+ */
+function tryParseRunAsCommentReference(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter
+): CommentReference | null {
+  const children = (entry["w:r"] as unknown[] | undefined) ?? [];
+  const elementChildren = elementEntries(children);
+  if (elementChildren.length !== 1) return null;
+  const only = elementChildren[0]!;
+  if (ooxml.getTag(only) !== "w:commentReference") return null;
+  const commentId = attrOf(only, "w:id");
+  if (commentId === undefined) return null;
+  return {
+    kind: "comment-reference",
+    id: mintNodeId(),
+    commentId,
+  };
+}
+
+/**
+ * Recognise the field instruction string used by `<w:fldSimple>`.
+ * Word writes the instruction with surrounding spaces and an
+ * optional `\* MERGEFORMAT` (or other) switch — we tokenise and
+ * return the canonical name when it matches a supported field.
+ */
+function detectPageNumberField(instr: string): "PAGE" | "NUMPAGES" | null {
+  const tokens = instr.trim().split(/\s+/);
+  const head = tokens[0]?.toUpperCase();
+  if (head === "PAGE") return "PAGE";
+  if (head === "NUMPAGES") return "NUMPAGES";
+  return null;
 }
 
 function parseRun(entry: Record<string, unknown>, mintNodeId: IdMinter): Run {
@@ -615,6 +792,12 @@ export function parseRunProperties(entry: Record<string, unknown>): RunPropertie
       case "w:rFonts": {
         const ascii = attrOf(c, "w:ascii");
         if (ascii) props.fontFamily = ascii;
+        const hAnsi = attrOf(c, "w:hAnsi");
+        if (hAnsi) props.fontFamilyHAnsi = hAnsi;
+        const eastAsia = attrOf(c, "w:eastAsia");
+        if (eastAsia) props.fontFamilyEastAsia = eastAsia;
+        const cs = attrOf(c, "w:cs");
+        if (cs) props.fontFamilyComplexScript = cs;
         // Theme refs are projected into typed fields so the cascade
         // resolver can consult them. The raw element is still pushed
         // into `opaqueProps` for byte-identical round-trip — the
@@ -626,6 +809,10 @@ export function parseRunProperties(entry: Record<string, unknown>): RunPropertie
         if (asciiTheme) props.fontFamilyAsciiTheme = asciiTheme;
         const hAnsiTheme = attrOf(c, "w:hAnsiTheme");
         if (hAnsiTheme) props.fontFamilyHAnsiTheme = hAnsiTheme;
+        const eastAsiaTheme = attrOf(c, "w:eastAsiaTheme");
+        if (eastAsiaTheme) props.fontFamilyEastAsiaTheme = eastAsiaTheme;
+        const csTheme = attrOf(c, "w:cstheme");
+        if (csTheme) props.fontFamilyComplexScriptTheme = csTheme;
         opaqueProps.push(captureOpaque(c));
         break;
       }
@@ -680,10 +867,92 @@ function parseRunChild(entry: Record<string, unknown>, mintNodeId: IdMinter): Ru
     case "w:tab":
       return { kind: "tab", id: mintNodeId() };
     case "w:drawing":
-      return parseDrawing(entry, mintNodeId);
+      return parseDrawing(entry, mintNodeId, currentChartResolver);
+    case "w:object": {
+      const ole = parseEmbeddedSpreadsheet(entry, mintNodeId, currentDocRelResolver);
+      if (ole) return ole;
+      return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };
+    }
     default:
       return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };
   }
+}
+
+/**
+ * Try to recognise a `<w:object>` run-child as an OLE-embedded
+ * Excel.Sheet workbook. Drills into both the simple form
+ * (`<w:object><o:OLEObject .../></w:object>`) and the
+ * `<mc:AlternateContent>` wrapper modern Word emits. Returns `null`
+ * for non-Excel OLE objects (Word, PowerPoint, generic CFB blobs)
+ * so the caller falls back to opaque preservation.
+ */
+function parseEmbeddedSpreadsheet(
+  entry: Record<string, unknown>,
+  mintNodeId: IdMinter,
+  resolveRel: ((relId: string) => string | undefined) | undefined
+): EmbeddedSpreadsheet | null {
+  if (!resolveRel) return null;
+  const objectChildren = (entry["w:object"] as unknown[] | undefined) ?? [];
+  let oleEntry = findElementEntry(objectChildren, "o:OLEObject");
+  if (!oleEntry) {
+    const ac = findElementEntry(objectChildren, "mc:AlternateContent");
+    if (ac) {
+      const choice =
+        findElementEntry((ac["mc:AlternateContent"] as unknown[] | undefined) ?? [], "mc:Choice") ??
+        findElementEntry((ac["mc:AlternateContent"] as unknown[] | undefined) ?? [], "mc:Fallback");
+      if (choice) {
+        const innerChildren = (choice[ooxml.getTag(choice)] as unknown[] | undefined) ?? [];
+        oleEntry = findElementEntry(innerChildren, "o:OLEObject");
+      }
+    }
+  }
+  if (!oleEntry) return null;
+  const oleAttrs: Record<string, string> = {};
+  const oleAttrBag = oleEntry[":@"];
+  if (oleAttrBag && typeof oleAttrBag === "object") {
+    for (const [k, v] of Object.entries(oleAttrBag as Record<string, unknown>)) {
+      const name = k.startsWith("@_") ? k.slice(2) : k;
+      oleAttrs[name] = String(v);
+    }
+  }
+  const progId = oleAttrs["ProgID"] ?? "";
+  if (!progId.startsWith("Excel.Sheet")) return null;
+  const oleRelId = oleAttrs["r:id"] ?? "";
+  if (!oleRelId) return null;
+  const embeddingPartPath = resolveRel(oleRelId);
+  if (!embeddingPartPath) return null;
+  const embeddingKind: "xlsx" | "bin" = embeddingPartPath.toLowerCase().endsWith(".xlsx")
+    ? "xlsx"
+    : "bin";
+
+  // Optional VML preview: <v:shape><v:imagedata r:id="rIdImage" .../>.
+  let previewImageRelId: string | undefined;
+  let previewImagePartPath: string | undefined;
+  for (const c of elementEntries(objectChildren)) {
+    if (ooxml.getTag(c) !== "v:shape") continue;
+    const shapeChildren = (c["v:shape"] as unknown[] | undefined) ?? [];
+    const imagedata = findElementEntry(shapeChildren, "v:imagedata");
+    if (!imagedata) continue;
+    const rid = attrOf(imagedata, "r:id");
+    if (rid) {
+      previewImageRelId = rid;
+      previewImagePartPath = resolveRel(rid);
+    }
+    break;
+  }
+
+  return {
+    kind: "embedded-spreadsheet",
+    id: mintNodeId(),
+    oleRelId,
+    embeddingPartPath,
+    progId,
+    embeddingKind,
+    ...(previewImageRelId ? { previewImageRelId } : {}),
+    ...(previewImagePartPath ? { previewImagePartPath } : {}),
+    oleObjectAttrs: oleAttrs,
+    raw: captureOpaque(entry),
+  };
 }
 
 function parseHyperlink(entry: Record<string, unknown>, mintNodeId: IdMinter): Hyperlink {

@@ -1,14 +1,14 @@
 {
   "name": "@officeai/pdf-annotations",
   "version": "0.1.0",
-  "private": true,
   "description": "Typed annotation model + AP-stream writer + FDF/XFDF I/O for PDFs.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -25,5 +25,15 @@
     "@types/node": "^22",
     "typescript": "^5",
     "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/pdf-annotations"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
   }
 }

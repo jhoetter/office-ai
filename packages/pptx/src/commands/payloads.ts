@@ -196,6 +196,26 @@ export interface SetSizePayload {
   readonly height: number;
 }
 
+/**
+ * Set a shape's rotation, in degrees clockwise around its (axis-aligned,
+ * pre-rotation) bounding-box centre. The handler normalises the value
+ * into `[0, 360)` and clears the OOXML `rot` attribute when the result
+ * is `0`, so the saved file matches PowerPoint's "no rotation" form.
+ *
+ * Connectors and groups silently ignore rotation today — both already
+ * encode orientation through other means (`flipH`/`flipV` + endpoint
+ * coords, child transforms) and rotating their wrapper would desync
+ * with how PowerPoint reads them back. The handler returns
+ * `not-applicable` rather than silently no-oping so the caller can
+ * report the skipped shape ids.
+ */
+export interface SetRotationPayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  /** Degrees clockwise. Any finite number; normalised to `[0, 360)`. */
+  readonly degrees: number;
+}
+
 // ─── P1 payloads ──────────────────────────────────────────────────────────
 
 export interface FormatTextPayload {
@@ -590,13 +610,70 @@ export interface SetSlideTransitionPayload {
   readonly speed?: "slow" | "med" | "fast";
 }
 
+export type AnimationCategoryPayload = "entrance" | "emphasis" | "exit" | "motionPath";
+
+export type AnimationTriggerPayload = "onClick" | "withPrevious" | "afterPrevious";
+
+export type AnimationDirectionPayload =
+  | "left"
+  | "right"
+  | "up"
+  | "down"
+  | "in"
+  | "out"
+  | "horizontal"
+  | "vertical"
+  | "clockwise"
+  | "counterclockwise";
+
+/**
+ * Add an animation to a shape. The discriminated `(category, preset)`
+ * pair selects an entry from the `ANIMATION_PRESETS` registry; everything
+ * else (trigger / direction / duration / delay / motionPath) is patched
+ * into the typed model. Legacy `effect` is still accepted for backward
+ * compatibility with the original 4-entrance-effect API.
+ */
 export interface AddShapeAnimationPayload {
   readonly slideIndex: number;
   readonly shapeId: NodeId;
-  readonly effect: "appear" | "fade" | "fly-in" | "wipe";
-  /** Insert position in the main entrance sequence. Defaults to append. */
-  readonly at?: number;
+  readonly category?: AnimationCategoryPayload;
+  /** Preset key from the registry (e.g. `"flyIn"`, `"spin"`, `"fade"`). */
+  readonly preset?: string;
+  /**
+   * Backward-compatible legacy alias. When neither `category` nor
+   * `preset` is supplied, this picks an entrance preset:
+   *   "appear"  → entrance.appear
+   *   "fade"    → entrance.fade
+   *   "fly-in"  → entrance.flyIn
+   *   "wipe"    → entrance.wipe
+   */
+  readonly effect?: "appear" | "fade" | "fly-in" | "wipe";
+  /** Defaults to `"onClick"`. */
+  readonly trigger?: AnimationTriggerPayload;
+  readonly direction?: AnimationDirectionPayload;
   readonly durationMs?: number;
+  readonly delayMs?: number;
+  /** MotionPath only — SVG-style command string in slide-relative units. */
+  readonly motionPath?: string;
+  /** Insert position in the main sequence. Defaults to append. */
+  readonly at?: number;
+}
+
+/**
+ * Patch an existing animation in place. Every non-id field is optional
+ * — a partial update preserves untouched values. Setting a field to
+ * `null` clears it (useful for `direction` / `delayMs` / `motionPath`).
+ */
+export interface SetShapeAnimationPayload {
+  readonly slideIndex: number;
+  readonly animationId: NodeId;
+  readonly category?: AnimationCategoryPayload;
+  readonly preset?: string;
+  readonly trigger?: AnimationTriggerPayload;
+  readonly direction?: AnimationDirectionPayload | null;
+  readonly durationMs?: number | null;
+  readonly delayMs?: number | null;
+  readonly motionPath?: string | null;
 }
 
 export interface RemoveShapeAnimationPayload {
@@ -645,6 +722,7 @@ export const PPTX_COMMAND_TYPES = {
   setChartType: "pptx:set-chart-type",
   setSlideTransition: "pptx:set-slide-transition",
   addShapeAnimation: "pptx:add-shape-animation",
+  setShapeAnimation: "pptx:set-shape-animation",
   removeShapeAnimation: "pptx:remove-shape-animation",
   reorderShapeAnimations: "pptx:reorder-shape-animations",
   addConnector: "pptx:add-connector",
@@ -660,6 +738,90 @@ export const PPTX_COMMAND_TYPES = {
   resolveComment: "pptx:resolve-comment",
   deleteComment: "pptx:delete-comment",
   editComment: "pptx:edit-comment",
+  insertSpreadsheet: "pptx:insert-spreadsheet",
+  updateSpreadsheet: "pptx:update-spreadsheet",
+  insertChart: "pptx:insert-chart",
+  insertTableFromGrid: "pptx:insert-table",
 } as const;
+
+/**
+ * Insert an OLE-embedded Excel spreadsheet onto a slide. The handler
+ * builds an `OleSpreadsheetShape` carrying both the typed metadata
+ * (rel ids, embedding part path, progId) and a `pendingGrid` on the
+ * embedded part so the serializer materialises the live `.xlsx`
+ * package — Office activates Excel on double-click of the resulting
+ * shape.
+ */
+export interface PptxInsertSpreadsheetPayload {
+  readonly slideIndex: number;
+  /** Slide-coord position in EMUs. */
+  readonly x: number;
+  readonly y: number;
+  /** Display size in EMUs. Defaults to a small ~3 inch box. */
+  readonly cx?: number;
+  readonly cy?: number;
+  /** 2D grid; same semantics as DOCX's `docx:insert-spreadsheet`. */
+  readonly data: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
+  readonly sheetName?: string;
+  readonly name?: string;
+}
+
+/**
+ * Replace the bytes of an existing PPTX OLE-embedded spreadsheet.
+ * Mirrors `docx:update-spreadsheet`; used by the editor's
+ * double-click → edit → save flow.
+ */
+export interface PptxUpdateSpreadsheetPayload {
+  readonly embeddingPartPath: string;
+  readonly bytes: Uint8Array;
+  readonly previewGrid?: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
+}
+
+/**
+ * Author a brand-new chart on a slide. Mirrors `docx:insert-chart`:
+ * the handler builds a typed `ChartPart` (categories + series +
+ * chart type + optional title) plus the `ChartShape` graphic frame on
+ * the targeted slide. The serializer then materialises the embedded
+ * `.xlsx` workbook the chart references via `<c:externalData>`, so
+ * Office's "Edit Data" round-trips against real workbook bytes.
+ */
+export interface PptxInsertChartPayload {
+  readonly slideIndex: number;
+  /** Slide-coord position in EMUs. */
+  readonly x: number;
+  readonly y: number;
+  /** Display size in EMUs. Defaults to ~5×3.75 inches. */
+  readonly cx?: number;
+  readonly cy?: number;
+  readonly chartType: "bar" | "line" | "pie" | "area";
+  readonly title?: string;
+  readonly categories: ReadonlyArray<string>;
+  readonly series: ReadonlyArray<{
+    readonly name?: string;
+    readonly values: ReadonlyArray<number>;
+  }>;
+  readonly sheetName?: string;
+  readonly name?: string;
+}
+
+/**
+ * Author a real `TableShape` on a slide from a 2D grid. Used when the
+ * user pastes / drops a range from xlsx and wants a native PowerPoint
+ * table (not a text box, not an OLE object). The handler synthesizes
+ * row/cell nodes and equally distributes width/height across the
+ * provided `cx`/`cy` when explicit `columnWidthsEmu`/`rowHeightsEmu`
+ * are not supplied.
+ */
+export interface PptxInsertTableFromGridPayload {
+  readonly slideIndex: number;
+  readonly x: number;
+  readonly y: number;
+  readonly cx?: number;
+  readonly cy?: number;
+  readonly data: ReadonlyArray<ReadonlyArray<string | number | null | undefined>>;
+  readonly columnWidthsEmu?: ReadonlyArray<number>;
+  readonly rowHeightsEmu?: ReadonlyArray<number>;
+  readonly name?: string;
+}
 
 export type PptxCommandType = (typeof PPTX_COMMAND_TYPES)[keyof typeof PPTX_COMMAND_TYPES];

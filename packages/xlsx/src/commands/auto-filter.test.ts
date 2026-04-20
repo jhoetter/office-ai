@@ -37,6 +37,7 @@ function makeSheet(
     columnWidths: new Map(),
     rowHeights: new Map(),
     hiddenRows: new Set(),
+    hiddenCols: new Set(),
     images: [],
     conditionalFormats: [],
     opaqueConditionalFormats: [],

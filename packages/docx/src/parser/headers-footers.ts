@@ -82,15 +82,18 @@ export function discoverHeaderFooterRefs(
  * carriers. `parseParagraph` is injected (rather than imported) to avoid an
  * import cycle with `parse.ts`.
  */
+export type ParseTableFn = (entry: Record<string, unknown>, mintNodeId: IdMinter) => BlockNode;
+
 export function parseHeaderFooterParts(
   container: ooxml.OoxmlContainer,
   refs: ReadonlyArray<DiscoveredRef>,
   mintNodeId: IdMinter,
-  parseParagraph: (entry: Record<string, unknown>, mintNodeId: IdMinter) => BlockNode
+  parseParagraph: (entry: Record<string, unknown>, mintNodeId: IdMinter) => BlockNode,
+  parseTable?: ParseTableFn
 ): HeaderFooterPart[] {
   const out: HeaderFooterPart[] = [];
   for (const ref of refs) {
-    out.push(parseHeaderFooterPart(container, ref, mintNodeId, parseParagraph));
+    out.push(parseHeaderFooterPart(container, ref, mintNodeId, parseParagraph, parseTable));
   }
   return out;
 }
@@ -99,7 +102,8 @@ function parseHeaderFooterPart(
   container: ooxml.OoxmlContainer,
   ref: DiscoveredRef,
   mintNodeId: IdMinter,
-  parseParagraph: (entry: Record<string, unknown>, mintNodeId: IdMinter) => BlockNode
+  parseParagraph: (entry: Record<string, unknown>, mintNodeId: IdMinter) => BlockNode,
+  parseTable: ParseTableFn | undefined
 ): HeaderFooterPart {
   const xml = container.readText(ref.partPath);
   let tree: unknown;
@@ -129,10 +133,16 @@ function parseHeaderFooterPart(
     const tag = ooxml.getTag(c);
     if (tag === "w:p") {
       body.push(parseParagraph(c, mintNodeId));
+    } else if (tag === "w:tbl" && parseTable) {
+      // Header/footer tables are now promoted to the same typed Table
+      // model as body tables so the renderer + agent diff path stay
+      // uniform. The default fallback to opaque-block remains as a
+      // safety net when the typed parser isn't injected.
+      body.push(parseTable(c, mintNodeId));
     } else {
-      // Tables / SDT / opaque elements stay verbatim — typed table mutation
-      // ships in W7. Unknown elements likewise become opaque blocks per the
-      // body parser's defensive contract.
+      // SDT / opaque elements stay verbatim — typed SDT mutation
+      // is out of scope. Unknown elements likewise become opaque
+      // blocks per the body parser's defensive contract.
       body.push({ kind: "opaque-block", id: mintNodeId(), raw: captureOpaque(c) });
     }
   }

@@ -122,6 +122,8 @@ describe("resolveEffectiveRpr cascade", () => {
         headersAndFooters: [],
         media: new Map(),
         relationships: new Map(),
+        charts: new Map(),
+        embeddings: new Map(),
         documentRootAttrs: {},
       },
       partHashes: {},

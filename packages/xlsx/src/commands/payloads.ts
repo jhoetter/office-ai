@@ -620,6 +620,16 @@ export interface AddChartPayload {
   readonly title?: string;
   /** Optional explicit anchor; auto-derived from `dataRange` when omitted. */
   readonly anchor?: import("../model/drawings.js").ImageAnchor;
+  /** Series color theme. Defaults to `"default"` when omitted. */
+  readonly palette?: import("../model/types.js").ChartPalette;
+  /** Default `true`. */
+  readonly showLegend?: boolean;
+  /** Default `false`. */
+  readonly showDataLabels?: boolean;
+  /** Default `true`. */
+  readonly showGridlines?: boolean;
+  readonly xAxisTitle?: string;
+  readonly yAxisTitle?: string;
 }
 
 /** `xlsx:remove-chart` — drop a chart from a sheet. */
@@ -644,4 +654,41 @@ export interface ResizeChartPayload {
   readonly chartId: string;
   readonly widthPx: number;
   readonly heightPx: number;
+}
+
+/**
+ * `xlsx:update-chart` — patch a chart's typed properties in place.
+ *
+ * Every field is optional; only provided fields are written. `title`
+ * uses an explicit `null` to mean "remove the title" (vs. `undefined`
+ * = "leave alone") because the model uses an optional string. At least
+ * one mutable property must be supplied or the handler rejects the
+ * command — silent no-ops are the agent equivalent of a typo.
+ *
+ * Position / size are deliberately routed through the existing
+ * `xlsx:move-chart` and `xlsx:resize-chart` commands so undo/redo
+ * stays a single step per logical gesture.
+ */
+export interface UpdateChartPayload {
+  readonly sheet: string;
+  readonly chartId: string;
+  readonly kind?: import("../model/types.js").ChartKind;
+  /** A1 range; same validation as `xlsx:add-chart` (≥ 2 cells). */
+  readonly dataRange?: string;
+  /** `null` clears the title; `undefined` leaves it unchanged. */
+  readonly title?: string | null;
+  readonly hasHeaderRow?: boolean;
+  readonly hasCategoryColumn?: boolean;
+  /**
+   * Style fields. As with `title`, `null` resets the field to its
+   * default (renderer-side) and `undefined` leaves it untouched —
+   * `palette: null` reverts to `"default"`, the boolean toggles
+   * revert to their renderer defaults, and the axis titles clear.
+   */
+  readonly palette?: import("../model/types.js").ChartPalette | null;
+  readonly showLegend?: boolean | null;
+  readonly showDataLabels?: boolean | null;
+  readonly showGridlines?: boolean | null;
+  readonly xAxisTitle?: string | null;
+  readonly yAxisTitle?: string | null;
 }

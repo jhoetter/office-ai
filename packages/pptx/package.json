@@ -1,7 +1,6 @@
 {
   "name": "@officeai/pptx",
   "version": "0.1.0",
-  "private": true,
   "description": "PPTX editor: parser, model, serializer, command handlers, agent API, hybrid SVG/HTML renderer.",
   "type": "module",
   "main": "./dist/index.js",
@@ -30,7 +29,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -41,7 +41,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@officeai/core": "workspace:*"
+    "@officeai/core": "workspace:*",
+    "@officeai/xlsx": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19"
@@ -58,5 +59,15 @@
     "react": "^19",
     "typescript": "^5",
     "vitest": "^2.1.9"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhoetter/office-ai.git",
+    "directory": "packages/pptx"
+  },
+  "homepage": "https://github.com/jhoetter/office-ai",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -16,6 +16,7 @@ const makePage = (n: number): PdfPage => ({
   height: 792,
   rotation: 0,
   text: `page ${n} content`,
+  structured: { pageWidth: 612, pageHeight: 792, blocks: [], columnCount: 1 },
   hasTextLayer: true,
   hasAnnotations: false,
   hasFormFields: false,

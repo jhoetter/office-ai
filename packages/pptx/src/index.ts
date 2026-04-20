@@ -44,8 +44,24 @@ export type {
   ShapePreset,
   TextAnchor,
   TextFormatPayload,
+  AddShapeAnimationPayload,
+  SetShapeAnimationPayload,
+  RemoveShapeAnimationPayload,
+  ReorderShapeAnimationsPayload,
+  AnimationCategoryPayload,
+  AnimationTriggerPayload,
+  AnimationDirectionPayload,
 } from "./commands/payloads.js";
 export { BUILTIN_LAYOUTS, type BuiltinLayout } from "./layouts/builtin.js";
+export {
+  ANIMATION_PRESETS,
+  findPreset,
+  findPresetByOoxmlIds,
+  presetsByCategory,
+  subtypeFor,
+  directionForSubtype,
+  type PresetSpec,
+} from "./animation/presets.js";
 export { resolveEndpoint as resolveConnectorEndpoint } from "./model/connector-geometry.js";
 export { PPTX_COMMAND_TYPES, type PptxCommandType } from "./commands/payloads.js";
 export {

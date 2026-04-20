@@ -72,6 +72,13 @@ import {
 } from "./lib/export-images";
 import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
 import { applyXlsxRangeToPptx } from "@/lib/embed/applyXlsxRangeToPptx";
+import { applyXlsxEmbed } from "@/lib/embed/xlsxEmbedShared";
+import type { XlsxEmbedMode } from "@/lib/embed/xlsxEmbedShared";
+import {
+  XlsxRangePickerDialog,
+  type XlsxRangePickerResult,
+} from "@/lib/embed/XlsxRangePickerDialog";
+import { installAltKeyTracker, isAltKeyPressed } from "@/lib/embed/altKeyTracker";
 
 const SCALE_OPTIONS = {
   type: "select" as const,
@@ -303,6 +310,7 @@ export function PptxEditor({
   initialSource,
   initialBlank,
 }: PptxEditorProps = {}): React.ReactNode {
+  const { t } = useTranslator();
   const [agent, setAgent] = useState<PptxAgent | null>(null);
   const agentRef = useRef<PptxAgent | null>(null);
   const [ready, setReady] = useState(false);
@@ -328,6 +336,7 @@ export function PptxEditor({
   // the panel takes meaningful vertical space and the default state is
   // what users expect when reopening a deck.
   const [notesOpen, setNotesOpen] = useState(false);
+  const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
   const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
   const selectedShapeId = selectedShapeIds[0] ?? null;
   const [textSelection, setTextSelection] = useState<PptxTextSelection | null>(null);
@@ -559,12 +568,20 @@ export function PptxEditor({
       e.stopPropagation();
       const slideIndex = slideIndexRef.current;
       const payload = env.payload;
+      // Alt held → embed as a live OLE Excel object instead of a
+      // materialised table. Mirrors PowerPoint's "Paste Special →
+      // Microsoft Excel Worksheet Object" shortcut so power users
+      // can opt-in without round-tripping through a dialog. Alt
+      // state is tracked separately because `ClipboardEvent`
+      // doesn't expose modifier keys directly.
+      const mode = isAltKeyPressed() ? "live" : "materialized";
       void (async () => {
         try {
           await applyXlsxRangeToPptx({
             agent,
             snapshot: payload.snapshot,
             slideIndex,
+            mode,
           });
         } catch (err) {
           pushToast("error", err instanceof Error ? err.message : String(err));
@@ -572,7 +589,11 @@ export function PptxEditor({
       })();
     };
     window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
+    const uninstallAlt = installAltKeyTracker();
+    return () => {
+      window.removeEventListener("paste", onPaste);
+      uninstallAlt();
+    };
   }, [pushToast]);
 
   const handleFile = useCallback(
@@ -1027,6 +1048,31 @@ export function PptxEditor({
       y: 1_000_000 + (count % 8) * step,
     };
   }, [activeIndex]);
+
+  const handleXlsxPickerSubmit = useCallback(
+    async (result: XlsxRangePickerResult) => {
+      const a = agentRef.current;
+      setXlsxPickerOpen(null);
+      if (!a) return;
+      try {
+        await applyXlsxEmbed({
+          target: { kind: "pptx", agent: a, slideIndex: activeIndex },
+          snapshot: result.snapshot,
+          mode: result.mode,
+        });
+        const label =
+          result.mode === "live"
+            ? "embedded spreadsheet"
+            : result.mode === "chart"
+              ? "chart"
+              : "table";
+        pushToast("info", `Inserted ${label} from xlsx.`);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, pushToast]
+  );
 
   const addTextBox = useCallback(async () => {
     const a = agentRef.current;
@@ -1566,13 +1612,22 @@ export function PptxEditor({
   );
 
   const addShapeAnimation = useCallback(
-    async (effect: import("@officeai/pptx").EntranceEffect) => {
+    async (params: import("./AnimationsPanel").AddAnimationParams) => {
       const a = agentRef.current;
       if (!a || !selectedShapeId) return;
       try {
         await a.applyCommand({
           type: "pptx:add-shape-animation",
-          payload: { slideIndex: activeIndex, shapeId: selectedShapeId, effect },
+          payload: {
+            slideIndex: activeIndex,
+            shapeId: selectedShapeId,
+            category: params.category,
+            preset: params.preset,
+            ...(params.direction ? { direction: params.direction } : {}),
+            ...(params.trigger ? { trigger: params.trigger } : {}),
+            ...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
+            ...(params.delayMs !== undefined ? { delayMs: params.delayMs } : {}),
+          },
           source: "human",
         });
       } catch (err) {
@@ -1580,6 +1635,32 @@ export function PptxEditor({
       }
     },
     [activeIndex, onError, selectedShapeId]
+  );
+
+  const setShapeAnimation = useCallback(
+    async (params: import("./AnimationsPanel").SetAnimationParams) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-shape-animation",
+          payload: {
+            slideIndex: activeIndex,
+            animationId: params.animationId,
+            ...(params.category !== undefined ? { category: params.category } : {}),
+            ...(params.preset !== undefined ? { preset: params.preset } : {}),
+            ...(params.direction !== undefined ? { direction: params.direction } : {}),
+            ...(params.trigger !== undefined ? { trigger: params.trigger } : {}),
+            ...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
+            ...(params.delayMs !== undefined ? { delayMs: params.delayMs } : {}),
+          },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError]
   );
 
   const removeShapeAnimation = useCallback(
@@ -1931,6 +2012,17 @@ export function PptxEditor({
       "pptx.duplicate-slide": { run: () => void duplicateSlide() },
       "pptx.delete-slide": { run: () => void deleteSlide(), enabled: slides.length > 1 },
       "pptx.add-text-box": { run: () => void addTextBox() },
+      "pptx.insert-image": {
+        run: () => {
+          void (async () => {
+            const file = await pickImageFile();
+            if (file) await insertImage(file);
+          })();
+        },
+      },
+      "pptx.insert-table-from-xlsx": { run: () => setXlsxPickerOpen("materialized") },
+      "pptx.insert-spreadsheet-from-xlsx": { run: () => setXlsxPickerOpen("live") },
+      "pptx.insert-chart-from-xlsx": { run: () => setXlsxPickerOpen("chart") },
       "pptx.add-rect": { run: () => void addShape("rect") },
       "pptx.add-ellipse": { run: () => void addShape("ellipse") },
       "pptx.add-arrow": { run: () => void addShape("rightArrow") },
@@ -1946,8 +2038,9 @@ export function PptxEditor({
       "pptx.present-from-start": { run: () => startPresenting(false), enabled: ready && slides.length > 0 },
       "pptx.present-from-current": { run: () => startPresenting(true), enabled: ready && slides.length > 0 },
     };
-    return buildPaletteFromCatalogue(pptxActions, runners);
+    return buildPaletteFromCatalogue(pptxActions, runners, t);
   }, [
+    t,
     startConnectorTool,
     addShape,
     addSlide,
@@ -1958,6 +2051,7 @@ export function PptxEditor({
     duplicateSlide,
     focusCommentComposer,
     groupSelectedShapes,
+    insertImage,
     ready,
     selectedShapeIds.length,
     slides.length,
@@ -2047,7 +2141,8 @@ export function PptxEditor({
               selectedShape={selectedShape}
               disabled={!ready}
               onSetTransition={(kind, speed) => void setSlideTransition(kind, speed)}
-              onAddAnimation={(effect) => void addShapeAnimation(effect)}
+              onAddAnimation={(params) => void addShapeAnimation(params)}
+              onSetAnimation={(params) => void setShapeAnimation(params)}
               onRemoveAnimation={(id) => void removeShapeAnimation(id)}
               onReorderAnimations={(orderIds) => void reorderShapeAnimations(orderIds)}
             />
@@ -2072,6 +2167,7 @@ export function PptxEditor({
       saveState,
       selectedShape,
       selectionText,
+      setShapeAnimation,
       setSlideTransition,
       shortcutsDialog,
       snap,
@@ -2132,6 +2228,7 @@ export function PptxEditor({
             onAddConnector={(t) => startConnectorTool(t)}
             connectorToolType={connectorTool?.type ?? null}
             onInsertImage={(f) => void insertImage(f)}
+            onInsertFromXlsx={() => setXlsxPickerOpen("materialized")}
             onReplacePicture={(f) => void replaceSelectedPicture(f)}
             selectedIsPicture={selectedShape?.kind === "pic"}
             onDeleteShape={() => void deleteSelectedShape()}
@@ -2289,6 +2386,12 @@ export function PptxEditor({
         product="pptx"
         open={shortcutsDialog.open}
         onClose={() => shortcutsDialog.setOpen(false)}
+      />
+      <XlsxRangePickerDialog
+        open={xlsxPickerOpen !== null}
+        defaultMode={xlsxPickerOpen ?? "materialized"}
+        onCancel={() => setXlsxPickerOpen(null)}
+        onSubmit={(result) => void handleXlsxPickerSubmit(result)}
       />
       {presenting && snap ? (
         <PresentMode

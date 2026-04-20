@@ -17,7 +17,8 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "architecture": "node scripts/check-architecture.mjs",
     "actions": "node scripts/check-action-parity.mjs",
-    "verify": "pnpm format:check && pnpm lint:root && pnpm --filter @officeai/web lint && pnpm actions && pnpm architecture && pnpm typecheck && pnpm test && pnpm build",
+    "verify": "pnpm format:check && pnpm lint:root && pnpm --filter @officeai/web lint && pnpm actions && pnpm architecture && pnpm typecheck && pnpm test && pnpm build && pnpm bundle:dry-run",
+    "bundle:dry-run": "node scripts/bundle-dry-run.mjs",
     "fixtures:docx": "node scripts/generate-docx-fixtures.mjs",
     "fixtures:xlsx": "node scripts/generate-xlsx-fixtures.mjs",
     "fixtures:pptx": "node scripts/generate-pptx-fixtures.mjs",
@@ -35,7 +36,7 @@
     "prettier": "^3",
     "turbo": "^2",
     "typescript": "^5",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "@e965/xlsx": "^0.20.3"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

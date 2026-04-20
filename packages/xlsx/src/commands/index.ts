@@ -56,6 +56,7 @@ export {
   removeChartHandler,
   moveChartHandler,
   resizeChartHandler,
+  updateChartHandler,
 } from "./chart-commands.js";
 export { setAutoFilterHandler } from "./set-auto-filter.js";
 export { setFilterColumnHandler } from "./set-filter-column.js";

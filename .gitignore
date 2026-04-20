@@ -12,6 +12,11 @@ node_modules/
 !.yarn/sdks
 !.yarn/versions
 
+# pnpm local content-addressed store (only present when `store-dir` is
+# pointed inside the repo or `PNPM_HOME` resolves here). Always huge
+# (10k+ files, hundreds of MB) and recreated by `pnpm install`.
+.pnpm-store/
+
 # Logs
 logs/
 *.log
@@ -26,6 +31,10 @@ build/
 out/
 *.tsbuildinfo
 .turbo/
+
+# Copied at build time by apps/web/scripts/copy-pdfjs-assets.mjs from
+# the installed pdfjs-dist package (cmaps + standard fonts).
+apps/web/public/pdfjs/
 
 # --- Python ---
 __pycache__/
