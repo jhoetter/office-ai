@@ -878,6 +878,18 @@ export function XlsxEditor({
   // single-cell anchor. F2 enters with the existing value; Backspace /
   // Delete clears the cell.
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  // Auto-focus the surface as soon as a workbook is mounted so the
+  // anchor cell (A1 by default) is immediately "live" — typing a
+  // printable key kicks off type-to-edit on the active cell without
+  // the user having to click the grid first. Re-runs on every
+  // workbook swap (open file, new sheet) so the same affordance
+  // applies to subsequent loads. Skipped when the user is already
+  // editing the formula bar so we don't yank focus mid-keystroke.
+  useEffect(() => {
+    if (!agent) return;
+    if (formulaFocused) return;
+    surfaceRef.current?.focus({ preventScroll: true });
+  }, [agent, formulaFocused]);
   // Bumped each time the comments sidebar requests "scroll to this
   // cell". The Grid effect keys off `nonce` so clicking the same
   // comment twice still re-scrolls and re-flashes.
