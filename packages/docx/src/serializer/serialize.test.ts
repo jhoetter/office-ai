@@ -108,6 +108,29 @@ describe("serializeDocx", () => {
     }
   });
 
+  it("body-dirty save leaves headers/footers and styles byte-identical", async () => {
+    // Mutation isolation: dirty exactly the body and assert that
+    // every other part of the package (headers, footers, styles,
+    // numbering, theme, comments, _rels, [Content_Types]) survives
+    // unchanged. The two-tier strategy promises this for any
+    // dirty-flag set that doesn't list the part — without it, an
+    // accidental flush of an untyped part would silently regress
+    // user files.
+    const buf = loadFixture("fixtures/docx/real-world/02-report-headers-footers.docx");
+    const snap = await parseDocx(buf, { idMinter: deterministicIdMinter("iso") });
+    const dirtied = { ...snap, dirty: { ...snap.dirty, body: true } };
+    const out = await serializeDocx(dirtied);
+    const reloaded = await ooxml.OoxmlContainer.load(out);
+    const allowed = new Set<string>(["word/document.xml", "[Content_Types].xml"]);
+    for (const path of snap.container.parts.keys()) {
+      if (allowed.has(path)) continue;
+      if (!reloaded.parts.has(path)) continue;
+      const before = sha256Hex(snap.container.readBytes(path));
+      const after = sha256Hex(reloaded.readBytes(path));
+      expect(after, `unrelated part ${path} drifted on body-dirty save`).toBe(before);
+    }
+  });
+
   it("forces serialization when body is dirty and remains valid", async () => {
     const buf = await makeSyntheticDocx({
       documentXml: plainDocxXml([{ text: "before" }]),
