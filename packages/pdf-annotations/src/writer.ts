@@ -51,7 +51,7 @@ const colorArray = (pdf: PDFDocument, c: [number, number, number]): PDFArray =>
 const ensureAnnots = (pdf: PDFDocument, pageIndex: number): PDFArray => {
   const page = pdf.getPage(pageIndex);
   const node = page.node;
-  let annots = node.get(PDFName.of("Annots"));
+  const annots = node.get(PDFName.of("Annots"));
   if (annots === undefined) {
     const arr = pdf.context.obj([]) as PDFArray;
     node.set(PDFName.of("Annots"), arr);

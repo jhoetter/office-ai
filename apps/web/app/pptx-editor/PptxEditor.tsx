@@ -35,8 +35,11 @@ import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog
 import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 import {
   PresenceSlot,
+  readExplicitRoomFromUrl,
+  RemotePresenceList,
   roomIdForSource,
   useCommandBroadcast,
+  usePublishPresence,
   useRealtimeRoom,
   useStableTabId,
 } from "@/lib/realtime";
@@ -2030,6 +2033,7 @@ export function PptxEditor({
       product: "pptx",
       src: initialSource?.url,
       tabFallback,
+      explicitRoom: readExplicitRoomFromUrl(),
     });
   }, [ready, initialSource, tabFallback]);
   const realtimeRoom = useRealtimeRoom({
@@ -2037,9 +2041,23 @@ export function PptxEditor({
     product: "pptx",
   });
   useCommandBroadcast({
-    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    agent,
     room: realtimeRoom.room,
   });
+
+  // Publish PPTX selection (active slide + currently-selected
+  // shapes) so peers see "Quick Quokka has 2 shapes selected on
+  // slide 3" in real time.
+  const presenceCursor = useMemo(() => {
+    const slideId = slide?.id;
+    if (!slideId) return null;
+    return {
+      product: "pptx" as const,
+      slideId,
+      shapeIds: selectedShapeIds,
+    };
+  }, [slide?.id, selectedShapeIds]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(
     () => ({
@@ -2112,6 +2130,7 @@ export function PptxEditor({
 
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANONYMOUS_ADJECTIVES,
+  ANONYMOUS_ANIMALS,
   ANONYMOUS_NAME_POOL,
   PRESENCE_PALETTE,
   colorForPeer,
@@ -32,5 +34,19 @@ describe("identity", () => {
       names.add(generateAnonymousIdentity(`peer-${i}`).name);
     }
     expect(names.size).toBeGreaterThan(1);
+  });
+
+  it("name pool exposes a broad cross-product, not the 20-entry diagonal", () => {
+    // Sanity: the pool is large enough that 100 random peers see
+    // at least 30 distinct names. Guards against an accidental
+    // regression to the old 20-entry pre-paired pool.
+    expect(ANONYMOUS_ADJECTIVES.length).toBeGreaterThanOrEqual(20);
+    expect(ANONYMOUS_ANIMALS.length).toBeGreaterThanOrEqual(20);
+    expect(ANONYMOUS_NAME_POOL.length).toBeGreaterThan(0);
+    const names = new Set<string>();
+    for (let i = 0; i < 100; i++) {
+      names.add(generateAnonymousIdentity(`peer-${i}`).name);
+    }
+    expect(names.size).toBeGreaterThan(30);
   });
 });

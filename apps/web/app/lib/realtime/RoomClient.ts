@@ -45,18 +45,37 @@ export interface RoomClient {
 
 const STORAGE_KEY = "officeai.peerId";
 
+/**
+ * Load (or mint) the per-browser peer id.
+ *
+ * We use `localStorage`, NOT `sessionStorage`, so the same human
+ * keeps the same `Quick Quokka` identity across:
+ *   - back/forward navigation (sessionStorage survives this for the
+ *     current tab — but if the editor unmounts and remounts the
+ *     stale awareness from the previous mount can briefly appear as
+ *     a "second" peer);
+ *   - tab close + reopen of the same document;
+ *   - opening the same document in a second tab (Yjs gives each
+ *     tab a distinct `clientID`, but `getRemoteStates` collapses
+ *     duplicates by `user.id` so it still reads as one peer).
+ *
+ * The fallback to `Math.random` is only hit in environments without
+ * Web Crypto (very old browsers, server-side import) — collision
+ * risk is acceptable there because those code paths never join a
+ * real room.
+ */
 function loadOrMintPeerId(): string {
   if (typeof window === "undefined") {
     return Math.random().toString(36).slice(2);
   }
   try {
-    const existing = window.sessionStorage.getItem(STORAGE_KEY);
+    const existing = window.localStorage.getItem(STORAGE_KEY);
     if (existing) return existing;
     const next =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : Math.random().toString(36).slice(2);
-    window.sessionStorage.setItem(STORAGE_KEY, next);
+    window.localStorage.setItem(STORAGE_KEY, next);
     return next;
   } catch {
     return Math.random().toString(36).slice(2);
@@ -210,18 +229,48 @@ class RoomClientImpl implements RoomClient {
     return () => this.awarenessListeners.delete(listener);
   }
 
+  /**
+   * Visible remote peers, with two layers of "self" filtering:
+   *
+   *   1. Drop the state at our own Yjs `clientID` (the standard
+   *      awareness "ignore self" check).
+   *   2. Drop ANY state whose `user.id` matches our own — this hides
+   *      stale ghosts left behind when the editor remounts (e.g. the
+   *      user navigates away & back; the previous mount's
+   *      WebsocketProvider may still be tearing down its awareness on
+   *      the server, briefly leaving an old `clientID` advertising
+   *      our identity). Without this guard we'd render that ghost as
+   *      a "new user".
+   *
+   * After self-filtering we also DEDUPE by `user.id`: two tabs of
+   * the same browser share a `peerId` (and therefore a `user.id`)
+   * via `localStorage`, but Yjs gives each tab its own `clientID`.
+   * The presence list should treat that pair as one human and pick
+   * the most recently active state.
+   */
   getRemoteStates(): ReadonlyArray<{ clientId: number; state: AwarenessState }> {
     const states = this.provider.awareness.getStates();
-    const out: { clientId: number; state: AwarenessState }[] = [];
     const ourClientId = this.doc.clientID;
+    const ourUserId = this.identity.id;
+    const byUser = new Map<string, { clientId: number; state: AwarenessState }>();
     for (const [clientId, state] of states.entries()) {
       if (clientId === ourClientId) continue;
       if (!state || typeof state !== "object") continue;
       const candidate = state as AwarenessState;
       if (!candidate.user || typeof candidate.user.id !== "string") continue;
-      out.push({ clientId, state: candidate });
+      if (candidate.user.id === ourUserId) continue;
+      const existing = byUser.get(candidate.user.id);
+      if (!existing) {
+        byUser.set(candidate.user.id, { clientId, state: candidate });
+        continue;
+      }
+      const existingSeen = existing.state.lastSeen ?? 0;
+      const candidateSeen = candidate.lastSeen ?? 0;
+      if (candidateSeen >= existingSeen) {
+        byUser.set(candidate.user.id, { clientId, state: candidate });
+      }
     }
-    return out;
+    return Array.from(byUser.values());
   }
 
   getStatus(): "disconnected" | "connecting" | "connected" {

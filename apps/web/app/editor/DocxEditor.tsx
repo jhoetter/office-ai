@@ -93,8 +93,11 @@ import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope"
 import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
 import {
   PresenceSlot,
+  readExplicitRoomFromUrl,
+  RemotePresenceList,
   roomIdForSource,
   useCommandBroadcast,
+  usePublishPresence,
   useRealtimeRoom,
   useStableTabId,
 } from "@/lib/realtime";
@@ -1604,6 +1607,7 @@ export function DocxEditor({
       product: "docx",
       src: initialSource?.url,
       tabFallback,
+      explicitRoom: readExplicitRoomFromUrl(),
     });
   }, [agentReady, initialSource, tabFallback]);
   const realtimeRoom = useRealtimeRoom({
@@ -1611,9 +1615,20 @@ export function DocxEditor({
     product: "docx",
   });
   useCommandBroadcast({
-    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    agent,
     room: realtimeRoom.room,
   });
+
+  // Publish a DocxCursor into the awareness payload whenever the
+  // ProseMirror selection changes. `uiTick` already bumps on every
+  // `selectionchange`, so it's the cheapest re-trigger we have.
+  const presenceCursor = useMemo(() => {
+    if (!view) return null;
+    const sel = view.state.selection;
+    void uiTick;
+    return { product: "docx" as const, head: sel.head, anchor: sel.anchor };
+  }, [view, uiTick]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(
     () => ({
@@ -1668,6 +1683,7 @@ export function DocxEditor({
 
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}

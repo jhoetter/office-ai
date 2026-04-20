@@ -91,8 +91,11 @@ import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import {
   PresenceSlot,
+  readExplicitRoomFromUrl,
+  RemotePresenceList,
   roomIdForSource,
   useCommandBroadcast,
+  usePublishPresence,
   useRealtimeRoom,
   useStableTabId,
 } from "@/lib/realtime";
@@ -3849,6 +3852,7 @@ export function XlsxEditor({
       product: "xlsx",
       src: initialSource?.url,
       tabFallback,
+      explicitRoom: readExplicitRoomFromUrl(),
     });
   }, [agent, initialSource, tabFallback]);
   const realtimeRoom = useRealtimeRoom({
@@ -3856,9 +3860,25 @@ export function XlsxEditor({
     product: "xlsx",
   });
   useCommandBroadcast({
-    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    agent,
     room: realtimeRoom.room,
   });
+
+  // Publish XLSX selection (sheet + A1 range) on every change so
+  // peers see "Quick Quokka is on Sheet1!B4:D7" in real time.
+  const presenceCursor = useMemo(() => {
+    if (!activeSheet || !selection) return null;
+    const r = selectionToRange(selection);
+    const a = `${colToLetter(r.start.col)}${r.start.row + 1}`;
+    const b = `${colToLetter(r.end.col)}${r.end.row + 1}`;
+    return {
+      product: "xlsx" as const,
+      sheetName: activeSheet.name,
+      anchor: a,
+      range: a === b ? a : `${a}:${b}`,
+    };
+  }, [activeSheet, selection]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(
     () => ({
@@ -3913,6 +3933,7 @@ export function XlsxEditor({
 
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}

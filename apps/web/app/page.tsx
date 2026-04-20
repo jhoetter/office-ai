@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles, BookOpen } from "lucide-react";
+import { BookOpen, FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 
@@ -31,6 +31,10 @@ interface NewAction {
 // rather than the demo content. Plain `/editor`, `/xlsx-editor` and
 // `/pptx-editor` (no query param) still open the welcome sample, so
 // direct-link smoke tests keep working.
+//
+// PDF is intentionally NOT a "create new" option — there's no useful
+// blank-PDF starting point, but PDFs from the sample-files folder
+// still open through the `/pdf-viewer` route via `KIND_META.pdf`.
 const NEW_ACTIONS: ReadonlyArray<NewAction> = [
   {
     id: "docx",
@@ -55,14 +59,6 @@ const NEW_ACTIONS: ReadonlyArray<NewAction> = [
     href: "/pptx-editor?new=1",
     icon: Presentation,
     accent: "text-orange-600 dark:text-orange-400",
-  },
-  {
-    id: "pdf",
-    titleKey: "home.newPdf",
-    subtitleKey: "home.subPdf",
-    href: "/pdf-viewer?new=1",
-    icon: BookOpen,
-    accent: "text-rose-600 dark:text-rose-400",
   },
 ];
 

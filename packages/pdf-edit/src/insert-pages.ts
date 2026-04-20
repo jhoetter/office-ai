@@ -1,4 +1,3 @@
-import { PDFDocument } from "pdf-lib";
 import { loadPdf, validatePages } from "./internal.js";
 
 export interface InsertPagesOptions {

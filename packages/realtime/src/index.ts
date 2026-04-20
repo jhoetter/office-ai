@@ -37,5 +37,6 @@ export {
   type DocxCursor,
   type XlsxSelection,
   type PptxSelection,
+  type PdfSelection,
   type RemotePresence,
 } from "./awareness-types";

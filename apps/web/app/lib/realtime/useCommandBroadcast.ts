@@ -5,13 +5,32 @@ import type { CommandLite } from "@officeai/core";
 import type { RoomClient } from "./RoomClient";
 
 /**
+ * Result returned by `applyCommand` that this hook actually reads.
+ * Mirrors `Mutation<TSnapshot>` from `@officeai/core` but kept
+ * structural so the hook doesn't need to import the heavy generic.
+ */
+export interface BroadcastableMutationResult {
+  readonly status: string;
+  readonly rejection?: { readonly code: string; readonly message?: string };
+}
+
+/**
  * Generic shape that all three product agents satisfy.
  *
  * Intentionally loose so this hook stays product-agnostic — it
  * inspects only the bits it needs (`subscribe` to learn about local
- * mutations, `dispatch` to apply remote ones). The `Mutation` shape
- * coming back from `subscribe` is also kept opaque for the same
- * reason; we only ever read `command.{type,payload,source,agentId}`.
+ * mutations, `applyCommand` to apply remote ones). The `Mutation`
+ * shape coming back from `subscribe` is also kept opaque for the
+ * same reason; we only ever read `command.{type,payload,source,agentId}`.
+ *
+ * NOTE: the method is `applyCommand` (not `dispatch`) — every
+ * product agent (`packages/{docx,xlsx,pptx,pdf}/src/agent/agent.ts`)
+ * exposes that name. An earlier iteration named it `dispatch`, which
+ * matched the underlying `CommandBus.dispatch` but NOT the agent
+ * facade — the resulting `agent.dispatch is not a function` runtime
+ * error silently broke every remote command (so users saw presence
+ * avatars but no live edits). The interface name now matches the
+ * agent so a future rename is caught at compile time.
  */
 export interface BroadcastableAgent {
   subscribe(
@@ -28,7 +47,9 @@ export interface BroadcastableAgent {
       }
     ) => void
   ): () => void;
-  dispatch(command: CommandLite): Promise<unknown> | unknown;
+  applyCommand(
+    command: CommandLite
+  ): Promise<BroadcastableMutationResult> | BroadcastableMutationResult;
 }
 
 export interface UseCommandBroadcastOptions {
@@ -88,10 +109,28 @@ export function useCommandBroadcast(opts: UseCommandBroadcastOptions): void {
 
     const unsubRemote = room.onRemoteCommand((command) => {
       applyingRemoteRef.current += 1;
-      const result = agent.dispatch({ ...command, source: "system" });
+      let result: Promise<BroadcastableMutationResult> | BroadcastableMutationResult;
+      try {
+        result = agent.applyCommand({ ...command, source: "system" });
+      } catch (err) {
+        applyingRemoteRef.current -= 1;
+        console.warn("[realtime] remote command threw synchronously:", command.type, err);
+        return;
+      }
       Promise.resolve(result)
+        .then((mutation) => {
+          // The bus returns `status: "rejected"` (with a `rejection`
+          // payload) instead of throwing. Surface it so the dev
+          // console reads "remote command rejected: …" the same way
+          // it would for a local rejection.
+          if (mutation && mutation.status === "rejected") {
+            const code = mutation.rejection?.code ?? "unknown";
+            const msg = mutation.rejection?.message ?? "";
+            console.warn("[realtime] remote command rejected:", command.type, code, msg);
+          }
+        })
         .catch((err) => {
-          console.warn("[realtime] remote command rejected:", command.type, err);
+          console.warn("[realtime] remote command threw:", command.type, err);
         })
         .finally(() => {
           applyingRemoteRef.current -= 1;

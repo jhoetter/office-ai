@@ -146,7 +146,7 @@ export class PdfAgent {
     try {
       re = new RegExp(pattern, flags);
     } catch (err) {
-      throw new Error(`pdf:search invalid pattern: ${(err as Error).message}`);
+      throw new Error(`pdf:search invalid pattern: ${(err as Error).message}`, { cause: err });
     }
     const out: PdfSearchResult[] = [];
     const pages = this.getSnapshot().root.pages;
