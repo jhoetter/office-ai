@@ -70,9 +70,17 @@ export const deleteRangeTrackedHandler: CommandHandler<DeleteRangeTrackedPayload
     }
 
     const date = payload.date ?? new Date().toISOString();
+    // Mirror the insert-text-tracked coalescing contract: when the
+    // caller pins an explicit `revisionId` we honour that intent
+    // (programmatic addressing of a distinct wrapper); otherwise
+    // we merge the freshly created `<w:del>` into a neighbouring
+    // same-author one so backspacing character-by-character produces
+    // a single Word-style balloon instead of one per keystroke.
+    const canCoalesce = payload.revisionId === undefined;
     const revisionId = payload.revisionId ?? mintRevisionId(snapshot);
 
-    const updated = wrapRangeAsDeletion(block, lo, hi, author, date, revisionId, ctx.mintNodeId);
+    const wrapped = wrapRangeAsDeletion(block, lo, hi, author, date, revisionId, ctx.mintNodeId);
+    const updated = canCoalesce ? coalesceAdjacentDeletions(wrapped, author) : wrapped;
     const nextDoc = replaceBlock(snapshot.root, idx, updated);
     const next = evolveSnapshot(snapshot, nextDoc, { body: true });
     return {
@@ -344,4 +352,93 @@ function runTextLength(r: Run): number {
   let n = 0;
   for (const c of r.children) if (c.kind === "text") n += c.text.length;
   return n;
+}
+
+/**
+ * Post-process a paragraph after a tracked deletion to merge any
+ * back-to-back same-author `<w:del>` wrappers into a single one.
+ *
+ * `wrapRangeAsDeletion` always splits the targeted run into a
+ * `before` / `deleted` / `after` triple and pushes the surrounding
+ * empty `before`/`after` shells when they have non-text children.
+ * In the typical typing flow they're empty (no children) and were
+ * already filtered out at construction time — but the *previous*
+ * deletion's wrapper sits next to the freshly-created one with at
+ * most a zero-text Run in between (the empty after-shell of the
+ * previous split). We treat any run with `runTextLength === 0` as
+ * "no separation" so consecutive backspaces collapse into one
+ * balloon, the way Word does it.
+ *
+ * The merged wrapper retains the *earliest* (document-order)
+ * revisionId. The newer id we just minted in this same call is
+ * dropped — nothing external can be referencing it yet because the
+ * snapshot evolves atomically.
+ */
+function coalesceAdjacentDeletions(p: Paragraph, author: string): Paragraph {
+  if (p.children.length < 2) return p;
+
+  const out: InlineNode[] = [];
+  let i = 0;
+  while (i < p.children.length) {
+    const head = p.children[i];
+    if (!isCoalescableDeletion(head, author)) {
+      out.push(head);
+      i++;
+      continue;
+    }
+    const mergedChildren: InlineNode[] = [...head.children];
+    let lastConsumed = i;
+    let j = i + 1;
+    while (j < p.children.length) {
+      const peek = p.children[j];
+      if (isZeroWidthSeparator(peek)) {
+        j++;
+        continue;
+      }
+      if (isCoalescableDeletion(peek, author)) {
+        // Merge: keep the earlier wrapper's identity (id, revisionId,
+        // date) and concatenate the inner runs in document order.
+        // The interleaved zero-width runs are dropped; they only
+        // existed as artefacts of the splitter and contribute no
+        // visible content (and no whitespace, since their text leaves
+        // are empty).
+        for (const c of peek.children) mergedChildren.push(c);
+        lastConsumed = j;
+        j++;
+        continue;
+      }
+      break;
+    }
+    if (lastConsumed === i) {
+      // Nothing merged; push the original wrapper untouched.
+      out.push(head);
+      i++;
+      continue;
+    }
+    const merged: RevisionWrapper = { ...head, children: mergedChildren };
+    out.push(merged);
+    i = lastConsumed + 1;
+  }
+  return { ...p, children: out };
+}
+
+function isCoalescableDeletion(node: InlineNode, author: string): node is RevisionWrapper {
+  return node.kind === "revision" && node.revisionType === "del" && node.author === author;
+}
+
+function isZeroWidthSeparator(node: InlineNode): boolean {
+  // Empty-shell runs left behind by `splitRunForDeletion` have no
+  // text leaves at all. Treat both "no children" and "only zero-text
+  // leaves" as zero-width so the coalescer doesn't keep an invisible
+  // gap between two halves of the same logical deletion.
+  if (node.kind !== "run") return false;
+  if (node.children.length === 0) return true;
+  for (const c of node.children) {
+    if (c.kind === "text") {
+      if (c.text.length > 0) return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }

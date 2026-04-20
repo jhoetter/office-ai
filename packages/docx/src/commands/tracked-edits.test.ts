@@ -356,6 +356,132 @@ describe("docx:delete-range-tracked", () => {
     }
   });
 
+  it("coalesces consecutive same-author backspaces into a single <w:del> wrapper", async () => {
+    // Simulates the PM funnel for backspacing one character at a
+    // time. Each backspace becomes its own
+    // `docx:delete-range-tracked` command without a pinned
+    // revisionId. Word merges these into a single revision (one
+    // balloon, one accept/reject) and so should we.
+    //
+    // Initial paragraph "Hello world." has visible length 12;
+    // paragraph offsets count wrapper text, so even after the first
+    // wrap the offset of "d" in "world" stays at 10 because the
+    // wrapper for "." still contributes one visible character.
+    const agent = await loadAgent("Hello world.");
+    const author = "Alice";
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 11 }, end: { paragraph: 0, offset: 12 } },
+        author,
+      },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 10 }, end: { paragraph: 0, offset: 11 } },
+        author,
+      },
+      source: "human",
+    });
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(1);
+    expect(revs[0].revisionType).toBe("del");
+    expect(revs[0].author).toBe(author);
+    // Inner runs concatenate to the document-order text "d." — the
+    // exact contiguous range the user removed.
+    const merged = revs[0].children
+      .filter((c): c is Run => c.kind === "run")
+      .flatMap((r) => r.children)
+      .filter((c): c is TextLeaf => c.kind === "text")
+      .map((t) => t.text)
+      .join("");
+    expect(merged).toBe("d.");
+    // Accept the merged wrapper and confirm the underlying range is
+    // gone in one shot — proving the wrapper still round-trips
+    // through the Accept handler unchanged.
+    await agent.applyCommand({
+      type: "docx:accept-change",
+      payload: { revisionId: revs[0].revisionId },
+      source: "human",
+    });
+    expect(paragraphPlainText(firstParagraph(agent.getSnapshot()))).toBe("Hello worl");
+  });
+
+  it("does not coalesce deletions across different authors", async () => {
+    const agent = await loadAgent("Hello world.");
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 11 }, end: { paragraph: 0, offset: 12 } },
+        author: "Alice",
+      },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 10 }, end: { paragraph: 0, offset: 11 } },
+        author: "Bob",
+      },
+      source: "human",
+    });
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(2);
+    expect(new Set(revs.map((r) => r.author))).toEqual(new Set(["Alice", "Bob"]));
+  });
+
+  it("does not coalesce deletions separated by visible content", async () => {
+    // Two single-char deletes at opposite ends of the paragraph by
+    // the same author. There's plenty of unwrapped text between them
+    // so the coalescer must keep them as two separate balloons.
+    const agent = await loadAgent("Hello world.");
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 11 }, end: { paragraph: 0, offset: 12 } },
+        author: "Alice",
+      },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 0 }, end: { paragraph: 0, offset: 1 } },
+        author: "Alice",
+      },
+      source: "human",
+    });
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(2);
+  });
+
+  it("honours an explicit revisionId by always creating a fresh <w:del> wrapper (no coalescing)", async () => {
+    const agent = await loadAgent("Hello world.");
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 11 }, end: { paragraph: 0, offset: 12 } },
+        author: "Alice",
+        revisionId: "100",
+      },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:delete-range-tracked",
+      payload: {
+        range: { start: { paragraph: 0, offset: 10 }, end: { paragraph: 0, offset: 11 } },
+        author: "Alice",
+        revisionId: "101",
+      },
+      source: "human",
+    });
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(2);
+    expect(revs.map((r) => r.revisionId).sort()).toEqual(["100", "101"]);
+  });
+
   it("rejects multi-paragraph ranges with not-implemented", async () => {
     const agent = await loadAgent("Hello world.");
     const m = await agent.applyCommand({
