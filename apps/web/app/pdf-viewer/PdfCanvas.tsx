@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import {
   useCallback,
   useEffect,
@@ -440,6 +441,7 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     onAnnotationCreated,
   } = props;
   const highlightArmed = armedTool === "highlight" && viewportRotation === 0;
+  const stickyArmed = armedTool === "sticky" && viewportRotation === 0;
   const onHighlightSelection = useCallback(
     (rects: ReadonlyArray<PdfRect>) => {
       if (!onAddAnnotation || rects.length === 0) return;
@@ -455,6 +457,56 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     },
     [onAddAnnotation, onAnnotationCreated, page.pageNumber]
   );
+
+  // Pending sticky-note placement. `null` means we're not composing.
+  // While set, we render the composer popover; the user types
+  // contents and either commits (Enter / Save) or aborts (Esc).
+  const [stickyDraft, setStickyDraft] = useState<{ x: number; y: number } | null>(null);
+  const onPageClickForSticky = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!stickyArmed) return;
+      const target = e.currentTarget;
+      const rect = target.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const x = (e.clientX - rect.left) / scale;
+      const y = page.height - (e.clientY - rect.top) / scale;
+      setStickyDraft({ x, y });
+      e.stopPropagation();
+    },
+    [stickyArmed, scale, page.height]
+  );
+  const onCommitSticky = useCallback(
+    (contents: string) => {
+      if (!stickyDraft) return;
+      const trimmed = contents.trim();
+      if (trimmed.length === 0) {
+        setStickyDraft(null);
+        onAnnotationCreated?.();
+        return;
+      }
+      const { x, y } = stickyDraft;
+      const half = 9; // ~18 PDF units square pin, like Acrobat
+      const r1 = Math.max(0, x - half);
+      const r2 = Math.min(page.width, x + half);
+      const r3 = Math.max(0, y - half);
+      const r4 = Math.min(page.height, y + half);
+      onAddAnnotation?.({
+        kind: "note",
+        pageNumber: page.pageNumber,
+        rect: [r1, r3, r2, r4] as PdfRect,
+        contents: trimmed,
+        color: { r: 1, g: 0.84, b: 0.0 },
+      });
+      setStickyDraft(null);
+      onAnnotationCreated?.();
+    },
+    [stickyDraft, onAddAnnotation, onAnnotationCreated, page.pageNumber, page.width, page.height]
+  );
+  // Clearing the draft when un-arming keeps the composer from
+  // surviving an Escape press through the editor's keyboard wiring.
+  useEffect(() => {
+    if (!stickyArmed) setStickyDraft(null);
+  }, [stickyArmed]);
   const { t } = useTranslator();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTokenRef = useRef(0);
@@ -520,7 +572,11 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     };
   }, [visible, engineDoc, page.pageNumber, scale, cssWidth, cssHeight, darkMode, viewportRotation]);
 
-  const cursorClass = highlightArmed ? "cursor-text" : "cursor-default";
+  const cursorClass = highlightArmed
+    ? "cursor-text"
+    : stickyArmed
+    ? "cursor-crosshair"
+    : "cursor-default";
 
   return (
     <div
@@ -560,6 +616,30 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
           pageHeight={page.height}
           scale={scale}
           rotation={viewportRotation}
+        />
+      ) : null}
+      {visible ? (
+        <PdfStickyNotesOverlay
+          annotations={annotations}
+          pageWidth={page.width}
+          pageHeight={page.height}
+          scale={scale}
+          rotation={viewportRotation}
+        />
+      ) : null}
+      {stickyArmed ? (
+        <div
+          aria-hidden
+          className="absolute inset-0 z-10"
+          onClick={onPageClickForSticky}
+        />
+      ) : null}
+      {stickyDraft && viewportRotation === 0 ? (
+        <PdfStickyComposer
+          x={stickyDraft.x * scale}
+          y={(page.height - stickyDraft.y) * scale}
+          onCommit={onCommitSticky}
+          onCancel={() => setStickyDraft(null)}
         />
       ) : null}
       {highlight ? <PdfMatchHighlight highlight={highlight} /> : null}
@@ -904,6 +984,170 @@ function mergeRectsByLine(rects: ReadonlyArray<DOMRect>): ReadonlyArray<MergedRe
     }
   }
   return merged;
+}
+
+interface PdfStickyNotesOverlayProps {
+  readonly annotations: ReadonlyArray<PdfAnnotation>;
+  readonly pageWidth: number;
+  readonly pageHeight: number;
+  readonly scale: number;
+  readonly rotation: PdfRotation;
+}
+
+/**
+ * Renders sticky-note pins for any `note` annotations on the page.
+ * Each pin opens an inline popover on click that displays its
+ * contents. Editing/deleting lives behind the same popover so
+ * users never need to leave the page rail.
+ *
+ * The pin layer ignores rotation overlay logic deliberately: PDF
+ * note rects use bottom-left origin, and we only commit pins from
+ * rotation 0. Existing pins stay anchored to their PDF coords —
+ * if the user rotates the viewport, pins ride along via the same
+ * inner-box CSS transform.
+ */
+function PdfStickyNotesOverlay({
+  annotations,
+  pageWidth,
+  pageHeight,
+  scale,
+  rotation,
+}: PdfStickyNotesOverlayProps): ReactNode {
+  const innerWidth = pageWidth * scale;
+  const innerHeight = pageHeight * scale;
+  const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
+  const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
+  const transform = textLayerTransform(rotation, innerWidth, innerHeight);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const notes = annotations.filter((a) => a.kind === "note");
+  if (notes.length === 0) return null;
+  return (
+    <div
+      className="pointer-events-none absolute inset-0"
+      style={{ width: rotatedW, height: rotatedH }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: innerWidth,
+          height: innerHeight,
+          transform,
+          transformOrigin: "0 0",
+        }}
+      >
+        {notes.map((a) => {
+          const [x1, , x2, y2] = a.rect;
+          const cx = ((x1 + x2) / 2) * scale;
+          const cy = (pageHeight - y2) * scale;
+          const open = openId === a.id;
+          return (
+            <div key={a.id} style={{ position: "absolute", left: cx - 10, top: cy - 10 }}>
+              <button
+                type="button"
+                title={a.contents ?? ""}
+                aria-label={a.contents ?? "sticky note"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenId((current) => (current === a.id ? null : a.id));
+                }}
+                className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm border border-amber-600/60 bg-amber-300 text-[10px] text-amber-900 shadow-sm hover:bg-amber-200"
+                style={{ pointerEvents: "auto" }}
+              >
+                ✎
+              </button>
+              {open ? (
+                <div
+                  className="pointer-events-auto absolute left-6 top-0 z-20 w-56 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 shadow-lg"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="whitespace-pre-wrap break-words">
+                    {a.contents || "(no contents)"}
+                  </div>
+                  {a.author ? (
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-amber-700/80">
+                      {a.author}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+interface PdfStickyComposerProps {
+  /** CSS x of the click in page-local coordinates. */
+  readonly x: number;
+  /** CSS y of the click in page-local coordinates. */
+  readonly y: number;
+  readonly onCommit: (contents: string) => void;
+  readonly onCancel: () => void;
+}
+
+/**
+ * Inline composer for a brand-new sticky note. Auto-focuses on
+ * mount; Cmd/Ctrl+Enter commits, Esc cancels. Positioned via
+ * absolute coordinates relative to the page wrapper.
+ */
+function PdfStickyComposer({ x, y, onCommit, onCancel }: PdfStickyComposerProps): ReactNode {
+  const { t } = useTranslator();
+  const [value, setValue] = useState("");
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onCancel();
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      onCommit(value);
+    }
+  };
+  return (
+    <div
+      className="absolute z-30"
+      style={{ left: x, top: y }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="w-56 rounded-md border border-amber-300 bg-amber-50 p-2 shadow-xl">
+        <textarea
+          ref={ref}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={onKeyDown}
+          rows={4}
+          placeholder={t("pdf.stickyPlaceholder")}
+          className="w-full resize-none rounded border border-amber-300/80 bg-white p-1.5 text-xs text-amber-950 outline-none focus:border-amber-500"
+        />
+        <div className="mt-1.5 flex items-center justify-between">
+          <span className="text-[10px] text-amber-700/80">⌘↵</span>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded border border-transparent px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100"
+            >
+              {t("pdf.stickyCancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => onCommit(value)}
+              className="rounded bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-amber-600"
+            >
+              {t("pdf.stickySave")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PdfMatchHighlight({ highlight }: { readonly highlight: PdfHighlight }): ReactNode {
