@@ -350,9 +350,6 @@ importers:
 
   packages/pdf-annotations:
     dependencies:
-      '@officeai/pdf':
-        specifier: workspace:*
-        version: link:../pdf
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
