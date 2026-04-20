@@ -6,6 +6,7 @@ import {
   XlsxAgent,
   cellKey,
   colToLetter,
+  formatA1,
   type Cell,
   type CellValue,
 } from "@officeai/xlsx";
@@ -104,7 +105,7 @@ export function EmbeddedXlsxModal(props: Props): React.ReactElement | null {
       const value = parseCellInput(raw);
       await agent.applyCommand({
         type: "xlsx:set-cell-value",
-        payload: { sheet: activeSheet, row, col, value },
+        payload: { sheet: activeSheet, ref: formatA1(row, col), value },
         source: "human",
       });
       setTick((t) => t + 1);
