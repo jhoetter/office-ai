@@ -16,7 +16,11 @@ import {
   type PdfEngineDocument,
 } from "@officeai/pdf-engine";
 import { PdfAgent } from "@officeai/pdf/agent";
-import type { PdfRotation, PdfSnapshot } from "@officeai/pdf";
+import type {
+  AddAnnotationPayload as AddAnnotationInput,
+  PdfRotation,
+  PdfSnapshot,
+} from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";
 import { handleUndoRedo } from "@/lib/undo-redo";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
@@ -431,14 +435,71 @@ export function PdfEditor({
 
   const onToggleReflow = useCallback(() => setReflow((v) => !v), []);
 
-  const onAnnotate = useCallback(
-    (tool: PdfAnnotationTool) => {
-      // Annotation editing in the canvas itself lands in W8 of the
-      // night-shift plan; for now the toolbar surfaces the tool
-      // names so the muscle memory matches Acrobat / Preview.
-      pushToast("info", `${tool} annotation tool isn't wired to the canvas yet.`);
+  const [armedTool, setArmedTool] = useState<PdfAnnotationTool | null>(null);
+  const onAnnotate = useCallback((tool: PdfAnnotationTool) => {
+    setArmedTool((current) => (current === tool ? null : tool));
+  }, []);
+  const unarmTool = useCallback(() => setArmedTool(null), []);
+
+  // Esc cancels any armed annotation tool. Cheap UX safety net so
+  // the user can never get "stuck" in highlight or sticky mode.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setArmedTool((current) => (current ? null : current));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const onAddAnnotation = useCallback(
+    async (input: AddAnnotationInput) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pdf:add-annotation",
+          payload: input,
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
     },
-    [pushToast]
+    [onError]
+  );
+
+  const onRemoveAnnotation = useCallback(
+    async (annotationId: string) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pdf:remove-annotation",
+          payload: { annotationId },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError]
+  );
+
+  const onUpdateAnnotation = useCallback(
+    async (annotationId: string, contents: string) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pdf:update-annotation",
+          payload: { annotationId, contents },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError]
   );
 
   const onRotatePages = useCallback(async () => {
@@ -757,6 +818,7 @@ export function PdfEditor({
             onRotateClockwise={onRotateClockwise}
             onRotateCounterClockwise={onRotateCounterClockwise}
             onAnnotate={onAnnotate}
+            armedTool={armedTool}
             onRotatePages={() => void onRotatePages()}
             onReorderPages={onReorderPages}
             onDeletePages={() => void onDeletePages()}
@@ -808,6 +870,9 @@ export function PdfEditor({
                     onZoomMetricsChange={onZoomMetricsChange}
                     jumpNonce={jumpNonce}
                     highlight={highlight}
+                    armedTool={armedTool}
+                    onAddAnnotation={(input) => void onAddAnnotation(input)}
+                    onAnnotationCreated={unarmTool}
                   />
                 </section>
               </div>

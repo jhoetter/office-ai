@@ -7,10 +7,13 @@ export { allPdfHandlers } from "./commands/index.js";
 export {
   PDF_COMMAND_TYPES,
   type PdfCommandType,
+  type AddAnnotationPayload,
   type AddBookmarkPayload,
   type AddCommentPayload,
   type DeleteCommentPayload,
   type EditCommentPayload,
+  type PdfAnnotationColor,
+  type RemoveAnnotationPayload,
   type ReplyCommentPayload,
   type ResolveCommentPayload,
   type RotatePagesPayload,
@@ -18,6 +21,7 @@ export {
   type DeletePagesPayload,
   type SetMetadataPayload,
   type SetPageRotationPayload,
+  type UpdateAnnotationPayload,
 } from "./commands/payloads.js";
 export {
   PdfAgent,

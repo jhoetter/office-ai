@@ -10,9 +10,17 @@ import {
   type ReactNode,
 } from "react";
 import type { PdfEngineDocument, PdfEnginePage, PdfEngineTextItem } from "@officeai/pdf-engine";
-import type { PdfPage, PdfRotation, PdfSnapshot } from "@officeai/pdf";
+import type {
+  AddAnnotationPayload,
+  PdfAnnotation,
+  PdfPage,
+  PdfRect,
+  PdfRotation,
+  PdfSnapshot,
+} from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";
 import { darkModeCssFilter } from "./darkMode";
+import type { PdfAnnotationTool } from "./PdfToolbar";
 
 /** Canvas-side view modes — 1:1 with the toolbar enum. */
 export type PdfViewMode = "single" | "continuous" | "two-up";
@@ -85,6 +93,22 @@ export interface PdfCanvasProps {
    * canvas never fights the user's wheel.
    */
   readonly jumpNonce?: number;
+  /**
+   * The currently armed annotation tool, or `null`. Controls the
+   * page cursor and which canvas-level handlers fire.
+   */
+  readonly armedTool?: PdfAnnotationTool | null;
+  /**
+   * Fired when the canvas wants to commit a new annotation
+   * (e.g. user released a text selection while the highlight
+   * tool was armed).
+   */
+  readonly onAddAnnotation?: (input: AddAnnotationPayload) => void;
+  /**
+   * Fired after the canvas successfully commits a new annotation,
+   * giving the editor a chance to un-arm the tool.
+   */
+  readonly onAnnotationCreated?: () => void;
 }
 
 /**
@@ -127,6 +151,9 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     highlight,
     onZoomMetricsChange,
     jumpNonce,
+    armedTool = null,
+    onAddAnnotation,
+    onAnnotationCreated,
   } = props;
   const { t } = useTranslator();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -355,6 +382,10 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
                 highlight={
                   highlight && highlight.pageNumber === p.pageNumber ? highlight : null
                 }
+                annotations={pageAnnotations(snapshot, p.pageNumber)}
+                armedTool={armedTool}
+                onAddAnnotation={onAddAnnotation}
+                onAnnotationCreated={onAnnotationCreated}
               />
             ))}
           </div>
@@ -375,6 +406,10 @@ interface PdfPageRenderProps {
   readonly darkMode: PdfDarkModeStrategy;
   readonly onClick: () => void;
   readonly highlight: PdfHighlight | null;
+  readonly annotations: ReadonlyArray<PdfAnnotation>;
+  readonly armedTool: PdfAnnotationTool | null;
+  readonly onAddAnnotation: ((input: AddAnnotationPayload) => void) | undefined;
+  readonly onAnnotationCreated: (() => void) | undefined;
 }
 
 /**
@@ -399,7 +434,27 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     darkMode,
     onClick,
     highlight,
+    annotations,
+    armedTool,
+    onAddAnnotation,
+    onAnnotationCreated,
   } = props;
+  const highlightArmed = armedTool === "highlight" && viewportRotation === 0;
+  const onHighlightSelection = useCallback(
+    (rects: ReadonlyArray<PdfRect>) => {
+      if (!onAddAnnotation || rects.length === 0) return;
+      const union = unionPdfRects(rects);
+      onAddAnnotation({
+        kind: "highlight",
+        pageNumber: page.pageNumber,
+        rect: union,
+        quadRects: rects,
+        color: { r: 1, g: 0.93, b: 0.16 },
+      });
+      onAnnotationCreated?.();
+    },
+    [onAddAnnotation, onAnnotationCreated, page.pageNumber]
+  );
   const { t } = useTranslator();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTokenRef = useRef(0);
@@ -465,13 +520,17 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     };
   }, [visible, engineDoc, page.pageNumber, scale, cssWidth, cssHeight, darkMode, viewportRotation]);
 
+  const cursorClass = highlightArmed ? "cursor-text" : "cursor-default";
+
   return (
     <div
       data-page-number={page.pageNumber}
       data-testid={`pdf-page-${page.pageNumber}`}
       onClick={onClick}
       className={
-        "relative cursor-default rounded-md border bg-white shadow-sm " +
+        "relative rounded-md border bg-white shadow-sm " +
+        cursorClass +
+        " " +
         (active ? "border-[var(--accent)]" : "border-divider")
       }
       style={{ width: cssWidth, height: cssHeight }}
@@ -490,6 +549,16 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
           scale={scale}
           pageWidth={page.width}
           pageHeight={page.height}
+          rotation={viewportRotation}
+          onSelectionPdfRects={highlightArmed ? onHighlightSelection : undefined}
+        />
+      ) : null}
+      {visible && annotations.length > 0 ? (
+        <PdfAnnotationOverlay
+          annotations={annotations}
+          pageWidth={page.width}
+          pageHeight={page.height}
+          scale={scale}
           rotation={viewportRotation}
         />
       ) : null}
@@ -517,6 +586,14 @@ interface PdfTextLayerProps {
   readonly pageWidth: number;
   readonly pageHeight: number;
   readonly rotation: PdfRotation;
+  /**
+   * If provided, mouseup events whose selection ends inside this
+   * text layer fire this callback with the selection's per-line
+   * rects translated into PDF user-space (origin bottom-left,
+   * units = PDF points). Only emitted at rotation 0 — the editor
+   * gates the highlight tool on that.
+   */
+  readonly onSelectionPdfRects?: (rects: ReadonlyArray<PdfRect>) => void;
 }
 
 /**
@@ -540,6 +617,7 @@ function PdfTextLayer({
   pageWidth,
   pageHeight,
   rotation,
+  onSelectionPdfRects,
 }: PdfTextLayerProps): ReactNode {
   const innerWidth = pageWidth * scale;
   const innerHeight = pageHeight * scale;
@@ -547,6 +625,36 @@ function PdfTextLayer({
   const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
   const transform = textLayerTransform(rotation, innerWidth, innerHeight);
   const innerRef = useRef<HTMLDivElement | null>(null);
+
+  const onMouseUp = useCallback(() => {
+    if (!onSelectionPdfRects) return;
+    const inner = innerRef.current;
+    if (!inner) return;
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!inner.contains(range.commonAncestorContainer)) return;
+    const innerRect = inner.getBoundingClientRect();
+    if (innerRect.width === 0 || innerRect.height === 0) return;
+    const clientRects = Array.from(range.getClientRects()).filter(
+      (r) => r.width > 0 && r.height > 0
+    );
+    if (clientRects.length === 0) return;
+    const merged = mergeRectsByLine(clientRects);
+    const pdfRects: PdfRect[] = merged.map((r) => {
+      const x_css = r.left - innerRect.left;
+      const y_css = r.top - innerRect.top;
+      const w_css = r.width;
+      const h_css = r.height;
+      const x1 = x_css / scale;
+      const x2 = (x_css + w_css) / scale;
+      const y2 = pageHeight - y_css / scale;
+      const y1 = pageHeight - (y_css + h_css) / scale;
+      return [x1, y1, x2, y2] as PdfRect;
+    });
+    sel.removeAllRanges();
+    onSelectionPdfRects(pdfRects);
+  }, [onSelectionPdfRects, scale, pageHeight]);
 
   // PDF.js's reference text layer measures each synthesised span's
   // browser-rendered width against the desired (rasterised) glyph
@@ -578,6 +686,7 @@ function PdfTextLayer({
   return (
     <div
       aria-hidden
+      onMouseUp={onMouseUp}
       className="pointer-events-auto absolute inset-0 select-text overflow-hidden text-transparent"
       style={{ lineHeight: 1, width: rotatedW, height: rotatedH }}
     >
@@ -645,6 +754,156 @@ function textLayerTransform(rotation: PdfRotation, width: number, height: number
       return _exhaustive;
     }
   }
+}
+
+interface PdfAnnotationOverlayProps {
+  readonly annotations: ReadonlyArray<PdfAnnotation>;
+  readonly pageWidth: number;
+  readonly pageHeight: number;
+  readonly scale: number;
+  readonly rotation: PdfRotation;
+}
+
+/**
+ * Renders translucent overlays for highlight annotations on the
+ * current page. Sticky-note pins and link affordances are layered
+ * separately by their own components in WP9; for WP8 we only need
+ * to surface highlights so the user immediately sees the result of
+ * arming the highlight tool and dragging across text.
+ *
+ * Coordinates: annotations live in PDF user-space (origin
+ * bottom-left). We position each rect inside an inner box of the
+ * un-rotated page dimensions and let the same CSS transform that
+ * rotates the text layer rotate the overlay too — so they never
+ * drift out of sync.
+ */
+function PdfAnnotationOverlay({
+  annotations,
+  pageWidth,
+  pageHeight,
+  scale,
+  rotation,
+}: PdfAnnotationOverlayProps): ReactNode {
+  const innerWidth = pageWidth * scale;
+  const innerHeight = pageHeight * scale;
+  const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
+  const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
+  const transform = textLayerTransform(rotation, innerWidth, innerHeight);
+  const highlights = annotations.filter((a) => a.kind === "highlight");
+  if (highlights.length === 0) return null;
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0"
+      style={{ width: rotatedW, height: rotatedH }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: innerWidth,
+          height: innerHeight,
+          transform,
+          transformOrigin: "0 0",
+        }}
+      >
+        {highlights.map((a) => {
+          const rects = a.quadRects && a.quadRects.length > 0 ? a.quadRects : [a.rect];
+          return rects.map((r, i) => {
+            const [x1, y1, x2, y2] = r;
+            const left = x1 * scale;
+            const top = (pageHeight - y2) * scale;
+            const width = Math.max(1, (x2 - x1) * scale);
+            const height = Math.max(1, (y2 - y1) * scale);
+            const fill = annotationFill(a);
+            return (
+              <div
+                key={`${a.id}-${i}`}
+                style={{
+                  position: "absolute",
+                  left,
+                  top,
+                  width,
+                  height,
+                  background: fill,
+                  mixBlendMode: "multiply",
+                }}
+              />
+            );
+          });
+        })}
+      </div>
+    </div>
+  );
+}
+
+function annotationFill(a: PdfAnnotation): string {
+  const c = a.color;
+  if (!c) return "rgba(255, 235, 59, 0.45)";
+  const alpha = c.a ?? 0.45;
+  const r = Math.round((c.r ?? 1) * 255);
+  const g = Math.round((c.g ?? 0.93) * 255);
+  const b = Math.round((c.b ?? 0.16) * 255);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function pageAnnotations(
+  snapshot: PdfSnapshot,
+  pageNumber: number
+): ReadonlyArray<PdfAnnotation> {
+  return snapshot.root.annotations.filter((a) => a.pageNumber === pageNumber);
+}
+
+/** Axis-aligned union of a set of PDF rects. */
+function unionPdfRects(rects: ReadonlyArray<PdfRect>): PdfRect {
+  let x1 = Number.POSITIVE_INFINITY;
+  let y1 = Number.POSITIVE_INFINITY;
+  let x2 = Number.NEGATIVE_INFINITY;
+  let y2 = Number.NEGATIVE_INFINITY;
+  for (const r of rects) {
+    if (r[0] < x1) x1 = r[0];
+    if (r[1] < y1) y1 = r[1];
+    if (r[2] > x2) x2 = r[2];
+    if (r[3] > y2) y2 = r[3];
+  }
+  return [x1, y1, x2, y2] as PdfRect;
+}
+
+interface MergedRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * `Range.getClientRects()` returns one rect per visual line — but
+ * sometimes splits a single line into many adjacent rects when the
+ * selection traverses span boundaries. Merging them by row keeps
+ * the highlight quad count low and avoids visible seams between
+ * sub-rects on the same baseline.
+ */
+function mergeRectsByLine(rects: ReadonlyArray<DOMRect>): ReadonlyArray<MergedRect> {
+  if (rects.length === 0) return [];
+  const sorted = [...rects].sort((a, b) => a.top - b.top || a.left - b.left);
+  const merged: MergedRect[] = [];
+  for (const r of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && Math.abs(r.top - last.top) < r.height * 0.5) {
+      const newLeft = Math.min(last.left, r.left);
+      const newRight = Math.max(last.left + last.width, r.left + r.width);
+      const newTop = Math.min(last.top, r.top);
+      const newBottom = Math.max(last.top + last.height, r.top + r.height);
+      last.left = newLeft;
+      last.top = newTop;
+      last.width = newRight - newLeft;
+      last.height = newBottom - newTop;
+    } else {
+      merged.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+    }
+  }
+  return merged;
 }
 
 function PdfMatchHighlight({ highlight }: { readonly highlight: PdfHighlight }): ReactNode {

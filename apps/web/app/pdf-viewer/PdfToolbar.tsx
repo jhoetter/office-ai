@@ -18,14 +18,13 @@ import {
   Square,
   StickyNote,
   Trash2,
-  Type,
   Workflow,
 } from "lucide-react";
 import { ToolbarMenu, ToolbarRow } from "@/lib/shell";
 import { useTranslator } from "@/lib/i18n";
 import type { PdfDarkModeStrategy, PdfViewMode } from "./PdfCanvas";
 
-export type PdfAnnotationTool = "highlight" | "sticky" | "free-text";
+export type PdfAnnotationTool = "highlight" | "sticky";
 
 export interface PdfToolbarProps {
   readonly disabled: boolean;
@@ -35,6 +34,8 @@ export interface PdfToolbarProps {
   readonly viewMode: PdfViewMode;
   readonly darkMode: PdfDarkModeStrategy;
   readonly reflow: boolean;
+  /** Currently armed annotation tool, or `null` when none is armed. */
+  readonly armedTool: PdfAnnotationTool | null;
   readonly onPrevPage: () => void;
   readonly onNextPage: () => void;
   readonly onJumpToPage: (pageNumber: number) => void;
@@ -151,6 +152,7 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
         icon={<Highlighter size={14} />}
         label={t("pdf.highlight")}
         disabled={disabled}
+        active={props.armedTool === "highlight"}
         testId="pdf-annotate-highlight"
       />
       <ToolbarTextButton
@@ -158,14 +160,8 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
         icon={<StickyNote size={14} />}
         label={t("pdf.stickyNote")}
         disabled={disabled}
+        active={props.armedTool === "sticky"}
         testId="pdf-annotate-sticky"
-      />
-      <ToolbarTextButton
-        onClick={() => props.onAnnotate("free-text")}
-        icon={<Type size={14} />}
-        label={t("pdf.freeText")}
-        disabled={disabled}
-        testId="pdf-annotate-freetext"
       />
       <Sep />
       <PageOpsMenu
