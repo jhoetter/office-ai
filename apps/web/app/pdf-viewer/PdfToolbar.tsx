@@ -558,6 +558,8 @@ function PageOpsMenu({
             onReorderPages();
           }}
           testId="pdf-reorder-pages"
+          disabled
+          badge="soon"
         />
         <MenuItem
           icon={<Trash2 size={14} />}
@@ -617,6 +619,8 @@ function FormMenu({ disabled, onFillForm, onFlattenForm }: FormMenuProps): React
             onFillForm();
           }}
           testId="pdf-form-fill"
+          disabled
+          badge="soon"
         />
         <MenuItem
           icon={<Square size={14} />}
@@ -626,6 +630,8 @@ function FormMenu({ disabled, onFillForm, onFlattenForm }: FormMenuProps): React
             onFlattenForm();
           }}
           testId="pdf-form-flatten"
+          disabled
+          badge="soon"
         />
       </ToolbarMenu>
     </>
@@ -678,23 +684,45 @@ interface MenuItemProps {
   readonly testId?: string;
   readonly icon?: React.ReactNode;
   readonly active?: boolean;
+  readonly disabled?: boolean;
+  /**
+   * Free-form badge text shown right-aligned, e.g. "soon" for items
+   * whose UI is intentionally stubbed pending a follow-up. Use sparingly
+   * — items with no visible meaning are better removed entirely than
+   * left in with a forever-promise.
+   */
+  readonly badge?: string;
 }
 
-function MenuItem({ label, onClick, testId, icon, active }: MenuItemProps): React.ReactNode {
+function MenuItem({
+  label,
+  onClick,
+  testId,
+  icon,
+  active,
+  disabled,
+  badge,
+}: MenuItemProps): React.ReactNode {
   return (
     <button
       type="button"
       role="menuitem"
       onClick={onClick}
+      disabled={disabled}
       data-testid={testId}
       className={
-        "flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover " +
+        "flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent " +
         (active ? "bg-hover" : "")
       }
     >
       {icon ?? <span className="inline-block h-[14px] w-[14px]" aria-hidden />}
       <span>{label}</span>
       {active ? <span className="ml-auto text-[10px] text-[var(--accent)]">●</span> : null}
+      {badge ? (
+        <span className="ml-auto rounded bg-tertiary/10 px-1 text-[9px] uppercase tracking-wide text-tertiary">
+          {badge}
+        </span>
+      ) : null}
     </button>
   );
 }

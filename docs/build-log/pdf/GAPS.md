@@ -258,6 +258,73 @@ Entries are ordered roughly by impact / cost ratio (high → low).
   - Listed by the home-page sample-files loader.
 - **Effort:** XS.
 
+### G14a. Free-text annotation tool
+
+- **What:** the model + serializer round-trip free-text annotations
+  (kind `"free-text"` lands as `/FreeText`), but the toolbar tool
+  was removed in the WP8/9 overhaul because it had no canvas
+  composer. Highlight + sticky landed first because their UX is
+  unambiguous; free-text needs a font-picker, color-picker and
+  resize affordance to be worth shipping.
+- **Why deferred:** scope. The user explicitly asked for
+  "round-trip Highlight + Sticky (the easy two via AP-stream),
+  defer Free-text" in the WP8/9 plan kickoff.
+- **Where:** `packages/pdf-annotations/src/free-text.ts`,
+  `apps/web/app/pdf-viewer/PdfToolbar.tsx`,
+  `apps/web/app/pdf-viewer/PdfCanvas.tsx`.
+- **Acceptance:**
+  - Toolbar `pdf-annotate-freetext` button reappears.
+  - Click on the page drops an editable text box anchored at the
+    click point. Cmd/Ctrl+Enter commits, Esc cancels.
+  - Resize handles + a small font-size dropdown.
+  - Existing free-text annotations render with their stored font /
+    color, not just a debug border.
+- **Effort:** M.
+
+### G14b. Highlight + sticky composers under viewport rotation
+
+- **What:** both new tools (highlight selection capture, sticky
+  click-to-place) silently no-op when `viewportRotation !== 0`.
+  Existing annotations *render* correctly under rotation because
+  their overlays ride along with the same CSS transform as the
+  text layer; only authoring is gated.
+- **Why deferred:** the inverse-transform from rotated viewport
+  pixels back to PDF user-space is straightforward but adds
+  surface area we hadn't tested. Shipping unrotated authoring +
+  rotated rendering covers ~95 % of the user journey.
+- **Where:** `apps/web/app/pdf-viewer/PdfCanvas.tsx`
+  (`highlightArmed`, `stickyArmed`, `onPageClickForSticky`,
+  `PdfTextLayer.onMouseUp`).
+- **Acceptance:**
+  - The cursor reflects the armed tool at any rotation.
+  - Authoring at 90/180/270 produces annotations whose stored PDF
+    rect matches what the user selected/clicked.
+  - Round-trip test fixture exercises authoring at each rotation.
+- **Effort:** S.
+
+### G14c. Deleting a "loaded" annotation
+
+- **What:** `pdf:remove-annotation` refuses to remove annotations
+  that originated in the source PDF (`source: "loaded"`) — the
+  serializer doesn't yet rewrite existing `/Annots` arrays.
+  Session-added annotations (`source: "session"`) round-trip
+  cleanly through `addAnnotations`.
+- **Why deferred:** writing a strip pass needs to walk every page's
+  `/Annots`, drop the right indirect references, and free the
+  underlying objects. Doable in `pdf-lib` but easy to get wrong
+  in a way that breaks signed PDFs, so we'd want full incremental-
+  save coverage too.
+- **Where:** `packages/pdf/src/commands/annotation-commands.ts`
+  (`removeAnnotationHandler`),
+  `packages/pdf-annotations/src/writer.ts`.
+- **Acceptance:**
+  - `removeAnnotationHandler` handles `source: "loaded"` by
+    appending an incremental update that removes the indirect
+    reference from the page's `/Annots`.
+  - Round-trip test loads `with-highlight-annot.pdf`, removes one
+    annotation, exports, re-parses, sees one fewer.
+- **Effort:** M.
+
 ### G14. LibreOffice headless XLSX chart round-trip flake
 
 - **Not a PDF gap, but observed during validation.**
