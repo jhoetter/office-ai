@@ -85,6 +85,7 @@ export const parsePdf = async (
       pages.push({
         id: mint(),
         pageNumber: i,
+        sourceIndex: i - 1,
         width: page.info.width,
         height: page.info.height,
         rotation: page.info.rotation as PdfRotation,

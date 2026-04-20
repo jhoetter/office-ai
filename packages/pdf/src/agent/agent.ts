@@ -80,9 +80,17 @@ export class PdfAgent {
     buffer: ArrayBuffer | Uint8Array,
     opts: PdfAgentOptions = {},
   ): Promise<PdfAgent> {
-    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    const snap = await parsePdf(bytes, opts);
-    return new PdfAgent(snap, bytes, opts);
+    const source = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    // PDF.js's worker pipeline transfers the underlying ArrayBuffer
+    // out of the calling thread which detaches the original Uint8Array
+    // and corrupts our pristine "for incremental save" copy. Defensive
+    // clone-then-pass keeps both copies intact.
+    const pristine = new Uint8Array(source.byteLength);
+    pristine.set(source);
+    const forParse = new Uint8Array(source.byteLength);
+    forParse.set(source);
+    const snap = await parsePdf(forParse, opts);
+    return new PdfAgent(snap, pristine, opts);
   }
 
   /**

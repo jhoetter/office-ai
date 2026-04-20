@@ -11,6 +11,7 @@ import {
 const makePage = (n: number): PdfPage => ({
   id: `page-${n}`,
   pageNumber: n,
+  sourceIndex: n - 1,
   width: 612,
   height: 792,
   rotation: 0,
@@ -98,6 +99,6 @@ describe("deletePagesHandler", () => {
 
   it("refuses to delete every page", () => {
     const snap = makeSnapshot(2);
-    expect(() => deletePagesHandler.apply(snap, { pages: [1, 2] }, ctx)).toThrow(/empty/);
+    expect(() => deletePagesHandler.apply(snap, { pages: [1, 2] }, ctx)).toThrow(/every page/);
   });
 });

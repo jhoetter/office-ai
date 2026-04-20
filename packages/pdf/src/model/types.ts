@@ -32,6 +32,15 @@ export interface PdfPage {
   readonly id: NodeId;
   /** 1-indexed page number in the current document order. */
   readonly pageNumber: number;
+  /**
+   * Stable 0-indexed position of this page in the **source** PDF —
+   * the buffer the agent was constructed from. Survives reorder /
+   * delete / insert mutations so the serializer can map projected
+   * pages back to their original objects for incremental save.
+   * For pages that were minted in-session (e.g. inserted blank pages)
+   * this is `-1`.
+   */
+  readonly sourceIndex: number;
   /** PDF user-units. */
   readonly width: number;
   readonly height: number;

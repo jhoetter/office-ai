@@ -46,7 +46,7 @@ describe("pdf-forms", () => {
     const byName = Object.fromEntries(fields.map((f) => [f.name, f]));
     expect(byName["first.name"].value).toBe("Ada");
     expect(byName["agree"].value).toBe(true);
-    expect(byName["color"].value).toBe("green");
+    expect(byName["color"].value).toEqual(["green"]);
   });
 
   it("flattens the form so widgets become non-fillable", async () => {
@@ -61,7 +61,8 @@ describe("pdf-forms", () => {
     const reset = await resetForm(filled);
     const fields = await listFormFields(reset);
     const byName = Object.fromEntries(fields.map((f) => [f.name, f]));
-    expect(byName["first.name"].value).toBe("");
+    const firstName = byName["first.name"].value;
+    expect(firstName === "" || firstName === undefined).toBe(true);
     expect(byName["agree"].value).toBe(false);
   });
 

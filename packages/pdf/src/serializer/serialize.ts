@@ -43,31 +43,33 @@ export const serializePdf = async (
     if (md.creator !== undefined) pdf.setCreator(md.creator);
     if (md.producer !== undefined) pdf.setProducer(md.producer);
 
-    const desiredOrder = snapshot.root.pages.map((p) => p.pageNumber);
+    const desiredSourceIndices = snapshot.root.pages.map((p) => p.sourceIndex);
     const desiredRotations = snapshot.root.pages.map((p) => p.rotation);
 
-    if (desiredOrder.length === originalPageCount) {
-      const isIdentity = desiredOrder.every((n, i) => n === i + 1);
-      if (!isIdentity) {
-        const indices = desiredOrder.map((n) => n - 1);
-        const reordered = await PDFDocument.create();
-        const copied = await reordered.copyPages(pdf, indices);
-        for (const page of copied) reordered.addPage(page);
-        if (md.title !== undefined) reordered.setTitle(md.title);
-        if (md.author !== undefined) reordered.setAuthor(md.author);
-        if (md.subject !== undefined) reordered.setSubject(md.subject);
-        if (md.keywords !== undefined) reordered.setKeywords([md.keywords]);
-        if (md.creator !== undefined) reordered.setCreator(md.creator);
-        if (md.producer !== undefined) reordered.setProducer(md.producer);
-        const pages = reordered.getPages();
-        pages.forEach((page, i) => page.setRotation(degrees(desiredRotations[i])));
-        return reordered.save({ useObjectStreams: opts.incremental !== false });
-      }
-    } else {
+    if (desiredSourceIndices.some((i) => i < 0 || i >= originalPageCount)) {
       throw new PdfSerializeError(
-        `cannot add or remove pages without re-serialization (got ${desiredOrder.length}, original has ${originalPageCount}). ` +
-          `Use @officeai/pdf-edit for page-level structural changes and pass the resulting buffer back through parsePdf.`,
+        `serializer cannot resolve source pages: this snapshot contains pages with no source mapping (sourceIndex out of [0..${originalPageCount - 1}]). ` +
+          `Use @officeai/pdf-edit for structural inserts/extracts/merges and feed the resulting buffer back through parsePdf.`,
       );
+    }
+
+    const isIdentity =
+      desiredSourceIndices.length === originalPageCount &&
+      desiredSourceIndices.every((srcIdx, i) => srcIdx === i);
+
+    if (!isIdentity) {
+      const reordered = await PDFDocument.create();
+      const copied = await reordered.copyPages(pdf, desiredSourceIndices);
+      for (const page of copied) reordered.addPage(page);
+      if (md.title !== undefined) reordered.setTitle(md.title);
+      if (md.author !== undefined) reordered.setAuthor(md.author);
+      if (md.subject !== undefined) reordered.setSubject(md.subject);
+      if (md.keywords !== undefined) reordered.setKeywords([md.keywords]);
+      if (md.creator !== undefined) reordered.setCreator(md.creator);
+      if (md.producer !== undefined) reordered.setProducer(md.producer);
+      const pages = reordered.getPages();
+      pages.forEach((page, i) => page.setRotation(degrees(desiredRotations[i])));
+      return reordered.save({ useObjectStreams: opts.incremental !== false });
     }
 
     const pages = pdf.getPages();
