@@ -131,7 +131,7 @@ export function PdfEditor({
   const [fileHandle, setFileHandle] = useState<FileSystemFileHandle | undefined>(undefined);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [currentPage, setCurrentPage] = useState(1);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0.95);
   const [viewMode, setViewMode] = useState<PdfViewMode>("continuous");
   const [darkMode, setDarkMode] = useState<PdfDarkModeStrategy>("off");
   const [reflow, setReflow] = useState(false);
@@ -202,7 +202,7 @@ export function PdfEditor({
       setAgent(nextAgent);
       setEngineDoc(nextEngine);
       setCurrentPage(1);
-      setZoom(1);
+      setZoom(0.95);
       setViewportRotation(0);
       setHighlight(null);
       setSaveState("saved");
@@ -394,11 +394,29 @@ export function PdfEditor({
   const onFirstPage = useCallback(() => goToPage(1), [goToPage]);
   const onLastPage = useCallback(() => goToPage(totalPages || 1), [goToPage, totalPages]);
 
+  const zoomMetricsRef = useRef<{ actualSizeZoom: number; fitPageZoom: number }>({
+    actualSizeZoom: 1,
+    fitPageZoom: 0.95,
+  });
+  const onZoomMetricsChange = useCallback(
+    (metrics: { actualSizeZoom: number; fitPageZoom: number }) => {
+      zoomMetricsRef.current = metrics;
+    },
+    []
+  );
+
   const onZoomIn = useCallback(() => setZoom((z) => clampZoom(z * ZOOM_STEP)), []);
   const onZoomOut = useCallback(() => setZoom((z) => clampZoom(z / ZOOM_STEP)), []);
   const onFitWidth = useCallback(() => setZoom(1), []);
-  const onFitPage = useCallback(() => setZoom(0.95), []);
-  const onActualSize = useCallback(() => setZoom(1.5), []);
+  const onFitPage = useCallback(
+    () => setZoom(clampZoom(zoomMetricsRef.current.fitPageZoom)),
+    []
+  );
+  const onActualSize = useCallback(
+    () => setZoom(clampZoom(zoomMetricsRef.current.actualSizeZoom)),
+    []
+  );
+  const onSetZoom = useCallback((next: number) => setZoom(clampZoom(next)), []);
 
   const onRotateClockwise = useCallback(
     () => setViewportRotation((r) => (((r + 90) % 360) as PdfRotation)),
@@ -732,6 +750,7 @@ export function PdfEditor({
             onFitWidth={onFitWidth}
             onFitPage={onFitPage}
             onActualSize={onActualSize}
+            onSetZoom={onSetZoom}
             onSetViewMode={setViewMode}
             onRotateClockwise={onRotateClockwise}
             onRotateCounterClockwise={onRotateCounterClockwise}
@@ -783,6 +802,7 @@ export function PdfEditor({
                     reflow={reflow}
                     viewportRotation={viewportRotation}
                     onCurrentPageChange={setCurrentPage}
+                    onZoomMetricsChange={onZoomMetricsChange}
                     highlight={highlight}
                   />
                 </section>

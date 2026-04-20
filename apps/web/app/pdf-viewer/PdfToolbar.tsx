@@ -43,6 +43,7 @@ export interface PdfToolbarProps {
   readonly onFitWidth: () => void;
   readonly onFitPage: () => void;
   readonly onActualSize: () => void;
+  readonly onSetZoom: (z: number) => void;
   readonly onSetViewMode: (mode: PdfViewMode) => void;
   readonly onRotateClockwise: () => void;
   readonly onRotateCounterClockwise: () => void;
@@ -116,6 +117,7 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
         onFitWidth={props.onFitWidth}
         onFitPage={props.onFitPage}
         onActualSize={props.onActualSize}
+        onSetZoom={props.onSetZoom}
         onZoomIn={props.onZoomIn}
         onZoomOut={props.onZoomOut}
       />
@@ -350,6 +352,7 @@ interface ZoomMenuProps {
   readonly onFitWidth: () => void;
   readonly onFitPage: () => void;
   readonly onActualSize: () => void;
+  readonly onSetZoom: (z: number) => void;
   readonly onZoomIn: () => void;
   readonly onZoomOut: () => void;
 }
@@ -360,6 +363,7 @@ function ZoomMenu({
   onFitWidth,
   onFitPage,
   onActualSize,
+  onSetZoom,
 }: ZoomMenuProps): React.ReactNode {
   const { t } = useTranslator();
   const [open, setOpen] = React.useState(false);
@@ -417,8 +421,7 @@ function ZoomMenu({
             key={preset}
             onClick={() => {
               setOpen(false);
-              if (preset === 1) onActualSize();
-              else if (preset > zoom) onActualSize(); // fall through; editor decides
+              onSetZoom(preset);
             }}
             label={`${Math.round(preset * 100)} %`}
             testId={`pdf-zoom-preset-${preset}`}

@@ -61,6 +61,24 @@ export interface PdfCanvasProps {
    * search match. Cleared by passing `null`.
    */
   readonly highlight?: PdfHighlight | null;
+  /**
+   * Reports container-derived zoom metrics back to the editor so
+   * the toolbar's "Actual size" and "Fit page" callbacks can pick
+   * the right `zoom` value. `actualSizeZoom` makes 1 PDF unit equal
+   * 1 CSS pixel; `fitPageZoom` shrinks the largest page to fit the
+   * viewport on both axes.
+   */
+  readonly onZoomMetricsChange?: (metrics: PdfZoomMetrics) => void;
+}
+
+/**
+ * Container-derived zoom values. The editor uses these so toolbar
+ * presets ("Actual size", "Fit page") map to a real `zoom` instead
+ * of hard-coded numbers.
+ */
+export interface PdfZoomMetrics {
+  readonly actualSizeZoom: number;
+  readonly fitPageZoom: number;
 }
 
 /**
@@ -91,19 +109,23 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     viewportRotation,
     onCurrentPageChange,
     highlight,
+    onZoomMetricsChange,
   } = props;
   const { t } = useTranslator();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       setContainerWidth(el.clientWidth);
+      setContainerHeight(el.clientHeight);
     });
     ro.observe(el);
     setContainerWidth(el.clientWidth);
+    setContainerHeight(el.clientHeight);
     return () => ro.disconnect();
   }, []);
 
@@ -123,6 +145,29 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     return target / widest;
   }, [pages, containerWidth, viewportRotation, viewMode]);
   const scale = baseScale * zoom;
+
+  // Surface fit-page / actual-size targets back to the editor so
+  // the toolbar's preset callbacks set a real `zoom` instead of a
+  // hard-coded heuristic.
+  useEffect(() => {
+    if (!onZoomMetricsChange) return;
+    if (!pages.length || baseScale === 0) return;
+    const tallest = pages.reduce(
+      (acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation)),
+      0
+    );
+    const verticalGutter = 32;
+    const fitPageScale =
+      containerHeight > 0 && tallest > 0
+        ? Math.min(
+            baseScale,
+            Math.max(0.05, (containerHeight - verticalGutter) / tallest)
+          )
+        : baseScale;
+    const actualSizeZoom = 1 / baseScale;
+    const fitPageZoom = fitPageScale / baseScale;
+    onZoomMetricsChange({ actualSizeZoom, fitPageZoom });
+  }, [pages, baseScale, containerHeight, viewportRotation, onZoomMetricsChange]);
 
   // Track which placeholders are intersected so we know which pages
   // to render. The set is mutable so the IO callback can mutate
