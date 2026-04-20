@@ -440,42 +440,20 @@ function projectGrid(
 
 function cellToScalar(value: CellValue | undefined): string | number | null {
   if (value === undefined || value === null) return null;
-  switch (value.kind) {
-    case "number":
-      return value.value;
-    case "string":
-      return value.value;
-    case "boolean":
-      return value.value ? "TRUE" : "FALSE";
-    case "error":
-      return value.code;
-    default: {
-      const _exhaustive: never = value;
-      void _exhaustive;
-      return null;
-    }
-  }
+  if (typeof value === "number") return value;
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  return value.code;
 }
 
 function cellDisplay(cell: Cell | undefined): string {
   if (!cell) return "";
   const v = cell.value;
   if (v === null || v === undefined) return "";
-  switch (v.kind) {
-    case "number":
-      return String(v.value);
-    case "string":
-      return v.value;
-    case "boolean":
-      return v.value ? "TRUE" : "FALSE";
-    case "error":
-      return v.code;
-    default: {
-      const _exhaustive: never = v;
-      void _exhaustive;
-      return "";
-    }
-  }
+  if (typeof v === "number") return String(v);
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+  return v.code;
 }
 
 /**
@@ -485,17 +463,11 @@ function cellDisplay(cell: Cell | undefined): string {
  * everything else → string. Formula authoring (`=SUM(...)`) is
  * intentionally not exposed here — the modal is for value tweaks.
  */
-function parseCellInput(raw: string): CellValue | null {
+function parseCellInput(raw: string): CellValue {
   const trimmed = raw.trim();
   if (trimmed === "") return null;
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-    return { kind: "number", value: Number(trimmed) };
-  }
-  if (trimmed.toUpperCase() === "TRUE") {
-    return { kind: "boolean", value: true };
-  }
-  if (trimmed.toUpperCase() === "FALSE") {
-    return { kind: "boolean", value: false };
-  }
-  return { kind: "string", value: raw };
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (trimmed.toUpperCase() === "TRUE") return true;
+  if (trimmed.toUpperCase() === "FALSE") return false;
+  return raw;
 }
