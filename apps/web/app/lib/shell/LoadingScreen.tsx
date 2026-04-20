@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { FileSpreadsheet, FileText, Presentation } from "lucide-react";
+import { BookOpen, FileSpreadsheet, FileText, Presentation } from "lucide-react";
 import { InlineSpinner } from "./InlineSpinner";
 import { useTranslator } from "@/lib/i18n";
 import type { ProductKind } from "./types";
@@ -73,6 +73,7 @@ const PRODUCT_ICON: Record<ProductKind, ComponentType<{ size?: number }>> = {
   docx: FileText,
   xlsx: FileSpreadsheet,
   pptx: Presentation,
+  pdf: BookOpen,
 };
 
 export function LoadingScreen({

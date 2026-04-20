@@ -15,7 +15,7 @@ import {
 } from "@officeai/realtime";
 import type { CommandLite } from "@officeai/core";
 
-export type ProductKind = "docx" | "xlsx" | "pptx";
+export type ProductKind = "docx" | "xlsx" | "pptx" | "pdf";
 
 export interface RoomClientOptions {
   readonly url: string;

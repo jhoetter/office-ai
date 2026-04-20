@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles } from "lucide-react";
+import { FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles, BookOpen } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 
-type Kind = "docx" | "xlsx" | "pptx";
+type Kind = "docx" | "xlsx" | "pptx" | "pdf";
 
 interface SampleFileEntry {
   readonly name: string;
@@ -56,6 +56,14 @@ const NEW_ACTIONS: ReadonlyArray<NewAction> = [
     icon: Presentation,
     accent: "text-orange-600 dark:text-orange-400",
   },
+  {
+    id: "pdf",
+    titleKey: "home.newPdf",
+    subtitleKey: "home.subPdf",
+    href: "/pdf-viewer?new=1",
+    icon: BookOpen,
+    accent: "text-rose-600 dark:text-rose-400",
+  },
 ];
 
 const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; labelKey: string; accent: string }> =
@@ -77,6 +85,12 @@ const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; label
       icon: Presentation,
       labelKey: "common.kindPptx",
       accent: "text-orange-600 dark:text-orange-400",
+    },
+    pdf: {
+      editorPath: "/pdf-viewer",
+      icon: BookOpen,
+      labelKey: "common.kindPdf",
+      accent: "text-rose-600 dark:text-rose-400",
     },
   };
 

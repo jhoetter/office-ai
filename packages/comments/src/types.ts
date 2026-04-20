@@ -49,6 +49,22 @@ export type CommentAnchor =
       /** Optional anchored shape id; if set, the pin moves with the shape. */
       readonly shapeId?: string;
     }
+  | {
+      /**
+       * PDF region anchor. Coordinates are NORMALIZED to the PDF page's
+       * MediaBox (0..1) so the comment stays correctly placed under
+       * page rotation, zoom, and reflow. The optional `nativeAnnotId`
+       * is the PDF object number when the comment is also written into
+       * the document as a native /Text annotation; absent for adapter-
+       * only comments that live in our snapshot only.
+       */
+      readonly kind: "pdf-region";
+      /** 1-indexed page number, matching the PDF spec convention. */
+      readonly pageNumber: number;
+      /** Normalised rect [x1, y1, x2, y2] in 0..1 of the page MediaBox. */
+      readonly normalizedRect: readonly [number, number, number, number];
+      readonly nativeAnnotId?: string;
+    }
   | { readonly kind: "none" };
 
 /** Normalised comment as the shared UI sees it. */

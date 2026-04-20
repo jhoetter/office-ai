@@ -14,7 +14,7 @@ export interface PresencePeer {
   readonly name: string;
   readonly color: string;
   /** ISO product slug — drives the optional product hint glyph. */
-  readonly product?: "docx" | "xlsx" | "pptx";
+  readonly product?: "docx" | "xlsx" | "pptx" | "pdf";
   /** Wall-clock when the peer last published awareness; "active 12s ago". */
   readonly lastSeen?: number;
 }

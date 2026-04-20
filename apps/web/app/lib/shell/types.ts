@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 /** Identity of the active editor product. Drives the per-product
  * shortcuts catalogue, the export menu, and the right-rail tabs
  * (Outline is DOCX-only). */
-export type ProductKind = "docx" | "xlsx" | "pptx";
+export type ProductKind = "docx" | "xlsx" | "pptx" | "pdf";
 
 /** Save / dirty state surfaced as a small pill in the top bar. The
  * product reports its current state and the shell decides how to

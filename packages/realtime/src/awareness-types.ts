@@ -32,6 +32,15 @@ export interface PptxSelection {
   readonly shapeIds: ReadonlyArray<string>;
 }
 
+/** PDF active page + optional pixel-rect selection (normalized 0..1). */
+export interface PdfSelection {
+  readonly product: "pdf";
+  /** 1-indexed page number of the active viewport. */
+  readonly pageNumber: number;
+  /** Optional normalized rect (0..1) describing what the user has selected on the page. */
+  readonly normalizedRect?: readonly [number, number, number, number];
+}
+
 /**
  * The full awareness state every peer publishes. The `cursor` field
  * is product-tagged so receivers can ignore peers in a different
@@ -40,8 +49,8 @@ export interface PptxSelection {
  */
 export interface AwarenessState {
   readonly user: AnonymousIdentity;
-  readonly product: "docx" | "xlsx" | "pptx";
-  readonly cursor?: DocxCursor | XlsxSelection | PptxSelection;
+  readonly product: "docx" | "xlsx" | "pptx" | "pdf";
+  readonly cursor?: DocxCursor | XlsxSelection | PptxSelection | PdfSelection;
   /** Wall-clock when this state was last published — tooltip "active 12s ago". */
   readonly lastSeen: number;
 }
