@@ -1724,8 +1724,7 @@ function registerPdfTools(server: McpServer): void {
   server.registerTool(
     "pdf_merge",
     {
-      description:
-        "Concatenate two-or-more PDFs into a single document. Schema: office-agent/pdf-merge@1.",
+      description: "Concatenate two-or-more PDFs into a single document. Schema: office-agent/pdf-merge@1.",
       inputSchema: {
         inputs: z.array(z.string()).min(2),
         out_path: z.string(),
@@ -1775,7 +1774,9 @@ function registerPdfTools(server: McpServer): void {
         if (typeof v === "string") patch[k] = v;
       }
       if (Object.keys(patch).length === 0) {
-        throw new Error("pdf_set_metadata: pass at least one of title/author/subject/keywords/creator/producer");
+        throw new Error(
+          "pdf_set_metadata: pass at least one of title/author/subject/keywords/creator/producer"
+        );
       }
       return {
         bytes: await setMetadata(bytes, patch),
@@ -1821,14 +1822,7 @@ function registerPdfTools(server: McpServer): void {
     {
       start: z.number().int().positive().optional(),
       position: z
-        .enum([
-          "top-left",
-          "top-center",
-          "top-right",
-          "bottom-left",
-          "bottom-center",
-          "bottom-right",
-        ])
+        .enum(["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"])
         .optional(),
       font_size: z.number().positive().optional(),
       margin: z.number().nonnegative().optional(),
@@ -1873,9 +1867,7 @@ function registerPdfTools(server: McpServer): void {
         else if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
           coerced[k] = v as ReadonlyArray<string>;
         } else {
-          throw new Error(
-            `pdf_fill_form: field "${k}" expects string|boolean|string[] (got ${typeof v})`
-          );
+          throw new Error(`pdf_fill_form: field "${k}" expects string|boolean|string[] (got ${typeof v})`);
         }
       }
       return {
@@ -1893,13 +1885,10 @@ function registerPdfTools(server: McpServer): void {
     async (bytes) => ({ bytes: await flattenForm(bytes), summary: "flattened form fields" })
   );
 
-  registerPdfMutationTool(
-    server,
-    "pdf_reset_form",
-    "office-agent/pdf-reset-form@1",
-    {},
-    async (bytes) => ({ bytes: await resetForm(bytes), summary: "reset form fields to defaults" })
-  );
+  registerPdfMutationTool(server, "pdf_reset_form", "office-agent/pdf-reset-form@1", {}, async (bytes) => ({
+    bytes: await resetForm(bytes),
+    summary: "reset form fields to defaults",
+  }));
 }
 
 /**

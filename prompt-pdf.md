@@ -240,6 +240,7 @@ Before declaring complete:
 ### PDF Viewer — In Scope (the table-stakes)
 
 **Reading**
+
 - Open any real-world PDF (PDF 1.4 → 2.0); local file, URL, drag-drop, paste, share-target
 - Continuous, single-page, two-page (book/cover), and presentation view modes
 - Smooth zoom: pinch, ctrl+wheel, fit-width, fit-page, fit-actual, custom %, double-tap-to-zoom
@@ -256,6 +257,7 @@ Before declaring complete:
 - Share (link with permissions, when collab enabled)
 
 **Reading polish (the differentiators)**
+
 - **Dark mode** that smart-inverts: page background dark, text light, but **photos and color-rich figures preserved as-is**; toggle per-document; system-aware; remembers preference
 - **Reading ruler** / line focus mode (dim everything except current line)
 - **Distraction-free** mode (chrome hides; tap to reveal)
@@ -268,6 +270,7 @@ Before declaring complete:
 - **Persistent reading position** per document (remember scroll, zoom, mode across sessions)
 
 **Search**
+
 - Full-text search with hit highlighting, hit count, prev/next, jump to result
 - Match case, match whole word, regex, **fuzzy** (typo-tolerant)
 - **Semantic search** ("show me the part where they discuss return policy") — AI-powered
@@ -275,6 +278,7 @@ Before declaring complete:
 - Search panel shows snippets with surrounding context
 
 **Selection & extraction**
+
 - Text selection (per-glyph, per-word double-click, per-paragraph triple-click)
 - Rectangular (lasso) selection for image extraction
 - Copy text with formatting preserved (or as plain)
@@ -283,6 +287,7 @@ Before declaring complete:
 - Extract image at original resolution
 
 **Annotations** (all roundtrip into native PDF annotation objects with valid AP streams)
+
 - Highlight, underline, strikethrough, squiggly (text markup annotations)
 - Sticky note / popup comment (with thread, replies, resolve)
 - Free text annotation
@@ -297,6 +302,7 @@ Before declaring complete:
 - Rich annotation list panel: filter by author, type, page, date; jump to; resolve; reply
 
 **Forms (AcroForm)**
+
 - Render every field type: text, textarea (multiline), checkbox, radio, combobox, listbox, button, signature, push-button, file-attachment
 - Fill, validate (regex / format constraints from `/V`, `/MaxLen`, `/AA` actions where safe)
 - Calculation order respected
@@ -306,6 +312,7 @@ Before declaring complete:
 - For XFA: render the AcroForm fallback if present; otherwise show a clear "this form requires Adobe Acrobat" message with a "convert to AcroForm" option (best-effort)
 
 **Page-level editing**
+
 - Rotate single page or selection (90° / 180° / 270°)
 - Reorder pages (drag in thumbnail panel)
 - Insert blank page / insert pages from another PDF
@@ -318,12 +325,14 @@ Before declaring complete:
 - Resize / change page size
 
 **Signatures**
+
 - Display existing signatures with validity badge (signature panel)
 - Show signing certificate chain
 - Detect changes after signing (LTV / DSS dictionary)
 - Optional: place a visible signature image + sign with PKCS#12 (deferred; spec must say)
 
 **Accessibility**
+
 - Tagged PDF reading order respected for screen readers
 - Reflow view (single-column, font-size adjustable, ignores layout)
 - High-contrast mode
@@ -335,6 +344,7 @@ Before declaring complete:
 - Respects `prefers-reduced-motion`
 
 **Performance**
+
 - First page rendered in < 600 ms on a mid-range laptop (cold load, 50 MB PDF over local file)
 - Scroll at 60 fps with virtual page rendering (only ±2 pages around viewport are in canvas)
 - Memory bounded: 1000-page document under 600 MB RSS in browser
@@ -344,6 +354,7 @@ Before declaring complete:
 - Lazy load: thumbnails, text-layer, AI features all on-demand
 
 **Privacy & security**
+
 - 100% client-side rendering by default; nothing leaves the browser unless the user opts in (e.g. to use cloud AI)
 - Local AI model option (WebLLM / wllama) for "ask the PDF" without ever uploading the file
 - Sandbox embedded JavaScript in PDFs (AcroForm `/AA` actions, document-level scripts) — by default, do not execute
@@ -351,6 +362,7 @@ Before declaring complete:
 - Clear visual indication when a PDF contains: JS, external links, attachments, forms, encryption, signatures
 
 **Collaboration** (reuse `packages/realtime` + `packages/comments`)
+
 - Presence: see other readers' cursors and current page
 - Annotation sync via Y.js (CRDT, no server lock)
 - Comment threads anchored to PDF coordinates (page + rect), stable across rotate/zoom
@@ -359,11 +371,11 @@ Before declaring complete:
 
 ### PDF — Explicitly Out of Scope
 
-- **Editing the existing text inside a page** (i.e. re-flowing paragraphs already rasterized into the content stream). This is a tar pit. We support text *overlay* and redaction; not text *editing*.
+- **Editing the existing text inside a page** (i.e. re-flowing paragraphs already rasterized into the content stream). This is a tar pit. We support text _overlay_ and redaction; not text _editing_.
 - **XFA dynamic forms** beyond rendering the AcroForm fallback (Adobe themselves are deprecating this)
 - **3D / PRC content** (preserve, do not render)
 - **Multimedia annotations** (movie / sound / 3D / RichMedia — preserve as-is, do not play)
-- **PDF/A creation/conformance certification** (we may *open* PDF/A files; we do not certify outputs as PDF/A)
+- **PDF/A creation/conformance certification** (we may _open_ PDF/A files; we do not certify outputs as PDF/A)
 - **Embedded JavaScript execution** (security; we sandbox / no-op)
 - **Native code signing** of digital signatures (deferred — placing visible signature images is in scope; cryptographic signing is opt-in deferred)
 - **Heavy-duty OCR** beyond on-demand `tesseract.js` for selectable-text overlay (we are not a Document AI / IDP product)
@@ -382,22 +394,25 @@ Same invariant as DOCX/XLSX/PPTX. No direct model mutation. Every change — hum
 
 ```typescript
 type PdfCommand =
-  | { type: 'pdf:add-annotation'; payload: AddAnnotationPayload }
-  | { type: 'pdf:update-annotation'; payload: UpdateAnnotationPayload }
-  | { type: 'pdf:delete-annotation'; payload: { id: string } }
-  | { type: 'pdf:fill-form-field'; payload: { fieldName: string; value: FormFieldValue } }
-  | { type: 'pdf:rotate-pages'; payload: { pages: number[]; angle: 90 | 180 | 270 } }
-  | { type: 'pdf:reorder-pages'; payload: { from: number[]; to: number[] } }
-  | { type: 'pdf:insert-pages'; payload: { at: number; sourceBuffer: ArrayBuffer; sourcePages?: number[] } }
-  | { type: 'pdf:delete-pages'; payload: { pages: number[] } }
-  | { type: 'pdf:redact'; payload: { rects: PdfRect[]; replacement?: RgbColor } }
-  | { type: 'pdf:add-text-overlay'; payload: { page: number; rect: PdfRect; text: string; style: TextStyle } }
-  | { type: 'pdf:add-image-overlay'; payload: { page: number; rect: PdfRect; data: ArrayBuffer } }
-  | { type: 'pdf:add-watermark'; payload: { text?: string; image?: ArrayBuffer; opacity: number; pages: number[] | 'all' } }
-  | { type: 'pdf:add-bookmark'; payload: { title: string; destination: PdfDestination; parent?: string } }
-  | { type: 'pdf:flatten-form' }
-  | { type: 'pdf:flatten-annotations' }
-  | { type: 'pdf:set-metadata'; payload: PdfMetadataPatch }
+  | { type: "pdf:add-annotation"; payload: AddAnnotationPayload }
+  | { type: "pdf:update-annotation"; payload: UpdateAnnotationPayload }
+  | { type: "pdf:delete-annotation"; payload: { id: string } }
+  | { type: "pdf:fill-form-field"; payload: { fieldName: string; value: FormFieldValue } }
+  | { type: "pdf:rotate-pages"; payload: { pages: number[]; angle: 90 | 180 | 270 } }
+  | { type: "pdf:reorder-pages"; payload: { from: number[]; to: number[] } }
+  | { type: "pdf:insert-pages"; payload: { at: number; sourceBuffer: ArrayBuffer; sourcePages?: number[] } }
+  | { type: "pdf:delete-pages"; payload: { pages: number[] } }
+  | { type: "pdf:redact"; payload: { rects: PdfRect[]; replacement?: RgbColor } }
+  | { type: "pdf:add-text-overlay"; payload: { page: number; rect: PdfRect; text: string; style: TextStyle } }
+  | { type: "pdf:add-image-overlay"; payload: { page: number; rect: PdfRect; data: ArrayBuffer } }
+  | {
+      type: "pdf:add-watermark";
+      payload: { text?: string; image?: ArrayBuffer; opacity: number; pages: number[] | "all" };
+    }
+  | { type: "pdf:add-bookmark"; payload: { title: string; destination: PdfDestination; parent?: string } }
+  | { type: "pdf:flatten-form" }
+  | { type: "pdf:flatten-annotations" }
+  | { type: "pdf:set-metadata"; payload: PdfMetadataPatch };
 ```
 
 ### The Agent API (Headless-First)
@@ -409,7 +424,7 @@ interface PdfAgent {
   // Read
   getSnapshot(): PdfDocumentSnapshot;
   getPage(pageIndex: number): PdfPageSnapshot;
-  getText(range: PdfRangeSpec, opts?: { format?: 'plain' | 'markdown' | 'html' }): string;
+  getText(range: PdfRangeSpec, opts?: { format?: "plain" | "markdown" | "html" }): string;
   getOutline(): PdfOutlineNode[];
   getAnnotations(filter?: PdfAnnotationFilter): PdfAnnotation[];
   getFormFields(): PdfFormField[];
@@ -446,7 +461,7 @@ This must work **headlessly** — zero DOM, zero React, zero browser. An agent i
 
 ### AI Features (the showcase)
 
-These are the things that turn a PDF viewer into a tool people *prefer*.
+These are the things that turn a PDF viewer into a tool people _prefer_.
 
 - **Chat with PDF** — sidebar chat. Every answer cites source pages with hover-preview and click-to-jump. Multi-turn, with conversation memory scoped to the document.
 - **Summarize** — full doc, current section, current page, current selection. Choice of length and style (executive / detailed / bullet / outline).

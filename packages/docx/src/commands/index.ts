@@ -39,12 +39,5 @@ export { insertPageBreakHandler, type InsertPageBreakPayload } from "./insert-pa
 export { insertTextTrackedHandler } from "./insert-text-tracked.js";
 export { deleteRangeTrackedHandler } from "./delete-range-tracked.js";
 export { insertChartHandler } from "./insert-chart.js";
-export {
-  setChartDataHandler,
-  setChartTitleHandler,
-  setChartTypeHandler,
-} from "./chart-edits.js";
-export {
-  insertSpreadsheetHandler,
-  updateSpreadsheetHandler,
-} from "./insert-spreadsheet.js";
+export { setChartDataHandler, setChartTitleHandler, setChartTypeHandler } from "./chart-edits.js";
+export { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";

@@ -2,12 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFocusTrap } from "@officeai/ui";
-import {
-  XlsxAgent,
-  colToLetter,
-  parseCellKey,
-  type XlsxClipboardSnapshot,
-} from "@officeai/xlsx";
+import { XlsxAgent, colToLetter, parseCellKey, type XlsxClipboardSnapshot } from "@officeai/xlsx";
 import type { XlsxEmbedMode } from "./xlsxEmbedShared";
 
 /**
@@ -48,7 +43,11 @@ interface Loaded {
   readonly sheets: ReadonlyArray<{ name: string; index: number }>;
 }
 
-const MODE_OPTIONS: ReadonlyArray<{ readonly id: XlsxEmbedMode; readonly label: string; readonly hint: string }> = [
+const MODE_OPTIONS: ReadonlyArray<{
+  readonly id: XlsxEmbedMode;
+  readonly label: string;
+  readonly hint: string;
+}> = [
   { id: "materialized", label: "Table", hint: "Native editable cells" },
   { id: "live", label: "Live spreadsheet", hint: "Double-click → Excel" },
   { id: "chart", label: "Chart", hint: "First row = series, first col = categories" },
@@ -80,9 +79,7 @@ export function XlsxRangePickerDialog(props: Props): React.ReactElement | null {
 
   const usedRange = useMemo(() => {
     if (!loaded) return "";
-    const sheet = loaded.agent
-      .getSnapshot()
-      .root.sheets.find((s) => s.name === sheetName);
+    const sheet = loaded.agent.getSnapshot().root.sheets.find((s) => s.name === sheetName);
     if (!sheet) return "A1:A1";
     return computeUsedRange(sheet.cells);
   }, [loaded, sheetName]);
@@ -209,9 +206,7 @@ export function XlsxRangePickerDialog(props: Props): React.ReactElement | null {
 
         {loaded && (
           <>
-            <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
-              {loaded.fileName}
-            </div>
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{loaded.fileName}</div>
 
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 500 }}>Sheet</span>
@@ -257,9 +252,7 @@ export function XlsxRangePickerDialog(props: Props): React.ReactElement | null {
             </label>
 
             <div>
-              <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>
-                Insert as
-              </div>
+              <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Insert as</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
                 {MODE_OPTIONS.map((opt) => {
                   const active = mode === opt.id;
@@ -285,9 +278,7 @@ export function XlsxRangePickerDialog(props: Props): React.ReactElement | null {
                       }}
                     >
                       <span style={{ fontWeight: 500 }}>{opt.label}</span>
-                      <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>
-                        {opt.hint}
-                      </span>
+                      <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>{opt.hint}</span>
                     </button>
                   );
                 })}
@@ -296,9 +287,7 @@ export function XlsxRangePickerDialog(props: Props): React.ReactElement | null {
           </>
         )}
 
-        {error && (
-          <div style={{ fontSize: 12, color: "var(--destructive, #b91c1c)" }}>{error}</div>
-        )}
+        {error && <div style={{ fontSize: 12, color: "var(--destructive, #b91c1c)" }}>{error}</div>}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
           <button

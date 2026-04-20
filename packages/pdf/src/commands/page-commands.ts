@@ -27,9 +27,7 @@ export const rotatePagesHandler: CommandHandler<RotatePagesPayload, PdfSnapshot>
 
     const targetSet = new Set(payload.pages);
     const nextPages: PdfPage[] = snapshot.root.pages.map((p) =>
-      targetSet.has(p.pageNumber)
-        ? { ...p, rotation: normalizeRotation(p.rotation + payload.delta) }
-        : p,
+      targetSet.has(p.pageNumber) ? { ...p, rotation: normalizeRotation(p.rotation + payload.delta) } : p
     );
     const root: PdfDocument = { ...snapshot.root, pages: nextPages };
     const next = evolvePdf(snapshot, root);

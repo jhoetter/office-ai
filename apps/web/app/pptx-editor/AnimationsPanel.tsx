@@ -174,23 +174,27 @@ const PRESET_LABELS: Record<string, string> = {
 
 export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement {
   const slide: Slide | undefined = props.snapshot.root.slides[props.activeIndex];
-  if (!slide) {
-    return <EmptyState message="No slide selected." />;
-  }
-  const animations = slide.animations;
-  const transition = slide.transition;
-  const selectedShapeName = props.selectedShape?.name ?? null;
-  const canAnimateSelected = canAnimate(props.selectedShape);
   const [activeCategory, setActiveCategory] = React.useState<AnimationCategory>("entrance");
   const [editingId, setEditingId] = React.useState<string | null>(null);
 
+  const animations = slide?.animations;
+
   // Auto-close the editor when the underlying animation disappears (e.g.
-  // user removed it via the trash button or a remote agent edit).
+  // user removed it via the trash button or a remote agent edit). Hook
+  // must run unconditionally — bail inside.
   React.useEffect(() => {
+    if (!animations) return;
     if (editingId && !animations.some((a) => a.id === editingId)) {
       setEditingId(null);
     }
   }, [animations, editingId]);
+
+  if (!slide || !animations) {
+    return <EmptyState message="No slide selected." />;
+  }
+  const transition = slide.transition;
+  const selectedShapeName = props.selectedShape?.name ?? null;
+  const canAnimateSelected = canAnimate(props.selectedShape);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 text-xs">
@@ -452,17 +456,12 @@ function AnimationList(props: AnimationListProps): React.ReactElement {
     );
   }
   return (
-    <ol
-      className="flex flex-col gap-1"
-      data-testid="pptx-anim-list"
-      aria-label="Animations on this slide"
-    >
+    <ol className="flex flex-col gap-1" data-testid="pptx-anim-list" aria-label="Animations on this slide">
       {props.animations.map((a, idx) => {
         const accent = CATEGORY_ACCENT[a.category];
         const isOpen = props.editingId === a.id;
         const TriggerIcon = TRIGGER_ICONS[a.trigger];
-        const shapeName =
-          props.shapeNamesByCNvPrId.get(a.targetCNvPrId) ?? `Shape #${a.targetCNvPrId}`;
+        const shapeName = props.shapeNamesByCNvPrId.get(a.targetCNvPrId) ?? `Shape #${a.targetCNvPrId}`;
         return (
           <li
             key={a.id}
@@ -584,9 +583,7 @@ function EffectOptions(props: EffectOptionsProps): React.ReactElement {
     >
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
-          <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-secondary">
-            Trigger
-          </span>
+          <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-secondary">Trigger</span>
           <select
             value={a.trigger}
             disabled={props.disabled}
@@ -608,9 +605,7 @@ function EffectOptions(props: EffectOptionsProps): React.ReactElement {
         </label>
         {directions.length > 0 ? (
           <label className="block">
-            <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-secondary">
-              Direction
-            </span>
+            <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-secondary">Direction</span>
             <select
               value={a.direction ?? ""}
               disabled={props.disabled}
@@ -657,9 +652,7 @@ function EffectOptions(props: EffectOptionsProps): React.ReactElement {
           />
         </label>
         <label className="block">
-          <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-secondary">
-            Delay (ms)
-          </span>
+          <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-secondary">Delay (ms)</span>
           <input
             type="number"
             min={0}

@@ -74,16 +74,10 @@ import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope"
 import { applyXlsxRangeToPptx } from "@/lib/embed/applyXlsxRangeToPptx";
 import { applyXlsxEmbed } from "@/lib/embed/xlsxEmbedShared";
 import type { XlsxEmbedMode } from "@/lib/embed/xlsxEmbedShared";
-import {
-  XlsxRangePickerDialog,
-  type XlsxRangePickerResult,
-} from "@/lib/embed/XlsxRangePickerDialog";
+import { XlsxRangePickerDialog, type XlsxRangePickerResult } from "@/lib/embed/XlsxRangePickerDialog";
 import { installAltKeyTracker, isAltKeyPressed } from "@/lib/embed/altKeyTracker";
 import { EmbeddedXlsxModal } from "@/lib/embed/EmbeddedXlsxModal";
-import {
-  resolveEmbeddedXlsxRef,
-  readEmbeddedXlsxBytes,
-} from "@/lib/embed/getEmbeddedXlsxBytes";
+import { resolveEmbeddedXlsxRef, readEmbeddedXlsxBytes } from "@/lib/embed/getEmbeddedXlsxBytes";
 
 const SCALE_OPTIONS = {
   type: "select" as const,
@@ -1081,11 +1075,7 @@ export function PptxEditor({
           mode: result.mode,
         });
         const label =
-          result.mode === "live"
-            ? "embedded spreadsheet"
-            : result.mode === "chart"
-              ? "chart"
-              : "table";
+          result.mode === "live" ? "embedded spreadsheet" : result.mode === "chart" ? "chart" : "table";
         pushToast("info", `Inserted ${label} from xlsx.`);
       } catch (err) {
         onError(err);
@@ -2153,9 +2143,15 @@ export function PptxEditor({
       "pptx.add-connector-curved": { run: () => startConnectorTool("curved") },
       "pptx.add-comment": { run: () => focusCommentComposer() },
       "pptx.delete-shape": { run: () => void deleteSelectedShape(), enabled: selectedShapeIds.length > 0 },
-      "pptx.duplicate-shape": { run: () => void duplicateSelectedShapes(), enabled: selectedShapeIds.length > 0 },
+      "pptx.duplicate-shape": {
+        run: () => void duplicateSelectedShapes(),
+        enabled: selectedShapeIds.length > 0,
+      },
       "pptx.group-shapes": { run: () => void groupSelectedShapes(), enabled: selectedShapeIds.length >= 2 },
-      "pptx.ungroup-shape": { run: () => void ungroupSelectedShape(), enabled: selectedShapeIds.length === 1 },
+      "pptx.ungroup-shape": {
+        run: () => void ungroupSelectedShape(),
+        enabled: selectedShapeIds.length === 1,
+      },
       "pptx.zoom-reset": { run: () => setZoom(1) },
       "pptx.present-from-start": { run: () => startPresenting(false), enabled: ready && slides.length > 0 },
       "pptx.present-from-current": { run: () => startPresenting(true), enabled: ready && slides.length > 0 },
@@ -2666,9 +2662,10 @@ function readSolidFill(shape: TextShape | Picture): string | null {
  * `set-chart-data` dispatch in that case so the chart's prior
  * categories survive.
  */
-function projectGridToChartData(
-  grid: ReadonlyArray<ReadonlyArray<string | number | null>>
-): { readonly categories: ReadonlyArray<string>; readonly series: ReadonlyArray<{ readonly name?: string; readonly values: ReadonlyArray<number> }> } | null {
+function projectGridToChartData(grid: ReadonlyArray<ReadonlyArray<string | number | null>>): {
+  readonly categories: ReadonlyArray<string>;
+  readonly series: ReadonlyArray<{ readonly name?: string; readonly values: ReadonlyArray<number> }>;
+} | null {
   if (grid.length < 2) return null;
   const header = grid[0]!;
   if (header.length < 2) return null;
@@ -2779,9 +2776,7 @@ function PptxSelectionHint({
       data-testid="pptx-selection-hint"
       aria-live="polite"
     >
-      {slideCount > 0 ? (
-        <span>{t("status.slideOf", { n: slideIndex + 1, total: slideCount })}</span>
-      ) : null}
+      {slideCount > 0 ? <span>{t("status.slideOf", { n: slideIndex + 1, total: slideCount })}</span> : null}
       {selectedCount > 0 ? (
         <span className="rounded bg-[var(--accent-light)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
           {t("status.shapesSelected", { n: selectedCount })}
@@ -2792,4 +2787,3 @@ function PptxSelectionHint({
     </span>
   );
 }
-

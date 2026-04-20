@@ -157,7 +157,9 @@ function buildSheetXml(grid: EmbeddedGrid): string {
       if (typeof v === "number" && Number.isFinite(v)) {
         cellsXml.push(`<c r="${ref}"><v>${v}</v></c>`);
       } else {
-        cellsXml.push(`<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(String(v))}</t></is></c>`);
+        cellsXml.push(
+          `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(String(v))}</t></is></c>`
+        );
       }
     }
     if (cellsXml.length === 0) continue;
@@ -218,11 +220,7 @@ function colToLetter(col: number): string {
 }
 
 function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function quoteSheetName(name: string): string {

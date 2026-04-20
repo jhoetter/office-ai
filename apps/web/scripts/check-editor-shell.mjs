@@ -63,6 +63,10 @@ async function* walk(dir) {
     if (entry.isDirectory()) {
       yield* walk(full);
     } else if (entry.isFile() && /\.(tsx|ts)$/.test(entry.name)) {
+      // Test files legitimately use arbitrary hex strings as fixture
+      // data (e.g. `authorColor: "#ff8800"` to assert round-trip
+      // hydration). The colour gate is for runtime UI styling only.
+      if (/\.test\.(tsx|ts)$/.test(entry.name)) continue;
       yield full;
     }
   }

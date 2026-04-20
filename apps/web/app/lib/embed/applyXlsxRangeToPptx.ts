@@ -124,8 +124,6 @@ async function applyAsTable(
     source: "human",
   });
   if (result.rejection) {
-    throw new Error(
-      `pptx:insert-table rejected: ${result.rejection.code} ${result.rejection.message ?? ""}`
-    );
+    throw new Error(`pptx:insert-table rejected: ${result.rejection.code} ${result.rejection.message ?? ""}`);
   }
 }

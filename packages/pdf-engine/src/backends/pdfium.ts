@@ -18,7 +18,7 @@ export const pdfiumBackend: PdfEngine = {
     throw new Error(
       "pdf-engine: pdfium backend is registered but not yet wired. " +
         "See /spec/pdf/engine-strategy.md for the migration plan. " +
-        "Use forceEngine: 'pdfjs' or omit forceEngine for the default backend.",
+        "Use forceEngine: 'pdfjs' or omit forceEngine for the default backend."
     );
   },
 };

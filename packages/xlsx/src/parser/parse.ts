@@ -423,8 +423,7 @@ function resolveSheet(
         const existing = next.get(key);
         if (!existing) continue;
         const fallbackText =
-          existing.formula?.text ??
-          (m.si !== undefined ? masterTextBySi.get(m.si) ?? "" : "");
+          existing.formula?.text ?? (m.si !== undefined ? (masterTextBySi.get(m.si) ?? "") : "");
         next.set(key, {
           ...existing,
           formula: {
@@ -489,12 +488,8 @@ function resolveSheet(
     ...(opaqueSheetParts.headerFooterXml ? { headerFooterXml: opaqueSheetParts.headerFooterXml } : {}),
     ...(opaqueSheetParts.rowBreaksXml ? { rowBreaksXml: opaqueSheetParts.rowBreaksXml } : {}),
     ...(opaqueSheetParts.colBreaksXml ? { colBreaksXml: opaqueSheetParts.colBreaksXml } : {}),
-    ...(opaqueSheetParts.ignoredErrorsXml
-      ? { ignoredErrorsXml: opaqueSheetParts.ignoredErrorsXml }
-      : {}),
-    ...(opaqueSheetParts.legacyDrawingXml
-      ? { legacyDrawingXml: opaqueSheetParts.legacyDrawingXml }
-      : {}),
+    ...(opaqueSheetParts.ignoredErrorsXml ? { ignoredErrorsXml: opaqueSheetParts.ignoredErrorsXml } : {}),
+    ...(opaqueSheetParts.legacyDrawingXml ? { legacyDrawingXml: opaqueSheetParts.legacyDrawingXml } : {}),
     ...(opaqueSheetParts.legacyDrawingHFXml
       ? { legacyDrawingHFXml: opaqueSheetParts.legacyDrawingHFXml }
       : {}),

@@ -5,5 +5,7 @@ export { pptxActions } from "./catalogue.js";
 
 export const pptxActionsById: ReadonlyMap<string, ActionDescriptor> = indexActionsById(pptxActions);
 
-export const pptxActionsByCommandType: ReadonlyMap<string, ReadonlyArray<ActionDescriptor>> =
-  indexActionsByCommandType(pptxActions);
+export const pptxActionsByCommandType: ReadonlyMap<
+  string,
+  ReadonlyArray<ActionDescriptor>
+> = indexActionsByCommandType(pptxActions);

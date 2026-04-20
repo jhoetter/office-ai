@@ -18,8 +18,7 @@ export const buildDiff = (
   changes,
 });
 
-export const makeError = (code: string, message: string): CommandError =>
-  new CommandError(code, message);
+export const makeError = (code: string, message: string): CommandError => new CommandError(code, message);
 
 export const validatePages = (snapshot: PdfSnapshot, pages: ReadonlyArray<number>, label: string): void => {
   const total = snapshot.root.pages.length;

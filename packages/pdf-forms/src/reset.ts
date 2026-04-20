@@ -1,11 +1,4 @@
-import {
-  PDFCheckBox,
-  PDFDocument,
-  PDFDropdown,
-  PDFOptionList,
-  PDFRadioGroup,
-  PDFTextField,
-} from "pdf-lib";
+import { PDFCheckBox, PDFDocument, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFTextField } from "pdf-lib";
 
 /** Reset every field to its default. */
 export const resetForm = async (buffer: Uint8Array): Promise<Uint8Array> => {

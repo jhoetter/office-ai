@@ -137,9 +137,12 @@ export function encodePng(args: PngEncodeArgs): Uint8Array {
 
   const out = new Uint8Array(PNG_SIGNATURE.length + ihdrChunk.length + idatChunk.length + iendChunk.length);
   let offset = 0;
-  out.set(PNG_SIGNATURE, offset); offset += PNG_SIGNATURE.length;
-  out.set(ihdrChunk, offset); offset += ihdrChunk.length;
-  out.set(idatChunk, offset); offset += idatChunk.length;
+  out.set(PNG_SIGNATURE, offset);
+  offset += PNG_SIGNATURE.length;
+  out.set(ihdrChunk, offset);
+  offset += ihdrChunk.length;
+  out.set(idatChunk, offset);
+  offset += idatChunk.length;
   out.set(iendChunk, offset);
   return out;
 }

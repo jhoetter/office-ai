@@ -1,17 +1,7 @@
 import type { CommandHandler } from "@officeai/core";
-import type {
-  PdfAnnotation,
-  PdfAnnotationKind,
-  PdfDocument,
-  PdfRect,
-  PdfSnapshot,
-} from "../model/types.js";
+import type { PdfAnnotation, PdfAnnotationKind, PdfDocument, PdfRect, PdfSnapshot } from "../model/types.js";
 import { buildDiff, evolvePdf, makeError } from "./helpers.js";
-import type {
-  AddAnnotationPayload,
-  RemoveAnnotationPayload,
-  UpdateAnnotationPayload,
-} from "./payloads.js";
+import type { AddAnnotationPayload, RemoveAnnotationPayload, UpdateAnnotationPayload } from "./payloads.js";
 
 const KIND_TO_SUBTYPE: Record<PdfAnnotationKind, string> = {
   highlight: "Highlight",
@@ -48,7 +38,7 @@ export const addAnnotationHandler: CommandHandler<AddAnnotationPayload, PdfSnaps
     if (payload.pageNumber < 1 || payload.pageNumber > snapshot.root.pages.length) {
       throw makeError(
         "invalid-payload",
-        `pdf:add-annotation page ${payload.pageNumber} out of range (1..${snapshot.root.pages.length})`,
+        `pdf:add-annotation page ${payload.pageNumber} out of range (1..${snapshot.root.pages.length})`
       );
     }
     const id = payload.id ?? ctx.mintNodeId();
@@ -64,13 +54,11 @@ export const addAnnotationHandler: CommandHandler<AddAnnotationPayload, PdfSnaps
       ...(payload.contents !== undefined ? { contents: payload.contents } : {}),
       ...(payload.author !== undefined ? { author: payload.author } : {}),
       ...(payload.color !== undefined ? { color: payload.color } : {}),
-      ...(payload.quadRects !== undefined
-        ? { quadRects: payload.quadRects.map(toRect) }
-        : {}),
+      ...(payload.quadRects !== undefined ? { quadRects: payload.quadRects.map(toRect) } : {}),
     };
     const annotations = [...snapshot.root.annotations, annot];
     const pages = snapshot.root.pages.map((p) =>
-      p.pageNumber === payload.pageNumber ? { ...p, hasAnnotations: true } : p,
+      p.pageNumber === payload.pageNumber ? { ...p, hasAnnotations: true } : p
     );
     const root: PdfDocument = { ...snapshot.root, annotations, pages };
     const next = evolvePdf(snapshot, root);
@@ -127,14 +115,14 @@ export const removeAnnotationHandler: CommandHandler<RemoveAnnotationPayload, Pd
       // pretending we removed it.
       throw makeError(
         "unsupported",
-        "Removing annotations that already exist in the source PDF isn't supported yet — only session-added annotations can be deleted.",
+        "Removing annotations that already exist in the source PDF isn't supported yet — only session-added annotations can be deleted."
       );
     }
     const stillOnPage = annotations.some((a) => a.pageNumber === removed.pageNumber);
     const pages = stillOnPage
       ? snapshot.root.pages
       : snapshot.root.pages.map((p) =>
-          p.pageNumber === removed.pageNumber ? { ...p, hasAnnotations: false } : p,
+          p.pageNumber === removed.pageNumber ? { ...p, hasAnnotations: false } : p
         );
     const root: PdfDocument = { ...snapshot.root, annotations, pages };
     const next = evolvePdf(snapshot, root);

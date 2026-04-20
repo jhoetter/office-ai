@@ -84,13 +84,7 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   const drawingRidByPath = new Map<string, string | null>();
   const emittedChartParts = new Set<string>();
   if (dirty.drawings.size > 0) {
-    rewriteDirtyDrawings(
-      snapshot.root,
-      container,
-      dirty.drawings,
-      drawingRidByPath,
-      emittedChartParts
-    );
+    rewriteDirtyDrawings(snapshot.root, container, dirty.drawings, drawingRidByPath, emittedChartParts);
     dropOrphanChartParts(container, emittedChartParts);
   }
   if (dirty.media.size > 0) {
@@ -290,18 +284,12 @@ function rewriteDirtyDrawings(
       chartDescs.push({ id: chart.id, chartPartPath });
     }
 
-    const { graph: drawingRels, embedRidByMediaPath, chartRidByChartId } = buildDrawingRels(
-      drawingPartPath,
-      sheet.images,
-      workbook.images,
-      chartDescs
-    );
-    const xml = serializeDrawingPart(
-      sheet.images,
+    const {
+      graph: drawingRels,
       embedRidByMediaPath,
-      sheet.charts,
-      chartRidByChartId
-    );
+      chartRidByChartId,
+    } = buildDrawingRels(drawingPartPath, sheet.images, workbook.images, chartDescs);
+    const xml = serializeDrawingPart(sheet.images, embedRidByMediaPath, sheet.charts, chartRidByChartId);
     container.writeText(drawingPartPath, xml);
     drawingRels.writeBack(container);
 
@@ -318,10 +306,7 @@ function rewriteDirtyDrawings(
  * previous save authored a chart that has since been removed via
  * `xlsx:remove-chart`.
  */
-function dropOrphanChartParts(
-  container: ooxml.OoxmlContainer,
-  emittedChartParts: ReadonlySet<string>
-): void {
+function dropOrphanChartParts(container: ooxml.OoxmlContainer, emittedChartParts: ReadonlySet<string>): void {
   const live = new Set<string>(emittedChartParts);
   // Anything we did NOT emit this round AND that lives under
   // xl/charts/ AND is not referenced from any drawing's rels
@@ -526,9 +511,7 @@ function renderTypedConditionalFormat(rule: ConditionalFormat): string {
         `<conditionalFormatting sqref="${sqref}">` +
         `<cfRule type="cellIs" dxfId="0" priority="1" operator="${cellIsOpToOoxml(rule.op)}">` +
         `<formula>${escapeXmlText(String(rule.value))}</formula>` +
-        (rule.value2 !== undefined
-          ? `<formula>${escapeXmlText(String(rule.value2))}</formula>`
-          : "") +
+        (rule.value2 !== undefined ? `<formula>${escapeXmlText(String(rule.value2))}</formula>` : "") +
         `</cfRule></conditionalFormatting>`
       );
     case "top10": {
@@ -764,7 +747,11 @@ function rewritePaneInSheetViews(original: string, freeze: FreezePanes | undefin
   const selfRe = /<sheetView\b([^/>]*)\/>/;
   const sm = selfRe.exec(stripped);
   if (sm) {
-    return stripped.slice(0, sm.index) + `<sheetView${sm[1]}>${newPane}</sheetView>` + stripped.slice(sm.index + sm[0].length);
+    return (
+      stripped.slice(0, sm.index) +
+      `<sheetView${sm[1]}>${newPane}</sheetView>` +
+      stripped.slice(sm.index + sm[0].length)
+    );
   }
   // No `<sheetView>` at all — defensively wrap one.
   const innerOpen = stripped.indexOf(">");
@@ -829,9 +816,7 @@ function injectTableParts(xml: string, sheet: Sheet): string {
   const next = xml.replace(/<tableParts\b[^>]*(?:\/>|>[\s\S]*?<\/tableParts>)/g, "");
   let block = "";
   if (sheet.tables.length > 0) {
-    const parts = sheet.tables
-      .map((t) => `<tablePart r:id="${escapeXmlAttr(t.relId)}"/>`)
-      .join("");
+    const parts = sheet.tables.map((t) => `<tablePart r:id="${escapeXmlAttr(t.relId)}"/>`).join("");
     block = `<tableParts count="${sheet.tables.length}">${parts}</tableParts>`;
   } else if (sheet.tablePartsXml) {
     block = sheet.tablePartsXml;
@@ -1027,33 +1012,30 @@ function injectFormulas(xml: string, cells: ReadonlyMap<string, Cell>): string {
   }
   if (formulaMeta.size === 0) return xml;
 
-  return xml.replace(
-    /<c\b([^>]*?)>([\s\S]*?)<\/c>/g,
-    (whole: string, attrs: string, body: string) => {
-      const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
-      if (!refMatch) return whole;
-      const ref = refMatch[2]!;
-      const meta = formulaMeta.get(ref);
-      if (!meta) return whole;
-      // Replace any existing `<f>` element. We don't touch `<v>`
-      // (cached value) — the SheetJS round-trip already wrote it.
-      const fOpen =
-        `<f t="${meta.kind}"` +
-        (meta.sharedIndex !== undefined ? ` si="${meta.sharedIndex}"` : "") +
-        (meta.isMaster && meta.ref ? ` ref="${meta.ref}"` : "");
-      const fEl = meta.isMaster ? `${fOpen}>${escapeXmlText(meta.text)}</f>` : `${fOpen}/>`;
-      const replaced = body.replace(/<f\b[^>]*?(?:\/>|>[\s\S]*?<\/f>)/, fEl);
-      // If the source body had no `<f>` (SheetJS dropped it because
-      // the cell carried only a value), insert ours before `<v>` so
-      // Excel still treats the cell as a formula on re-load.
-      if (replaced === body && !/<f\b/.test(body)) {
-        const vIdx = body.indexOf("<v");
-        if (vIdx === -1) return `<c${attrs}>${fEl}${body}</c>`;
-        return `<c${attrs}>${body.slice(0, vIdx)}${fEl}${body.slice(vIdx)}</c>`;
-      }
-      return `<c${attrs}>${replaced}</c>`;
+  return xml.replace(/<c\b([^>]*?)>([\s\S]*?)<\/c>/g, (whole: string, attrs: string, body: string) => {
+    const refMatch = /\br=("|')([^"']+)\1/.exec(attrs);
+    if (!refMatch) return whole;
+    const ref = refMatch[2]!;
+    const meta = formulaMeta.get(ref);
+    if (!meta) return whole;
+    // Replace any existing `<f>` element. We don't touch `<v>`
+    // (cached value) — the SheetJS round-trip already wrote it.
+    const fOpen =
+      `<f t="${meta.kind}"` +
+      (meta.sharedIndex !== undefined ? ` si="${meta.sharedIndex}"` : "") +
+      (meta.isMaster && meta.ref ? ` ref="${meta.ref}"` : "");
+    const fEl = meta.isMaster ? `${fOpen}>${escapeXmlText(meta.text)}</f>` : `${fOpen}/>`;
+    const replaced = body.replace(/<f\b[^>]*?(?:\/>|>[\s\S]*?<\/f>)/, fEl);
+    // If the source body had no `<f>` (SheetJS dropped it because
+    // the cell carried only a value), insert ours before `<v>` so
+    // Excel still treats the cell as a formula on re-load.
+    if (replaced === body && !/<f\b/.test(body)) {
+      const vIdx = body.indexOf("<v");
+      if (vIdx === -1) return `<c${attrs}>${fEl}${body}</c>`;
+      return `<c${attrs}>${body.slice(0, vIdx)}${fEl}${body.slice(vIdx)}</c>`;
     }
-  );
+    return `<c${attrs}>${replaced}</c>`;
+  });
 }
 
 function injectStyleIds(xml: string, cells: ReadonlyMap<string, Cell>): string {

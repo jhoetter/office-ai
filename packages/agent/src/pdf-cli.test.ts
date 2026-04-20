@@ -89,10 +89,7 @@ async function writeFixture(name: string, bytes: Uint8Array): Promise<string> {
 
 describe("office-agent pdf — read commands", () => {
   it("read-metadata returns a versioned envelope", async () => {
-    const path = await writeFixture(
-      "meta.pdf",
-      await buildPdf({ pages: 3, title: "Hello", author: "Ada" })
-    );
+    const path = await writeFixture("meta.pdf", await buildPdf({ pages: 3, title: "Hello", author: "Ada" }));
     const { io, stdout } = makeIO();
     const code = await runCli(["pdf", "read-metadata", path], io);
     expect(code).toBe(0);
@@ -204,10 +201,7 @@ describe("office-agent pdf — mutate commands", () => {
     const path = await writeFixture("del-in.pdf", await buildPdf({ pages: 4 }));
     const out = join(TMP, "del-out.pdf");
     const { io, stdout } = makeIO();
-    const code = await runCli(
-      ["pdf", "delete-pages", path, "--pages", "2,4", "--out", out],
-      io
-    );
+    const code = await runCli(["pdf", "delete-pages", path, "--pages", "2,4", "--out", out], io);
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout.text());
     expect(parsed.schema).toBe("office-agent/pdf-delete-pages@1");
@@ -233,10 +227,7 @@ describe("office-agent pdf — mutate commands", () => {
     const path = await writeFixture("split-in.pdf", await buildPdf({ pages: 4 }));
     const prefix = join(TMP, "split-out");
     const { io, stdout } = makeIO();
-    const code = await runCli(
-      ["pdf", "split", path, "--at", "3", "--out-prefix", prefix],
-      io
-    );
+    const code = await runCli(["pdf", "split", path, "--at", "3", "--out-prefix", prefix], io);
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout.text());
     expect(parsed.schema).toBe("office-agent/pdf-split@1");
@@ -252,17 +243,7 @@ describe("office-agent pdf — mutate commands", () => {
     const out = join(TMP, "meta-out.pdf");
     const { io, stdout } = makeIO();
     const code = await runCli(
-      [
-        "pdf",
-        "set-metadata",
-        path,
-        "--title",
-        "Updated",
-        "--author",
-        "Linus",
-        "--out",
-        out,
-      ],
+      ["pdf", "set-metadata", path, "--title", "Updated", "--author", "Linus", "--out", out],
       io
     );
     expect(code).toBe(0);

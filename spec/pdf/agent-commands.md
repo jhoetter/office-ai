@@ -52,7 +52,7 @@ The shapes below describe the diff each command produces.
 
 ```typescript
 interface RotatePagesPayload {
-  pages: ReadonlyArray<number>;        // 1-indexed
+  pages: ReadonlyArray<number>; // 1-indexed
   delta: 90 | 180 | 270 | -90 | -180 | -270;
 }
 ```
@@ -89,7 +89,7 @@ must be one of the literal values. Otherwise rejected with
 ```typescript
 interface SetPageRotationPayload {
   pageNumber: number;
-  rotation: PdfRotation;               // 0 | 90 | 180 | 270
+  rotation: PdfRotation; // 0 | 90 | 180 | 270
 }
 ```
 
@@ -140,7 +140,7 @@ Otherwise `error: "invalid-permutation"`.
 
 ```typescript
 interface DeletePagesPayload {
-  pages: ReadonlyArray<number>;        // 1-indexed
+  pages: ReadonlyArray<number>; // 1-indexed
 }
 ```
 
@@ -191,7 +191,7 @@ Diff: one `node-updated` per present field on
 interface AddBookmarkPayload {
   title: string;
   pageNumber: number;
-  parentId?: NodeId;                   // omit for root-level
+  parentId?: NodeId; // omit for root-level
 }
 ```
 
@@ -232,11 +232,11 @@ polluting the byte-preservation invariant.
 
 ```typescript
 interface AddCommentPayload {
-  id?: NodeId;                         // optional pre-minted id (for replay)
+  id?: NodeId; // optional pre-minted id (for replay)
   author: string;
   text: string;
   pageNumber: number;
-  normalizedRect: PdfRect;             // 0..1 in unrotated user-space
+  normalizedRect: PdfRect; // 0..1 in unrotated user-space
 }
 ```
 
@@ -260,7 +260,7 @@ Diff:
 ```typescript
 interface ReplyCommentPayload {
   id?: NodeId;
-  parentId: NodeId;                    // the comment being replied to
+  parentId: NodeId; // the comment being replied to
   author: string;
   text: string;
 }
@@ -371,25 +371,25 @@ Roll back the working snapshot to a prior revision. Used by the
 Documented for completeness; not implemented this session. These will
 expand the `PDF_COMMAND_TYPES` union when shipped.
 
-| Command                         | Payload sketch                                                | Status |
-| ------------------------------- | ------------------------------------------------------------- | :----: |
-| `pdf:add-annotation`            | typed `PdfAnnotation` insert                                  | **P1** |
-| `pdf:update-annotation`         | annotation id + diff                                          | **P1** |
-| `pdf:delete-annotation`         | annotation id                                                 | **P1** |
-| `pdf:fill-form`                 | `Record<fieldName, value>` + `flatten?: boolean`              | **P0** (CLI; typed command lands W4–W5) |
-| `pdf:reset-form`                | (no payload)                                                  | **P0** (CLI) |
-| `pdf:flatten-form`              | (no payload)                                                  | **P0** (CLI) |
-| `pdf:redact`                    | `{ rects: PdfRect[]; replacement?: RGB }`                     | **P0** (CLI) |
-| `pdf:apply-redactions`          | (no payload)                                                  | **P0** (CLI) |
-| `pdf:add-watermark`             | text or image + opacity + pages                               | **P0** (CLI) |
-| `pdf:add-page-numbers`          | position + format + start                                     | **P0** (CLI) |
-| `pdf:crop`                      | `{ pages, margin: [l,t,r,b] }`                                | **P0** (CLI) |
-| `pdf:insert-pages`              | `{ at, sourceBuffer, sourcePages? }`                          | **P0** (CLI) |
-| `pdf:merge`                     | `{ files: Uint8Array[] }` (pure helper, not bus-routed)       | **P0** (CLI) |
-| `pdf:split`                     | `{ by: "range"|"bookmark"|"size"; … }` (pure helper)         | **P0** (CLI) |
-| `pdf:add-text-overlay`          | page + rect + text + style                                    | **P2** |
-| `pdf:add-image-overlay`         | page + rect + image bytes                                     | **P2** |
-| `pdf:flatten-annotations`       | (no payload)                                                  | **P2** |
+| Command                   | Payload sketch                                          |                 Status                  |
+| ------------------------- | ------------------------------------------------------- | :-------------------------------------: | -------------------------- | ------------ |
+| `pdf:add-annotation`      | typed `PdfAnnotation` insert                            |                 **P1**                  |
+| `pdf:update-annotation`   | annotation id + diff                                    |                 **P1**                  |
+| `pdf:delete-annotation`   | annotation id                                           |                 **P1**                  |
+| `pdf:fill-form`           | `Record<fieldName, value>` + `flatten?: boolean`        | **P0** (CLI; typed command lands W4–W5) |
+| `pdf:reset-form`          | (no payload)                                            |              **P0** (CLI)               |
+| `pdf:flatten-form`        | (no payload)                                            |              **P0** (CLI)               |
+| `pdf:redact`              | `{ rects: PdfRect[]; replacement?: RGB }`               |              **P0** (CLI)               |
+| `pdf:apply-redactions`    | (no payload)                                            |              **P0** (CLI)               |
+| `pdf:add-watermark`       | text or image + opacity + pages                         |              **P0** (CLI)               |
+| `pdf:add-page-numbers`    | position + format + start                               |              **P0** (CLI)               |
+| `pdf:crop`                | `{ pages, margin: [l,t,r,b] }`                          |              **P0** (CLI)               |
+| `pdf:insert-pages`        | `{ at, sourceBuffer, sourcePages? }`                    |              **P0** (CLI)               |
+| `pdf:merge`               | `{ files: Uint8Array[] }` (pure helper, not bus-routed) |              **P0** (CLI)               |
+| `pdf:split`               | `{ by: "range"                                          |               "bookmark"                | "size"; … }` (pure helper) | **P0** (CLI) |
+| `pdf:add-text-overlay`    | page + rect + text + style                              |                 **P2**                  |
+| `pdf:add-image-overlay`   | page + rect + image bytes                               |                 **P2**                  |
+| `pdf:flatten-annotations` | (no payload)                                            |                 **P2**                  |
 
 The CLI exposes the **P0** items in this table (W4–W5 wave) before
 they have typed `pdf:*` commands routed through the bus. Once W4–W5

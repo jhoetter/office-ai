@@ -140,7 +140,12 @@ export function EditorTopBar({
       <Sep />
 
       {adapter.findAdapter ? (
-        <ToolbarIcon label={t("shell.findTooltip")} shortcut="Cmd+F" onClick={onOpenFindReplace} testId="shell-find">
+        <ToolbarIcon
+          label={t("shell.findTooltip")}
+          shortcut="Cmd+F"
+          onClick={onOpenFindReplace}
+          testId="shell-find"
+        >
           <Search size={15} />
         </ToolbarIcon>
       ) : null}
@@ -412,8 +417,12 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
                         <FormatIcon icon={fmt.icon ?? guessIcon(fmt)} />
                       </span>
                       <span className="min-w-0 flex-1 truncate">{fmt.label}</span>
-                      {                    dialogish ? (
-                        <span className="text-tertiary" aria-label={t("common.moreOptions")} title={t("common.moreOptions")}>
+                      {dialogish ? (
+                        <span
+                          className="text-tertiary"
+                          aria-label={t("common.moreOptions")}
+                          title={t("common.moreOptions")}
+                        >
                           <Sliders size={11} />
                         </span>
                       ) : null}

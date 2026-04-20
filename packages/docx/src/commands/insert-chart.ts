@@ -60,9 +60,7 @@ export const insertChartHandler: CommandHandler<InsertChartPayload, DocxSnapshot
     const docRelsKey = "word/document.xml";
     const docRels = snapshot.root.relationships.get(docRelsKey) ?? [];
     const chartPartPath = mintChartPartPath(snapshot.root.charts);
-    const relTarget = chartPartPath.startsWith("word/")
-      ? chartPartPath.slice("word/".length)
-      : chartPartPath;
+    const relTarget = chartPartPath.startsWith("word/") ? chartPartPath.slice("word/".length) : chartPartPath;
     const relId = mintRelId(docRels);
     const newRel: Relationship = { id: relId, type: CHART_REL_TYPE, target: relTarget };
     const nextRels: ReadonlyArray<Relationship> = [...docRels, newRel];
@@ -79,12 +77,14 @@ export const insertChartHandler: CommandHandler<InsertChartPayload, DocxSnapshot
       chartType: payload.chartType as ChartType,
       ...(payload.title !== undefined ? { title: payload.title } : {}),
       categories: [...payload.categories],
-      series: payload.series.map((s, i): ChartSeries => ({
-        id: ctx.mintNodeId(),
-        idx: i,
-        ...(s.name !== undefined ? { name: s.name } : {}),
-        values: [...s.values],
-      })),
+      series: payload.series.map(
+        (s, i): ChartSeries => ({
+          id: ctx.mintNodeId(),
+          idx: i,
+          ...(s.name !== undefined ? { name: s.name } : {}),
+          values: [...s.values],
+        })
+      ),
       embeddingSheetName: "Sheet1",
     };
 
@@ -287,4 +287,3 @@ function splitRunAtOffset(run: Run, offset: number, mintNodeId: IdMinter): Split
     afterChildren.length > 0 ? { ...run, id: mintNodeId(), children: afterChildren } : null;
   return { before, after };
 }
-

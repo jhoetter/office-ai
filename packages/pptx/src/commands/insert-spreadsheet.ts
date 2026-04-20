@@ -12,13 +12,9 @@ import type {
   Slide,
 } from "../model/types.js";
 import { evolveSnapshot, findSlide, makeError, maxCNvPrId } from "./helpers.js";
-import type {
-  PptxInsertSpreadsheetPayload,
-  PptxUpdateSpreadsheetPayload,
-} from "./payloads.js";
+import type { PptxInsertSpreadsheetPayload, PptxUpdateSpreadsheetPayload } from "./payloads.js";
 
-const REL_TYPE_OLE_OBJECT =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+const REL_TYPE_OLE_OBJECT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
 const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const OLE_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/presentationml/2006/ole";
 const CT_SPREADSHEETML_SHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -36,10 +32,7 @@ const CT_SPREADSHEETML_SHEET = "application/vnd.openxmlformats-officedocument.sp
  * which calls `buildEmbeddedXlsx` lazily. The preview PNG, by
  * contrast, is small and pure-JS so it's materialised eagerly.
  */
-export const insertSpreadsheetHandler: CommandHandler<
-  PptxInsertSpreadsheetPayload,
-  PptxSnapshot
-> = {
+export const insertSpreadsheetHandler: CommandHandler<PptxInsertSpreadsheetPayload, PptxSnapshot> = {
   type: "pptx:insert-spreadsheet",
   apply(snapshot, payload, ctx) {
     if (!Array.isArray(payload.data) || payload.data.length === 0) {
@@ -116,16 +109,11 @@ export const insertSpreadsheetHandler: CommandHandler<
     let newContentTypes: ContentTypesSnap = snapshot.contentTypes;
     let contentTypesDirty = false;
     if (mediaWasNew) {
-      const hasPng = snapshot.contentTypes.defaults.some(
-        (d) => d.extension.toLowerCase() === "png"
-      );
+      const hasPng = snapshot.contentTypes.defaults.some((d) => d.extension.toLowerCase() === "png");
       if (!hasPng) {
         newContentTypes = {
           ...snapshot.contentTypes,
-          defaults: [
-            ...snapshot.contentTypes.defaults,
-            { extension: "png", contentType: "image/png" },
-          ],
+          defaults: [...snapshot.contentTypes.defaults, { extension: "png", contentType: "image/png" }],
         };
         contentTypesDirty = true;
       }
@@ -210,12 +198,7 @@ export const insertSpreadsheetHandler: CommandHandler<
           {
             kind: "node-inserted",
             nodeId: ole.id,
-            path: [
-              "slides",
-              sIdx,
-              "shapes",
-              newSlide.shapes.length - 1,
-            ] as ReadonlyArray<string | number>,
+            path: ["slides", sIdx, "shapes", newSlide.shapes.length - 1] as ReadonlyArray<string | number>,
             summary: `+spreadsheet (${payload.data.length}×${cols})`,
           },
           {
@@ -234,18 +217,12 @@ export const insertSpreadsheetHandler: CommandHandler<
  * editor's double-click → edit-in-XlsxAgent → save loop, mirroring
  * `docx:update-spreadsheet`.
  */
-export const updateSpreadsheetHandler: CommandHandler<
-  PptxUpdateSpreadsheetPayload,
-  PptxSnapshot
-> = {
+export const updateSpreadsheetHandler: CommandHandler<PptxUpdateSpreadsheetPayload, PptxSnapshot> = {
   type: "pptx:update-spreadsheet",
   apply(snapshot, payload) {
     const existing = snapshot.root.embeddings.get(payload.embeddingPartPath);
     if (!existing) {
-      throw makeError(
-        "missing-embedding",
-        `no embedded part at ${payload.embeddingPartPath}`
-      );
+      throw makeError("missing-embedding", `no embedded part at ${payload.embeddingPartPath}`);
     }
     if (!(payload.bytes instanceof Uint8Array) || payload.bytes.byteLength === 0) {
       throw makeError("invalid-payload", "bytes must be a non-empty Uint8Array");
@@ -314,10 +291,7 @@ function mintEmbeddingPath(map: ReadonlyMap<string, EmbeddedBinaryPart>): string
   return `ppt/embeddings/Microsoft_Excel_Worksheet${n}.xlsx`;
 }
 
-function findPreviewPathForEmbedding(
-  snapshot: PptxSnapshot,
-  embeddingPath: string
-): string | undefined {
+function findPreviewPathForEmbedding(snapshot: PptxSnapshot, embeddingPath: string): string | undefined {
   for (const slide of snapshot.root.slides) {
     for (const shape of slide.shapes) {
       if (shape.kind === "ole-spreadsheet" && shape.embeddingPartPath === embeddingPath) {

@@ -26,8 +26,8 @@ describe("addTextLayer (with injected recognise)", () => {
 
   it("rejects out-of-range pages", async () => {
     const buf = await buildScanLikePdf();
-    await expect(
-      addTextLayer(buf, { pages: [99], recognise: async () => [] }),
-    ).rejects.toThrow(/out of range/);
+    await expect(addTextLayer(buf, { pages: [99], recognise: async () => [] })).rejects.toThrow(
+      /out of range/
+    );
   });
 });

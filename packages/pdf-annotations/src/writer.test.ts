@@ -98,7 +98,7 @@ describe("addAnnotations", () => {
     await expect(
       addAnnotations(await buildPdf(), {
         annotations: [{ kind: "sticky-note", pageNumber: 99, rect: [0, 0, 10, 10], contents: "x" }],
-      }),
+      })
     ).rejects.toThrow(/out of range/);
   });
 });

@@ -25,7 +25,7 @@ export interface PdfEngineTextItem {
 
 export interface PdfEngineTextContent {
   readonly items: ReadonlyArray<PdfEngineTextItem>;
-  readonly plain: string;  // concatenated reading-order projection
+  readonly plain: string; // concatenated reading-order projection
 }
 ```
 
@@ -86,14 +86,14 @@ appears highlighted exactly where the canvas glyphs are.
 
 ## Copy fidelity
 
-| Operation                              | Output                                   |
-| -------------------------------------- | ---------------------------------------- |
-| Cmd/Ctrl+C                             | Plain text in reading order              |
-| Cmd/Ctrl+Shift+C                       | Markdown (preserves headings + lists where the struct-tree is available) |
-| Right-click → Copy as plain            | Plain text                               |
-| Right-click → Copy as Markdown         | Markdown                                 |
-| Right-click → Copy as HTML             | HTML with `<span>` per item              |
-| Right-click → Copy text + URL          | `${text} [${current page URL}#page=N]`   |
+| Operation                      | Output                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| Cmd/Ctrl+C                     | Plain text in reading order                                              |
+| Cmd/Ctrl+Shift+C               | Markdown (preserves headings + lists where the struct-tree is available) |
+| Right-click → Copy as plain    | Plain text                                                               |
+| Right-click → Copy as Markdown | Markdown                                                                 |
+| Right-click → Copy as HTML     | HTML with `<span>` per item                                              |
+| Right-click → Copy text + URL  | `${text} [${current page URL}#page=N]`                                   |
 
 The Markdown serializer uses the struct tree when present
 (`/H1` → `#`, `/H2` → `##`, `/L`/`/LI` → `- `, `/P` → paragraph).
@@ -106,7 +106,7 @@ When [`search.md`](./search.md) returns a match `(pageNumber, start,
 end)` we walk the page's text items and split the affected `<span>`s
 at the match boundaries. The match characters get
 `class="pdf-search-hit"` (Tailwind `bg-yellow-200/60` light, `bg-yellow-700/40`
-dark) and the *current* hit gets `class="pdf-search-hit current"`
+dark) and the _current_ hit gets `class="pdf-search-hit current"`
 (brighter background + auto-scroll-into-view).
 
 Highlighting is non-destructive: cancelling search restores the

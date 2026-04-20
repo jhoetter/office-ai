@@ -5,5 +5,7 @@ export { xlsxActions } from "./catalogue.js";
 
 export const xlsxActionsById: ReadonlyMap<string, ActionDescriptor> = indexActionsById(xlsxActions);
 
-export const xlsxActionsByCommandType: ReadonlyMap<string, ReadonlyArray<ActionDescriptor>> =
-  indexActionsByCommandType(xlsxActions);
+export const xlsxActionsByCommandType: ReadonlyMap<
+  string,
+  ReadonlyArray<ActionDescriptor>
+> = indexActionsByCommandType(xlsxActions);

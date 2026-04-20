@@ -40,11 +40,7 @@ export interface StructuredLine {
   readonly dir: "ltr" | "rtl";
 }
 
-export type StructuredBlockKind =
-  | "paragraph"
-  | "heading"
-  | "list"
-  | "caption";
+export type StructuredBlockKind = "paragraph" | "heading" | "list" | "caption";
 
 export interface StructuredBlock {
   readonly kind: StructuredBlockKind;
@@ -81,7 +77,7 @@ const PRINTABLE = /\S/;
 export function buildStructuredPage(
   runs: ReadonlyArray<PdfEngineGlyphRun>,
   pageWidth: number,
-  pageHeight: number,
+  pageHeight: number
 ): StructuredPage {
   const glyphs = flattenRuns(runs);
   if (glyphs.length === 0) {
@@ -300,7 +296,7 @@ function buildLine(rawGlyphs: ReadonlyArray<RawGlyph>): StructuredLine {
     // separator so this is what gets us "Hello world" instead of
     // "Helloworld" when the source PDF emits one item per word.
     if (prevRight !== null) {
-      const gap = (dir === "rtl" ? prevRight - g.bbox[2] : g.bbox[0] - prevRight);
+      const gap = dir === "rtl" ? prevRight - g.bbox[2] : g.bbox[0] - prevRight;
       if (gap > 0.25 * prevFontHeight && !/\s$/.test(text) && PRINTABLE.test(g.char)) {
         text += " ";
       }
@@ -348,10 +344,7 @@ function median(xs: ReadonlyArray<number>): number {
 const BULLET_GLYPHS = /^[\u2022\u2023\u25E6\u2043\u2219\u00B7\u25AA\-*]/;
 const NUMBERED_PREFIX = /^(?:\(\d+\)|\d+[.)])/;
 
-function groupLinesIntoBlocks(
-  lines: ReadonlyArray<StructuredLine>,
-  columnIndex: number,
-): StructuredBlock[] {
+function groupLinesIntoBlocks(lines: ReadonlyArray<StructuredLine>, columnIndex: number): StructuredBlock[] {
   if (lines.length === 0) return [];
   const columnMedianFont = median(lines.map((l) => l.fontHeight));
   const blocks: StructuredBlock[] = [];
@@ -368,8 +361,7 @@ function groupLinesIntoBlocks(
     if (prev) {
       const gap = prev.bbox[1] - line.bbox[3];
       const leading = Math.max(prev.fontHeight, line.fontHeight);
-      const fontJump =
-        Math.abs(line.fontHeight - prev.fontHeight) / Math.max(prev.fontHeight, 1);
+      const fontJump = Math.abs(line.fontHeight - prev.fontHeight) / Math.max(prev.fontHeight, 1);
       if (gap > 1.5 * leading || fontJump > 0.2) flush();
     }
     current.push(line);
@@ -382,7 +374,7 @@ function groupLinesIntoBlocks(
 function toBlock(
   lines: ReadonlyArray<StructuredLine>,
   columnMedianFont: number,
-  columnIndex: number,
+  columnIndex: number
 ): StructuredBlock {
   let x1 = Number.POSITIVE_INFINITY;
   let y1 = Number.POSITIVE_INFINITY;

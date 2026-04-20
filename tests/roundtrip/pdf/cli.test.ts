@@ -84,10 +84,7 @@ describe("PDF roundtrip — CLI envelope shape & re-parse", () => {
 
   it("read-annotations enumerates the link annotation in with-link-annot.pdf", async () => {
     const { io, stdout } = makeIO();
-    const code = await runCli(
-      ["pdf", "read-annotations", fixturePath("with-link-annot.pdf")],
-      io,
-    );
+    const code = await runCli(["pdf", "read-annotations", fixturePath("with-link-annot.pdf")], io);
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout.text()) as {
       schema: string;
@@ -114,7 +111,7 @@ describe("PDF roundtrip — CLI envelope shape & re-parse", () => {
         "--out",
         out,
       ],
-      io,
+      io
     );
     expect(code).toBe(0);
     const env = JSON.parse(stdout.text()) as { schema: string; bytes: number };
@@ -141,7 +138,7 @@ describe("PDF roundtrip — CLI envelope shape & re-parse", () => {
         "--out",
         out,
       ],
-      io,
+      io
     );
     expect(code).toBe(0);
     const env = JSON.parse(stdout.text()) as { schema: string };
@@ -166,16 +163,8 @@ describe("PDF roundtrip — CLI envelope shape & re-parse", () => {
     const out = join(TMP, "cli-wm.pdf");
     const { io, stdout } = makeIO();
     const code = await runCli(
-      [
-        "pdf",
-        "add-watermark",
-        fixturePath("simple-text-1page.pdf"),
-        "--text",
-        "DRAFT",
-        "--out",
-        out,
-      ],
-      io,
+      ["pdf", "add-watermark", fixturePath("simple-text-1page.pdf"), "--text", "DRAFT", "--out", out],
+      io
     );
     expect(code).toBe(0);
     const env = JSON.parse(stdout.text()) as { schema: string; bytes: number };

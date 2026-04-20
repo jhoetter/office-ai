@@ -65,12 +65,12 @@ export interface PdfMetadata {
 
 export interface PdfPage {
   readonly id: NodeId;
-  readonly pageNumber: number;          // 1-indexed in current order
-  readonly width: number;               // PDF user-units (1/72 in)
+  readonly pageNumber: number; // 1-indexed in current order
+  readonly width: number; // PDF user-units (1/72 in)
   readonly height: number;
   readonly rotation: PdfRotation;
-  readonly label?: string;              // "iv", "A-12", …
-  readonly text: string;                // best-effort reading-order projection
+  readonly label?: string; // "iv", "A-12", …
+  readonly text: string; // best-effort reading-order projection
   readonly hasTextLayer: boolean;
   readonly hasAnnotations: boolean;
   readonly hasFormFields: boolean;
@@ -85,33 +85,43 @@ export interface PdfOutlineNode {
 }
 
 export type PdfAnnotationKind =
-  | "highlight" | "underline" | "strikethrough" | "squiggly"
-  | "note" | "free-text" | "ink"
-  | "line" | "rectangle" | "ellipse" | "polygon" | "polyline"
-  | "stamp" | "link" | "redaction" | "unknown";
+  | "highlight"
+  | "underline"
+  | "strikethrough"
+  | "squiggly"
+  | "note"
+  | "free-text"
+  | "ink"
+  | "line"
+  | "rectangle"
+  | "ellipse"
+  | "polygon"
+  | "polyline"
+  | "stamp"
+  | "link"
+  | "redaction"
+  | "unknown";
 
 export interface PdfAnnotation {
   readonly id: NodeId;
   readonly kind: PdfAnnotationKind;
-  readonly subtype: string;             // native PDF /Subtype
+  readonly subtype: string; // native PDF /Subtype
   readonly pageNumber: number;
-  readonly rect: PdfRect;               // PDF user-space
+  readonly rect: PdfRect; // PDF user-space
   readonly contents?: string;
   readonly author?: string;
   readonly color?: { r: number; g: number; b: number; a?: number };
-  readonly url?: string;                // for link
-  readonly destPage?: number;           // for goto-link
+  readonly url?: string; // for link
+  readonly destPage?: number; // for goto-link
   readonly createdAt?: string;
   readonly nativeObjectNumber?: number; // for incremental save
 }
 
-export type PdfFormFieldType =
-  | "text" | "checkbox" | "radio" | "choice"
-  | "button" | "signature" | "unknown";
+export type PdfFormFieldType = "text" | "checkbox" | "radio" | "choice" | "button" | "signature" | "unknown";
 
 export interface PdfFormField {
   readonly id: NodeId;
-  readonly name: string;                // /T fully-qualified name
+  readonly name: string; // /T fully-qualified name
   readonly type: PdfFormFieldType;
   readonly value?: string | boolean;
   readonly options?: ReadonlyArray<string>;
@@ -138,7 +148,7 @@ export interface PdfComment {
   readonly parentId?: NodeId;
   readonly createdAt?: string;
   readonly pageNumber: number;
-  readonly normalizedRect: PdfRect;     // 0..1 normalized for stable anchor
+  readonly normalizedRect: PdfRect; // 0..1 normalized for stable anchor
 }
 
 export interface PdfDocument {
@@ -210,9 +220,9 @@ typed variant added to
 ```typescript
 export interface PdfRegionAnchor {
   readonly kind: "pdf-region";
-  readonly pageNumber: number;             // 1-indexed
-  readonly normalizedRect: PdfRect;        // 0..1 in page user-space
-  readonly nativeObjectNumber?: number;    // optional native /Annot ref
+  readonly pageNumber: number; // 1-indexed
+  readonly normalizedRect: PdfRect; // 0..1 in page user-space
+  readonly nativeObjectNumber?: number; // optional native /Annot ref
 }
 ```
 
@@ -228,7 +238,7 @@ viewer), we record the native object number so subsequent edits update
 the same object. If the comment is Office-AI-internal only, the field
 is absent.
 
-## What's *not* in the model
+## What's _not_ in the model
 
 - The full PDF object graph. The model never carries a
   `PdfIndirectObject` or `PdfStream` type.
@@ -252,7 +262,7 @@ is absent.
    replaced. Pending mutations from `source: "agent"` go to the
    pending queue first; human approves → moves to approved.
 3. **Serialize.** `agent.exportFile()` → `serializePdf(snapshot,
-   originalBuffer)` → incremental update with only changed objects.
+originalBuffer)` → incremental update with only changed objects.
 4. **Re-parse.** `PdfAgent.fromBuffer(exported)` produces a new
    snapshot at revision 0; the round-trip test asserts byte-equality
    on untouched regions.

@@ -267,15 +267,11 @@ For each annotation kind in [`annotation-model.md`](./annotation-model.md):
       counts (pages, annotations, fields, outline depth, fonts).
 - [ ] `make e2e-web` includes a basic PDF flow: load fixture →
       render first page → search → annotate → save.
-- [ ] `scripts/check-architecture.mjs` enforces:
-      - `@officeai/pdf` cannot import `pdfjs-dist` or
-        `@embedpdf/pdfium` directly.
-      - Any package outside `packages/pdf-engine/src/backends/`
-        cannot import `pdfjs-dist` or `@embedpdf/pdfium`.
-      - `@officeai/pdf-engine` cannot import `react` /
-        `react-dom` / `next`.
-      - `@officeai/pdf` cannot import `react` / `react-dom` /
-        `next`.
+- [ ] `scripts/check-architecture.mjs` enforces: - `@officeai/pdf` cannot import `pdfjs-dist` or
+      `@embedpdf/pdfium` directly. - Any package outside `packages/pdf-engine/src/backends/`
+      cannot import `pdfjs-dist` or `@embedpdf/pdfium`. - `@officeai/pdf-engine` cannot import `react` /
+      `react-dom` / `next`. - `@officeai/pdf` cannot import `react` / `react-dom` /
+      `next`.
 
 ## Manual visual QA
 

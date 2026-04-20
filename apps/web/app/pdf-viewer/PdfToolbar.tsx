@@ -69,13 +69,7 @@ export interface PdfToolbarProps {
  */
 export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
   const { t } = useTranslator();
-  const {
-    disabled,
-    currentPage,
-    totalPages,
-    zoom,
-    viewMode,
-  } = props;
+  const { disabled, currentPage, totalPages, zoom, viewMode } = props;
   const noPages = totalPages === 0;
   const canPrev = !disabled && !noPages && currentPage > 1;
   const canNext = !disabled && !noPages && currentPage < totalPages;
@@ -303,9 +297,7 @@ function PageNav({
         data-testid="pdf-page-input"
         className="h-6 w-10 rounded border border-divider bg-background px-1 text-center text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
       />
-      <span className="text-xs tabular-nums text-tertiary">
-        {totalPages > 0 ? `/ ${totalPages}` : ""}
-      </span>
+      <span className="text-xs tabular-nums text-tertiary">{totalPages > 0 ? `/ ${totalPages}` : ""}</span>
       <IconButton
         onClick={onNext}
         icon={<ChevronRight size={14} />}
@@ -448,11 +440,7 @@ function ViewModeMenu({ mode, disabled, onPick }: ViewModeMenuProps): React.Reac
           <MenuItem
             key={m}
             label={
-              m === "single"
-                ? t("pdf.singlePage")
-                : m === "two-up"
-                  ? t("pdf.twoUp")
-                  : t("pdf.continuous")
+              m === "single" ? t("pdf.singlePage") : m === "two-up" ? t("pdf.twoUp") : t("pdf.continuous")
             }
             active={mode === m}
             onClick={() => {
@@ -476,11 +464,7 @@ interface PageOpsMenuProps {
   readonly onDeletePages: () => void;
 }
 
-function PageOpsMenu({
-  disabled,
-  onRotatePages,
-  onDeletePages,
-}: PageOpsMenuProps): React.ReactNode {
+function PageOpsMenu({ disabled, onRotatePages, onDeletePages }: PageOpsMenuProps): React.ReactNode {
   const { t } = useTranslator();
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
@@ -549,15 +533,7 @@ interface MenuItemProps {
   readonly badge?: string;
 }
 
-function MenuItem({
-  label,
-  onClick,
-  testId,
-  icon,
-  active,
-  disabled,
-  badge,
-}: MenuItemProps): React.ReactNode {
+function MenuItem({ label, onClick, testId, icon, active, disabled, badge }: MenuItemProps): React.ReactNode {
   return (
     <button
       type="button"

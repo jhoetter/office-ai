@@ -116,13 +116,13 @@ hard-failing.
 
 ## Virtualization budget
 
-| Window           | Budget                                   |
-| ---------------- | ---------------------------------------- |
-| Render window    | viewport pages **± 2**                   |
-| Text-layer window| viewport pages **± 1**                   |
-| Annotation window| viewport pages **± 2**                   |
-| Struct-tree win  | viewport pages **± 1**                   |
-| Raster cache     | **200 MB** RSS, page-granular LRU        |
+| Window              | Budget                                                       |
+| ------------------- | ------------------------------------------------------------ |
+| Render window       | viewport pages **± 2**                                       |
+| Text-layer window   | viewport pages **± 1**                                       |
+| Annotation window   | viewport pages **± 2**                                       |
+| Struct-tree win     | viewport pages **± 1**                                       |
+| Raster cache        | **200 MB** RSS, page-granular LRU                            |
 | Operator-list cache | **20 pages** LRU (faster re-render on rotate / zoom changes) |
 
 Pages outside the render window are placeholders sized from
@@ -155,10 +155,10 @@ fresh task on the next intent.
 
 ## Failure modes
 
-| Failure                                | Handling                                                           |
-| -------------------------------------- | ------------------------------------------------------------------ |
-| Engine throws on `getPage(N)`          | Render placeholder shows "Page N could not be rendered" + retry button.|
-| Engine returns blank text content      | Page rendered without text-layer; OCR opt-in banner shown if scan-detected.|
-| Bitmap exceeds canvas size limit       | `effectiveScale` clamped; visible warning at zoom level.           |
-| Cache eviction during in-flight render | The render completes, then is immediately evicted if budget exceeded. Caller is unaware.|
-| Worker crashes (PDF.js)                | Engine destroyed and re-created lazily; in-flight intents replayed. |
+| Failure                                | Handling                                                                                 |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Engine throws on `getPage(N)`          | Render placeholder shows "Page N could not be rendered" + retry button.                  |
+| Engine returns blank text content      | Page rendered without text-layer; OCR opt-in banner shown if scan-detected.              |
+| Bitmap exceeds canvas size limit       | `effectiveScale` clamped; visible warning at zoom level.                                 |
+| Cache eviction during in-flight render | The render completes, then is immediately evicted if budget exceeded. Caller is unaware. |
+| Worker crashes (PDF.js)                | Engine destroyed and re-created lazily; in-flight intents replayed.                      |

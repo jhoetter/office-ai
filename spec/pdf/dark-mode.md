@@ -46,7 +46,6 @@ Let the source pixel be `(r, g, b)` in 0..1.
    ```
 
 3. **Classify** the pixel:
-
    - `chroma < CHROMA_BG` (default 0.04) → **near-grayscale**.
      - If `Y > Y_BG` (default 0.85) → **background** (paper white).
        Output: dark surface color (`#1a1a1a` token `--pdf-paper-dark`).
@@ -99,14 +98,14 @@ heuristic above (chroma threshold) is the only signal.
 
 ## Toggle and persistence
 
-| Trigger                     | Effect                                              |
-| --------------------------- | --------------------------------------------------- |
-| `Ctrl+Alt+D`                | Toggle dark mode globally (system + viewer chrome). |
-| Page menu → "Dark mode"     | Same as `Ctrl+Alt+D`.                              |
-| `prefers-color-scheme: dark`| Default to dark mode on first open.                 |
-| Page menu → "Always light"  | Per-document opt-out, persisted in localStorage.    |
-| Page menu → "Always dark"   | Per-document opt-in, persisted in localStorage.    |
-| Page menu → "Follow system" | Default; respects `prefers-color-scheme` changes.   |
+| Trigger                      | Effect                                              |
+| ---------------------------- | --------------------------------------------------- |
+| `Ctrl+Alt+D`                 | Toggle dark mode globally (system + viewer chrome). |
+| Page menu → "Dark mode"      | Same as `Ctrl+Alt+D`.                               |
+| `prefers-color-scheme: dark` | Default to dark mode on first open.                 |
+| Page menu → "Always light"   | Per-document opt-out, persisted in localStorage.    |
+| Page menu → "Always dark"    | Per-document opt-in, persisted in localStorage.     |
+| Page menu → "Follow system"  | Default; respects `prefers-color-scheme` changes.   |
 
 The per-document override is keyed by `partHashes`-equivalent digest
 so the same document always loads with the same preference.
@@ -135,12 +134,12 @@ theme accent color around the current page.
 
 ## Failure modes
 
-| Case                                            | Handling                                              |
-| ----------------------------------------------- | ----------------------------------------------------- |
-| WebGL2 unavailable                              | CPU fallback. Banner: "Slower dark-mode pass active." |
-| GPU memory pressure during 1000-page scroll     | Drop the smart-invert pass for off-viewport pages.    |
-| Pure-grayscale scan (low chroma everywhere)     | Inversion applied everywhere → photo looks wrong; user can opt-out per document. |
-| Color profile mismatch (CMYK / Lab)             | Convert to RGB at engine boundary; smart-invert sees RGB. |
+| Case                                        | Handling                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| WebGL2 unavailable                          | CPU fallback. Banner: "Slower dark-mode pass active."                            |
+| GPU memory pressure during 1000-page scroll | Drop the smart-invert pass for off-viewport pages.                               |
+| Pure-grayscale scan (low chroma everywhere) | Inversion applied everywhere → photo looks wrong; user can opt-out per document. |
+| Color profile mismatch (CMYK / Lab)         | Convert to RGB at engine boundary; smart-invert sees RGB.                        |
 
 ## Why not "filter: invert(1) hue-rotate(180deg)"
 

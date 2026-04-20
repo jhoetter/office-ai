@@ -153,9 +153,7 @@ function buildSeriesName(name: string, ref: string | undefined): Record<string, 
     makeEntry("c:ptCount", [], { val: "1" }),
     makeEntry("c:pt", [makeEntry("c:v", [{ "#text": name }])], { idx: "0" }),
   ]);
-  return makeEntry("c:tx", [
-    makeEntry("c:strRef", [makeEntry("c:f", [{ "#text": ref }]), cache]),
-  ]);
+  return makeEntry("c:tx", [makeEntry("c:strRef", [makeEntry("c:f", [{ "#text": ref }]), cache])]);
 }
 
 function buildCategoryRef(
@@ -173,10 +171,7 @@ function buildCategoryRef(
   return makeEntry("c:cat", [refNode]);
 }
 
-function buildValueRef(
-  values: ReadonlyArray<number>,
-  ref: string | undefined
-): Record<string, unknown> {
+function buildValueRef(values: ReadonlyArray<number>, ref: string | undefined): Record<string, unknown> {
   const ptCount = makeEntry("c:ptCount", [], { val: String(values.length) });
   const pts: unknown[] = [ptCount];
   for (let i = 0; i < values.length; i++) {

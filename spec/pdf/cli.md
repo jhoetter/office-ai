@@ -92,9 +92,12 @@ office-agent pdf outline --file f.pdf
 {
   "format": "pdf-outline/v1",
   "items": [
-    { "id": "n_…", "title": "Chapter 1", "pageNumber": 1, "children": [
-      { "id": "n_…", "title": "Section 1.1", "pageNumber": 3, "children": [] }
-    ]}
+    {
+      "id": "n_…",
+      "title": "Chapter 1",
+      "pageNumber": 1,
+      "children": [{ "id": "n_…", "title": "Section 1.1", "pageNumber": 3, "children": [] }]
+    }
   ]
 }
 ```
@@ -112,7 +115,8 @@ office-agent pdf list-pages --file f.pdf
     {
       "pageNumber": 1,
       "id": "n_…",
-      "width": 612, "height": 792,
+      "width": 612,
+      "height": 792,
       "rotation": 0,
       "label": "i",
       "hasTextLayer": true,
@@ -192,7 +196,14 @@ office-agent pdf list-fonts --file f.pdf
       "encoding": "WinAnsiEncoding",
       "usedOnPages": [1, 2, 3]
     },
-    { "name": "ABCDEF+TimesNewRoman", "type": "TrueType", "embedded": true, "subset": true, "encoding": "Identity-H", "usedOnPages": [4, 5] }
+    {
+      "name": "ABCDEF+TimesNewRoman",
+      "type": "TrueType",
+      "embedded": true,
+      "subset": true,
+      "encoding": "Identity-H",
+      "usedOnPages": [4, 5]
+    }
   ]
 }
 ```
@@ -206,9 +217,7 @@ office-agent pdf list-attachments --file f.pdf [--out ./attachments/]
 ```json
 {
   "format": "pdf-attachments/v1",
-  "attachments": [
-    { "id": "n_…", "name": "appendix.xlsx", "bytes": 12345 }
-  ]
+  "attachments": [{ "id": "n_…", "name": "appendix.xlsx", "bytes": 12345 }]
 }
 ```
 
@@ -275,9 +284,7 @@ Splits the document into LLM-friendly chunks. Strategies:
 {
   "format": "pdf-chunks/v1",
   "strategy": "outline",
-  "chunks": [
-    { "id": "ch_1", "title": "Chapter 1", "pages": [1, 2, 3, 4, 5], "tokens": 1234, "text": "…" }
-  ]
+  "chunks": [{ "id": "ch_1", "title": "Chapter 1", "pages": [1, 2, 3, 4, 5], "tokens": 1234, "text": "…" }]
 }
 ```
 
@@ -383,9 +390,7 @@ office-agent pdf split --file f.pdf --by range|bookmark|size --out ./parts/ [--r
 ```json
 {
   "format": "pdf-split/v1",
-  "parts": [
-    { "outPath": "./parts/part-1.pdf", "pages": [1,2,3,4,5,6,7,8,9,10], "bytes": 234567 }
-  ]
+  "parts": [{ "outPath": "./parts/part-1.pdf", "pages": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "bytes": 234567 }]
 }
 ```
 

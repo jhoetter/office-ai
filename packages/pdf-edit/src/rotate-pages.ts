@@ -17,10 +17,7 @@ const normalize = (raw: number): 0 | 90 | 180 | 270 => {
   return 0;
 };
 
-export const rotatePages = async (
-  buffer: Uint8Array,
-  opts: RotatePagesOptions,
-): Promise<Uint8Array> => {
+export const rotatePages = async (buffer: Uint8Array, opts: RotatePagesOptions): Promise<Uint8Array> => {
   if (!isValidDelta(opts.delta)) {
     throw new Error(`pdf-edit/rotate-pages: delta ${opts.delta} is not a multiple of 90`);
   }

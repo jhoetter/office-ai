@@ -69,12 +69,14 @@ export const insertChartHandler: CommandHandler<PptxInsertChartPayload, PptxSnap
       chartType: payload.chartType,
       ...(payload.title !== undefined ? { title: payload.title } : {}),
       categories: [...payload.categories],
-      series: payload.series.map((s, i): ChartSeries => ({
-        id: ctx.mintNodeId(),
-        idx: i,
-        ...(s.name !== undefined ? { name: s.name } : {}),
-        values: [...s.values],
-      })),
+      series: payload.series.map(
+        (s, i): ChartSeries => ({
+          id: ctx.mintNodeId(),
+          idx: i,
+          ...(s.name !== undefined ? { name: s.name } : {}),
+          values: [...s.values],
+        })
+      ),
       chartSpaceRaw: emptyChartSpaceRaw(),
       plotAreaTailRaw: [],
       seriesRaw: new Map(),
@@ -133,12 +135,7 @@ export const insertChartHandler: CommandHandler<PptxInsertChartPayload, PptxSnap
           {
             kind: "node-inserted",
             nodeId: chartShape.id,
-            path: [
-              "slides",
-              sIdx,
-              "shapes",
-              newSlide.shapes.length - 1,
-            ] as ReadonlyArray<string | number>,
+            path: ["slides", sIdx, "shapes", newSlide.shapes.length - 1] as ReadonlyArray<string | number>,
             summary: `+chart (${payload.chartType}, ${payload.categories.length} cats × ${payload.series.length} ser)`,
           },
           {
@@ -251,17 +248,11 @@ function emptyChartSpaceRaw(): OpaqueXml {
   };
 }
 
-function registerChartOverride(
-  contentTypes: ContentTypesSnap,
-  chartPartPath: string
-): ContentTypesSnap {
+function registerChartOverride(contentTypes: ContentTypesSnap, chartPartPath: string): ContentTypesSnap {
   const partName = chartPartPath.startsWith("/") ? chartPartPath : `/${chartPartPath}`;
   if (contentTypes.overrides.some((o) => o.partName === partName)) return contentTypes;
   return {
     ...contentTypes,
-    overrides: [
-      ...contentTypes.overrides,
-      { partName, contentType: CT_DRAWINGML_CHART },
-    ],
+    overrides: [...contentTypes.overrides, { partName, contentType: CT_DRAWINGML_CHART }],
   };
 }

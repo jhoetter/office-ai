@@ -99,14 +99,8 @@ import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
 import { applyXlsxEmbed } from "@/lib/embed/xlsxEmbedShared";
 import type { XlsxEmbedMode } from "@/lib/embed/xlsxEmbedShared";
 import { EmbeddedXlsxModal } from "@/lib/embed/EmbeddedXlsxModal";
-import {
-  resolveEmbeddedXlsxRef,
-  readEmbeddedXlsxBytes,
-} from "@/lib/embed/getEmbeddedXlsxBytes";
-import {
-  XlsxRangePickerDialog,
-  type XlsxRangePickerResult,
-} from "@/lib/embed/XlsxRangePickerDialog";
+import { resolveEmbeddedXlsxRef, readEmbeddedXlsxBytes } from "@/lib/embed/getEmbeddedXlsxBytes";
+import { XlsxRangePickerDialog, type XlsxRangePickerResult } from "@/lib/embed/XlsxRangePickerDialog";
 import { installAltKeyTracker, isAltKeyPressed } from "@/lib/embed/altKeyTracker";
 import {
   PresenceSlot,
@@ -1126,11 +1120,7 @@ export function DocxEditor({
           mode: result.mode,
         });
         const label =
-          result.mode === "live"
-            ? "embedded spreadsheet"
-            : result.mode === "chart"
-              ? "chart"
-              : "table";
+          result.mode === "live" ? "embedded spreadsheet" : result.mode === "chart" ? "chart" : "table";
         pushToast("info", `Inserted ${label} from xlsx.`);
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
@@ -1361,7 +1351,12 @@ export function DocxEditor({
             try {
               await applyXlsxRangeToDocx({
                 agent,
-                snapshot: env.payload.kind === "xlsx-range" ? env.payload.snapshot : (() => { throw new Error("unreachable"); })(),
+                snapshot:
+                  env.payload.kind === "xlsx-range"
+                    ? env.payload.snapshot
+                    : (() => {
+                        throw new Error("unreachable");
+                      })(),
                 paragraphIndex: Math.max(0, paragraphIndex),
                 mode,
               });
@@ -2162,9 +2157,10 @@ function normaliseUrl(raw: string): string {
  * module beyond the `lib/embed/` directory; lifting one tiny pure
  * helper into its own file would be more ceremony than it's worth.
  */
-function projectGridToChartData(
-  grid: ReadonlyArray<ReadonlyArray<string | number | null>>
-): { readonly categories: ReadonlyArray<string>; readonly series: ReadonlyArray<{ readonly name?: string; readonly values: ReadonlyArray<number> }> } | null {
+function projectGridToChartData(grid: ReadonlyArray<ReadonlyArray<string | number | null>>): {
+  readonly categories: ReadonlyArray<string>;
+  readonly series: ReadonlyArray<{ readonly name?: string; readonly values: ReadonlyArray<number> }>;
+} | null {
   if (grid.length < 2) return null;
   const header = grid[0]!;
   if (header.length < 2) return null;

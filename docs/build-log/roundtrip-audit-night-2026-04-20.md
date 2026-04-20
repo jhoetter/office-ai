@@ -1,7 +1,7 @@
 # Round-trip attribute-fidelity audit — Night 2026-04-20
 
 This phase delivered a developer-loop friendly audit script that
-*counts attribute-class survival* through a full parse → serialize
+_counts attribute-class survival_ through a full parse → serialize
 → re-parse cycle for every fixture in the repository.
 
 Unlike the existing `run-libreoffice-roundtrip.mjs` (which gates
@@ -29,11 +29,11 @@ Every single fixture round-tripped with **exact attribute match
 counts** (no losses, no spurious gains). All 30 bundled fixtures
 land at `attrs preserved == attrs after`:
 
-| Format | Fixtures | Exact-match | Notes |
-| ------ | -------- | ----------- | ----- |
+| Format | Fixtures | Exact-match | Notes                                                         |
+| ------ | -------- | ----------- | ------------------------------------------------------------- |
 | DOCX   | 11/11    | 11/11       | incl. landscape section, multi-column, TOC SDT, callout table |
-| XLSX   | 6/6      | 6/6         | incl. 7012-attribute large-grid sheet, formulas, merges |
-| PPTX   | 13/13    | 13/13       | incl. real-world decks, charts, animations, multi-shape |
+| XLSX   | 6/6      | 6/6         | incl. 7012-attribute large-grid sheet, formulas, merges       |
+| PPTX   | 13/13    | 13/13       | incl. real-world decks, charts, animations, multi-shape       |
 
 Headline numbers from the JSON summary:
 
@@ -86,8 +86,8 @@ run-color run-font-family
 
 A deep equality on snapshots would flag every cosmetic difference
 (NodeId remint, attribute order, default vs explicit `xml:space`,
-etc.) and drown out the signal we actually want — *did this
-formatting attribute survive at all?* Counting captures that
+etc.) and drown out the signal we actually want — _did this
+formatting attribute survive at all?_ Counting captures that
 question precisely: a missing alignment shows up as "12 → 11", and
 a duplication shows up as a positive `gain`. Both are flagged.
 
@@ -95,7 +95,7 @@ The vitest packages already do per-feature deep equality on
 focused fixtures (e.g. `packages/docx/src/serializer/*.test.ts`),
 so the two layers complement: vitest answers "does this single
 attribute survive end-to-end?", the audit answers "does the
-*aggregate* across the whole corpus survive?".
+_aggregate_ across the whole corpus survive?".
 
 ## Backlog (cheap one-liners, deferred to follow-up)
 

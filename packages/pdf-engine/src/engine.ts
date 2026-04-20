@@ -1,9 +1,4 @@
-import type {
-  PdfEngine,
-  PdfEngineDocument,
-  PdfEngineKind,
-  PdfEngineLoadOptions,
-} from "./types.js";
+import type { PdfEngine, PdfEngineDocument, PdfEngineKind, PdfEngineLoadOptions } from "./types.js";
 
 /**
  * Lazy backend registry. Backends register on first use to keep the
@@ -31,7 +26,7 @@ export const getDefaultEngine = (): PdfEngineKind => defaultEngine;
  */
 export const loadDocument = async (
   buffer: Uint8Array,
-  opts: PdfEngineLoadOptions = {},
+  opts: PdfEngineLoadOptions = {}
 ): Promise<PdfEngineDocument> => {
   const requested: PdfEngineKind = opts.forceEngine ?? defaultEngine;
   let loader = backends.get(requested);
@@ -46,7 +41,7 @@ export const loadDocument = async (
     } else {
       throw new Error(
         `pdf-engine: no backend registered for "${requested as string}". ` +
-          `Call registerBackend(${JSON.stringify(requested)}, …) first.`,
+          `Call registerBackend(${JSON.stringify(requested)}, …) first.`
       );
     }
   }

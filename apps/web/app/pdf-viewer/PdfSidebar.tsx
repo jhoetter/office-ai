@@ -91,11 +91,7 @@ export function PdfSidebar(props: PdfSidebarProps): ReactNode {
             onJumpToPage={onJumpToPage}
           />
         ) : tab === "outline" ? (
-          <OutlinePanel
-            snapshot={snapshot}
-            currentPage={currentPage}
-            onJumpToPage={onJumpToPage}
-          />
+          <OutlinePanel snapshot={snapshot} currentPage={currentPage} onJumpToPage={onJumpToPage} />
         ) : (
           <AnnotationsPanel
             snapshot={snapshot}
@@ -174,9 +170,7 @@ function ThumbnailsPanel({
   useEffect(() => {
     const inner = containerRef.current;
     if (!inner) return;
-    const target = inner.querySelector<HTMLElement>(
-      `[data-thumb-page="${currentPage}"]`
-    );
+    const target = inner.querySelector<HTMLElement>(`[data-thumb-page="${currentPage}"]`);
     if (!target) return;
     // The scrollable element is the panel wrapper one level up from
     // our flex column (see `PdfSidebar`'s `overflow-y-auto` div).
@@ -196,22 +190,15 @@ function ThumbnailsPanel({
     // already fully visible thumbnail we still nudge it back toward
     // the middle so the next page peeks into view as the reader
     // scrolls forward.
-    const desired = target.offsetTop -
-      scroller.offsetTop -
-      (scroller.clientHeight - target.offsetHeight) / 2;
-    const clamped = Math.max(
-      0,
-      Math.min(scroller.scrollHeight - scroller.clientHeight, desired)
-    );
+    const desired = target.offsetTop - scroller.offsetTop - (scroller.clientHeight - target.offsetHeight) / 2;
+    const clamped = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, desired));
     if (!fullyVisible || Math.abs(clamped - visTop) > target.offsetHeight) {
       scroller.scrollTo({ top: clamped, behavior: "smooth" });
     }
   }, [currentPage]);
 
   if (!snapshot || pages.length === 0) {
-    return (
-      <p className="p-4 text-xs text-tertiary">{t("pdf.loading")}</p>
-    );
+    return <p className="p-4 text-xs text-tertiary">{t("pdf.loading")}</p>;
   }
 
   return (
@@ -454,7 +441,11 @@ function OutlineEntry({
       ? "bg-[var(--accent-light)] font-medium text-[var(--accent)]"
       : "text-primary hover:text-[var(--accent)]");
   return (
-    <li role="treeitem" aria-expanded={hasChildren ? open : undefined} aria-current={isActive ? "page" : undefined}>
+    <li
+      role="treeitem"
+      aria-expanded={hasChildren ? open : undefined}
+      aria-current={isActive ? "page" : undefined}
+    >
       <div
         className="group flex items-center gap-1 rounded hover:bg-hover"
         style={{ paddingLeft: 4 + depth * 12 }}
@@ -484,8 +475,7 @@ function OutlineEntry({
           {typeof node.pageNumber === "number" ? (
             <span
               className={
-                "shrink-0 text-[10px] tabular-nums " +
-                (isActive ? "text-[var(--accent)]" : "text-tertiary")
+                "shrink-0 text-[10px] tabular-nums " + (isActive ? "text-[var(--accent)]" : "text-tertiary")
               }
             >
               {node.pageNumber}
@@ -630,9 +620,7 @@ function AnnotationsPanel({
                 <button
                   type="button"
                   className="flex w-full items-baseline justify-between gap-2 text-left text-primary hover:text-[var(--accent)]"
-                  onClick={() =>
-                    onJumpToAnnotation ? onJumpToAnnotation(a) : onJumpToPage(a.pageNumber)
-                  }
+                  onClick={() => (onJumpToAnnotation ? onJumpToAnnotation(a) : onJumpToPage(a.pageNumber))}
                   title={a.contents ?? a.kind}
                   data-testid={`pdf-annotation-${a.id}`}
                 >
@@ -646,9 +634,7 @@ function AnnotationsPanel({
                 <button
                   type="button"
                   className="flex w-full flex-col gap-0.5 text-left hover:text-[var(--accent)]"
-                  onClick={() =>
-                    onJumpToComment ? onJumpToComment(c.id) : onJumpToPage(c.pageNumber)
-                  }
+                  onClick={() => (onJumpToComment ? onJumpToComment(c.id) : onJumpToPage(c.pageNumber))}
                   data-testid={`pdf-comment-${c.id}`}
                 >
                   <span className="text-[11px] font-medium text-primary">

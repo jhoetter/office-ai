@@ -1,12 +1,4 @@
-import {
-  PDFArray,
-  PDFDocument,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFRef,
-  PDFString,
-} from "pdf-lib";
+import { PDFArray, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from "pdf-lib";
 import type { AnnotationInput, ColorInput, RectInput } from "./types.js";
 
 export interface AddAnnotationsOptions {
@@ -67,11 +59,7 @@ const ensureAnnots = (pdf: PDFDocument, pageIndex: number): PDFArray => {
   return arr;
 };
 
-const appendAnnotation = (
-  pdf: PDFDocument,
-  pageIndex: number,
-  dict: Record<string, unknown>,
-): void => {
+const appendAnnotation = (pdf: PDFDocument, pageIndex: number, dict: Record<string, unknown>): void => {
   const ref = pdf.context.register(pdf.context.obj(dict as never));
   const annots = ensureAnnots(pdf, pageIndex);
   annots.push(ref);
@@ -85,7 +73,7 @@ const appendAnnotation = (
  */
 export const addAnnotations = async (
   buffer: Uint8Array,
-  opts: AddAnnotationsOptions,
+  opts: AddAnnotationsOptions
 ): Promise<Uint8Array> => {
   const pdf = await PDFDocument.load(buffer, { updateMetadata: false });
   const total = pdf.getPageCount();

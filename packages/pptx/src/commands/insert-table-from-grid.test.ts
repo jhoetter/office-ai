@@ -8,9 +8,7 @@ const FIXTURES_DIR = new URL("../../../../fixtures/pptx/synthetic/", import.meta
 
 function cellText(table: TableShape, row: number, col: number): string {
   const cell = table.rows[row]!.cells[col]!;
-  return cell.txBody.paragraphs
-    .map((p) => p.runs.map((r) => r.text).join(""))
-    .join("\n");
+  return cell.txBody.paragraphs.map((p) => p.runs.map((r) => r.text).join("")).join("\n");
 }
 
 describe("pptx:insert-table", () => {

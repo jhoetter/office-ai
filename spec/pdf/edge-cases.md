@@ -19,14 +19,14 @@ declares `/Encrypt` referring to the encryption dictionary.
 
 - On parse, the engine throws a typed `PasswordRequired` error
   (PDF.js: `PasswordException` with `code === 1`).
-- The viewer surfaces a modal: *"This document is password-protected.
-  Enter the password to decrypt."*
+- The viewer surfaces a modal: _"This document is password-protected.
+  Enter the password to decrypt."_
 - On submit, `PdfAgent.fromBuffer(bytes, { password })` re-attempts.
 - The password is held in memory for the session and **never
   written**. Closing the document discards it.
 - The CLI accepts `--password <pw>` on every command; missing
   password on encrypted input exits with code `1` and the message
-  *"password required for this PDF; pass --password"*.
+  _"password required for this PDF; pass --password"_.
 - The model's `PdfMetadata.encryption` flags both `hasUserPassword`
   and `hasOwnerPassword` so the UI shows the security pane.
 - Permission flags (`/P` bits — print, copy, modify, …) are
@@ -63,7 +63,7 @@ Engineering drawings, cartograms, banner PDFs.
   request down and overlays the text layer at the user's requested
   zoom — text remains crisp; only the canvas image scales.
 - A subtle banner appears at zoom levels that triggered clamping:
-  *"Rendering at reduced fidelity due to page size."*
+  _"Rendering at reduced fidelity due to page size."_
 
 ## Missing fonts
 
@@ -76,7 +76,7 @@ the system (deeply rare but real).
   (serif → Times, sans → Helvetica, mono → Courier).
 - We surface this in `office-agent pdf list-fonts`:
   `{ "name": "FooBar", "embedded": false, "substituted": true,
-  "substitutedAs": "Helvetica" }`.
+"substitutedAs": "Helvetica" }`.
 - For pages with substituted fonts, the substituted glyphs may be
   visually different from the original. The viewer shows a per-page
   badge (gear icon) that opens a popover listing the substitutions.
@@ -145,8 +145,8 @@ form-field `/AA`, or per-page `/AA`.
 
 - We **do not execute** any embedded JS. Sandboxed / no-op.
 - On parse, the snapshot carries `warning: "embedded-js"` if any JS
-  is detected. The UI shows a banner: *"This document contains
-  embedded scripts that have been blocked for your safety."*
+  is detected. The UI shows a banner: _"This document contains
+  embedded scripts that have been blocked for your safety."_
 - Form calc-order resolution (which would normally use JS) falls
   back to the static dependency analysis described in
   [`form-engine.md`](./form-engine.md).
@@ -159,9 +159,9 @@ in our viewer.
 
 **Handling:**
 
-- The viewer shows a banner: *"This form was authored in XFA
+- The viewer shows a banner: _"This form was authored in XFA
   dynamic-forms format and requires Adobe Acrobat. The static
-  layout is shown for reference only."*
+  layout is shown for reference only."_
 - Field-level interaction is disabled.
 - `list-form-fields` flags `"backing": "xfa-only"`.
 - A best-effort `office-agent pdf convert-xfa-to-acroform` is on the
@@ -174,7 +174,7 @@ in our viewer.
 - For 200 MB files the viewer behaves correctly but memory peaks at
   ~1.5 GB (see [`performance.md`](./performance.md)).
 - For files > 500 MB, the viewer surfaces a confirmation:
-  *"This document is large (X MB). Open anyway?"* — the user can
+  _"This document is large (X MB). Open anyway?"_ — the user can
   decline and the file is not loaded.
 - The CLI handles arbitrary sizes; OOM is the OS's problem.
 
@@ -215,10 +215,10 @@ comments.
 - Search returns empty.
 - Selection drags don't paint highlight (no text underneath the
   pointer).
-- The viewer shows a per-page banner: *"Run OCR (German + English)
-  to make this page selectable and searchable."*
+- The viewer shows a per-page banner: _"Run OCR (German + English)
+  to make this page selectable and searchable."_
 - One click triggers `packages/pdf-ocr.addTextLayer(buffer,
-  [pageIndex], "deu+eng")`. Output replaces the snapshot's bytes via
+[pageIndex], "deu+eng")`. Output replaces the snapshot's bytes via
   incremental save.
 
 ## Files with attachments
@@ -247,8 +247,8 @@ See "CMap edge cases" above. `selectEngine()` triggers PDFium.
 
 - We **open** PDF/A files normally.
 - We **do not** certify outputs as PDF/A — saves remove the PDF/A
-  badge. The viewer shows a *"This was a PDF/A file; saving will
-  drop PDF/A conformance"* banner before the first edit.
+  badge. The viewer shows a _"This was a PDF/A file; saving will
+  drop PDF/A conformance"_ banner before the first edit.
 - A best-effort `office-agent pdf convert-to-pdfa` is roadmap (P2).
 
 ## Files with broken / overflowing /MediaBox

@@ -827,6 +827,114 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
 
   // ── Charts (F3) ─────────────────────────────────────────────────────
   pptx
+    .command("insert-chart")
+    .description(
+      "Insert a typed chart on a slide. Embeds a backing .xlsx workbook so 'Edit Data' works in PowerPoint."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--x <emu>", "Slide-coord X position in EMU", parseIntArg)
+    .requiredOption("--y <emu>", "Slide-coord Y position in EMU", parseIntArg)
+    .option("--cx <emu>", "Display width in EMU", parseIntArg)
+    .option("--cy <emu>", "Display height in EMU", parseIntArg)
+    .addOption(
+      new Option("--chart-type <type>", "Chart type").choices(["bar", "line", "pie", "area"]).default("bar")
+    )
+    .option("--title <text>", "Chart title")
+    .requiredOption(
+      "--data <path>",
+      'JSON file: { "categories": ["Q1",…], "series": [{ "name": "Revenue", "values": [1,2,3] }, …] }'
+    )
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        x: number;
+        y: number;
+        cx?: number;
+        cy?: number;
+        chartType: "bar" | "line" | "pie" | "area";
+        title?: string;
+        data: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        const raw = await readFile(resolve(opts.data), "utf8");
+        const parsed: unknown = JSON.parse(raw);
+        const { categories, series } = parseChartData(parsed);
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:insert-chart",
+            payload: {
+              slideIndex: opts.slide,
+              x: opts.x,
+              y: opts.y,
+              ...(opts.cx !== undefined ? { cx: opts.cx } : {}),
+              ...(opts.cy !== undefined ? { cy: opts.cy } : {}),
+              chartType: opts.chartType,
+              ...(opts.title !== undefined ? { title: opts.title } : {}),
+              categories,
+              series,
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("insert-spreadsheet")
+    .description(
+      "Insert a live OLE-embedded Excel workbook on a slide. Double-clicking the embed in PowerPoint opens the underlying .xlsx in Excel."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--x <emu>", "Slide-coord X position in EMU", parseIntArg)
+    .requiredOption("--y <emu>", "Slide-coord Y position in EMU", parseIntArg)
+    .option("--cx <emu>", "Display width in EMU", parseIntArg)
+    .option("--cy <emu>", "Display height in EMU", parseIntArg)
+    .requiredOption("--data <path>", 'JSON file: 2D array of cell values, e.g. [["Name","Score"],["Ada",91]]')
+    .option("--sheet-name <name>", "Worksheet name", "Sheet1")
+    .option("--name <text>", "Display name (e.g. tab title in PowerPoint)")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        x: number;
+        y: number;
+        cx?: number;
+        cy?: number;
+        data: string;
+        sheetName: string;
+        name?: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        const raw = await readFile(resolve(opts.data), "utf8");
+        const parsed: unknown = JSON.parse(raw);
+        const grid = parseSpreadsheetGrid(parsed);
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:insert-spreadsheet",
+            payload: {
+              slideIndex: opts.slide,
+              x: opts.x,
+              y: opts.y,
+              ...(opts.cx !== undefined ? { cx: opts.cx } : {}),
+              ...(opts.cy !== undefined ? { cy: opts.cy } : {}),
+              data: grid,
+              sheetName: opts.sheetName,
+              ...(opts.name !== undefined ? { name: opts.name } : {}),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
     .command("chart-set-title")
     .description("Set or remove a typed ChartShape's title text. Pass --remove to clear it.")
     .requiredOption("--file <path>", "Path to a .pptx file")
@@ -1614,6 +1722,41 @@ export function normalizeCommands(
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
+}
+
+/**
+ * Validate a 2D grid loaded from a JSON file for
+ * `pptx:insert-spreadsheet`. Cells must be strings, numbers, booleans,
+ * or `null` — anything else is rejected so a typo'd `{ "v": 1 }`
+ * cell (instead of a literal `1`) doesn't silently render as
+ * `[object Object]` in the embedded preview.
+ */
+function parseSpreadsheetGrid(v: unknown): ReadonlyArray<ReadonlyArray<string | number | null>> {
+  if (!Array.isArray(v)) {
+    throw new Error("spreadsheet data must be a 2D array of cell values");
+  }
+  const out: Array<Array<string | number | null>> = [];
+  for (let r = 0; r < v.length; r++) {
+    const row = v[r];
+    if (!Array.isArray(row)) {
+      throw new Error(`spreadsheet data row ${r} must be an array`);
+    }
+    const next: Array<string | number | null> = [];
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
+      if (cell === null || cell === undefined) {
+        next.push(null);
+      } else if (typeof cell === "string" || typeof cell === "number") {
+        next.push(cell);
+      } else if (typeof cell === "boolean") {
+        next.push(cell ? "TRUE" : "FALSE");
+      } else {
+        throw new Error(`spreadsheet data cell at row ${r} col ${c} must be string|number|boolean|null`);
+      }
+    }
+    out.push(next);
+  }
+  return out;
 }
 
 function parseChartData(v: unknown): {

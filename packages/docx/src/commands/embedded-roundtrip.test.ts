@@ -58,9 +58,7 @@ function findEmbeddingPath(container: ooxml.OoxmlContainer): string {
 
 /** Match an inline-string `<c r="A1" t="inlineStr"><is><t...>VAL</t></is></c>`. */
 function expectInlineString(sheetXml: string, ref: string, value: string): void {
-  const re = new RegExp(
-    `<c[^>]*r="${ref}"[^>]*t="inlineStr"[^>]*>\\s*<is>\\s*<t[^>]*>${value}</t>`
-  );
+  const re = new RegExp(`<c[^>]*r="${ref}"[^>]*t="inlineStr"[^>]*>\\s*<is>\\s*<t[^>]*>${value}</t>`);
   expect(sheetXml).toMatch(re);
 }
 

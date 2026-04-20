@@ -1,14 +1,7 @@
 "use client";
 
 import * as React from "react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PdfEngineDocument, PdfEnginePage } from "@officeai/pdf-engine";
 import type {
   AddAnnotationPayload,
@@ -246,16 +239,10 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     // editor consumes only the first metrics callback after a
     // document load) lock the page in at "way too zoomed in".
     if (containerHeight === 0) return;
-    const tallest = pages.reduce(
-      (acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation)),
-      0
-    );
+    const tallest = pages.reduce((acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation)), 0);
     if (tallest === 0) return;
     const verticalGutter = 32;
-    const fitPageScale = Math.min(
-      baseScale,
-      Math.max(0.05, (containerHeight - verticalGutter) / tallest)
-    );
+    const fitPageScale = Math.min(baseScale, Math.max(0.05, (containerHeight - verticalGutter) / tallest));
     const actualSizeZoom = 1 / baseScale;
     const fitPageZoom = fitPageScale / baseScale;
     onZoomMetricsChange({ actualSizeZoom, fitPageZoom });
@@ -315,9 +302,7 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        const placeholders = Array.from(
-          root.querySelectorAll<HTMLElement>("[data-page-number]")
-        );
+        const placeholders = Array.from(root.querySelectorAll<HTMLElement>("[data-page-number]"));
         const viewMid = root.scrollTop + root.clientHeight / 2;
         let nearest: { num: number; dist: number } | null = null;
         for (const el of placeholders) {
@@ -354,9 +339,7 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     const root = containerRef.current;
     if (!root) return;
     if (viewMode === "single") return;
-    const target = root.querySelector<HTMLElement>(
-      `[data-page-number="${currentPage}"]`
-    );
+    const target = root.querySelector<HTMLElement>(`[data-page-number="${currentPage}"]`);
     if (!target) return;
     const top = target.offsetTop;
     const distance = Math.abs(top - root.scrollTop);
@@ -364,10 +347,7 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     // Smooth feels great for small jumps; for big jumps (e.g.
     // shift-jumping 50 pages) the animation drags. Snap instantly
     // past five page-heights.
-    const tallest = pages.reduce(
-      (acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation) * scale),
-      1
-    );
+    const tallest = pages.reduce((acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation) * scale), 1);
     const useSmooth = distance < tallest * 5;
     root.scrollTo({ top, behavior: useSmooth ? "smooth" : "auto" });
   }, [jumpNonce, currentPage, viewMode, scale, pages, viewportRotation]);
@@ -444,9 +424,7 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
               viewportRotation={viewportRotation}
               darkMode={darkMode}
               onClick={() => onCurrentPageChange(p.pageNumber)}
-              highlight={
-                highlight && highlight.pageNumber === p.pageNumber ? highlight : null
-              }
+              highlight={highlight && highlight.pageNumber === p.pageNumber ? highlight : null}
               annotations={pageAnnotations(snapshot, p.pageNumber)}
               armedTool={armedTool}
               onAddAnnotation={onAddAnnotation}
@@ -464,13 +442,13 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
           // also gives the cover its "right side of an open book"
           // offset for free.
           const spreadWidth = twoUpSlotWidth * 2 + BOOK_BINDING_GAP;
-          const leftPage = row.slot === "right" ? null : row.pages[0] ?? null;
+          const leftPage = row.slot === "right" ? null : (row.pages[0] ?? null);
           const rightPage =
             row.slot === "spread"
-              ? row.pages[1] ?? null
+              ? (row.pages[1] ?? null)
               : row.slot === "right"
-              ? row.pages[0] ?? null
-              : null;
+                ? (row.pages[0] ?? null)
+                : null;
           return (
             <div
               key={row.key}
@@ -686,21 +664,14 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     };
   }, [visible, engineDoc, page.pageNumber, scale, cssWidth, cssHeight, darkMode, viewportRotation]);
 
-  const cursorClass = highlightArmed
-    ? "cursor-text"
-    : stickyArmed
-    ? "cursor-crosshair"
-    : "cursor-default";
+  const cursorClass = highlightArmed ? "cursor-text" : stickyArmed ? "cursor-crosshair" : "cursor-default";
 
   return (
     <div
       data-page-number={page.pageNumber}
       data-testid={`pdf-page-${page.pageNumber}`}
       onClick={onClick}
-      className={
-        "relative rounded-md border border-divider bg-white shadow-sm " +
-        cursorClass
-      }
+      className={"relative rounded-md border border-divider bg-white shadow-sm " + cursorClass}
       style={{ width: cssWidth, height: cssHeight }}
     >
       <canvas
@@ -740,11 +711,7 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         />
       ) : null}
       {stickyArmed ? (
-        <div
-          aria-hidden
-          className="absolute inset-0 z-10"
-          onClick={onPageClickForSticky}
-        />
+        <div aria-hidden className="absolute inset-0 z-10" onClick={onPageClickForSticky} />
       ) : null}
       {stickyDraft && viewportRotation === 0 ? (
         <PdfStickyComposer
@@ -807,10 +774,7 @@ interface OfficialPdfTextLayerProps {
  * at fixed (1.0) scale and drift the moment the user zooms.
  */
 const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLayerProps>(
-  function OfficialPdfTextLayer(
-    { scale, pageWidth, pageHeight, rotation, page, onSelectionPdfRects },
-    ref,
-  ) {
+  function OfficialPdfTextLayer({ scale, pageWidth, pageHeight, rotation, page, onSelectionPdfRects }, ref) {
     const innerWidth = pageWidth * scale;
     const innerHeight = pageHeight * scale;
     const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
@@ -828,8 +792,7 @@ const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLay
      */
     const onCopy = useCallback(
       (e: React.ClipboardEvent<HTMLDivElement>) => {
-        const inner =
-          typeof ref === "object" && ref ? ref.current : null;
+        const inner = typeof ref === "object" && ref ? ref.current : null;
         if (!inner) return;
         const sel = typeof window !== "undefined" ? window.getSelection() : null;
         if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -839,9 +802,7 @@ const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLay
 
         const innerRect = inner.getBoundingClientRect();
         if (innerRect.width === 0 || innerRect.height === 0) return;
-        const clientRects = Array.from(range.getClientRects()).filter(
-          (r) => r.width > 0 && r.height > 0,
-        );
+        const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
         if (clientRects.length === 0) return;
         // Convert the selection's pixel rects into PDF user-space
         // and ask the structured page which glyphs land inside.
@@ -868,13 +829,12 @@ const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLay
         e.clipboardData.setData("text/plain", text);
         e.preventDefault();
       },
-      [ref, scale, pageHeight, page.structured],
+      [ref, scale, pageHeight, page.structured]
     );
 
     const onMouseUp = useCallback(() => {
       if (!onSelectionPdfRects) return;
-      const inner =
-        typeof ref === "object" && ref ? ref.current : null;
+      const inner = typeof ref === "object" && ref ? ref.current : null;
       if (!inner) return;
       const sel = typeof window !== "undefined" ? window.getSelection() : null;
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -882,9 +842,7 @@ const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLay
       if (!inner.contains(range.commonAncestorContainer)) return;
       const innerRect = inner.getBoundingClientRect();
       if (innerRect.width === 0 || innerRect.height === 0) return;
-      const clientRects = Array.from(range.getClientRects()).filter(
-        (r) => r.width > 0 && r.height > 0,
-      );
+      const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
       if (clientRects.length === 0) return;
       const merged = mergeRectsByLine(clientRects);
       const pdfRects: PdfRect[] = merged.map((r) => {
@@ -920,7 +878,7 @@ const OfficialPdfTextLayer = React.forwardRef<HTMLDivElement, OfficialPdfTextLay
         }}
       />
     );
-  },
+  }
 );
 
 function collapseWhitespace(s: string): string {
@@ -974,16 +932,13 @@ async function mountOfficialTextLayer(opts: {
   // `pdfjs-dist` ESM module imports browser-only globals at the top
   // level and can't be statically required by Next.js's server side.
   const pdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as unknown as {
-    TextLayer: new (params: {
-      textContentSource: unknown;
-      container: HTMLElement;
-      viewport: unknown;
-    }) => { render(): Promise<unknown>; cancel(): void };
+    TextLayer: new (params: { textContentSource: unknown; container: HTMLElement; viewport: unknown }) => {
+      render(): Promise<unknown>;
+      cancel(): void;
+    };
   };
   if (typeof pdfjs.TextLayer !== "function") {
-    throw new Error(
-      "pdfjs-dist: TextLayer export missing. Required pdfjs-dist >= 4.0.",
-    );
+    throw new Error("pdfjs-dist: TextLayer export missing. Required pdfjs-dist >= 4.0.");
   }
   // Clear any previous content so re-mounting is safe.
   while (container.firstChild) container.removeChild(container.firstChild);
@@ -1106,10 +1061,7 @@ function annotationFill(a: PdfAnnotation): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function pageAnnotations(
-  snapshot: PdfSnapshot,
-  pageNumber: number
-): ReadonlyArray<PdfAnnotation> {
+function pageAnnotations(snapshot: PdfSnapshot, pageNumber: number): ReadonlyArray<PdfAnnotation> {
   return snapshot.root.annotations.filter((a) => a.pageNumber === pageNumber);
 }
 
@@ -1200,10 +1152,7 @@ function PdfStickyNotesOverlay({
   const notes = annotations.filter((a) => a.kind === "note");
   if (notes.length === 0) return null;
   return (
-    <div
-      className="pointer-events-none absolute inset-0"
-      style={{ width: rotatedW, height: rotatedH }}
-    >
+    <div className="pointer-events-none absolute inset-0" style={{ width: rotatedW, height: rotatedH }}>
       <div
         style={{
           position: "absolute",
@@ -1240,9 +1189,7 @@ function PdfStickyNotesOverlay({
                   className="pointer-events-auto absolute left-6 top-0 z-20 w-56 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 shadow-lg"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="whitespace-pre-wrap break-words">
-                    {a.contents || "(no contents)"}
-                  </div>
+                  <div className="whitespace-pre-wrap break-words">{a.contents || "(no contents)"}</div>
                   {a.author ? (
                     <div className="mt-1 text-[10px] uppercase tracking-wide text-amber-700/80">
                       {a.author}
@@ -1289,11 +1236,7 @@ function PdfStickyComposer({ x, y, onCommit, onCancel }: PdfStickyComposerProps)
     }
   };
   return (
-    <div
-      className="absolute z-30"
-      style={{ left: x, top: y }}
-      onClick={(e) => e.stopPropagation()}
-    >
+    <div className="absolute z-30" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
       <div className="w-56 rounded-md border border-amber-300 bg-amber-50 p-2 shadow-xl">
         <textarea
           ref={ref}
@@ -1345,10 +1288,8 @@ function PdfMatchHighlight({
   if (quads.length > 0) {
     const innerWidth = pageWidth * scale;
     const innerHeight = pageHeight * scale;
-    const rotatedW =
-      rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
-    const rotatedH =
-      rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
+    const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
+    const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
     const transform = textLayerTransform(rotation, innerWidth, innerHeight);
     return (
       <div

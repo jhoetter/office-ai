@@ -3714,17 +3714,41 @@ export function XlsxEditor({
       "xlsx.toggle-filter": { run: () => onToggleFilter(), enabled: Boolean(agent) },
       "xlsx.text-to-columns": { run: () => onTextToColumns(), enabled: canTextToColumns },
       "xlsx.format-cells": { run: () => setFormatCellsTab("number"), enabled: Boolean(agent && selection) },
-      "xlsx.format-cells-alignment": { run: () => setFormatCellsTab("alignment"), enabled: Boolean(agent && selection) },
-      "xlsx.format-cells-font": { run: () => setFormatCellsTab("font"), enabled: Boolean(agent && selection) },
-      "xlsx.format-cells-border": { run: () => setFormatCellsTab("border"), enabled: Boolean(agent && selection) },
-      "xlsx.format-cells-fill": { run: () => setFormatCellsTab("fill"), enabled: Boolean(agent && selection) },
-      "xlsx.format-cells-protection": { run: () => setFormatCellsTab("protection"), enabled: Boolean(agent && selection) },
+      "xlsx.format-cells-alignment": {
+        run: () => setFormatCellsTab("alignment"),
+        enabled: Boolean(agent && selection),
+      },
+      "xlsx.format-cells-font": {
+        run: () => setFormatCellsTab("font"),
+        enabled: Boolean(agent && selection),
+      },
+      "xlsx.format-cells-border": {
+        run: () => setFormatCellsTab("border"),
+        enabled: Boolean(agent && selection),
+      },
+      "xlsx.format-cells-fill": {
+        run: () => setFormatCellsTab("fill"),
+        enabled: Boolean(agent && selection),
+      },
+      "xlsx.format-cells-protection": {
+        run: () => setFormatCellsTab("protection"),
+        enabled: Boolean(agent && selection),
+      },
       "xlsx.borders-all": { run: () => onApplyBorderPreset("all"), enabled: Boolean(agent && selection) },
-      "xlsx.borders-outside": { run: () => onApplyBorderPreset("outside"), enabled: Boolean(agent && selection) },
-      "xlsx.borders-thick-outside": { run: () => onApplyBorderPreset("thick-outside"), enabled: Boolean(agent && selection) },
+      "xlsx.borders-outside": {
+        run: () => onApplyBorderPreset("outside"),
+        enabled: Boolean(agent && selection),
+      },
+      "xlsx.borders-thick-outside": {
+        run: () => onApplyBorderPreset("thick-outside"),
+        enabled: Boolean(agent && selection),
+      },
       "xlsx.borders-none": { run: () => onApplyBorderPreset("none"), enabled: Boolean(agent && selection) },
       "xlsx.paste-special": { run: () => setPasteSpecialOpen(true), enabled: Boolean(agent && selection) },
-      "xlsx.format-painter": { run: () => activateFormatPainter(false), enabled: Boolean(agent && selection) },
+      "xlsx.format-painter": {
+        run: () => activateFormatPainter(false),
+        enabled: Boolean(agent && selection),
+      },
       "xlsx.add-sheet": { run: () => onAddSheet(), enabled: Boolean(agent) },
       "xlsx.rename-sheet": {
         run: () => {
@@ -3737,27 +3761,37 @@ export function XlsxEditor({
         enabled: Boolean(agent && activeSheet),
       },
       "xlsx.delete-sheet": {
-        run: () => { if (activeSheet) onDeleteSheet(activeSheet.name); },
+        run: () => {
+          if (activeSheet) onDeleteSheet(activeSheet.name);
+        },
         enabled: Boolean(agent && activeSheet && (snapshot?.root.sheets.length ?? 0) > 1),
       },
       "xlsx.hide-sheet": {
-        run: () => { if (activeSheet) onSetSheetState(activeSheet.name, "hidden"); },
+        run: () => {
+          if (activeSheet) onSetSheetState(activeSheet.name, "hidden");
+        },
         enabled: Boolean(
           agent && activeSheet && (snapshot?.root.sheets.filter((s) => s.state === "visible").length ?? 0) > 1
         ),
       },
-      "xlsx.conditional-format": { run: () => setConditionalFormatOpen(true), enabled: Boolean(agent && activeSheet) },
+      "xlsx.conditional-format": {
+        run: () => setConditionalFormatOpen(true),
+        enabled: Boolean(agent && activeSheet),
+      },
       "xlsx.conditional-format-clear": {
         run: () => onClearConditionalFormats(),
         enabled: Boolean(agent && activeSheet && (activeSheet.conditionalFormats.length ?? 0) > 0),
       },
-      "xlsx.data-validation": { run: () => setDataValidationOpen(true), enabled: Boolean(agent && activeSheet) },
+      "xlsx.data-validation": {
+        run: () => setDataValidationOpen(true),
+        enabled: Boolean(agent && activeSheet),
+      },
       "xlsx.data-validation-clear": {
         run: () => onClearDataValidations(),
         enabled: Boolean(
           agent &&
-            activeSheet &&
-            ((activeSheet.dataValidations.length ?? 0) > 0 || activeSheet.opaqueDataValidations)
+          activeSheet &&
+          ((activeSheet.dataValidations.length ?? 0) > 0 || activeSheet.opaqueDataValidations)
         ),
       },
       "xlsx.name-manager": { run: () => setNameManagerOpen(true), enabled: Boolean(agent) },
@@ -3775,7 +3809,10 @@ export function XlsxEditor({
         },
         enabled: Boolean(activeSheet && selection),
       },
-      "xlsx.insert-chart": { run: () => setInsertChartOpen(true), enabled: Boolean(activeSheet && selection) },
+      "xlsx.insert-chart": {
+        run: () => setInsertChartOpen(true),
+        enabled: Boolean(activeSheet && selection),
+      },
       "xlsx.edit-chart": {
         run: () => {
           if (selectedChartId !== null) setEditChartId(selectedChartId);

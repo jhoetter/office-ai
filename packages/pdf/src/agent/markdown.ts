@@ -38,9 +38,7 @@ export const snapshotToMarkdown = (snapshot: PdfSnapshot): string => {
   out.push("\n## Pages\n");
   for (const page of snapshot.root.pages) {
     out.push(`\n### Page ${page.pageNumber}`);
-    const structuredMd = page.structured.blocks.length > 0
-      ? serializeMarkdown(page.structured)
-      : "";
+    const structuredMd = page.structured.blocks.length > 0 ? serializeMarkdown(page.structured) : "";
     if (structuredMd.length > 0) {
       out.push(structuredMd);
     } else if (page.text.trim().length > 0) {

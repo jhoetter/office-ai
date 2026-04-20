@@ -2,12 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ChartKind, ChartPalette, Sheet, SheetChart } from "@officeai/xlsx";
-import {
-  bodyPxToAnchor,
-  rawAnchorToBodyPx,
-  type AnchorFromPx,
-  type ResizeHandle,
-} from "./ImageOverlay";
+import { bodyPxToAnchor, rawAnchorToBodyPx, type AnchorFromPx, type ResizeHandle } from "./ImageOverlay";
 import type { AxisLookup } from "./gridDimensions";
 import { parseChartRangeShape } from "./chartShape";
 
@@ -248,11 +243,7 @@ export function ChartOverlay(props: ChartOverlayProps): ReactNode {
   };
 
   return (
-    <div
-      data-testid={`chart-overlay-${chart.id}`}
-      data-chart-id={chart.id}
-      style={wrapperStyle}
-    >
+    <div data-testid={`chart-overlay-${chart.id}`} data-chart-id={chart.id} style={wrapperStyle}>
       {selected ? (
         <ChartToolbar
           chart={chart}
@@ -633,13 +624,7 @@ function ChartCanvas(props: ChartCanvasProps): ReactNode {
       );
     case "line":
       return (
-        <LineChart
-          width={width}
-          height={height}
-          categories={categories}
-          series={series}
-          style={style}
-        />
+        <LineChart width={width} height={height} categories={categories} series={series} style={style} />
       );
     case "pie":
       return (
@@ -713,13 +698,7 @@ function ColumnOrBar(props: BaseChartProps & { horizontal: boolean }): ReactNode
         {ticks.map((t) => (
           <g key={`gx-${t}`}>
             {style.showGridlines ? (
-              <line
-                x1={xv(t)}
-                x2={xv(t)}
-                y1={padding.top}
-                y2={padding.top + plotH}
-                stroke="var(--divider)"
-              />
+              <line x1={xv(t)} x2={xv(t)} y1={padding.top} y2={padding.top + plotH} stroke="var(--divider)" />
             ) : null}
             <text
               x={xv(t)}
@@ -805,13 +784,7 @@ function ColumnOrBar(props: BaseChartProps & { horizontal: boolean }): ReactNode
       {ticks.map((t) => (
         <g key={`gy-${t}`}>
           {style.showGridlines ? (
-            <line
-              x1={padding.left}
-              x2={padding.left + plotW}
-              y1={ys(t)}
-              y2={ys(t)}
-              stroke="var(--divider)"
-            />
+            <line x1={padding.left} x2={padding.left + plotW} y1={ys(t)} y2={ys(t)} stroke="var(--divider)" />
           ) : null}
           <text
             x={padding.left - 4}
@@ -918,13 +891,7 @@ function LineChart(props: BaseChartProps): ReactNode {
       {ticks.map((t) => (
         <g key={`gy-${t}`}>
           {style.showGridlines ? (
-            <line
-              x1={padding.left}
-              x2={padding.left + plotW}
-              y1={ys(t)}
-              y2={ys(t)}
-              stroke="var(--divider)"
-            />
+            <line x1={padding.left} x2={padding.left + plotW} y1={ys(t)} y2={ys(t)} stroke="var(--divider)" />
           ) : null}
           <text
             x={padding.left - 4}

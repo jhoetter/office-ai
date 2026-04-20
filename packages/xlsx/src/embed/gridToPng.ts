@@ -51,7 +51,10 @@ export function gridToPng(grid: EmbeddedGrid, opts: GridToPngOptions = {}): Grid
   const maxH = Math.max(cellH, opts.maxHeight ?? DEFAULT_MAX_H);
 
   const rows = Math.max(1, grid.length);
-  const cols = Math.max(1, grid.reduce((m, r) => Math.max(m, r.length), 0));
+  const cols = Math.max(
+    1,
+    grid.reduce((m, r) => Math.max(m, r.length), 0)
+  );
   const visibleCols = Math.min(cols, Math.floor(maxW / cellW));
   const visibleRows = Math.min(rows, Math.floor(maxH / cellH));
   const width = Math.max(cellW, visibleCols * cellW);

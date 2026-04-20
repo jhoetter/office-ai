@@ -12,7 +12,7 @@ mutations) a typed bus handler. The mapping lives in one place per format:
 - `packages/docx/src/actions/catalogue.ts` → `docxActions`
 - `packages/xlsx/src/actions/catalogue.ts` → `xlsxActions`
 - `packages/pptx/src/actions/catalogue.ts` → `pptxActions`
-- `packages/pdf/src/actions/catalogue.ts`  → `pdfActions`
+- `packages/pdf/src/actions/catalogue.ts` → `pdfActions`
 
 Each `ActionDescriptor` carries:
 

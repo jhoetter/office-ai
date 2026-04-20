@@ -37,9 +37,7 @@ export const EMBED_VERSION = 1;
  * Keep the variant names short and stable; they're persisted on
  * the system clipboard which can outlive the user's session.
  */
-export type OfficeAIEmbedPayload =
-  | XlsxRangeEmbed
-  | XlsxChartImageEmbed;
+export type OfficeAIEmbedPayload = XlsxRangeEmbed | XlsxChartImageEmbed;
 
 /**
  * A copied XLSX range. The raw `XlsxClipboardSnapshot` is preserved

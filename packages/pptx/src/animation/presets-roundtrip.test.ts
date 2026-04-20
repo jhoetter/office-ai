@@ -4,11 +4,7 @@ import { describe, expect, it } from "vitest";
 import { PptxAgent } from "../agent/agent.js";
 import { parsePptx } from "../parser/parse.js";
 import { serializePptx } from "../serializer/serialize.js";
-import {
-  ANIMATION_PRESETS,
-  findPreset,
-  type PresetSpec,
-} from "./presets.js";
+import { ANIMATION_PRESETS, findPreset, type PresetSpec } from "./presets.js";
 import type {
   AnimationCategory,
   AnimationDirection,
@@ -222,13 +218,7 @@ describe("F4 v2: animation preset round-trip", () => {
       const reparsed = await parsePptx(out);
       const anim = reparsed.root.slides[0]!.animations;
       expect(anim.length).toBe(5);
-      expect(anim.map((a) => a.category)).toEqual([
-        "entrance",
-        "emphasis",
-        "exit",
-        "entrance",
-        "motionPath",
-      ]);
+      expect(anim.map((a) => a.category)).toEqual(["entrance", "emphasis", "exit", "entrance", "motionPath"]);
     });
   });
 

@@ -4,11 +4,7 @@ import { acceptAllChangesHandler } from "./accept-all-changes.js";
 import { acceptChangeHandler } from "./accept-change.js";
 import { addCommentHandler } from "./add-comment.js";
 import { applyListFormatHandler } from "./apply-list-format.js";
-import {
-  setChartDataHandler,
-  setChartTitleHandler,
-  setChartTypeHandler,
-} from "./chart-edits.js";
+import { setChartDataHandler, setChartTitleHandler, setChartTypeHandler } from "./chart-edits.js";
 import { insertChartHandler } from "./insert-chart.js";
 import { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
 import { rejectAllChangesHandler } from "./reject-all-changes.js";

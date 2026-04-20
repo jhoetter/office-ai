@@ -76,7 +76,8 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     id: "xlsx.apply",
     commandType: null,
     label: "Apply raw command",
-    description: "Generic command escape hatch — pass --type and --payload (JSON), or --type with --payload-stdin.",
+    description:
+      "Generic command escape hatch — pass --type and --payload (JSON), or --type with --payload-stdin.",
     section: "Edit",
     surfaces: ["cli"],
   },
@@ -84,7 +85,8 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     id: "xlsx.fill-formula",
     commandType: null,
     label: "Fill formula across range",
-    description: "Fill a formula across an A1 range, expanding {row}/{col}/{rowN}/{colN} placeholders per cell.",
+    description:
+      "Fill a formula across an A1 range, expanding {row}/{col}/{rowN}/{colN} placeholders per cell.",
     section: "Edit",
     surfaces: ["cli"],
   },

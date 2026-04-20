@@ -123,7 +123,9 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
         </div>
         <div ref={listRef} className="max-h-[50vh] overflow-y-auto p-1">
           {filtered.length === 0 ? (
-            <div className="px-3 py-6 text-center text-sm text-secondary">{t("common.commandPaletteEmpty")}</div>
+            <div className="px-3 py-6 text-center text-sm text-secondary">
+              {t("common.commandPaletteEmpty")}
+            </div>
           ) : (
             filtered.map((c, i) => (
               <button

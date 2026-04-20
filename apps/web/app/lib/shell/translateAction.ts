@@ -29,14 +29,9 @@ export interface TranslatedActionStrings {
   readonly section: string;
 }
 
-export function translateAction(
-  action: ActionDescriptor,
-  t: TranslateFn
-): TranslatedActionStrings {
+export function translateAction(action: ActionDescriptor, t: TranslateFn): TranslatedActionStrings {
   const format = formatOf(action.id);
-  const localId = action.id.startsWith(`${format}.`)
-    ? action.id.slice(format.length + 1)
-    : action.id;
+  const localId = action.id.startsWith(`${format}.`) ? action.id.slice(format.length + 1) : action.id;
   const labelKey = `actions.${format}.${localId}.label`;
   const descKey = `actions.${format}.${localId}.description`;
   const sectionKey = `actions.${format}.sections.${action.section}`;

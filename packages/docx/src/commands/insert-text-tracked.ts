@@ -158,16 +158,7 @@ function insertRevisionIntoParagraph(
     // what callers from the PM funnel use because a paragraph's
     // run/wrapper structure is a model concept that PM positions
     // don't expose.
-    return spliceWrapperAtParagraphOffset(
-      p,
-      offset,
-      text,
-      author,
-      date,
-      revisionId,
-      mintNodeId,
-      canCoalesce
-    );
+    return spliceWrapperAtParagraphOffset(p, offset, text, author, date, revisionId, mintNodeId, canCoalesce);
   }
 
   const wrapper = makeInsRevision(text, author, date, revisionId, mintNodeId);
@@ -370,8 +361,7 @@ function spliceWrapperAtParagraphOffset(
   mintNodeId: () => string,
   canCoalesce: boolean
 ): Paragraph {
-  const makeWrapper = (): RevisionWrapper =>
-    makeInsRevision(text, author, date, revisionId, mintNodeId);
+  const makeWrapper = (): RevisionWrapper => makeInsRevision(text, author, date, revisionId, mintNodeId);
 
   if (offset <= 0 || p.children.length === 0) {
     if (canCoalesce) {

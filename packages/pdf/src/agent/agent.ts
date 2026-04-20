@@ -1,10 +1,4 @@
-import {
-  CommandBus,
-  type Command,
-  type CommandLite,
-  type DocumentDiff,
-  type Mutation,
-} from "@officeai/core";
+import { CommandBus, type Command, type CommandLite, type DocumentDiff, type Mutation } from "@officeai/core";
 import { allPdfHandlers } from "../commands/index.js";
 import type { PdfRect, PdfSnapshot } from "../model/types.js";
 import { parsePdf, type PdfParseOptions } from "../parser/parse.js";
@@ -85,10 +79,7 @@ export class PdfAgent {
     this.bus.registerAll(allPdfHandlers);
   }
 
-  static async fromBuffer(
-    buffer: ArrayBuffer | Uint8Array,
-    opts: PdfAgentOptions = {},
-  ): Promise<PdfAgent> {
+  static async fromBuffer(buffer: ArrayBuffer | Uint8Array, opts: PdfAgentOptions = {}): Promise<PdfAgent> {
     const source = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     // PDF.js's worker pipeline transfers the underlying ArrayBuffer
     // out of the calling thread which detaches the original Uint8Array
@@ -167,9 +158,8 @@ export class PdfAgent {
       // bbox quads). Falls back transparently to the legacy
       // string-only search when the page has no structured layer
       // (e.g. fully scanned PDF).
-      const structuredHits = page.structured.blocks.length > 0
-        ? findInStructuredPage(page.structured, re, page.text)
-        : null;
+      const structuredHits =
+        page.structured.blocks.length > 0 ? findInStructuredPage(page.structured, re, page.text) : null;
       if (structuredHits) {
         for (const h of structuredHits) {
           out.push({
@@ -208,7 +198,7 @@ export class PdfAgent {
   }
 
   async applyCommands(
-    commands: ReadonlyArray<Command | CommandLite>,
+    commands: ReadonlyArray<Command | CommandLite>
   ): Promise<ReadonlyArray<Mutation<PdfSnapshot>>> {
     return this.bus.dispatchAll(commands);
   }

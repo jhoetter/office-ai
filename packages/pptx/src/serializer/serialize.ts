@@ -288,8 +288,7 @@ async function serializeChartWithEmbedding(
     { sheetName }
   );
 
-  const embeddingPath =
-    part.embeddingPartPath ?? mintChartEmbeddingPath(container, part.partPath);
+  const embeddingPath = part.embeddingPartPath ?? mintChartEmbeddingPath(container, part.partPath);
 
   const built = await buildEmbeddedXlsx(chartGrid.grid, { sheetName });
 
@@ -326,7 +325,7 @@ async function serializeChartWithEmbedding(
  * stays human-grokable when inspecting the package.
  */
 function mintChartEmbeddingPath(container: ooxml.OoxmlContainer, chartPartPath: string): string {
-  const root = chartPartPath.startsWith("ppt/") ? "ppt" : chartPartPath.split("/")[0] ?? "ppt";
+  const root = chartPartPath.startsWith("ppt/") ? "ppt" : (chartPartPath.split("/")[0] ?? "ppt");
   let n = 1;
   while (container.has(`${root}/embeddings/Microsoft_Excel_Worksheet${n}.xlsx`)) n++;
   return `${root}/embeddings/Microsoft_Excel_Worksheet${n}.xlsx`;
@@ -423,9 +422,11 @@ function timingFromAnimations(animations: ReadonlyArray<ShapeAnimation>): Record
     const spec = findPreset(a.category, a.preset);
     const animCTnId = cTnId++;
     const helpers = makeEmitHelpers(() => cTnId++);
-    const body = spec ? spec.emitBody(a, helpers) : helpers.childTnLst([
-      helpers.setAttr(a.targetCNvPrId, "style.visibility", "visible", a.durationMs ?? 1),
-    ]);
+    const body = spec
+      ? spec.emitBody(a, helpers)
+      : helpers.childTnLst([
+          helpers.setAttr(a.targetCNvPrId, "style.visibility", "visible", a.durationMs ?? 1),
+        ]);
     const presetClass = spec?.presetClass ?? "entr";
     const presetId = spec?.presetId ?? 1;
     const subtype = spec ? subtypeFor(spec, a.direction) : 0;
@@ -439,9 +440,7 @@ function timingFromAnimations(animations: ReadonlyArray<ShapeAnimation>): Record
     };
     if (a.durationMs !== undefined) animCTnAttrs.dur = String(a.durationMs);
     if (a.delayMs !== undefined) animCTnAttrs.delay = String(a.delayMs);
-    animPars.push(
-      makeEntry("p:par", [makeEntry("p:cTn", [body], animCTnAttrs)])
-    );
+    animPars.push(makeEntry("p:par", [makeEntry("p:cTn", [body], animCTnAttrs)]));
   }
   const seq = makeEntry(
     "p:seq",
@@ -502,9 +501,7 @@ function makeEmitHelpers(nextId: () => number): EmitHelpers {
     const children: unknown[] = [makeEntry("p:cTn", [], attrs)];
     children.push(makeEntry("p:tgtEl", [makeEntry("p:spTgt", [], { spid: String(spid) })]));
     if (attrName) {
-      children.push(
-        makeEntry("p:attrNameLst", [makeEntry("p:attrName", [{ "#text": attrName }])])
-      );
+      children.push(makeEntry("p:attrNameLst", [makeEntry("p:attrName", [{ "#text": attrName }])]));
     }
     return makeEntry("p:cBhvr", children);
   };
@@ -518,13 +515,15 @@ function makeEmitHelpers(nextId: () => number): EmitHelpers {
     anim: (spid, attrName, durMs, fromTo, extra) => {
       const tavLst = makeEntry("p:tavLst", [
         ...(fromTo.from !== undefined
-          ? [makeEntry("p:tav", [makeEntry("p:val", [makeEntry("p:strVal", [], { val: fromTo.from })])], { tm: "0" })]
+          ? [
+              makeEntry("p:tav", [makeEntry("p:val", [makeEntry("p:strVal", [], { val: fromTo.from })])], {
+                tm: "0",
+              }),
+            ]
           : []),
-        makeEntry(
-          "p:tav",
-          [makeEntry("p:val", [makeEntry("p:strVal", [], { val: fromTo.to })])],
-          { tm: "100000" }
-        ),
+        makeEntry("p:tav", [makeEntry("p:val", [makeEntry("p:strVal", [], { val: fromTo.to })])], {
+          tm: "100000",
+        }),
       ]);
       const animAttrs: Record<string, string> = { calcmode: "lin", valueType: "num" };
       if (extra) Object.assign(animAttrs, extra);
@@ -1274,9 +1273,7 @@ function rebuildSeriesNameRef(name: string, ref: string): Record<string, unknown
     makeEntry("c:ptCount", [], { val: "1" }),
     makeEntry("c:pt", [makeEntry("c:v", [{ "#text": name }])], { idx: "0" }),
   ]);
-  return makeEntry("c:tx", [
-    makeEntry("c:strRef", [makeEntry("c:f", [{ "#text": ref }]), cache]),
-  ]);
+  return makeEntry("c:tx", [makeEntry("c:strRef", [makeEntry("c:f", [{ "#text": ref }]), cache])]);
 }
 
 function rebuildCategoryRef(
@@ -1298,10 +1295,7 @@ function rebuildCategoryRef(
   return makeEntry("c:cat", [refNode]);
 }
 
-function rebuildValueRef(
-  values: ReadonlyArray<number>,
-  ref: string | undefined
-): Record<string, unknown> {
+function rebuildValueRef(values: ReadonlyArray<number>, ref: string | undefined): Record<string, unknown> {
   const ptCount = makeEntry("c:ptCount", [], { val: String(values.length) });
   const pts: unknown[] = [ptCount];
   for (let i = 0; i < values.length; i++) {
@@ -1589,10 +1583,8 @@ function buildRPrChildren(r: TextRun): unknown[] {
   // rule). When neither typed slot is set we fall through to the
   // captured opaque element so source presentations that only
   // declare e.g. `a:cs` survive unchanged.
-  const latinTypeface =
-    r.properties.fontFamily ?? r.properties.fontFamilyLatinTheme ?? undefined;
-  const eaTypeface =
-    r.properties.fontFamilyEastAsia ?? r.properties.fontFamilyEastAsiaTheme ?? undefined;
+  const latinTypeface = r.properties.fontFamily ?? r.properties.fontFamilyLatinTheme ?? undefined;
+  const eaTypeface = r.properties.fontFamilyEastAsia ?? r.properties.fontFamilyEastAsiaTheme ?? undefined;
   const csTypeface =
     r.properties.fontFamilyComplexScript ?? r.properties.fontFamilyComplexScriptTheme ?? undefined;
   const symTypeface = r.properties.fontFamilySymbol ?? undefined;

@@ -670,10 +670,7 @@ function parseInline(entry: Record<string, unknown>, mintNodeId: IdMinter): Inli
  * `PageNumberFieldLeaf` re-emits as a `<w:fldSimple>` wrapper, so
  * the parse → serialize → parse cycle stays loss-free.
  */
-function tryParseFldSimpleAsPageNumber(
-  entry: Record<string, unknown>,
-  mintNodeId: IdMinter
-): Run | null {
+function tryParseFldSimpleAsPageNumber(entry: Record<string, unknown>, mintNodeId: IdMinter): Run | null {
   const instrRaw = attrOf(entry, "w:instr");
   if (!instrRaw) return null;
   const field = detectPageNumberField(instrRaw);
@@ -690,7 +687,11 @@ function tryParseFldSimpleAsPageNumber(
       if (ooxml.getTag(c) === "w:t") {
         const v = (c["w:t"] as unknown[] | undefined) ?? [];
         const txt = v
-          .map((n) => (typeof n === "object" && n && "#text" in n ? String((n as { "#text": unknown })["#text"] ?? "") : ""))
+          .map((n) =>
+            typeof n === "object" && n && "#text" in n
+              ? String((n as { "#text": unknown })["#text"] ?? "")
+              : ""
+          )
           .join("");
         if (txt.length > 0) cachedText = txt;
       }
@@ -921,9 +922,7 @@ function parseEmbeddedSpreadsheet(
   if (!oleRelId) return null;
   const embeddingPartPath = resolveRel(oleRelId);
   if (!embeddingPartPath) return null;
-  const embeddingKind: "xlsx" | "bin" = embeddingPartPath.toLowerCase().endsWith(".xlsx")
-    ? "xlsx"
-    : "bin";
+  const embeddingKind: "xlsx" | "bin" = embeddingPartPath.toLowerCase().endsWith(".xlsx") ? "xlsx" : "bin";
 
   // Optional VML preview: <v:shape><v:imagedata r:id="rIdImage" .../>.
   let previewImageRelId: string | undefined;

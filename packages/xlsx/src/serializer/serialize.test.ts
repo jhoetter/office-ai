@@ -358,7 +358,7 @@ describe("serializeXlsx — dirty-flag guard", () => {
     expect(joined).toContain('<color rgb="FFFF0000"/>');
     expect(joined).toContain('<color rgb="FF00FF00"/>');
     expect(joined).toContain('sqref="D2:D5"');
-    expect(joined).toContain('<dataBar>');
+    expect(joined).toContain("<dataBar>");
     expect(joined).toContain('<color rgb="FF0070C0"/>');
   });
 });
@@ -398,10 +398,9 @@ describe("serializeXlsx — mutation isolation", () => {
       const allowedDrift = new Set<string>([sheet.partPath]);
       // Sheet rels often piggy-back drawing/comment rId rewrites
       // that the dirty sheet pass needs; whitelist those too.
-      const relsPath = sheet.partPath.replace(/\.xml$/, ".xml.rels").replace(
-        "xl/worksheets/",
-        "xl/worksheets/_rels/"
-      );
+      const relsPath = sheet.partPath
+        .replace(/\.xml$/, ".xml.rels")
+        .replace("xl/worksheets/", "xl/worksheets/_rels/");
       allowedDrift.add(relsPath);
       // [Content_Types] is regenerated whenever sheets churn — not
       // worth gating because the rewrite is byte-stable in practice.

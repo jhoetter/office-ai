@@ -40,7 +40,9 @@ export function EmptyState({ product, onOpen }: EmptyStateProps): ReactNode {
         <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-hover text-secondary">
           <FolderOpen size={22} />
         </div>
-        <h2 className="text-lg font-semibold text-foreground">{t("common.openProduct", { product: label })}</h2>
+        <h2 className="text-lg font-semibold text-foreground">
+          {t("common.openProduct", { product: label })}
+        </h2>
         <p className="max-w-md text-sm text-secondary">{t("common.openProductHint", { ext })}</p>
       </div>
       <Button variant="primary" size="md" onClick={onOpen}>

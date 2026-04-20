@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { AwarenessState } from "@officeai/realtime";
+import { colors } from "@officeai/design-tokens";
 import type { AxisLookup } from "./gridDimensions";
 import { parseRangeA1 } from "./parseRangeA1";
 
@@ -102,7 +103,7 @@ export function XlsxRemoteSelectionLayer(props: XlsxRemoteSelectionLayerProps): 
               padding: "1px 4px",
               fontSize: 10,
               fontWeight: 500,
-              color: "#fff",
+              color: colors.background,
               backgroundColor: r.color,
               borderRadius: "2px 2px 2px 0",
               whiteSpace: "nowrap",
@@ -115,4 +116,3 @@ export function XlsxRemoteSelectionLayer(props: XlsxRemoteSelectionLayerProps): 
     </>
   );
 }
-

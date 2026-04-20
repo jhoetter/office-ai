@@ -1,5 +1,8 @@
 export class PdfParseError extends Error {
-  constructor(message: string, readonly cause?: unknown) {
+  constructor(
+    message: string,
+    readonly cause?: unknown
+  ) {
     super(message);
     this.name = "PdfParseError";
   }

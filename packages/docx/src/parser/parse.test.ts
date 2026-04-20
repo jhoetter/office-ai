@@ -123,7 +123,7 @@ describe("parseDocx", () => {
     expect(end.wrapperId).toBe(begin.wrapperId);
   });
 
-  it("promotes <w:fldSimple w:instr=\"PAGE\"> into a typed PageNumberFieldLeaf", async () => {
+  it('promotes <w:fldSimple w:instr="PAGE"> into a typed PageNumberFieldLeaf', async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
   <w:p>
@@ -163,7 +163,7 @@ describe("parseDocx", () => {
     expect(op.raw.tag).toBe("w:fldSimple");
   });
 
-  it("promotes <w:r><w:commentReference w:id=\"N\"/></w:r> into a typed CommentReference", async () => {
+  it('promotes <w:r><w:commentReference w:id="N"/></w:r> into a typed CommentReference', async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
   <w:p>

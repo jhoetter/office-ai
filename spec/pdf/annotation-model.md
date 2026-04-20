@@ -15,47 +15,57 @@ Defined in [`packages/pdf/src/model/types.ts`](../../packages/pdf/src/model/type
 
 ```typescript
 export type PdfAnnotationKind =
-  | "highlight" | "underline" | "strikethrough" | "squiggly"   // text markup
-  | "note" | "free-text"                                        // text
-  | "ink"                                                       // free-hand
-  | "line" | "rectangle" | "ellipse" | "polygon" | "polyline"   // shapes
-  | "stamp" | "link" | "redaction"                              // misc
-  | "unknown";                                                  // round-trip preserved
+  | "highlight"
+  | "underline"
+  | "strikethrough"
+  | "squiggly" // text markup
+  | "note"
+  | "free-text" // text
+  | "ink" // free-hand
+  | "line"
+  | "rectangle"
+  | "ellipse"
+  | "polygon"
+  | "polyline" // shapes
+  | "stamp"
+  | "link"
+  | "redaction" // misc
+  | "unknown"; // round-trip preserved
 
 export interface PdfAnnotation {
   readonly id: NodeId;
   readonly kind: PdfAnnotationKind;
-  readonly subtype: string;             // native PDF /Subtype string
+  readonly subtype: string; // native PDF /Subtype string
   readonly pageNumber: number;
   readonly rect: PdfRect;
   readonly contents?: string;
   readonly author?: string;
   readonly color?: { r: number; g: number; b: number; a?: number };
-  readonly url?: string;                // for link
-  readonly destPage?: number;           // for goto-link
-  readonly createdAt?: string;          // ISO-8601
+  readonly url?: string; // for link
+  readonly destPage?: number; // for goto-link
+  readonly createdAt?: string; // ISO-8601
   readonly nativeObjectNumber?: number; // for incremental save
 }
 ```
 
-| `kind`         | `/Subtype`     | Visual                                   |
-| -------------- | -------------- | ---------------------------------------- |
-| `highlight`    | `Highlight`    | Translucent fill over `QuadPoints`       |
-| `underline`    | `Underline`    | Solid line at the descender baseline     |
-| `strikethrough`| `StrikeOut`    | Solid line at mid-height                 |
-| `squiggly`     | `Squiggly`     | Wavy line at the descender baseline      |
-| `note`         | `Text`         | Sticky-note icon with popup on click     |
-| `free-text`    | `FreeText`     | Floating text box                        |
-| `ink`          | `Ink`          | Vector strokes from `InkList`            |
-| `line`         | `Line`         | Line segment with optional arrowheads    |
-| `rectangle`    | `Square`       | Stroked / filled rectangle               |
-| `ellipse`      | `Circle`       | Stroked / filled ellipse                 |
-| `polygon`      | `Polygon`      | Closed polygon                           |
-| `polyline`     | `PolyLine`     | Open polyline                            |
-| `stamp`        | `Stamp`        | Image stamp (preset or custom)           |
-| `link`         | `Link`         | Invisible click region with action       |
-| `redaction`    | `Redact`       | Black box + content-stream removal       |
-| `unknown`      | (preserved)    | Round-trip the original /AP stream verbatim |
+| `kind`          | `/Subtype`  | Visual                                      |
+| --------------- | ----------- | ------------------------------------------- |
+| `highlight`     | `Highlight` | Translucent fill over `QuadPoints`          |
+| `underline`     | `Underline` | Solid line at the descender baseline        |
+| `strikethrough` | `StrikeOut` | Solid line at mid-height                    |
+| `squiggly`      | `Squiggly`  | Wavy line at the descender baseline         |
+| `note`          | `Text`      | Sticky-note icon with popup on click        |
+| `free-text`     | `FreeText`  | Floating text box                           |
+| `ink`           | `Ink`       | Vector strokes from `InkList`               |
+| `line`          | `Line`      | Line segment with optional arrowheads       |
+| `rectangle`     | `Square`    | Stroked / filled rectangle                  |
+| `ellipse`       | `Circle`    | Stroked / filled ellipse                    |
+| `polygon`       | `Polygon`   | Closed polygon                              |
+| `polyline`      | `PolyLine`  | Open polyline                               |
+| `stamp`         | `Stamp`     | Image stamp (preset or custom)              |
+| `link`          | `Link`      | Invisible click region with action          |
+| `redaction`     | `Redact`    | Black box + content-stream removal          |
+| `unknown`       | (preserved) | Round-trip the original /AP stream verbatim |
 
 `unknown` is the catch-all for native annotation subtypes we don't
 expose in the typed model (e.g. `RichMedia`, `Movie`, `Sound`, `3D`).

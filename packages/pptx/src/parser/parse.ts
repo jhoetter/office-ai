@@ -262,9 +262,10 @@ export async function parsePptx(
     if (!partPath.startsWith("ppt/embeddings/")) continue;
     const bytes = container.readBytes(partPath);
     const ext = partPath.slice(partPath.lastIndexOf(".") + 1).toLowerCase();
-    const contentType = ext === "xlsx"
-      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      : "application/vnd.openxmlformats-officedocument.oleObject";
+    const contentType =
+      ext === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/vnd.openxmlformats-officedocument.oleObject";
     embeddings.set(partPath, { partPath, bytes, contentType });
   }
 
@@ -679,10 +680,7 @@ function parseGraphicFrameOleSpreadsheet(
       findElementEntry((oleObj["mc:AlternateContent"] as unknown[] | undefined) ?? [], "mc:Choice") ??
       findElementEntry((oleObj["mc:AlternateContent"] as unknown[] | undefined) ?? [], "mc:Fallback");
     if (!choice) return null;
-    const inner = findElementEntry(
-      (choice[ooxml.getTag(choice)] as unknown[] | undefined) ?? [],
-      "p:oleObj"
-    );
+    const inner = findElementEntry((choice[ooxml.getTag(choice)] as unknown[] | undefined) ?? [], "p:oleObj");
     if (!inner) return null;
     oleAttrs = readRootAttrs(inner);
     oleChildren = (inner["p:oleObj"] as unknown[] | undefined) ?? [];
@@ -700,9 +698,7 @@ function parseGraphicFrameOleSpreadsheet(
   // Distinguish a true xlsx package (rel type "package") from a legacy
   // .bin compound document (rel type "oleObject"). The serializer needs
   // this to pick the right content type when round-tripping.
-  let embeddingKind: "xlsx" | "bin" = embeddingPartPath.toLowerCase().endsWith(".xlsx")
-    ? "xlsx"
-    : "bin";
+  const embeddingKind: "xlsx" | "bin" = embeddingPartPath.toLowerCase().endsWith(".xlsx") ? "xlsx" : "bin";
   void REL_TYPE_OLE_OBJECT;
   void REL_TYPE_PACKAGE;
 
@@ -715,10 +711,7 @@ function parseGraphicFrameOleSpreadsheet(
     if (tag === "p:pic") {
       const blipFill = findElementEntry((c["p:pic"] as unknown[] | undefined) ?? [], "p:blipFill");
       if (blipFill) {
-        const blip = findElementEntry(
-          (blipFill["p:blipFill"] as unknown[] | undefined) ?? [],
-          "a:blip"
-        );
+        const blip = findElementEntry((blipFill["p:blipFill"] as unknown[] | undefined) ?? [], "a:blip");
         if (blip) {
           const embed = attrOf(blip, "r:embed");
           if (embed) {
@@ -2378,10 +2371,7 @@ function parseSlideTiming(
             const delay = attrOf(ctn, "delay");
             const subtype = attrOf(ctn, "presetSubtype");
             const trigger = nodeTypeToTrigger(attrOf(ctn, "nodeType"));
-            const direction = directionForSubtype(
-              spec,
-              subtype !== undefined ? Number(subtype) : undefined
-            );
+            const direction = directionForSubtype(spec, subtype !== undefined ? Number(subtype) : undefined);
             const motionPath = spec.category === "motionPath" ? findMotionPath(ctn) : undefined;
             // Built-in motion paths (`arc`, `turn`, `loops`) use distinct
             // preset IDs, so the registry already maps them correctly.

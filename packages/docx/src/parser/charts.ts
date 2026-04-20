@@ -67,9 +67,7 @@ function readChartEmbedding(container: ooxml.OoxmlContainer, chartPartPath: stri
   const relsPath = ooxml.RelationshipGraph.relsPathFor(chartPartPath);
   if (!container.has(relsPath)) return {};
   const graph = ooxml.RelationshipGraph.loadFor(container, chartPartPath);
-  const pkg = graph.relationships.find(
-    (r) => r.type === REL_TYPE_PACKAGE || r.type === REL_TYPE_OLE_OBJECT
-  );
+  const pkg = graph.relationships.find((r) => r.type === REL_TYPE_PACKAGE || r.type === REL_TYPE_OLE_OBJECT);
   if (!pkg) return {};
   return { embeddingPartPath: resolveTarget(chartPartPath, pkg.target), embeddingRelId: pkg.id };
 }

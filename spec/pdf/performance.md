@@ -11,22 +11,22 @@ acceptance criteria in [`acceptance-criteria.md`](./acceptance-criteria.md).
 
 ## Targets
 
-| Metric                                                     | Target                                  |
-| ---------------------------------------------------------- | --------------------------------------- |
-| Cold load (first paint) for 50-page text PDF (~2 MB)       | **< 600 ms p95** on a Mac M1 over local file |
-| Cold load for 50-page mixed-content PDF (~10 MB)           | **< 1.5 s p95**                         |
-| Page render (visible page → bitmap)                        | **< 150 ms p95**                        |
-| Scroll FPS during continuous scroll on 1000-page PDF       | **60 FPS** sustained (no drops > 20 ms in any 5 s window) |
-| Memory cap (RSS) on 1000-page PDF                          | **< 600 MB**                            |
-| Memory cap (RSS) on 200 MB PDF (stress)                    | **< 1.5 GB**                            |
-| Search: first hit on 500-page text PDF                     | **< 200 ms p95**                        |
-| Search: all hits on 500-page text PDF                      | **< 800 ms p95**                        |
-| Annotation create + render                                 | **< 50 ms p95**                         |
-| Bus dispatch + handler + diff                              | **< 5 ms p95** for typical commands     |
-| Outline parse for 1000-entry outline                       | **< 100 ms**                            |
-| Thumbnail generation (lazy, per page)                      | **< 80 ms**                             |
-| Bundle (eager) — viewer chrome + PDF.js                    | **< 800 KB gzipped**                    |
-| Bundle (lazy) — PDFium WASM, tesseract, fonts              | budgets in [`engine-strategy.md`](./engine-strategy.md) |
+| Metric                                               | Target                                                    |
+| ---------------------------------------------------- | --------------------------------------------------------- |
+| Cold load (first paint) for 50-page text PDF (~2 MB) | **< 600 ms p95** on a Mac M1 over local file              |
+| Cold load for 50-page mixed-content PDF (~10 MB)     | **< 1.5 s p95**                                           |
+| Page render (visible page → bitmap)                  | **< 150 ms p95**                                          |
+| Scroll FPS during continuous scroll on 1000-page PDF | **60 FPS** sustained (no drops > 20 ms in any 5 s window) |
+| Memory cap (RSS) on 1000-page PDF                    | **< 600 MB**                                              |
+| Memory cap (RSS) on 200 MB PDF (stress)              | **< 1.5 GB**                                              |
+| Search: first hit on 500-page text PDF               | **< 200 ms p95**                                          |
+| Search: all hits on 500-page text PDF                | **< 800 ms p95**                                          |
+| Annotation create + render                           | **< 50 ms p95**                                           |
+| Bus dispatch + handler + diff                        | **< 5 ms p95** for typical commands                       |
+| Outline parse for 1000-entry outline                 | **< 100 ms**                                              |
+| Thumbnail generation (lazy, per page)                | **< 80 ms**                                               |
+| Bundle (eager) — viewer chrome + PDF.js              | **< 800 KB gzipped**                                      |
+| Bundle (lazy) — PDFium WASM, tesseract, fonts        | budgets in [`engine-strategy.md`](./engine-strategy.md)   |
 
 These targets are the floor for "feels faster than Chrome's built-in
 viewer". Anything slower is a regression.
@@ -65,8 +65,9 @@ MB engine + ~200 MB raster + ~5 MB indexes + UI + browser overhead =
 ~600 MB. We hit the budget.
 
 For the 200 MB PDF stress fixture: ~200 MB original + ~80 MB engine
-+ ~200 MB raster + ~5 MB indexes + UI ≈ 1.5 GB. We hit the stress
-budget.
+
+- ~200 MB raster + ~5 MB indexes + UI ≈ 1.5 GB. We hit the stress
+  budget.
 
 ## Threading discipline
 
@@ -150,14 +151,14 @@ Three perf jobs:
 
 The CLI's perf characteristics:
 
-| CLI command                              | Budget for 50-page PDF        |
-| ---------------------------------------- | ----------------------------- |
-| `office-agent pdf inspect`               | < 800 ms                      |
-| `office-agent pdf metadata`              | < 400 ms                      |
-| `office-agent pdf read --pages all`      | < 2 s                         |
-| `office-agent pdf render --dpi 150 all`  | < 15 s (~300 ms / page)       |
-| `office-agent pdf rotate --pages 1`      | < 600 ms (load + edit + save) |
-| `office-agent pdf merge --files 5`       | < 3 s                         |
+| CLI command                             | Budget for 50-page PDF        |
+| --------------------------------------- | ----------------------------- |
+| `office-agent pdf inspect`              | < 800 ms                      |
+| `office-agent pdf metadata`             | < 400 ms                      |
+| `office-agent pdf read --pages all`     | < 2 s                         |
+| `office-agent pdf render --dpi 150 all` | < 15 s (~300 ms / page)       |
+| `office-agent pdf rotate --pages 1`     | < 600 ms (load + edit + save) |
+| `office-agent pdf merge --files 5`      | < 3 s                         |
 
 Measured by `tests/agent/pdf/perf.test.ts` on CI.
 

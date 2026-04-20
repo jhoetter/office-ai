@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PdfEngineGlyphRun } from "@officeai/pdf-engine";
 import { buildStructuredPage } from "./structured.js";
-import {
-  collectTextWithinRegions,
-  serializeMarkdown,
-  serializeReadingOrder,
-} from "./serialize.js";
+import { collectTextWithinRegions, serializeMarkdown, serializeReadingOrder } from "./serialize.js";
 import { findInStructuredPage } from "./search.js";
 
 /**
@@ -17,7 +13,7 @@ function makeRun(
   chars: string,
   startX: number,
   baselineY: number,
-  options: { fontHeight?: number; charWidth?: number } = {},
+  options: { fontHeight?: number; charWidth?: number } = {}
 ): PdfEngineGlyphRun {
   const fontHeight = options.fontHeight ?? 12;
   const charWidth = options.charWidth ?? 6;
@@ -41,11 +37,7 @@ function makeRun(
 
 describe("buildStructuredPage", () => {
   it("groups glyphs into lines by baseline tolerance", () => {
-    const runs = [
-      makeRun("Hello", 50, 700),
-      makeRun("World", 100, 700),
-      makeRun("Second line", 50, 680),
-    ];
+    const runs = [makeRun("Hello", 50, 700), makeRun("World", 100, 700), makeRun("Second line", 50, 680)];
     const page = buildStructuredPage(runs, 612, 792);
     expect(page.columnCount).toBe(1);
     expect(page.blocks.length).toBeGreaterThan(0);
@@ -85,10 +77,7 @@ describe("buildStructuredPage", () => {
   });
 
   it("classifies a list block when the first line starts with a bullet", () => {
-    const runs = [
-      makeRun("\u2022 First item", 50, 700),
-      makeRun("\u2022 Second item", 50, 680),
-    ];
+    const runs = [makeRun("\u2022 First item", 50, 700), makeRun("\u2022 Second item", 50, 680)];
     const page = buildStructuredPage(runs, 612, 792);
     expect(page.blocks[0].kind).toBe("list");
     const md = serializeMarkdown(page);
@@ -99,10 +88,7 @@ describe("buildStructuredPage", () => {
 
 describe("findInStructuredPage", () => {
   it("returns per-line PDF rects for a found phrase", () => {
-    const runs = [
-      makeRun("Hello world", 50, 700),
-      makeRun("foo bar baz", 50, 680),
-    ];
+    const runs = [makeRun("Hello world", 50, 700), makeRun("foo bar baz", 50, 680)];
     const page = buildStructuredPage(runs, 612, 792);
     const text = serializeReadingOrder(page);
     const re = /world/g;
@@ -117,10 +103,7 @@ describe("findInStructuredPage", () => {
   });
 
   it("emits one rect per visual line for matches that wrap", () => {
-    const runs = [
-      makeRun("abc def", 50, 700),
-      makeRun("ghi jkl", 50, 680),
-    ];
+    const runs = [makeRun("abc def", 50, 700), makeRun("ghi jkl", 50, 680)];
     const page = buildStructuredPage(runs, 612, 792);
     const text = serializeReadingOrder(page);
     // Match characters that span both lines via a deliberately

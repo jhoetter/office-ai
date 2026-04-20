@@ -1,17 +1,7 @@
 import { CommandError, type CommandHandler } from "@officeai/core";
-import type {
-  ChartPart,
-  ChartSeries,
-  ChartType,
-  DocxDocument,
-  DocxSnapshot,
-} from "../model/types.js";
+import type { ChartPart, ChartSeries, ChartType, DocxDocument, DocxSnapshot } from "../model/types.js";
 import { buildDiff, evolveSnapshot } from "./helpers.js";
-import type {
-  SetChartDataPayload,
-  SetChartTitlePayload,
-  SetChartTypePayload,
-} from "./payloads.js";
+import type { SetChartDataPayload, SetChartTitlePayload, SetChartTypePayload } from "./payloads.js";
 
 /** Replace categories + series of an existing chart. */
 export const setChartDataHandler: CommandHandler<SetChartDataPayload, DocxSnapshot> = {
@@ -37,12 +27,14 @@ export const setChartDataHandler: CommandHandler<SetChartDataPayload, DocxSnapsh
     const nextPart: ChartPart = {
       ...part,
       categories: [...payload.categories],
-      series: payload.series.map((s, i): ChartSeries => ({
-        id: ctx.mintNodeId(),
-        idx: i,
-        ...(s.name !== undefined ? { name: s.name } : {}),
-        values: [...s.values],
-      })),
+      series: payload.series.map(
+        (s, i): ChartSeries => ({
+          id: ctx.mintNodeId(),
+          idx: i,
+          ...(s.name !== undefined ? { name: s.name } : {}),
+          values: [...s.values],
+        })
+      ),
     };
 
     return finalize(snapshot, nextPart, "data");
@@ -58,9 +50,7 @@ export const setChartTitleHandler: CommandHandler<SetChartTitlePayload, DocxSnap
     if ((part.title ?? null) === (nextTitle ?? null)) {
       throw new CommandError("no-op", "title is unchanged");
     }
-    const nextPart: ChartPart = nextTitle === undefined
-      ? omitTitle(part)
-      : { ...part, title: nextTitle };
+    const nextPart: ChartPart = nextTitle === undefined ? omitTitle(part) : { ...part, title: nextTitle };
     return finalize(snapshot, nextPart, "title");
   },
 };

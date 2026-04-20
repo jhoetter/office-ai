@@ -41,8 +41,4 @@ export {
   type StructuredPage,
   buildStructuredPage,
 } from "./text/structured.js";
-export {
-  collectTextWithinRegions,
-  serializeMarkdown,
-  serializeReadingOrder,
-} from "./text/serialize.js";
+export { collectTextWithinRegions, serializeMarkdown, serializeReadingOrder } from "./text/serialize.js";

@@ -1,26 +1,14 @@
 import type { XlsxClipboardSnapshot } from "@officeai/xlsx";
 import { describe, expect, it } from "vitest";
-import {
-  EMBED_MIME,
-  EMBED_VERSION,
-  makeEnvelope,
-  parseEnvelope,
-  serializeEnvelope,
-} from "./envelope";
+import { EMBED_MIME, EMBED_VERSION, makeEnvelope, parseEnvelope, serializeEnvelope } from "./envelope";
 
 const SAMPLE_SNAPSHOT: XlsxClipboardSnapshot = {
   origin: { sheet: "Sheet1", range: "A1:B2" },
   width: 2,
   height: 2,
   cells: [
-    [
-      { value: "h1" },
-      { value: "h2" },
-    ],
-    [
-      { value: 1 },
-      { value: 2 },
-    ],
+    [{ value: "h1" }, { value: "h2" }],
+    [{ value: 1 }, { value: 2 }],
   ],
   merges: [],
 };
@@ -79,7 +67,14 @@ describe("OfficeAI embed envelope", () => {
       )
     ).toBeNull();
     expect(
-      parseEnvelope(JSON.stringify({ type: "officeai/embed", version: 1, source: "elsewhere", payload: { kind: "xlsx-range" } }))
+      parseEnvelope(
+        JSON.stringify({
+          type: "officeai/embed",
+          version: 1,
+          source: "elsewhere",
+          payload: { kind: "xlsx-range" },
+        })
+      )
     ).toBeNull();
   });
 

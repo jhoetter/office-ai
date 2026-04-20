@@ -14,10 +14,7 @@ import type {
 } from "../model/types.js";
 import { buildDiffMulti, evolveSnapshot } from "./helpers.js";
 import { mintMediaPath } from "./insert-image.js";
-import type {
-  InsertSpreadsheetPayload,
-  UpdateSpreadsheetPayload,
-} from "./payloads.js";
+import type { InsertSpreadsheetPayload, UpdateSpreadsheetPayload } from "./payloads.js";
 
 /**
  * Insert an OLE-Excel spreadsheet at the targeted paragraph position.
@@ -97,8 +94,8 @@ export const insertSpreadsheetHandler: CommandHandler<InsertSpreadsheetPayload, 
       previewImageRelId: imageRelId,
       previewImagePartPath: previewPath,
       oleObjectAttrs: {
-        "Type": "Embed",
-        "DrawAspect": "Content",
+        Type: "Embed",
+        DrawAspect: "Content",
       },
     };
 
@@ -186,10 +183,7 @@ export const updateSpreadsheetHandler: CommandHandler<UpdateSpreadsheetPayload, 
     }
     const existing = snapshot.root.embeddings.get(payload.embeddingPartPath);
     if (!existing) {
-      throw new CommandError(
-        "missing-embedding",
-        `no embedded part at ${payload.embeddingPartPath}`
-      );
+      throw new CommandError("missing-embedding", `no embedded part at ${payload.embeddingPartPath}`);
     }
     if (!(payload.bytes instanceof Uint8Array) || payload.bytes.byteLength === 0) {
       throw new CommandError("invalid-payload", "bytes must be a non-empty Uint8Array");

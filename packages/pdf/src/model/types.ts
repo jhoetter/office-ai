@@ -119,14 +119,7 @@ export interface PdfAnnotation {
   readonly quadRects?: ReadonlyArray<PdfRect>;
 }
 
-export type PdfFormFieldType =
-  | "text"
-  | "checkbox"
-  | "radio"
-  | "choice"
-  | "button"
-  | "signature"
-  | "unknown";
+export type PdfFormFieldType = "text" | "checkbox" | "radio" | "choice" | "button" | "signature" | "unknown";
 
 export interface PdfFormField {
   readonly id: NodeId;

@@ -22,15 +22,15 @@ export interface SplitPdfResult {
 
 const buildPart = async (src: PDFDocument, pages: ReadonlyArray<number>): Promise<Uint8Array> => {
   const out = await PDFDocument.create();
-  const copied = await out.copyPages(src, pages.map((n) => n - 1));
+  const copied = await out.copyPages(
+    src,
+    pages.map((n) => n - 1)
+  );
   for (const page of copied) out.addPage(page);
   return out.save();
 };
 
-export const splitPdf = async (
-  buffer: Uint8Array,
-  opts: SplitPdfOptions,
-): Promise<SplitPdfResult> => {
+export const splitPdf = async (buffer: Uint8Array, opts: SplitPdfOptions): Promise<SplitPdfResult> => {
   const src = await loadPdf(buffer);
   const total = src.getPageCount();
   const parts: SplitPdfPart[] = [];

@@ -29,7 +29,7 @@ const DEFAULTS = {
 
 export const addPageNumbers = async (
   buffer: Uint8Array,
-  opts: AddPageNumbersOptions = {},
+  opts: AddPageNumbersOptions = {}
 ): Promise<Uint8Array> => {
   const pdf = await loadPdf(buffer);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -40,15 +40,17 @@ export const addPageNumbers = async (
   pages.forEach((page, i) => {
     const pageNumber = i + 1;
     if (pageNumber < merged.startAt) return;
-    const text = merged.format
-      .replace("{page}", String(pageNumber))
-      .replace("{total}", String(total));
+    const text = merged.format.replace("{page}", String(pageNumber)).replace("{total}", String(total));
     const { width, height } = page.getSize();
     const textWidth = font.widthOfTextAtSize(text, merged.fontSize);
 
     let x = merged.margin;
     let y = merged.margin;
-    if (merged.position === "top-left" || merged.position === "top-center" || merged.position === "top-right") {
+    if (
+      merged.position === "top-left" ||
+      merged.position === "top-center" ||
+      merged.position === "top-right"
+    ) {
       y = height - merged.margin - merged.fontSize;
     }
     if (merged.position === "top-center" || merged.position === "bottom-center") {

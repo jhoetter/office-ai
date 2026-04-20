@@ -9,13 +9,13 @@ doesn't ship to production users until QA signs off.
 
 ## What ships
 
-| Source                | Target | Result                              | Status |
-| --------------------- | ------ | ----------------------------------- | ------ |
-| XLSX range            | XLSX   | Existing `<table data-fingerprint>` | Shipped (untouched) |
-| XLSX range            | DOCX   | Typed `<w:tbl>` with cell text      | **New** |
-| XLSX range            | PPTX   | New `<p:sp>` text box, TSV-rendered | **New** |
-| XLSX chart            | DOCX/PPTX | PNG paste                        | Backlog (see below) |
-| Other → other         | …      | falls through to existing handlers  | Unchanged |
+| Source        | Target    | Result                              | Status              |
+| ------------- | --------- | ----------------------------------- | ------------------- |
+| XLSX range    | XLSX      | Existing `<table data-fingerprint>` | Shipped (untouched) |
+| XLSX range    | DOCX      | Typed `<w:tbl>` with cell text      | **New**             |
+| XLSX range    | PPTX      | New `<p:sp>` text box, TSV-rendered | **New**             |
+| XLSX chart    | DOCX/PPTX | PNG paste                           | Backlog (see below) |
+| Other → other | …         | falls through to existing handlers  | Unchanged           |
 
 ## Wire format
 
@@ -26,11 +26,11 @@ Body : { type: "officeai/embed", version: 1, source, createdAt, payload }
 
 Payload variants (`payload.kind`):
 
-* `xlsx-range` — an `XlsxClipboardSnapshot` plus an `originLabel`.
+- `xlsx-range` — an `XlsxClipboardSnapshot` plus an `originLabel`.
   Pasted into XLSX, the existing fingerprint path catches it first
   (lossless). Pasted into DOCX/PPTX, the cross-format helpers
   consume the snapshot directly without a re-parse hop.
-* `xlsx-chart-image` — base64-PNG + intrinsic dimensions + chart
+- `xlsx-chart-image` — base64-PNG + intrinsic dimensions + chart
   kind. Designed for the future chart-to-image flow; the type and
   parser are in place so the receiving DOCX/PPTX handlers can be
   added incrementally without touching the envelope.
@@ -53,15 +53,15 @@ apps/web/app/lib/embed/
 
 Wired into editors:
 
-* `apps/web/app/xlsx-editor/clipboard.ts` — `marshalClipboard` adds
+- `apps/web/app/xlsx-editor/clipboard.ts` — `marshalClipboard` adds
   the embed string when the flag is on; `writeToSystemClipboard`
   carries it through the `ClipboardItem` path.
-* `apps/web/app/xlsx-editor/XlsxEditor.tsx` — synchronous
+- `apps/web/app/xlsx-editor/XlsxEditor.tsx` — synchronous
   `onSurfaceCopy` / `onSurfaceCut` paint the embed MIME via
   `setData` so non-async paths still get it.
-* `apps/web/app/editor/DocxEditor.tsx` — paste handler checks the
+- `apps/web/app/editor/DocxEditor.tsx` — paste handler checks the
   embed MIME first, falls back to the existing image-paste path.
-* `apps/web/app/pptx-editor/PptxEditor.tsx` — window-level paste
+- `apps/web/app/pptx-editor/PptxEditor.tsx` — window-level paste
   listener (the slide canvas isn't tab-focusable; window scope keeps
   Cmd-V working from anywhere except form fields).
 
@@ -86,12 +86,12 @@ table paste / clipboard image paste paths run unchanged.
 
 The first ship picks correctness-by-construction over fidelity:
 
-* **DOCX**: Cell formulas render as `=…` text. Style ids and merge
+- **DOCX**: Cell formulas render as `=…` text. Style ids and merge
   regions are dropped — the typed `<w:tbl>` doesn't yet carry style
   fields, so re-emitting them through `set-cell-content` would be a
   lie. Column widths are a uniform split clamped to fit a Letter
   body width.
-* **PPTX**: Renders as a single TSV text box because there is no
+- **PPTX**: Renders as a single TSV text box because there is no
   `pptx:insert-table` command yet (only edits to existing
   `<a:tbl>`). The pasted box is sized 80% × 60% of the slide and
   named `XLSX paste Sheet1!A1:C5` so the user can find it in the

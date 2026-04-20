@@ -1,11 +1,4 @@
-import {
-  PDFCheckBox,
-  PDFDocument,
-  PDFDropdown,
-  PDFOptionList,
-  PDFRadioGroup,
-  PDFTextField,
-} from "pdf-lib";
+import { PDFCheckBox, PDFDocument, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFTextField } from "pdf-lib";
 
 export interface FillFormOptions {
   readonly values: Readonly<Record<string, string | boolean | ReadonlyArray<string>>>;
@@ -13,10 +6,7 @@ export interface FillFormOptions {
   readonly flatten?: boolean;
 }
 
-export const fillForm = async (
-  buffer: Uint8Array,
-  opts: FillFormOptions,
-): Promise<Uint8Array> => {
+export const fillForm = async (buffer: Uint8Array, opts: FillFormOptions): Promise<Uint8Array> => {
   const pdf = await PDFDocument.load(buffer, { updateMetadata: false });
   const form = pdf.getForm();
 

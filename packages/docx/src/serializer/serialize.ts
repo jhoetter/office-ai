@@ -656,9 +656,9 @@ function serializeEmbeddedSpreadsheet(leaf: import("../model/types.js").Embedded
   const objectChildren: unknown[] = [];
   if (leaf.previewImageRelId) {
     const shapeAttrs: Record<string, string> = {
-      "id": `_x0000_i${leaf.id}`,
-      "type": "#_x0000_t75",
-      "style": "width:240pt;height:180pt",
+      id: `_x0000_i${leaf.id}`,
+      type: "#_x0000_t75",
+      style: "width:240pt;height:180pt",
     };
     const imagedata = makeEntry("v:imagedata", [], { "r:id": leaf.previewImageRelId, "o:title": "" });
     const shape = makeEntry("v:shape", [imagedata], shapeAttrs);

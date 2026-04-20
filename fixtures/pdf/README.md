@@ -16,20 +16,20 @@ These files are checked into the repo and consumed by:
 
 ## Files
 
-| Fixture | Pages | Purpose |
-| --- | --- | --- |
-| `simple-text-1page.pdf` | 1 | Smallest happy path: one Letter page with two short text lines. Used as the baseline page-count + text-layer projection check. |
-| `simple-text-3page.pdf` | 3 | Multi-page text projection + per-page text marker (`PAGE_<n>`) for `search-text` round-trips and outline page resolution sanity. |
-| `metadata-rich.pdf` | 1 | Every Info-dict field is set (title, author, subject, keywords, creator, producer). Used to assert metadata round-trips through `serializePdf`. |
-| `rotated-pages.pdf` | 4 | Pages rotated `0° / 90° / 180° / 270°`. Drives the rotation projection + the `pdf:rotate-pages` command-bus round-trip. |
-| `with-outline.pdf` | 3 | 2-level hand-rolled `/Outlines` (3 chapters, 2 sub-entries under chapter 2). Used to assert outline depth + page-destination resolution. |
-| `acroform-basic.pdf` | 1 | All four widget kinds (`text`, `checkbox`, `dropdown`, `radio`) — empty values. Drives `list-form-fields` enumeration + `fill-form` baseline. |
-| `acroform-prefilled.pdf` | 1 | Same as `acroform-basic.pdf` with non-empty values (`first.name=Ada`, `agree=☑`, `country=DE`, `plan=pro`). Used to verify value extraction. |
-| `with-link-annot.pdf` | 1 | A single URI link annotation pointing at `https://cursor.com`. Drives the `link` annotation kind detection. |
-| `with-highlight-annot.pdf` | 1 | One highlight + one sticky note (`/Text`). Drives the `highlight` + `note` annotation kinds and `contents` projection. |
-| `multi-size-pages.pdf` | 4 | Letter, A4, Legal, A3 in that order. Drives per-page width/height projection + cross-size reorder safety. |
-| `large-50page.pdf` | 50 | Pure text, 50 pages, ~14 KB. Soft perf budget for `parsePdf` + `toMarkdown`. |
-| `signed-then-modified.pdf` | 1 | Hand-rolled `/Sig` widget + `SigFlags=3`. The fixture is intentionally **un-signed** (no PKCS#7) so it represents the "signed then modified" detection scenario: `signatureCount === 1`, no real cryptographic guarantee. |
+| Fixture                    | Pages | Purpose                                                                                                                                                                                                                   |
+| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `simple-text-1page.pdf`    | 1     | Smallest happy path: one Letter page with two short text lines. Used as the baseline page-count + text-layer projection check.                                                                                            |
+| `simple-text-3page.pdf`    | 3     | Multi-page text projection + per-page text marker (`PAGE_<n>`) for `search-text` round-trips and outline page resolution sanity.                                                                                          |
+| `metadata-rich.pdf`        | 1     | Every Info-dict field is set (title, author, subject, keywords, creator, producer). Used to assert metadata round-trips through `serializePdf`.                                                                           |
+| `rotated-pages.pdf`        | 4     | Pages rotated `0° / 90° / 180° / 270°`. Drives the rotation projection + the `pdf:rotate-pages` command-bus round-trip.                                                                                                   |
+| `with-outline.pdf`         | 3     | 2-level hand-rolled `/Outlines` (3 chapters, 2 sub-entries under chapter 2). Used to assert outline depth + page-destination resolution.                                                                                  |
+| `acroform-basic.pdf`       | 1     | All four widget kinds (`text`, `checkbox`, `dropdown`, `radio`) — empty values. Drives `list-form-fields` enumeration + `fill-form` baseline.                                                                             |
+| `acroform-prefilled.pdf`   | 1     | Same as `acroform-basic.pdf` with non-empty values (`first.name=Ada`, `agree=☑`, `country=DE`, `plan=pro`). Used to verify value extraction.                                                                              |
+| `with-link-annot.pdf`      | 1     | A single URI link annotation pointing at `https://cursor.com`. Drives the `link` annotation kind detection.                                                                                                               |
+| `with-highlight-annot.pdf` | 1     | One highlight + one sticky note (`/Text`). Drives the `highlight` + `note` annotation kinds and `contents` projection.                                                                                                    |
+| `multi-size-pages.pdf`     | 4     | Letter, A4, Legal, A3 in that order. Drives per-page width/height projection + cross-size reorder safety.                                                                                                                 |
+| `large-50page.pdf`         | 50    | Pure text, 50 pages, ~14 KB. Soft perf budget for `parsePdf` + `toMarkdown`.                                                                                                                                              |
+| `signed-then-modified.pdf` | 1     | Hand-rolled `/Sig` widget + `SigFlags=3`. The fixture is intentionally **un-signed** (no PKCS#7) so it represents the "signed then modified" detection scenario: `signatureCount === 1`, no real cryptographic guarantee. |
 
 ## Regenerating
 

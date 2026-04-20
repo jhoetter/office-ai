@@ -19,7 +19,8 @@ import { RelationshipGraph } from "./relationships.js";
 
 export const REL_TYPE_CHART = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 export const REL_TYPE_PACKAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package";
-export const REL_TYPE_OLE_OBJECT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+export const REL_TYPE_OLE_OBJECT =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
 export const REL_TYPE_IMAGE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
 export const CT_DRAWINGML_CHART = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";

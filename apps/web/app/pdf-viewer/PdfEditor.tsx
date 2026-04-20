@@ -1,20 +1,10 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BookOpen, FolderOpen, MousePointer2 } from "lucide-react";
 import { Button } from "@officeai/ui";
 import { CommentsSidebar } from "@officeai/ui";
-import {
-  loadDocument,
-  type PdfEngineDocument,
-} from "@officeai/pdf-engine";
+import { loadDocument, type PdfEngineDocument } from "@officeai/pdf-engine";
 import { PdfAgent } from "@officeai/pdf/agent";
 import type {
   AddAnnotationPayload as AddAnnotationInput,
@@ -54,11 +44,7 @@ import {
   type PresenceCursor,
 } from "@/lib/realtime";
 import { PdfToolbar, type PdfAnnotationTool } from "./PdfToolbar";
-import {
-  PdfCanvas,
-  type PdfHighlight,
-  type PdfViewMode,
-} from "./PdfCanvas";
+import { PdfCanvas, type PdfHighlight, type PdfViewMode } from "./PdfCanvas";
 import { PdfSidebar, type PdfSidebarTab } from "./PdfSidebar";
 import { usePdfShortcuts } from "./usePdfShortcuts";
 import { usePdfFormatProvider } from "./usePdfFormatProvider";
@@ -97,10 +83,7 @@ async function ensurePdfjsWorker(): Promise<void> {
   if (pdfjsWorkerSetup) return pdfjsWorkerSetup;
   pdfjsWorkerSetup = (async (): Promise<void> => {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const url = new URL(
-      "pdfjs-dist/build/pdf.worker.min.mjs",
-      import.meta.url
-    );
+    const url = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url);
     pdfjs.GlobalWorkerOptions.workerSrc = url.toString();
   })();
   return pdfjsWorkerSetup;
@@ -130,11 +113,7 @@ export interface PdfEditorProps {
   readonly initialBlank?: boolean;
 }
 
-export function PdfEditor({
-  onBootstrapReady,
-  initialSource,
-  initialBlank,
-}: PdfEditorProps = {}): ReactNode {
+export function PdfEditor({ onBootstrapReady, initialSource, initialBlank }: PdfEditorProps = {}): ReactNode {
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PdfAgent | null>(null);
   const agentRef = useRef<PdfAgent | null>(null);
@@ -166,9 +145,9 @@ export function PdfEditor({
   // The find-replace panel renders matches incrementally — keeping
   // the latest results around lets `gotoMatch` flash the right
   // highlight rect without re-running the search.
-  const lastSearchResultsRef = useRef<
-    Map<string, { pageNumber: number; rects: ReadonlyArray<PdfRect> }>
-  >(new Map());
+  const lastSearchResultsRef = useRef<Map<string, { pageNumber: number; rects: ReadonlyArray<PdfRect> }>>(
+    new Map()
+  );
 
   useEffect(() => {
     onBootstrapReady?.(ready);
@@ -427,39 +406,29 @@ export function PdfEditor({
     actualSizeZoom: 1,
     fitPageZoom: 0.95,
   });
-  const onZoomMetricsChange = useCallback(
-    (metrics: { actualSizeZoom: number; fitPageZoom: number }) => {
-      zoomMetricsRef.current = metrics;
-      if (pendingFitOnLoadRef.current) {
-        pendingFitOnLoadRef.current = false;
-        setZoom(clampZoom(metrics.fitPageZoom));
-      }
-    },
-    []
-  );
+  const onZoomMetricsChange = useCallback((metrics: { actualSizeZoom: number; fitPageZoom: number }) => {
+    zoomMetricsRef.current = metrics;
+    if (pendingFitOnLoadRef.current) {
+      pendingFitOnLoadRef.current = false;
+      setZoom(clampZoom(metrics.fitPageZoom));
+    }
+  }, []);
 
   const onZoomIn = useCallback(() => setZoom((z) => clampZoom(z * ZOOM_STEP)), []);
   const onZoomOut = useCallback(() => setZoom((z) => clampZoom(z / ZOOM_STEP)), []);
   const onFitWidth = useCallback(() => setZoom(1), []);
-  const onFitPage = useCallback(
-    () => setZoom(clampZoom(zoomMetricsRef.current.fitPageZoom)),
-    []
-  );
-  const onActualSize = useCallback(
-    () => setZoom(clampZoom(zoomMetricsRef.current.actualSizeZoom)),
-    []
-  );
+  const onFitPage = useCallback(() => setZoom(clampZoom(zoomMetricsRef.current.fitPageZoom)), []);
+  const onActualSize = useCallback(() => setZoom(clampZoom(zoomMetricsRef.current.actualSizeZoom)), []);
   const onSetZoom = useCallback((next: number) => setZoom(clampZoom(next)), []);
 
   const onRotateClockwise = useCallback(
-    () => setViewportRotation((r) => (((r + 90) % 360) as PdfRotation)),
+    () => setViewportRotation((r) => ((r + 90) % 360) as PdfRotation),
     []
   );
   const onRotateCounterClockwise = useCallback(
-    () => setViewportRotation((r) => (((r + 270) % 360) as PdfRotation)),
+    () => setViewportRotation((r) => ((r + 270) % 360) as PdfRotation),
     []
   );
-
 
   const printIframeRef = useRef<HTMLIFrameElement | null>(null);
   const printObjectUrlRef = useRef<string | null>(null);
@@ -730,9 +699,7 @@ export function PdfEditor({
 
   const renderCommentsPanel = useCallback((): ReactNode => {
     if (!agent) {
-      return (
-        <div className="p-4 text-sm text-secondary">{t("pdf.addCommentHint")}</div>
-      );
+      return <div className="p-4 text-sm text-secondary">{t("pdf.addCommentHint")}</div>;
     }
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -909,9 +876,7 @@ export function PdfEditor({
             onDeletePages={() => void onDeletePages()}
           />
         }
-        statusBarLeft={
-          <PdfStatusHint currentPage={currentPage} totalPages={totalPages} />
-        }
+        statusBarLeft={<PdfStatusHint currentPage={currentPage} totalPages={totalPages} />}
         statusBarRight={
           <ZoomControl
             value={zoom}

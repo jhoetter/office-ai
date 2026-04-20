@@ -106,12 +106,7 @@ export function registerActionsAsSubcommands(
   return { registered, skipped };
 }
 
-function registerOne(
-  parent: Command,
-  action: ActionDescriptor,
-  io: IO,
-  ctx: AgentDispatchContext
-): void {
+function registerOne(parent: Command, action: ActionDescriptor, io: IO, ctx: AgentDispatchContext): void {
   const subName = subcommandNameFromId(action.id);
   const cmd = parent
     .command(subName)
@@ -127,9 +122,7 @@ function registerOne(
   // Common write flags shared by every mutation subcommand.
   cmd
     .option("--out <path>", `Path to write the resulting .${ctx.format} file (defaults to --file, in place)`)
-    .addOption(
-      new Option("--source <src>", "Mutation source").choices(["agent", "human"]).default("agent")
-    )
+    .addOption(new Option("--source <src>", "Mutation source").choices(["agent", "human"]).default("agent"))
     .option("--agent-id <id>", "Agent identifier (defaults to office-agent-cli)", "office-agent-cli")
     .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
     .option("--pretty", "Pretty-print JSON output", false);

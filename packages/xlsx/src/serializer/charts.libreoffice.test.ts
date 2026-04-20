@@ -55,64 +55,55 @@ async function applyAddChart(
 const describeIfLO = SOFFICE ? describe : describe.skip;
 
 describeIfLO("LibreOffice headless chart round-trip", () => {
-  it(
-    "all four chart kinds survive a LibreOffice convert pass",
-    async () => {
-      const buf = new Uint8Array(
-        await readFile(resolve(fixtures, "01-single-sheet-numbers.xlsx"))
-      );
-      const snap = await parseXlsx(buf);
-      const sheetName = snap.root.sheets[0]!.name;
+  it("all four chart kinds survive a LibreOffice convert pass", async () => {
+    const buf = new Uint8Array(await readFile(resolve(fixtures, "01-single-sheet-numbers.xlsx")));
+    const snap = await parseXlsx(buf);
+    const sheetName = snap.root.sheets[0]!.name;
 
-      let cur = snap;
-      for (const kind of ["column", "bar", "line", "pie"] as const) {
-        cur = await applyAddChart(cur, {
-          sheet: sheetName,
-          kind,
-          dataRange: "A1:C5",
-          title: `${kind} chart`,
-        });
-      }
+    let cur = snap;
+    for (const kind of ["column", "bar", "line", "pie"] as const) {
+      cur = await applyAddChart(cur, {
+        sheet: sheetName,
+        kind,
+        dataRange: "A1:C5",
+        title: `${kind} chart`,
+      });
+    }
 
-      const out = await serializeXlsx(cur);
-      const tmpDir = resolve("/tmp/officeai-chart-roundtrip");
-      await rm(tmpDir, { recursive: true, force: true });
-      await mkdir(tmpDir, { recursive: true });
-      const inPath = resolve(tmpDir, "with-charts.xlsx");
-      const outDir = resolve(tmpDir, "converted");
-      await mkdir(outDir, { recursive: true });
-      await writeFile(inPath, new Uint8Array(out));
+    const out = await serializeXlsx(cur);
+    const tmpDir = resolve("/tmp/officeai-chart-roundtrip");
+    await rm(tmpDir, { recursive: true, force: true });
+    await mkdir(tmpDir, { recursive: true });
+    const inPath = resolve(tmpDir, "with-charts.xlsx");
+    const outDir = resolve(tmpDir, "converted");
+    await mkdir(outDir, { recursive: true });
+    await writeFile(inPath, new Uint8Array(out));
 
-      // Each LO invocation locks `~/.config/libreoffice` for a moment;
-      // running the test serially is fine, but we add `--user-profile`
-      // so a parallel test session doesn't fight ours.
-      const profile = `-env:UserInstallation=file://${tmpDir}/lo-profile`;
-      const { stdout, stderr } = await exec(SOFFICE!, [
-        profile,
-        "--headless",
-        "--convert-to",
-        "xlsx",
-        inPath,
-        "--outdir",
-        outDir,
-      ]);
-      // Surface LO output on test failure so we don't have to re-run
-      // by hand to see what went wrong.
-      void stdout;
-      void stderr;
+    // Each LO invocation locks `~/.config/libreoffice` for a moment;
+    // running the test serially is fine, but we add `--user-profile`
+    // so a parallel test session doesn't fight ours.
+    const profile = `-env:UserInstallation=file://${tmpDir}/lo-profile`;
+    const { stdout, stderr } = await exec(SOFFICE!, [
+      profile,
+      "--headless",
+      "--convert-to",
+      "xlsx",
+      inPath,
+      "--outdir",
+      outDir,
+    ]);
+    // Surface LO output on test failure so we don't have to re-run
+    // by hand to see what went wrong.
+    void stdout;
+    void stderr;
 
-      const reEmitted = new Uint8Array(
-        await readFile(resolve(outDir, "with-charts.xlsx"))
-      );
-      const reparsed = await parseXlsx(reEmitted);
-      const chartParts = [...reparsed.container.parts.keys()].filter((p) =>
-        /^xl\/charts\/chart\d+\.xml$/.test(p)
-      );
-      // LibreOffice may rename or coalesce the chart parts but it
-      // must keep the same number of charts (one per kind).
-      expect(chartParts.length).toBeGreaterThanOrEqual(4);
-    },
-    // LO startup is slow on cold cache; give it generous breathing room.
-    60_000
-  );
+    const reEmitted = new Uint8Array(await readFile(resolve(outDir, "with-charts.xlsx")));
+    const reparsed = await parseXlsx(reEmitted);
+    const chartParts = [...reparsed.container.parts.keys()].filter((p) =>
+      /^xl\/charts\/chart\d+\.xml$/.test(p)
+    );
+    // LibreOffice may rename or coalesce the chart parts but it
+    // must keep the same number of charts (one per kind).
+    expect(chartParts.length).toBeGreaterThanOrEqual(4);
+  }, 60_000); // LO startup is slow on cold cache; give it generous breathing room.
 });

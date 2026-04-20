@@ -36,8 +36,8 @@ describe("F4: pptx:set-slide-transition", () => {
     // kind tag and the new speed attribute.
     expect(after.raw).toBeDefined();
     expect(after.raw!.attrs.spd).toBe("fast");
-    const childTags = (after.raw!.subtree as ReadonlyArray<Record<string, unknown>>).map(
-      (n) => Object.keys(n).find((k) => !k.startsWith(":") && !k.startsWith("#"))
+    const childTags = (after.raw!.subtree as ReadonlyArray<Record<string, unknown>>).map((n) =>
+      Object.keys(n).find((k) => !k.startsWith(":") && !k.startsWith("#"))
     );
     expect(childTags).toContain("p:push");
     expect(childTags).not.toContain("p:fade");

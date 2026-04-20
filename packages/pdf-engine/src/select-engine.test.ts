@@ -26,7 +26,7 @@ describe("selectEngine", () => {
         hasUncommonColorSpace: false,
         hasType3Fonts: false,
         hasCustomCMap: false,
-      }),
+      })
     ).toBe("pdfium");
   });
 });

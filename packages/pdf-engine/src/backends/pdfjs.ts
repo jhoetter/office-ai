@@ -132,9 +132,7 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
   // `ReadableStream<TextContent>`; fall back to the eagerly-resolved
   // `getTextContent()` if the streaming variant isn't available
   // (older minor versions and the legacy build alias).
-  const getTextContentSource = async (
-    opts: { includeMarkedContent?: boolean } = {},
-  ): Promise<unknown> => {
+  const getTextContentSource = async (opts: { includeMarkedContent?: boolean } = {}): Promise<unknown> => {
     const includeMarkedContent = opts.includeMarkedContent ?? true;
     const params = {
       includeMarkedContent,
@@ -143,9 +141,11 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
       // behaviour in.
       disableNormalization: false,
     };
-    const streamer = (raw as unknown as {
-      streamTextContent?: (opts: unknown) => ReadableStream;
-    }).streamTextContent;
+    const streamer = (
+      raw as unknown as {
+        streamTextContent?: (opts: unknown) => ReadableStream;
+      }
+    ).streamTextContent;
     if (typeof streamer === "function") {
       return streamer.call(raw, params);
     }
@@ -171,7 +171,11 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
           id: annot.id ?? `annot-${i}`,
           subtype: annotationSubtype(annot),
           rect: [annot.rect[0], annot.rect[1], annot.rect[2], annot.rect[3]] as const,
-          ...(annot.contents !== undefined ? { contents: annot.contents } : annot.contentsObj?.str !== undefined ? { contents: annot.contentsObj.str } : {}),
+          ...(annot.contents !== undefined
+            ? { contents: annot.contents }
+            : annot.contentsObj?.str !== undefined
+              ? { contents: annot.contentsObj.str }
+              : {}),
           ...(annot.title !== undefined ? { author: annot.title } : {}),
           ...(annot.url !== undefined ? { url: annot.url } : {}),
         };
@@ -201,7 +205,8 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
           id: annot.id ?? `field-${i}`,
           name: annot.fieldName ?? annot.id ?? `field-${i}`,
           type: formFieldType(annot),
-          ...(annot.fieldValue !== undefined && (typeof annot.fieldValue === "string" || typeof annot.fieldValue === "boolean")
+          ...(annot.fieldValue !== undefined &&
+          (typeof annot.fieldValue === "string" || typeof annot.fieldValue === "boolean")
             ? { value: annot.fieldValue }
             : {}),
           ...(annot.options !== undefined
@@ -255,7 +260,7 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
 };
 
 const buildOutline = async (
-  raw: import("pdfjs-dist").PDFDocumentProxy,
+  raw: import("pdfjs-dist").PDFDocumentProxy
 ): Promise<PdfEngineOutlineNode[] | null> => {
   const top = await raw.getOutline();
   if (!top) return null;
@@ -266,7 +271,7 @@ const buildOutline = async (
       dest?: unknown;
       url?: string;
       items?: ReadonlyArray<unknown>;
-    }>,
+    }>
   ): Promise<PdfEngineOutlineNode[]> => {
     const out: PdfEngineOutlineNode[] = [];
     for (const n of nodes) {
@@ -302,7 +307,7 @@ const buildOutline = async (
  * have to know that.
  */
 const resolveAssetUrls = (
-  assetsBase: string | undefined,
+  assetsBase: string | undefined
 ): { cMapUrl?: string; cMapPacked?: boolean; standardFontDataUrl?: string } => {
   if (!assetsBase) return {};
   const base = assetsBase.endsWith("/") ? assetsBase : `${assetsBase}/`;
@@ -372,7 +377,7 @@ export const pdfjsBackend: PdfEngine = {
           ([key, val]) => ({
             name: val.filename ?? key,
             data: val.content ?? new Uint8Array(0),
-          }),
+          })
         );
       },
       estimatedBytes: () => buffer.byteLength,

@@ -6,16 +6,11 @@ export interface ReorderPagesOptions {
   readonly order: ReadonlyArray<number>;
 }
 
-export const reorderPages = async (
-  buffer: Uint8Array,
-  opts: ReorderPagesOptions,
-): Promise<Uint8Array> => {
+export const reorderPages = async (buffer: Uint8Array, opts: ReorderPagesOptions): Promise<Uint8Array> => {
   const src = await loadPdf(buffer);
   const total = src.getPageCount();
   if (opts.order.length !== total) {
-    throw new Error(
-      `pdf-edit/reorder-pages: order length ${opts.order.length} != page count ${total}`,
-    );
+    throw new Error(`pdf-edit/reorder-pages: order length ${opts.order.length} != page count ${total}`);
   }
   const seen = new Set<number>();
   for (const n of opts.order) {

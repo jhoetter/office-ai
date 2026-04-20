@@ -14,21 +14,89 @@
  * realistic concurrent-user count.
  */
 export const ANONYMOUS_ADJECTIVES: ReadonlyArray<string> = [
-  "Quick", "Fuzzy", "Bright", "Calm", "Brave", "Swift", "Gentle", "Curious",
-  "Witty", "Cosy", "Lively", "Wise", "Kind", "Sunny", "Mellow", "Nimble",
-  "Plucky", "Snug", "Bold", "Merry", "Faithful", "Cheerful", "Jolly", "Breezy",
-  "Spirited", "Dapper", "Earnest", "Friendly", "Glowing", "Honest", "Joyful",
-  "Lucky", "Noble", "Peppy", "Radiant", "Sincere", "Tender", "Upbeat", "Vivid",
+  "Quick",
+  "Fuzzy",
+  "Bright",
+  "Calm",
+  "Brave",
+  "Swift",
+  "Gentle",
+  "Curious",
+  "Witty",
+  "Cosy",
+  "Lively",
+  "Wise",
+  "Kind",
+  "Sunny",
+  "Mellow",
+  "Nimble",
+  "Plucky",
+  "Snug",
+  "Bold",
+  "Merry",
+  "Faithful",
+  "Cheerful",
+  "Jolly",
+  "Breezy",
+  "Spirited",
+  "Dapper",
+  "Earnest",
+  "Friendly",
+  "Glowing",
+  "Honest",
+  "Joyful",
+  "Lucky",
+  "Noble",
+  "Peppy",
+  "Radiant",
+  "Sincere",
+  "Tender",
+  "Upbeat",
+  "Vivid",
   "Zesty",
 ];
 
 export const ANONYMOUS_ANIMALS: ReadonlyArray<string> = [
-  "Quokka", "Otter", "Finch", "Heron", "Lynx", "Marten", "Doe", "Tapir",
-  "Magpie", "Hare", "Wren", "Owl", "Beaver", "Squirrel", "Vole", "Stoat",
-  "Puffin", "Pika", "Badger", "Mouse", "Dog", "Cat", "Fox", "Wolf",
-  "Panda", "Koala", "Rabbit", "Hedgehog", "Raccoon", "Sparrow", "Robin",
-  "Falcon", "Dolphin", "Seal", "Penguin", "Capybara", "Llama", "Alpaca",
-  "Manatee", "Narwhal",
+  "Quokka",
+  "Otter",
+  "Finch",
+  "Heron",
+  "Lynx",
+  "Marten",
+  "Doe",
+  "Tapir",
+  "Magpie",
+  "Hare",
+  "Wren",
+  "Owl",
+  "Beaver",
+  "Squirrel",
+  "Vole",
+  "Stoat",
+  "Puffin",
+  "Pika",
+  "Badger",
+  "Mouse",
+  "Dog",
+  "Cat",
+  "Fox",
+  "Wolf",
+  "Panda",
+  "Koala",
+  "Rabbit",
+  "Hedgehog",
+  "Raccoon",
+  "Sparrow",
+  "Robin",
+  "Falcon",
+  "Dolphin",
+  "Seal",
+  "Penguin",
+  "Capybara",
+  "Llama",
+  "Alpaca",
+  "Manatee",
+  "Narwhal",
 ];
 
 /**
@@ -36,8 +104,9 @@ export const ANONYMOUS_ANIMALS: ReadonlyArray<string> = [
  * "named pair". New callers should use `nameForPeer` directly so we
  * get the full cross-product space.
  */
-export const ANONYMOUS_NAME_POOL: ReadonlyArray<readonly [string, string]> =
-  ANONYMOUS_ADJECTIVES.map((adj) => [adj, ANONYMOUS_ANIMALS[0]!] as const);
+export const ANONYMOUS_NAME_POOL: ReadonlyArray<readonly [string, string]> = ANONYMOUS_ADJECTIVES.map(
+  (adj) => [adj, ANONYMOUS_ANIMALS[0]!] as const
+);
 
 /**
  * Pleasant, accessible-on-light-and-dark colour ramp. Used to tint

@@ -12,5 +12,7 @@ export const docxActionsById: ReadonlyMap<string, ActionDescriptor> = indexActio
  * descriptors may share a `commandType` (e.g. one CLI subcommand
  * plus a hidden palette wrapper). Used by the parity check.
  */
-export const docxActionsByCommandType: ReadonlyMap<string, ReadonlyArray<ActionDescriptor>> =
-  indexActionsByCommandType(docxActions);
+export const docxActionsByCommandType: ReadonlyMap<
+  string,
+  ReadonlyArray<ActionDescriptor>
+> = indexActionsByCommandType(docxActions);

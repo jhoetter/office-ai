@@ -58,9 +58,7 @@ export function createPdfCommentsProvider(opts: PdfCommentsProviderOptions): Com
     async add(input) {
       const anchor = input.anchor;
       const rect: readonly [number, number, number, number] =
-        anchor.kind === "pdf-region"
-          ? anchor.normalizedRect
-          : (opts.defaultRect ?? DEFAULT_RECT);
+        anchor.kind === "pdf-region" ? anchor.normalizedRect : (opts.defaultRect ?? DEFAULT_RECT);
       const pageNumber = anchor.kind === "pdf-region" ? anchor.pageNumber : currentPage;
       const before = agent.getSnapshot().root.comments;
       await agent.applyCommand({
@@ -150,10 +148,7 @@ function normalizeComment(c: PdfComment): CommentBody {
   };
 }
 
-function latestNewCommentId(
-  agent: PdfAgent,
-  before: ReadonlyArray<PdfComment>
-): string | null {
+function latestNewCommentId(agent: PdfAgent, before: ReadonlyArray<PdfComment>): string | null {
   const after = agent.getSnapshot().root.comments;
   if (after.length === before.length) return null;
   const beforeIds = new Set(before.map((c) => c.id));

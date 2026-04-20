@@ -13,11 +13,7 @@ import type { PdfRect } from "../model/types.js";
  * `agent.toMarkdown()` and the right-click "Copy as Markdown".
  * Maps detected block kinds onto Markdown primitives.
  */
-import type {
-  StructuredBlock,
-  StructuredLine,
-  StructuredPage,
-} from "./structured.js";
+import type { StructuredBlock, StructuredLine, StructuredPage } from "./structured.js";
 
 export function serializeReadingOrder(page: StructuredPage): string {
   const out: string[] = [];
@@ -59,10 +55,7 @@ function blockText(block: StructuredBlock): string {
  * Region intersection is "any overlap" — close enough for selection
  * highlights produced by the browser's `Range.getClientRects()`.
  */
-export function collectTextWithinRegions(
-  page: StructuredPage,
-  regions: ReadonlyArray<PdfRect>,
-): string {
+export function collectTextWithinRegions(page: StructuredPage, regions: ReadonlyArray<PdfRect>): string {
   if (regions.length === 0) return "";
   const out: string[] = [];
   let lastColumn = -1;
@@ -76,10 +69,7 @@ export function collectTextWithinRegions(
   return out.join("\n\n").trim();
 }
 
-function collectTextFromBlock(
-  block: StructuredBlock,
-  regions: ReadonlyArray<PdfRect>,
-): string {
+function collectTextFromBlock(block: StructuredBlock, regions: ReadonlyArray<PdfRect>): string {
   const lineStrings: string[] = [];
   for (const line of block.lines) {
     let lineText = "";
@@ -107,7 +97,7 @@ function collectTextFromBlock(
 
 function intersectsAny(
   bbox: readonly [number, number, number, number],
-  regions: ReadonlyArray<PdfRect>,
+  regions: ReadonlyArray<PdfRect>
 ): boolean {
   for (const r of regions) {
     if (bbox[2] < r[0] || bbox[0] > r[2]) continue;
@@ -129,9 +119,7 @@ function renderBlockAsMarkdown(block: StructuredBlock): string {
       return `## ${text}`;
     }
     case "list": {
-      return block.lines
-        .map((l) => `- ${stripBullet(joinLine(l))}`)
-        .join("\n");
+      return block.lines.map((l) => `- ${stripBullet(joinLine(l))}`).join("\n");
     }
     case "caption":
     case "paragraph":

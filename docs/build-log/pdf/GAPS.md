@@ -68,7 +68,7 @@ Entries are ordered roughly by impact / cost ratio (high → low).
   - Add `axe-playwright` as a dev dep on `@officeai/web`.
   - One spec per editor (`docx-a11y.spec.ts`, `xlsx-a11y.spec.ts`,
     `pptx-a11y.spec.ts`, `pdf-a11y.spec.ts`) that runs `injectAxe`
-    + `checkA11y` on the editor shell after first paint.
+    - `checkA11y` on the editor shell after first paint.
   - All four pass with WCAG 2.1 AA + best-practice tags enabled.
   - Document the score / known violations in `docs/build-log/pdf/`.
 - **Effort:** M (1 day if cross-product is in scope, ½ day if PDF-only).
@@ -99,7 +99,7 @@ Entries are ordered roughly by impact / cost ratio (high → low).
 
 - **What:** the parser tolerates and round-trips PDF 2.0 `/RichMedia`
   and `/3D` annotations on input (we never drop them), but the
-  command surface doesn't yet let an editor *create* them.
+  command surface doesn't yet let an editor _create_ them.
 - **Why deferred:** out of scope for v1; spec captures it.
 - **Where:** `spec/pdf/edge-cases.md` §"PDF 2.0 features",
   `packages/pdf-annotations/src/types.ts`.
@@ -186,6 +186,7 @@ Entries are ordered roughly by impact / cost ratio (high → low).
 - **Effort:** L.
 
 ### G10. Annotation comments don't surface in the cross-product
+
 **Comments** sidebar
 
 - **What:** the new `pdf-region` `CommentAnchor` is wired through
@@ -285,7 +286,7 @@ Entries are ordered roughly by impact / cost ratio (high → low).
 
 - **What:** both new tools (highlight selection capture, sticky
   click-to-place) silently no-op when `viewportRotation !== 0`.
-  Existing annotations *render* correctly under rotation because
+  Existing annotations _render_ correctly under rotation because
   their overlays ride along with the same CSS transform as the
   text layer; only authoring is gated.
 - **Why deferred:** the inverse-transform from rotated viewport
@@ -332,8 +333,8 @@ Entries are ordered roughly by impact / cost ratio (high → low).
   `filter: invert()` only, no per-pixel correction; produced
   inverted images and washed-out colour profiles), **reflow**
   (single-column text dump that, per G9, garbled multi-column /
-  tabular content), and the **Form** menu's *Fill* / *Flatten*
-  entries plus the **Page ops** menu's *Reorder*, all carrying a
+  tabular content), and the **Form** menu's _Fill_ / _Flatten_
+  entries plus the **Page ops** menu's _Reorder_, all carrying a
   `soon` badge against missing implementations. They were removed
   in this pass because their on-canvas effect was net-negative for
   most PDFs and the placeholders muddied the affordance bar.
@@ -385,7 +386,7 @@ Entries are ordered roughly by impact / cost ratio (high → low).
    the matching MCP tool descriptor in `packages/agent/src/mcp.ts`.
 6. UI surface change → keep `i18n` keys in EN + DE in lockstep.
 7. `pnpm -r typecheck && pnpm -r lint && pnpm -r test &&
-   make audit-roundtrip` before opening the PR.
+make audit-roundtrip` before opening the PR.
 
 If any item changes scope or a new gap shows up, append it here so
 the backlog stays in one place.

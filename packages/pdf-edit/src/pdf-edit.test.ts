@@ -22,8 +22,7 @@ const buildPdf = async (n: number, label = "P"): Promise<Uint8Array> => {
   return pdf.save();
 };
 
-const pageCount = async (buf: Uint8Array): Promise<number> =>
-  (await PDFDocument.load(buf)).getPageCount();
+const pageCount = async (buf: Uint8Array): Promise<number> => (await PDFDocument.load(buf)).getPageCount();
 
 describe("pdf-edit", () => {
   it("rotatePages applies a delta", async () => {

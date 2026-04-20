@@ -25,7 +25,7 @@ References surveyed (matches [`prompt-pdf.md`](../../prompt-pdf.md)
 
 The DOCX/XLSX/PPTX clean-room work in [`spec/docx/analysis.md`](../docx/analysis.md)
 and [`spec/pptx/analysis.md`](../pptx/analysis.md) is the most
-important reference for *us*: PDF reuses `@officeai/core`
+important reference for _us_: PDF reuses `@officeai/core`
 (`CommandBus`, `DocumentSnapshot`, `mintNodeId`, `freezeSnapshot`),
 `@officeai/realtime` (codec + Y.js bridge), `@officeai/comments`
 (thread model), and the same architectural invariants (headless first,
@@ -66,15 +66,15 @@ struct tree.
 
 ### Decisions for our model
 
-- We mirror this with a *typed projection* (`PdfDocument` →
+- We mirror this with a _typed projection_ (`PdfDocument` →
   `PdfPage[] + PdfOutline + PdfAnnotation[] + PdfFormField[] +
-  PdfAttachment[] + PdfMetadata + signatureCount`), **not** a faithful
+PdfAttachment[] + PdfMetadata + signatureCount`), **not** a faithful
   reconstruction of the object graph. The original byte buffer is
   always retained on the agent for incremental save. See
   [`document-model.md`](./document-model.md).
 - The full object graph never enters our typed model — that road leads
   to the tar pit of re-implementing PDF semantics PDF.js / pdf-lib /
-  PDFium have already nailed. We expose what the editor *operates on*
+  PDFium have already nailed. We expose what the editor _operates on_
   (pages, annotations, fields, comments, metadata) and treat the rest
   as opaque bytes preserved verbatim by incremental save.
 
@@ -222,8 +222,8 @@ display a clear "this form requires Adobe Acrobat" banner otherwise.
   (regex + `/MaxLen`), and resolves calc-order. **No JS execution**
   (no `/AA`, no `/F`, no `/V` JS) — sandboxed/no-op.
 - **Flatten on save** option bakes values into the page content stream
-  + drops the field, producing a non-fillable but visually identical
-  PDF. See [`form-engine.md`](./form-engine.md).
+  - drops the field, producing a non-fillable but visually identical
+    PDF. See [`form-engine.md`](./form-engine.md).
 - **Signature fields** are detected, displayed read-only, and
   reported. We do not sign cryptographically (deferred). We do place
   visible signature images via the annotation pipeline.
@@ -280,21 +280,21 @@ DOM aligned with the text layer.
 
 ## 8. Engine fallback decision
 
-| Concern | PDF.js | PDFium-WASM (`@embedpdf/pdfium`) | mupdf.js (study only) |
-| --- | --- | --- | --- |
-| License | Apache 2.0 ✓ | Apache 2.0 (engine BSD-3) ✓ | AGPL ✗ shippable |
-| Bundle (gzipped) | ≈350 KB | ≈3.5 MB lazy | ≈4 MB |
-| Worker isolation | First-class | Yes (lazy boot) | Yes |
-| Text-layer | Mature | Available, lower-level | Available |
-| AcroForm | Mature widget layer | Available, lower-level | Available |
-| StructTree | Available | Available | Available |
-| Type3 fonts | Substitutes | Renders | Renders |
-| DeviceN / Separation | RGB approx | Correct | Correct |
-| Custom CMaps | Sometimes substitutes | Correct | Correct |
-| ICC color management | Limited | Full | Full |
-| Headless Node renderer | `pdfjs-dist/legacy` + `@napi-rs/canvas` | Yes via WASM | Yes via WASM |
-| Streaming / range requests | Yes | No | No |
-| Time to first paint | Best | Worse (lazy) | Worse (lazy) |
+| Concern                    | PDF.js                                  | PDFium-WASM (`@embedpdf/pdfium`) | mupdf.js (study only) |
+| -------------------------- | --------------------------------------- | -------------------------------- | --------------------- |
+| License                    | Apache 2.0 ✓                            | Apache 2.0 (engine BSD-3) ✓      | AGPL ✗ shippable      |
+| Bundle (gzipped)           | ≈350 KB                                 | ≈3.5 MB lazy                     | ≈4 MB                 |
+| Worker isolation           | First-class                             | Yes (lazy boot)                  | Yes                   |
+| Text-layer                 | Mature                                  | Available, lower-level           | Available             |
+| AcroForm                   | Mature widget layer                     | Available, lower-level           | Available             |
+| StructTree                 | Available                               | Available                        | Available             |
+| Type3 fonts                | Substitutes                             | Renders                          | Renders               |
+| DeviceN / Separation       | RGB approx                              | Correct                          | Correct               |
+| Custom CMaps               | Sometimes substitutes                   | Correct                          | Correct               |
+| ICC color management       | Limited                                 | Full                             | Full                  |
+| Headless Node renderer     | `pdfjs-dist/legacy` + `@napi-rs/canvas` | Yes via WASM                     | Yes via WASM          |
+| Streaming / range requests | Yes                                     | No                               | No                    |
+| Time to first paint        | Best                                    | Worse (lazy)                     | Worse (lazy)          |
 
 **Decision:** PDF.js as the default engine; lazy PDFium-WASM as a
 fidelity fallback triggered by the `selectEngine()` heuristic
@@ -345,7 +345,7 @@ shape the spec:
 
 The PDF stack is mature: PDF.js solves the read path; pdf-lib solves
 the incremental write path; PDFium fills the fidelity gaps PDF.js
-can't close. Our value is *not* in re-implementing any of these — it
+can't close. Our value is _not_ in re-implementing any of these — it
 is in (a) wrapping them behind a clean engine abstraction, (b)
 exposing a typed projection over the binary that flows through the
 shared `CommandBus`, (c) shipping the AI integration surface as a

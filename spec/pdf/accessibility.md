@@ -34,10 +34,10 @@ document's logical structure (`/H1`, `/P`, `/Figure`, `/Table`, `/L`,
 
 ```typescript
 export interface PdfStructNode {
-  readonly role: string;                         // "/H1", "/P", "/Figure", …
-  readonly lang?: string;                        // e.g. "en", "de"
-  readonly alt?: string;                         // alt text
-  readonly actualText?: string;                  // for ligatures, OCR, replaced text
+  readonly role: string; // "/H1", "/P", "/Figure", …
+  readonly lang?: string; // e.g. "en", "de"
+  readonly alt?: string; // alt text
+  readonly actualText?: string; // for ligatures, OCR, replaced text
   readonly children: ReadonlyArray<PdfStructNode>;
   /** Indices into the page's text-layer items, when this node is a leaf. */
   readonly textRange?: { readonly start: number; readonly end: number };
@@ -112,25 +112,25 @@ The full keymap lives in
 [`keyboard-shortcuts.md`](./keyboard-shortcuts.md). For accessibility,
 the **non-negotiable** subset:
 
-| Action                       | Default key                     | Reachable?            |
-| ---------------------------- | ------------------------------- | --------------------- |
-| Skip to toolbar              | `Ctrl+,`                        | Yes — `<a class="skip-link">` revealed on focus |
-| Skip to sidebar              | `Ctrl+1`                        | Yes                   |
-| Skip to page content         | `Ctrl+2`                        | Yes                   |
-| Next / previous page         | `PageDown` / `PageUp`           | Yes                   |
-| First / last page            | `Home` / `End`                  | Yes                   |
-| Jump to page                 | `Ctrl+G`                        | Yes — opens GotoDialog with `aria-modal` |
-| Open outline                 | `Ctrl+Shift+O`                  | Yes                   |
-| Open thumbnails              | `Ctrl+Shift+T`                  | Yes                   |
-| Open annotations panel       | `Ctrl+Shift+A`                  | Yes                   |
-| Find                         | `Ctrl+F`                        | Yes                   |
-| Find next / previous         | `Ctrl+G` / `Ctrl+Shift+G` (with find open) | Yes        |
-| Zoom in / out / reset        | `Ctrl++` / `Ctrl+-` / `Ctrl+0`  | Yes                   |
-| Toggle reflow                | `Ctrl+Shift+R`                  | Yes                   |
-| Toggle dark mode             | `Ctrl+Alt+D`                    | Yes                   |
-| Annotate (highlight)         | `Ctrl+Shift+H` (after select)   | Yes                   |
-| Add comment at focused page  | `Ctrl+Alt+C`                    | Yes                   |
-| Print                        | `Ctrl+P`                        | Yes                   |
+| Action                      | Default key                                | Reachable?                                      |
+| --------------------------- | ------------------------------------------ | ----------------------------------------------- |
+| Skip to toolbar             | `Ctrl+,`                                   | Yes — `<a class="skip-link">` revealed on focus |
+| Skip to sidebar             | `Ctrl+1`                                   | Yes                                             |
+| Skip to page content        | `Ctrl+2`                                   | Yes                                             |
+| Next / previous page        | `PageDown` / `PageUp`                      | Yes                                             |
+| First / last page           | `Home` / `End`                             | Yes                                             |
+| Jump to page                | `Ctrl+G`                                   | Yes — opens GotoDialog with `aria-modal`        |
+| Open outline                | `Ctrl+Shift+O`                             | Yes                                             |
+| Open thumbnails             | `Ctrl+Shift+T`                             | Yes                                             |
+| Open annotations panel      | `Ctrl+Shift+A`                             | Yes                                             |
+| Find                        | `Ctrl+F`                                   | Yes                                             |
+| Find next / previous        | `Ctrl+G` / `Ctrl+Shift+G` (with find open) | Yes                                             |
+| Zoom in / out / reset       | `Ctrl++` / `Ctrl+-` / `Ctrl+0`             | Yes                                             |
+| Toggle reflow               | `Ctrl+Shift+R`                             | Yes                                             |
+| Toggle dark mode            | `Ctrl+Alt+D`                               | Yes                                             |
+| Annotate (highlight)        | `Ctrl+Shift+H` (after select)              | Yes                                             |
+| Add comment at focused page | `Ctrl+Alt+C`                               | Yes                                             |
+| Print                       | `Ctrl+P`                                   | Yes                                             |
 
 Every action **must** be reachable from the keyboard. CI gate: an
 e2e test sweeps every toolbar button and asserts focusable + has

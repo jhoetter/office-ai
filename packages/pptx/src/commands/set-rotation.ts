@@ -42,21 +42,19 @@ export const setRotationHandler: CommandHandler<SetRotationPayload, PptxSnapshot
       );
     }
     if (shape.kind === "group") {
-      throw makeError(
-        "not-applicable",
-        "rotate is not supported for group shapes yet"
-      );
+      throw makeError("not-applicable", "rotate is not supported for group shapes yet");
     }
 
     const normalised = ((payload.degrees % 360) + 360) % 360;
     const rounded = Math.round(normalised * 1000) / 1000;
     // Treat 0 as "no rotation" so the serializer drops the attr.
-    const updated: Shape = rounded === 0
-      ? (() => {
-          const { rotation: _omit, ...rest } = shape as Shape & { rotation?: number };
-          return rest as Shape;
-        })()
-      : { ...shape, rotation: rounded };
+    const updated: Shape =
+      rounded === 0
+        ? (() => {
+            const { rotation: _omit, ...rest } = shape as Shape & { rotation?: number };
+            return rest as Shape;
+          })()
+        : { ...shape, rotation: rounded };
 
     if ((shape.rotation ?? 0) === rounded) {
       // No-op: short-circuit so we don't bump the revision for nothing.

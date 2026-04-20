@@ -81,7 +81,7 @@ describe("office-agent pdf — multi-step flows", () => {
           "--out",
           filled,
         ],
-        io,
+        io
       );
       expect(code).toBe(0);
       const env = JSON.parse(stdout.text()) as { schema: string; summary: string };
@@ -144,7 +144,7 @@ describe("office-agent pdf — multi-step flows", () => {
           "--out",
           rotated,
         ],
-        io,
+        io
       );
       expect(code).toBe(0);
     }
@@ -163,7 +163,7 @@ describe("office-agent pdf — multi-step flows", () => {
           "--out",
           titled,
         ],
-        io,
+        io
       );
       expect(code).toBe(0);
     }
@@ -180,7 +180,7 @@ describe("office-agent pdf — multi-step flows", () => {
       const { io, stdout } = makeIO();
       const code = await runCli(
         ["pdf", "split", fixture("simple-text-3page.pdf"), "--at", "2", "--out-prefix", prefix],
-        io,
+        io
       );
       expect(code).toBe(0);
       const env = JSON.parse(stdout.text()) as { outputs: ReadonlyArray<{ out: string }> };
@@ -191,7 +191,7 @@ describe("office-agent pdf — multi-step flows", () => {
     const { io, stdout } = makeIO();
     const code = await runCli(
       ["pdf", "merge", `${prefix}-001.pdf`, `${prefix}-002.pdf`, "--out", merged],
-      io,
+      io
     );
     expect(code).toBe(0);
     const env = JSON.parse(stdout.text()) as { schema: string; bytes: number };
@@ -209,16 +209,8 @@ describe("office-agent pdf — multi-step flows", () => {
     {
       const { io } = makeIO();
       const code = await runCli(
-        [
-          "pdf",
-          "add-watermark",
-          fixture("simple-text-3page.pdf"),
-          "--text",
-          "CONFIDENTIAL",
-          "--out",
-          wm,
-        ],
-        io,
+        ["pdf", "add-watermark", fixture("simple-text-3page.pdf"), "--text", "CONFIDENTIAL", "--out", wm],
+        io
       );
       expect(code).toBe(0);
     }
@@ -227,7 +219,7 @@ describe("office-agent pdf — multi-step flows", () => {
       const { io } = makeIO();
       const code = await runCli(
         ["pdf", "add-page-numbers", wm, "--position", "bottom-right", "--out", numbered],
-        io,
+        io
       );
       expect(code).toBe(0);
     }
@@ -239,20 +231,14 @@ describe("office-agent pdf — multi-step flows", () => {
   it("read-metadata followed by an out-of-range read-page produces a structured error", async () => {
     {
       const { io, stdout } = makeIO();
-      const code = await runCli(
-        ["pdf", "read-metadata", fixture("simple-text-1page.pdf")],
-        io,
-      );
+      const code = await runCli(["pdf", "read-metadata", fixture("simple-text-1page.pdf")], io);
       expect(code).toBe(0);
       const env = JSON.parse(stdout.text()) as { pageCount: number };
       expect(env.pageCount).toBe(1);
     }
     {
       const { io, stderr } = makeIO();
-      const code = await runCli(
-        ["pdf", "read-page", fixture("simple-text-1page.pdf"), "--page", "5"],
-        io,
-      );
+      const code = await runCli(["pdf", "read-page", fixture("simple-text-1page.pdf"), "--page", "5"], io);
       expect(code).toBe(1);
       const lines = stderr.text().trim().split("\n").filter(Boolean);
       const env = JSON.parse(lines[lines.length - 1]) as { error: string };

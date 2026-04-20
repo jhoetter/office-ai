@@ -40,14 +40,7 @@ export type ActionSurface = "toolbar" | "palette" | "cli" | "contextMenu";
  * purpose — every kind here is something both commander and a tiny
  * inline form can render without needing a full schema validator.
  */
-export type ActionArgKind =
-  | "string"
-  | "number"
-  | "boolean"
-  | "filepath"
-  | "selector"
-  | "enum"
-  | "stringList";
+export type ActionArgKind = "string" | "number" | "boolean" | "filepath" | "selector" | "enum" | "stringList";
 
 export interface ActionArg {
   /** camelCase property name in the parsed-args record. */

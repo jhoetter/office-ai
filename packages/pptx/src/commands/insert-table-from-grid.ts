@@ -28,10 +28,7 @@ const TABLE_GRAPHIC_DATA_URI = "http://schemas.openxmlformats.org/drawingml/2006
  *   - `cy` is split evenly across rows when no `rowHeightsEmu` is
  *     provided. Both default to a small ~5×0.5-inch-per-row block.
  */
-export const insertTableFromGridHandler: CommandHandler<
-  PptxInsertTableFromGridPayload,
-  PptxSnapshot
-> = {
+export const insertTableFromGridHandler: CommandHandler<PptxInsertTableFromGridPayload, PptxSnapshot> = {
   type: "pptx:insert-table",
   apply(snapshot, payload, ctx) {
     if (!Array.isArray(payload.data) || payload.data.length === 0) {
@@ -98,12 +95,7 @@ export const insertTableFromGridHandler: CommandHandler<
           {
             kind: "node-inserted",
             nodeId: table.id,
-            path: [
-              "slides",
-              sIdx,
-              "shapes",
-              newSlide.shapes.length - 1,
-            ] as ReadonlyArray<string | number>,
+            path: ["slides", sIdx, "shapes", newSlide.shapes.length - 1] as ReadonlyArray<string | number>,
             summary: `+table (${rows}×${cols})`,
           },
         ],
@@ -144,10 +136,7 @@ function resolveRowHeights(
   return out;
 }
 
-function buildCell(
-  value: string | number | null | undefined,
-  mintNodeId: () => string
-): TableCell {
+function buildCell(value: string | number | null | undefined, mintNodeId: () => string): TableCell {
   const text = stringifyCellValue(value);
   const txBody = textBodyFromString(text, mintNodeId);
   return {

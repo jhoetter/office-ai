@@ -5,10 +5,7 @@ export interface DeletePagesOptions {
   readonly pages: ReadonlyArray<number>;
 }
 
-export const deletePages = async (
-  buffer: Uint8Array,
-  opts: DeletePagesOptions,
-): Promise<Uint8Array> => {
+export const deletePages = async (buffer: Uint8Array, opts: DeletePagesOptions): Promise<Uint8Array> => {
   if (opts.pages.length === 0) {
     throw new Error("pdf-edit/delete-pages: requires at least one page");
   }
@@ -21,7 +18,10 @@ export const deletePages = async (
   const drop = new Set(opts.pages);
   const keep = Array.from({ length: total }, (_, i) => i + 1).filter((n) => !drop.has(n));
   const out = await PDFDocument.create();
-  const copied = await out.copyPages(src, keep.map((n) => n - 1));
+  const copied = await out.copyPages(
+    src,
+    keep.map((n) => n - 1)
+  );
   for (const page of copied) out.addPage(page);
   return out.save();
 };

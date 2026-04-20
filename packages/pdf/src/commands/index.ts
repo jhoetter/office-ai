@@ -22,7 +22,12 @@ import {
 } from "./page-commands.js";
 
 export * from "./payloads.js";
-export { rotatePagesHandler, setPageRotationHandler, reorderPagesHandler, deletePagesHandler } from "./page-commands.js";
+export {
+  rotatePagesHandler,
+  setPageRotationHandler,
+  reorderPagesHandler,
+  deletePagesHandler,
+} from "./page-commands.js";
 export { setMetadataHandler } from "./metadata-commands.js";
 export { addBookmarkHandler } from "./bookmark-commands.js";
 export {

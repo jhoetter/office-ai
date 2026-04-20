@@ -5,5 +5,7 @@ export { pdfActions } from "./catalogue.js";
 
 export const pdfActionsById: ReadonlyMap<string, ActionDescriptor> = indexActionsById(pdfActions);
 
-export const pdfActionsByCommandType: ReadonlyMap<string, ReadonlyArray<ActionDescriptor>> =
-  indexActionsByCommandType(pdfActions);
+export const pdfActionsByCommandType: ReadonlyMap<
+  string,
+  ReadonlyArray<ActionDescriptor>
+> = indexActionsByCommandType(pdfActions);

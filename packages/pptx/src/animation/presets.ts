@@ -34,10 +34,6 @@ import type {
   AnimationCategory,
   AnimationDirection,
   AnimationPreset,
-  EmphasisPreset,
-  EntrancePreset,
-  ExitPreset,
-  MotionPathPreset,
   ShapeAnimation,
 } from "../model/types.js";
 
@@ -59,12 +55,7 @@ export interface PresetSpec {
 
 export interface EmitHelpers {
   /** Build a generic `<p:set>` setting an attribute to a value. */
-  readonly setAttr: (
-    spid: number,
-    attrName: string,
-    value: string,
-    durMs: number
-  ) => Record<string, unknown>;
+  readonly setAttr: (spid: number, attrName: string, value: string, durMs: number) => Record<string, unknown>;
   /** Build a `<p:anim>` interpolating one attribute. */
   readonly anim: (
     spid: number,
@@ -120,9 +111,7 @@ const ENTRANCE_PRESETS: ReadonlyArray<PresetSpec> = [
     defaultDurationMs: 1,
     i18nKey: "entranceAppear",
     emitBody: (a, h) =>
-      h.childTnLst([
-        h.setAttr(a.targetCNvPrId, "style.visibility", "visible", a.durationMs ?? 1),
-      ]),
+      h.childTnLst([h.setAttr(a.targetCNvPrId, "style.visibility", "visible", a.durationMs ?? 1)]),
   },
   {
     category: "entrance",
@@ -342,13 +331,7 @@ const ENTRANCE_PRESETS: ReadonlyArray<PresetSpec> = [
       const dur = a.durationMs ?? 1500;
       return h.childTnLst([
         h.setAttr(a.targetCNvPrId, "style.visibility", "visible", 1),
-        h.anim(
-          a.targetCNvPrId,
-          "ppt_y",
-          dur,
-          { from: "#ppt_y-#ppt_h", to: "#ppt_y" },
-          { calcmode: "lin" }
-        ),
+        h.anim(a.targetCNvPrId, "ppt_y", dur, { from: "#ppt_y-#ppt_h", to: "#ppt_y" }, { calcmode: "lin" }),
       ]);
     },
   },
@@ -479,13 +462,7 @@ const EMPHASIS_PRESETS: ReadonlyArray<PresetSpec> = [
     emitBody: (a, h) => {
       const dur = a.durationMs ?? 700;
       return h.childTnLst([
-        h.anim(
-          a.targetCNvPrId,
-          "style.color",
-          dur,
-          { from: "#000000", to: "#FF0000" },
-          { calcmode: "lin" }
-        ),
+        h.anim(a.targetCNvPrId, "style.color", dur, { from: "#000000", to: "#FF0000" }, { calcmode: "lin" }),
       ]);
     },
   },
@@ -794,10 +771,7 @@ const PRESETS_BY_CATEGORY_PRESET = new Map<string, PresetSpec>(
 );
 
 /** Look up a spec by `(presetClass, presetId)`. Used by the parser. */
-export function findPresetByOoxmlIds(
-  presetClass: string,
-  presetId: number
-): PresetSpec | undefined {
+export function findPresetByOoxmlIds(presetClass: string, presetId: number): PresetSpec | undefined {
   // Custom motion-path collides with `path/1`; the parser distinguishes
   // the `custom` variant only when the path is user-specified, which we
   // can't tell from the tuple alone. Default to the typed `line` preset
@@ -807,10 +781,7 @@ export function findPresetByOoxmlIds(
 }
 
 /** Look up a spec by `(category, preset)`. Used by the serializer / UI. */
-export function findPreset(
-  category: AnimationCategory,
-  preset: AnimationPreset
-): PresetSpec | undefined {
+export function findPreset(category: AnimationCategory, preset: AnimationPreset): PresetSpec | undefined {
   return PRESETS_BY_CATEGORY_PRESET.get(`${category}:${preset}`);
 }
 

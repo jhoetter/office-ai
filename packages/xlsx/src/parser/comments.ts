@@ -113,10 +113,7 @@ function extractTextElementForComment(
   const refEsc = escapeForRegex(ref);
   const idEsc = authorId !== undefined ? escapeForRegex(authorId) : undefined;
   const idAttrPart = idEsc !== undefined ? `\\s+authorId="${idEsc}"` : "";
-  const re = new RegExp(
-    `<comment\\s+ref="${refEsc}"${idAttrPart}[^>]*>([\\s\\S]*?)<\\/comment>`,
-    "g"
-  );
+  const re = new RegExp(`<comment\\s+ref="${refEsc}"${idAttrPart}[^>]*>([\\s\\S]*?)<\\/comment>`, "g");
   const m = re.exec(commentsXml);
   if (!m) return undefined;
   const inner = m[1] ?? "";

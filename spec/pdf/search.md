@@ -20,7 +20,7 @@ typed model:
 ```typescript
 export interface PdfPage {
   // …
-  readonly text: string;          // best-effort reading-order projection
+  readonly text: string; // best-effort reading-order projection
   readonly hasTextLayer: boolean;
 }
 ```
@@ -40,21 +40,21 @@ parser re-reads the page and refreshes the index.
 ```typescript
 export interface PdfSearchSpec {
   readonly query: string;
-  readonly caseSensitive?: boolean;     // default false
-  readonly regex?: boolean;             // default false; query is treated as a regex
-  readonly wholeWord?: boolean;         // default false; wraps query in \b…\b
+  readonly caseSensitive?: boolean; // default false
+  readonly regex?: boolean; // default false; query is treated as a regex
+  readonly wholeWord?: boolean; // default false; wraps query in \b…\b
   readonly pageRange?: {
-    readonly start: number;             // 1-indexed inclusive
+    readonly start: number; // 1-indexed inclusive
     readonly end: number;
   };
 }
 
 export interface PdfSearchResult {
   readonly pageNumber: number;
-  readonly start: number;               // char offset into PdfPage.text
+  readonly start: number; // char offset into PdfPage.text
   readonly end: number;
-  readonly preview: string;             // ±40 chars around the match, with ellipsis
-  readonly match: string;               // exact matched substring
+  readonly preview: string; // ±40 chars around the match, with ellipsis
+  readonly match: string; // exact matched substring
 }
 ```
 
@@ -90,7 +90,7 @@ The search panel in `PdfSidebar` shows:
 - A virtualized list of matches: each row shows page number, preview
   with the match bolded, and click-to-jump.
 - Prev / next buttons (`F3` / `Shift+F3` keyboard) that scroll the
-  page into view and highlight the *current* hit with a brighter
+  page into view and highlight the _current_ hit with a brighter
   background.
 
 The header search input (Ctrl+F) is a compact version with the
@@ -101,7 +101,7 @@ sidebar.
 
 Match highlighting splits affected `<span>`s at the match boundaries
 and adds `class="pdf-search-hit"` to the match characters. The
-*current* hit additionally gets `class="pdf-search-hit current"` and
+_current_ hit additionally gets `class="pdf-search-hit current"` and
 auto-scrolls into view. Detail:
 [`text-layer.md` § Search-hit highlighting](./text-layer.md).
 
@@ -169,20 +169,20 @@ piping. `--format md` emits a Markdown table.
 
 ## Performance budgets
 
-| Metric                                          | Target           |
-| ----------------------------------------------- | ---------------- |
-| First hit on 500-page text-heavy document       | < 200 ms p95     |
-| All hits on 500-page text-heavy document        | < 800 ms p95     |
-| First hit on 1000-page document, regex query    | < 500 ms p95     |
-| Memory overhead per page (in `PdfPage.text`)    | ~3-5 KB typical  |
-| Parse-time cost of building the index           | already amortized into `getTextContent()` |
+| Metric                                       | Target                                    |
+| -------------------------------------------- | ----------------------------------------- |
+| First hit on 500-page text-heavy document    | < 200 ms p95                              |
+| All hits on 500-page text-heavy document     | < 800 ms p95                              |
+| First hit on 1000-page document, regex query | < 500 ms p95                              |
+| Memory overhead per page (in `PdfPage.text`) | ~3-5 KB typical                           |
+| Parse-time cost of building the index        | already amortized into `getTextContent()` |
 
 ## Failure modes
 
-| Case                                          | Handling                                                  |
-| --------------------------------------------- | --------------------------------------------------------- |
-| Invalid regex                                 | Throw `pdf:search invalid pattern: <message>`; UI surfaces an inline error. |
-| Empty query                                   | Returns `[]` immediately; no UI noise.                    |
-| Query in pure-scan PDF (no text layer)        | Returns `[]` for all pages with `hasTextLayer === false`; banner offers OCR. |
-| Page range out of bounds                      | Clamped to `[1, numPages]`; no error.                     |
-| Regex with catastrophic backtracking          | Worker timeout at 5 s; user sees "Search took too long; refine your query." |
+| Case                                   | Handling                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| Invalid regex                          | Throw `pdf:search invalid pattern: <message>`; UI surfaces an inline error.  |
+| Empty query                            | Returns `[]` immediately; no UI noise.                                       |
+| Query in pure-scan PDF (no text layer) | Returns `[]` for all pages with `hasTextLayer === false`; banner offers OCR. |
+| Page range out of bounds               | Clamped to `[1, numPages]`; no error.                                        |
+| Regex with catastrophic backtracking   | Worker timeout at 5 s; user sees "Search took too long; refine your query."  |

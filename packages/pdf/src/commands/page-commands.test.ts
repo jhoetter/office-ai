@@ -53,9 +53,9 @@ describe("rotatePagesHandler", () => {
 
   it("rejects deltas that are not multiples of 90", () => {
     const snap = makeSnapshot(2);
-    expect(() =>
-      rotatePagesHandler.apply(snap, { pages: [1], delta: 45 as unknown as 90 }, ctx),
-    ).toThrow(/multiple of 90/);
+    expect(() => rotatePagesHandler.apply(snap, { pages: [1], delta: 45 as unknown as 90 }, ctx)).toThrow(
+      /multiple of 90/
+    );
   });
 
   it("rejects pages that are out of range", () => {
@@ -77,7 +77,11 @@ describe("reorderPagesHandler", () => {
   it("reorders pages and renumbers them", () => {
     const snap = makeSnapshot(3);
     const { next } = reorderPagesHandler.apply(snap, { order: [3, 1, 2] }, ctx);
-    expect(next.root.pages.map((p) => p.text)).toEqual(["page 3 content", "page 1 content", "page 2 content"]);
+    expect(next.root.pages.map((p) => p.text)).toEqual([
+      "page 3 content",
+      "page 1 content",
+      "page 2 content",
+    ]);
     expect(next.root.pages.map((p) => p.pageNumber)).toEqual([1, 2, 3]);
   });
 

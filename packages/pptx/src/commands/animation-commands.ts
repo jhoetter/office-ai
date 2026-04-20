@@ -162,8 +162,7 @@ export const setShapeAnimationHandler: CommandHandler<SetShapeAnimationPayload, 
     }
     const current = slide.animations[idx]!;
     const nextCategory: AnimationCategory = payload.category ?? current.category;
-    const nextPreset: AnimationPreset =
-      (payload.preset as AnimationPreset | undefined) ?? current.preset;
+    const nextPreset: AnimationPreset = (payload.preset as AnimationPreset | undefined) ?? current.preset;
     if (payload.category && !payload.preset) {
       throw makeError("invalid-payload", "category change requires explicit preset");
     }
@@ -195,11 +194,7 @@ export const setShapeAnimationHandler: CommandHandler<SetShapeAnimationPayload, 
       throw makeError("no-op", "animation already matches the requested state");
     }
 
-    const newAnimations = [
-      ...slide.animations.slice(0, idx),
-      nextAnim,
-      ...slide.animations.slice(idx + 1),
-    ];
+    const newAnimations = [...slide.animations.slice(0, idx), nextAnim, ...slide.animations.slice(idx + 1)];
     const nextSlide = dropTimingTail({ ...slide, animations: newAnimations });
 
     const root = withSlide(snapshot.root, payload.slideIndex, () => nextSlide);

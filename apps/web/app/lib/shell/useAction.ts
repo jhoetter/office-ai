@@ -28,10 +28,7 @@ export interface ResolvedAction {
   readonly icon?: string;
 }
 
-export function getAction(
-  catalogue: ReadonlyArray<ActionDescriptor>,
-  id: string
-): ResolvedAction {
+export function getAction(catalogue: ReadonlyArray<ActionDescriptor>, id: string): ResolvedAction {
   for (const a of catalogue) {
     if (a.id !== id) continue;
     return {
@@ -48,10 +45,7 @@ export function getAction(
   );
 }
 
-export function useAction(
-  catalogue: ReadonlyArray<ActionDescriptor>,
-  id: string
-): ResolvedAction {
+export function useAction(catalogue: ReadonlyArray<ActionDescriptor>, id: string): ResolvedAction {
   const { t } = useTranslator();
   return useMemo(() => {
     const base = getAction(catalogue, id);

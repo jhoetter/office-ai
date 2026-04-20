@@ -52,7 +52,7 @@ Payload:
 
 ```typescript
 {
-  pages: ReadonlyArray<number>;          // 1-indexed
+  pages: ReadonlyArray<number>; // 1-indexed
   delta: 90 | 180 | 270 | -90 | -180 | -270;
 }
 ```
@@ -67,7 +67,10 @@ Payload:
 Payload:
 
 ```typescript
-{ pageNumber: number; rotation: 0 | 90 | 180 | 270 }
+{
+  pageNumber: number;
+  rotation: 0 | 90 | 180 | 270;
+}
 ```
 
 Absolute set; otherwise identical to rotate-pages.
@@ -77,7 +80,9 @@ Absolute set; otherwise identical to rotate-pages.
 Payload:
 
 ```typescript
-{ order: ReadonlyArray<number> }  // permutation of 1..N
+{
+  order: ReadonlyArray<number>;
+} // permutation of 1..N
 ```
 
 - Typed model: `pages` rebuilt in the new order; `pageNumber` field
@@ -91,7 +96,9 @@ Payload:
 Payload:
 
 ```typescript
-{ pages: ReadonlyArray<number> }
+{
+  pages: ReadonlyArray<number>;
+}
 ```
 
 - Typed model: pages dropped from the array; `pageNumber` reassigned.
@@ -150,7 +157,7 @@ Payload:
 ```typescript
 {
   pages: ReadonlyArray<number> | "all";
-  margin: readonly [number, number, number, number];  // [left, top, right, bottom] in user-units
+  margin: readonly[(number, number, number, number)]; // [left, top, right, bottom] in user-units
 }
 ```
 
@@ -278,7 +285,7 @@ Opt-in only, via `agent.exportFile({ rewrite: true })` or
 - Re-compresses streams.
 - **Breaks digital signatures** (the byte range covered by `/ByteRange`
   no longer exists). The Mutation carries `warning:
-  "signature-broken-on-rewrite"`.
+"signature-broken-on-rewrite"`.
 - The viewer surfaces a confirmation dialog before producing
   rewrite output.
 
@@ -294,12 +301,12 @@ Before applying any edit on a signed PDF, the handler:
 
 ## Failure modes
 
-| Failure                                  | Handling                                                        |
-| ---------------------------------------- | --------------------------------------------------------------- |
+| Failure                                  | Handling                                                                   |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
 | pdf-lib throws on `loadDocument`         | Mutation rejected with `error: "parse-failed"`; original buffer untouched. |
-| `pages` payload contains out-of-range N  | Rejected with `error: "invalid-page-range"`.                    |
-| `order` payload not a valid permutation  | Rejected with `error: "invalid-permutation"`.                   |
-| Encrypted PDF without password           | Rejected with `error: "password-required"`; UI prompts.         |
-| Source PDF for `insert-pages` fails open | Rejected with `error: "source-parse-failed"`.                   |
-| Watermark image bytes corrupt            | Rejected with `error: "image-decode-failed"`.                   |
-| Disk full on output write (CLI)          | Reported with `error: "io-failed"`; partial output cleaned up.  |
+| `pages` payload contains out-of-range N  | Rejected with `error: "invalid-page-range"`.                               |
+| `order` payload not a valid permutation  | Rejected with `error: "invalid-permutation"`.                              |
+| Encrypted PDF without password           | Rejected with `error: "password-required"`; UI prompts.                    |
+| Source PDF for `insert-pages` fails open | Rejected with `error: "source-parse-failed"`.                              |
+| Watermark image bytes corrupt            | Rejected with `error: "image-decode-failed"`.                              |
+| Disk full on output write (CLI)          | Reported with `error: "io-failed"`; partial output cleaned up.             |

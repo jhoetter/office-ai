@@ -6,7 +6,7 @@ import type { AddBookmarkPayload } from "./payloads.js";
 const insertChild = (
   outline: ReadonlyArray<PdfOutlineNode>,
   parentId: string,
-  child: PdfOutlineNode,
+  child: PdfOutlineNode
 ): { next: PdfOutlineNode[]; inserted: boolean } => {
   const out: PdfOutlineNode[] = [];
   let inserted = false;

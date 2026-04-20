@@ -12,12 +12,7 @@
 
 import { ooxml } from "@officeai/core";
 import { buildChartGrid, buildEmbeddedXlsx } from "@officeai/xlsx";
-import type {
-  ChartDrawing,
-  ChartPart,
-  DocxSnapshot,
-  Relationship,
-} from "../model/types.js";
+import type { ChartDrawing, ChartPart, DocxSnapshot, Relationship } from "../model/types.js";
 import { DocxSerializeError } from "./errors.js";
 
 const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -185,10 +180,7 @@ export function chartRelTargetFor(chartPartPath: string): string {
 }
 
 /** True iff `rels` already advertises a relationship pointing at `target`. */
-export function findChartRel(
-  rels: ReadonlyArray<Relationship>,
-  target: string
-): Relationship | undefined {
+export function findChartRel(rels: ReadonlyArray<Relationship>, target: string): Relationship | undefined {
   return rels.find(
     (r) =>
       r.type === "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" &&

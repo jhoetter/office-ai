@@ -17,7 +17,7 @@ This is already very close to the Word "Home" tab. The only material gripe is th
 
 ### Other observations
 
-- "Show formatting marks" sits inside the lists cluster but is conceptually a *view* toggle, not an *edit*. Belongs next to the (future) ruler / page-grid toggles in a "View" group.
+- "Show formatting marks" sits inside the lists cluster but is conceptually a _view_ toggle, not an _edit_. Belongs next to the (future) ruler / page-grid toggles in a "View" group.
 - The trailing `doc-info` strip ("N paragraphs · rev N · N comments") repeats information the status bar already shows. Candidate for removal once the status bar carries the equivalent.
 
 ---
@@ -30,7 +30,7 @@ Toolbar header → font/format → number formats → alignment → borders/fill
 
 ### Fixed
 
-- **Formula-reference picking hint** in the status bar. When the formula bar is open (`= …` draft), the status bar now surfaces a high-contrast pill: `Click cells to insert reference · Esc to cancel`. Previously, users routinely thought clicking a cell would *deselect* the formula draft when in fact it inserts a reference — a [classic Excel onboarding stumble][1]. Translatable via `xlsx.selection.formulaPickHint`.
+- **Formula-reference picking hint** in the status bar. When the formula bar is open (`= …` draft), the status bar now surfaces a high-contrast pill: `Click cells to insert reference · Esc to cancel`. Previously, users routinely thought clicking a cell would _deselect_ the formula draft when in fact it inserts a reference — a [classic Excel onboarding stumble][1]. Translatable via `xlsx.selection.formulaPickHint`.
 
 ### Backlog
 

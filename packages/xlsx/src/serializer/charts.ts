@@ -6,15 +6,13 @@ import type { ChartKind, SheetChart } from "../model/types.js";
  * both require this `<Override>` entry — without it the chart parts
  * are loaded as opaque XML and the chart goes invisible.
  */
-export const CHART_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+export const CHART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 
 /**
  * Relationship type for `xl/drawings/drawingN.xml` → `xl/charts/chartN.xml`.
  * Same `relationships/chart` namespace as Office uses everywhere.
  */
-export const CHART_REL_TYPE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+export const CHART_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 
 const DRAWINGML_CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -77,9 +75,7 @@ export function serializeChartPart(chart: SheetChart, ownerSheetName?: string): 
   for (let s = 0; s < seriesCount; s++) {
     const col = dataStartCol + s;
     const valuesRange = `${sheet}!${a1(dataStartRow, col)}:${a1(endRow, col)}`;
-    const titleRef = chart.hasHeaderRow
-      ? `${sheet}!${a1(startRow, col)}`
-      : undefined;
+    const titleRef = chart.hasHeaderRow ? `${sheet}!${a1(startRow, col)}` : undefined;
     const categoriesRef = chart.hasCategoryColumn
       ? `${sheet}!${a1(dataStartRow, startCol)}:${a1(endRow, startCol)}`
       : undefined;
@@ -203,9 +199,7 @@ function buildPlotArea(kind: ChartKind, series: ReadonlyArray<SeriesSpec>): stri
 }
 
 function buildSeries(kind: ChartKind, s: SeriesSpec): string {
-  const titleXml = s.titleRef
-    ? `<c:tx><c:strRef><c:f>${escapeXml(s.titleRef)}</c:f></c:strRef></c:tx>`
-    : "";
+  const titleXml = s.titleRef ? `<c:tx><c:strRef><c:f>${escapeXml(s.titleRef)}</c:f></c:strRef></c:tx>` : "";
   const catXml = s.categoriesRef
     ? `<c:cat><c:strRef><c:f>${escapeXml(s.categoriesRef)}</c:f></c:strRef></c:cat>`
     : "";
@@ -282,10 +276,7 @@ export function mintChartPartPath(
   let i = 1;
   // Walk past both committed parts and parts we're about to write
   // in this same serialize pass.
-  while (
-    container.has(`xl/charts/chart${i}.xml`) ||
-    alreadyMinted.has(`xl/charts/chart${i}.xml`)
-  ) {
+  while (container.has(`xl/charts/chart${i}.xml`) || alreadyMinted.has(`xl/charts/chart${i}.xml`)) {
     i++;
   }
   return `xl/charts/chart${i}.xml`;

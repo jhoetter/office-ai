@@ -39,25 +39,25 @@ edge cases in [`edge-cases.md`](./edge-cases.md).
 
 ```typescript
 export type PdfFormFieldType =
-  | "text"      // /Tx
-  | "checkbox"  // /Btn with /Ff bit 16 = checkbox
-  | "radio"     // /Btn with /Ff bit 15 = radio
-  | "choice"    // /Ch combo or list
-  | "button"    // /Btn push-button
+  | "text" // /Tx
+  | "checkbox" // /Btn with /Ff bit 16 = checkbox
+  | "radio" // /Btn with /Ff bit 15 = radio
+  | "choice" // /Ch combo or list
+  | "button" // /Btn push-button
   | "signature" // /Sig
   | "unknown";
 ```
 
 Mapping to PDF `/FT` and `/Ff` flag bits:
 
-| Type        | `/FT` | `/Ff` flags                                    |
-| ----------- | ----- | ---------------------------------------------- |
-| `text`      | `/Tx` | `Multiline` (bit 13), `Password` (bit 14), `FileSelect` (bit 21), `DoNotSpellCheck` (bit 23), `RichText` (bit 26) |
-| `checkbox`  | `/Btn`| `NoToggleToOff` (bit 15) for radios, `Radio` (bit 16) — checkbox = neither set |
-| `radio`     | `/Btn`| `Radio` (bit 16) **set**, `RadiosInUnison` (bit 26) optional |
-| `choice`    | `/Ch` | `Combo` (bit 18), `Edit` (bit 19), `MultiSelect` (bit 22), `DoNotSpellCheck` (bit 23) |
-| `button`    | `/Btn`| `PushButton` (bit 17) |
-| `signature` | `/Sig`| n/a |
+| Type        | `/FT`  | `/Ff` flags                                                                                                       |
+| ----------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `text`      | `/Tx`  | `Multiline` (bit 13), `Password` (bit 14), `FileSelect` (bit 21), `DoNotSpellCheck` (bit 23), `RichText` (bit 26) |
+| `checkbox`  | `/Btn` | `NoToggleToOff` (bit 15) for radios, `Radio` (bit 16) — checkbox = neither set                                    |
+| `radio`     | `/Btn` | `Radio` (bit 16) **set**, `RadiosInUnison` (bit 26) optional                                                      |
+| `choice`    | `/Ch`  | `Combo` (bit 18), `Edit` (bit 19), `MultiSelect` (bit 22), `DoNotSpellCheck` (bit 23)                             |
+| `button`    | `/Btn` | `PushButton` (bit 17)                                                                                             |
+| `signature` | `/Sig` | n/a                                                                                                               |
 
 `unknown` is a defensive fallback for malformed forms.
 

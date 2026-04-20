@@ -3,7 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles } from "lucide-react";
+import {
+  BookOpen,
+  FileSpreadsheet,
+  FileText,
+  FolderOpen,
+  Loader2,
+  Plus,
+  Presentation,
+  Sparkles,
+} from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 import { openFile } from "@/lib/files/file-service";
@@ -64,33 +73,35 @@ const NEW_ACTIONS: ReadonlyArray<NewAction> = [
   },
 ];
 
-const KIND_META: Record<Kind, { editorPath: string; icon: typeof FileText; labelKey: string; accent: string }> =
-  {
-    docx: {
-      editorPath: "/editor",
-      icon: FileText,
-      labelKey: "common.kindDocx",
-      accent: "text-[var(--office-blue)]",
-    },
-    xlsx: {
-      editorPath: "/xlsx-editor",
-      icon: FileSpreadsheet,
-      labelKey: "common.kindXlsx",
-      accent: "text-emerald-600 dark:text-emerald-400",
-    },
-    pptx: {
-      editorPath: "/pptx-editor",
-      icon: Presentation,
-      labelKey: "common.kindPptx",
-      accent: "text-orange-600 dark:text-orange-400",
-    },
-    pdf: {
-      editorPath: "/pdf-viewer",
-      icon: BookOpen,
-      labelKey: "common.kindPdf",
-      accent: "text-rose-600 dark:text-rose-400",
-    },
-  };
+const KIND_META: Record<
+  Kind,
+  { editorPath: string; icon: typeof FileText; labelKey: string; accent: string }
+> = {
+  docx: {
+    editorPath: "/editor",
+    icon: FileText,
+    labelKey: "common.kindDocx",
+    accent: "text-[var(--office-blue)]",
+  },
+  xlsx: {
+    editorPath: "/xlsx-editor",
+    icon: FileSpreadsheet,
+    labelKey: "common.kindXlsx",
+    accent: "text-emerald-600 dark:text-emerald-400",
+  },
+  pptx: {
+    editorPath: "/pptx-editor",
+    icon: Presentation,
+    labelKey: "common.kindPptx",
+    accent: "text-orange-600 dark:text-orange-400",
+  },
+  pdf: {
+    editorPath: "/pdf-viewer",
+    icon: BookOpen,
+    labelKey: "common.kindPdf",
+    accent: "text-rose-600 dark:text-rose-400",
+  },
+};
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -191,7 +202,9 @@ export default function HomePage() {
       </section>
 
       <section className="mt-8">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-tertiary">{t("home.createNew")}</h2>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-tertiary">
+          {t("home.createNew")}
+        </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {NEW_ACTIONS.map((action) => {
             const Icon = action.icon;
@@ -229,7 +242,10 @@ export default function HomePage() {
               <span className="text-sm font-medium text-foreground">{t("home.openPdf")}</span>
               <span className="text-xs text-secondary">{t("home.subOpenPdf")}</span>
             </div>
-            <FolderOpen size={16} className="text-tertiary transition group-hover:text-[var(--office-blue)]" />
+            <FolderOpen
+              size={16}
+              className="text-tertiary transition group-hover:text-[var(--office-blue)]"
+            />
           </button>
         </div>
       </section>

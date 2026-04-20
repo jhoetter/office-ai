@@ -6,11 +6,7 @@ import { CommandBus, type SerializedCommand } from "@officeai/core";
 import { parseXlsx } from "../parser/parse.js";
 import { allXlsxHandlers } from "../commands/registry.js";
 import { serializeXlsx } from "./serialize.js";
-import {
-  CHART_CONTENT_TYPE,
-  CHART_REL_TYPE,
-  serializeChartPart,
-} from "./charts.js";
+import { CHART_CONTENT_TYPE, CHART_REL_TYPE, serializeChartPart } from "./charts.js";
 import type { ChartKind, SheetChart, XlsxSnapshot } from "../model/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));

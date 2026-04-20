@@ -47,9 +47,7 @@ export function LocaleToggle({ className, compact }: LocaleToggleProps) {
     <div
       role="group"
       aria-label="Language"
-      className={
-        "inline-flex items-center rounded-md bg-hover p-0.5 gap-0.5 " + (className ?? "")
-      }
+      className={"inline-flex items-center rounded-md bg-hover p-0.5 gap-0.5 " + (className ?? "")}
     >
       {OPTIONS.map(({ value, label, title }) => {
         const active = locale === value;
@@ -62,9 +60,7 @@ export function LocaleToggle({ className, compact }: LocaleToggleProps) {
             title={title}
             className={
               "flex h-6 items-center justify-center rounded px-2 text-[11px] font-medium transition-colors duration-150 " +
-              (active
-                ? "bg-background text-foreground shadow-sm"
-                : "text-secondary hover:text-foreground")
+              (active ? "bg-background text-foreground shadow-sm" : "text-secondary hover:text-foreground")
             }
           >
             {label}

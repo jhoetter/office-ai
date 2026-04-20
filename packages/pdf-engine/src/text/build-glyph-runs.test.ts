@@ -46,10 +46,6 @@ describe("buildGlyphRuns", () => {
   });
 
   it("skips empty items", () => {
-    expect(
-      buildGlyphRuns([
-        { str: "", transform: [1, 0, 0, 1, 0, 0], width: 0, height: 0 },
-      ]),
-    ).toEqual([]);
+    expect(buildGlyphRuns([{ str: "", transform: [1, 0, 0, 1, 0, 0], width: 0, height: 0 }])).toEqual([]);
   });
 });

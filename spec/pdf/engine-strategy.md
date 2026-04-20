@@ -23,18 +23,18 @@ The decision is also recorded as the as-built shape in
 
 ## Why PDF.js as default
 
-| Concern                       | PDF.js                          | PDFium-WASM                          |
-| ----------------------------- | ------------------------------- | ------------------------------------ |
-| License                       | Apache 2.0                      | Apache 2.0 wrapper / BSD-3 engine    |
-| Bundle (gzipped)              | ≈350 KB                         | ≈3.5 MB lazy                         |
-| First paint (50 MB doc)       | < 600 ms                        | > 1.5 s (WASM boot)                  |
-| Worker isolation              | First-class, ships with library | Yes (lazy boot, opt-in)              |
-| Text-layer extraction         | Mature `getTextContent()`       | Lower-level; we'd build the layer    |
-| AcroForm widget layer         | Mature                          | Lower-level; we'd build widgets      |
-| Struct-tree-layer (a11y)      | Mature                          | Available; we'd render               |
-| Range-request streaming       | Yes                             | No                                   |
-| Headless Node renderer        | `pdfjs-dist/legacy`             | Available; same WASM as browser      |
-| Fidelity on edge fonts/colors | Approximate; substitutes        | Pixel-correct                        |
+| Concern                       | PDF.js                          | PDFium-WASM                       |
+| ----------------------------- | ------------------------------- | --------------------------------- |
+| License                       | Apache 2.0                      | Apache 2.0 wrapper / BSD-3 engine |
+| Bundle (gzipped)              | ≈350 KB                         | ≈3.5 MB lazy                      |
+| First paint (50 MB doc)       | < 600 ms                        | > 1.5 s (WASM boot)               |
+| Worker isolation              | First-class, ships with library | Yes (lazy boot, opt-in)           |
+| Text-layer extraction         | Mature `getTextContent()`       | Lower-level; we'd build the layer |
+| AcroForm widget layer         | Mature                          | Lower-level; we'd build widgets   |
+| Struct-tree-layer (a11y)      | Mature                          | Available; we'd render            |
+| Range-request streaming       | Yes                             | No                                |
+| Headless Node renderer        | `pdfjs-dist/legacy`             | Available; same WASM as browser   |
+| Fidelity on edge fonts/colors | Approximate; substitutes        | Pixel-correct                     |
 
 Two factors drive the default:
 
@@ -68,11 +68,11 @@ These are the exact signals fed into `selectEngine()`.
 ```typescript
 export interface EngineSelectionHints {
   hasUncommonColorSpace?: boolean; // DeviceN/NChannel/Separation/Lab in /ColorSpace
-  hasCustomCMap?: boolean;         // non-standard /CIDSystemInfo
-  hasType3Fonts?: boolean;         // /Font/Subtype /Type3
-  linearized?: boolean;            // informational; not a fallback trigger by itself
-  inPdfiumAllowlist?: boolean;     // curated allowlist hit
-  userPrefersFidelity?: boolean;   // explicit user opt-in
+  hasCustomCMap?: boolean; // non-standard /CIDSystemInfo
+  hasType3Fonts?: boolean; // /Font/Subtype /Type3
+  linearized?: boolean; // informational; not a fallback trigger by itself
+  inPdfiumAllowlist?: boolean; // curated allowlist hit
+  userPrefersFidelity?: boolean; // explicit user opt-in
 }
 
 export const selectEngine = (hints: EngineSelectionHints = {}): PdfEngineKind => {
@@ -141,16 +141,16 @@ engine packages.
 
 ## Bundle-size budget
 
-| Layer                                | Budget (gzipped) |
-| ------------------------------------ | ---------------- |
-| `packages/pdf-engine` shell          | < 5 KB           |
-| `pdfjs-dist` worker + main           | < 400 KB         |
-| `@embedpdf/pdfium` (lazy)            | < 4 MB           |
-| `@officeai/pdf` (model + parser)     | < 50 KB          |
-| `@officeai/pdf-edit`                 | < 30 KB          |
-| `@officeai/pdf-annotations`          | < 30 KB          |
-| `@officeai/pdf-forms`                | < 20 KB          |
-| `@officeai/pdf-ocr` (lazy)           | < 1 MB (tesseract)|
+| Layer                            | Budget (gzipped)   |
+| -------------------------------- | ------------------ |
+| `packages/pdf-engine` shell      | < 5 KB             |
+| `pdfjs-dist` worker + main       | < 400 KB           |
+| `@embedpdf/pdfium` (lazy)        | < 4 MB             |
+| `@officeai/pdf` (model + parser) | < 50 KB            |
+| `@officeai/pdf-edit`             | < 30 KB            |
+| `@officeai/pdf-annotations`      | < 30 KB            |
+| `@officeai/pdf-forms`            | < 20 KB            |
+| `@officeai/pdf-ocr` (lazy)       | < 1 MB (tesseract) |
 
 CI gate: `bundlesize` config in the web app fails the build on
 regressions. PDFium and tesseract are excluded from the eager-load

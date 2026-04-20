@@ -53,11 +53,26 @@ const ALLOWED_INTERNAL_DEPS = {
     "@officeai/comments",
     "@officeai/realtime",
   ],
-  "@officeai/docx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
+  // docx/pptx may depend on xlsx for embedded-spreadsheet support
+  // (chart data parts in docx; native OLE-spreadsheet shapes in pptx).
+  // The dep is one-way — xlsx never reaches back into docx/pptx.
+  "@officeai/docx": [
+    "@officeai/core",
+    "@officeai/text-formatting",
+    "@officeai/comments",
+    "@officeai/xlsx",
+  ],
   "@officeai/xlsx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
-  "@officeai/pptx": ["@officeai/core", "@officeai/text-formatting", "@officeai/comments"],
+  "@officeai/pptx": [
+    "@officeai/core",
+    "@officeai/text-formatting",
+    "@officeai/comments",
+    "@officeai/xlsx",
+  ],
   "@officeai/pdf-engine": [],
-  "@officeai/pdf": ["@officeai/core", "@officeai/pdf-engine"],
+  // pdf depends on pdf-annotations for the unified comment/annotation
+  // surface exposed at the top-level pdf package.
+  "@officeai/pdf": ["@officeai/core", "@officeai/pdf-engine", "@officeai/pdf-annotations"],
   "@officeai/pdf-edit": ["@officeai/pdf"],
   "@officeai/pdf-annotations": ["@officeai/pdf"],
   "@officeai/pdf-forms": ["@officeai/pdf"],

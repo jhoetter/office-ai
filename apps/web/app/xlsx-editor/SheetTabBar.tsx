@@ -214,7 +214,9 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
                           />
                         ))}
                         {dots.length > 3 ? (
-                          <span className="ml-1 text-[10px] font-normal text-secondary">+{dots.length - 3}</span>
+                          <span className="ml-1 text-[10px] font-normal text-secondary">
+                            +{dots.length - 3}
+                          </span>
                         ) : null}
                       </span>
                     );

@@ -25,12 +25,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Command as CommanderCommand } from "commander";
 import { PdfAgent } from "@officeai/pdf";
-import type {
-  PdfAnnotation,
-  PdfFormField,
-  PdfOutlineNode,
-  PdfSnapshot,
-} from "@officeai/pdf";
+import type { PdfAnnotation, PdfFormField, PdfOutlineNode, PdfSnapshot } from "@officeai/pdf";
 import {
   addPageNumbers,
   addWatermark,
@@ -163,8 +158,7 @@ export function projectAnnotations(
   filter?: { readonly page?: number }
 ): PdfAnnotationsProjection {
   const all = snapshot.root.annotations;
-  const annotations =
-    filter?.page !== undefined ? all.filter((a) => a.pageNumber === filter.page) : all;
+  const annotations = filter?.page !== undefined ? all.filter((a) => a.pageNumber === filter.page) : all;
   return { schema: "office-agent/pdf-read-annotations@1", annotations };
 }
 
@@ -286,10 +280,7 @@ function registerReadCommands(pdf: CommanderCommand, io: IO): void {
         const agent = await PdfAgent.fromBuffer(bytes);
         writeJson(
           io,
-          projectAnnotations(
-            agent.getSnapshot(),
-            opts.page !== undefined ? { page: opts.page } : undefined
-          )
+          projectAnnotations(agent.getSnapshot(), opts.page !== undefined ? { page: opts.page } : undefined)
         );
       });
     });
@@ -390,9 +381,7 @@ function registerMutateCommands(pdf: CommanderCommand, io: IO): void {
 
   pdf
     .command("reorder-pages <file>")
-    .description(
-      "Reorder pages to a new permutation of 1..N. Schema: office-agent/pdf-reorder-pages@1."
-    )
+    .description("Reorder pages to a new permutation of 1..N. Schema: office-agent/pdf-reorder-pages@1.")
     .requiredOption("--order <list>", "Comma-separated 1-indexed permutation (e.g. 3,1,2)")
     .requiredOption("--out <path>", "Output PDF path")
     .action(async (file: string, opts: { order: string; out: string }) => {
@@ -424,9 +413,7 @@ function registerMutateCommands(pdf: CommanderCommand, io: IO): void {
 
   pdf
     .command("merge <a> <b> [more...]")
-    .description(
-      "Concatenate two-or-more PDFs into a single document. Schema: office-agent/pdf-merge@1."
-    )
+    .description("Concatenate two-or-more PDFs into a single document. Schema: office-agent/pdf-merge@1.")
     .requiredOption("--out <path>", "Output PDF path")
     .action(async (a: string, b: string, more: string[], opts: { out: string }) => {
       await pdfAction(io, async () => {
@@ -638,16 +625,9 @@ function registerMutateCommands(pdf: CommanderCommand, io: IO): void {
             ...(opts.margin !== undefined ? { margin: opts.margin } : {}),
             ...(opts.format ? { format: opts.format } : {}),
           });
-          await writeMutationOutput(
-            io,
-            "office-agent/pdf-add-page-numbers@1",
-            file,
-            opts.out,
-            out,
-            {
-              summary: `added page numbers (position=${position ?? "bottom-center"})`,
-            }
-          );
+          await writeMutationOutput(io, "office-agent/pdf-add-page-numbers@1", file, opts.out, out, {
+            summary: `added page numbers (position=${position ?? "bottom-center"})`,
+          });
         });
       }
     );
@@ -658,10 +638,7 @@ function registerMutateCommands(pdf: CommanderCommand, io: IO): void {
       "Crop selected pages to a rectangle expressed in PDF user units (lower-left origin). Schema: office-agent/pdf-crop-pages@1."
     )
     .requiredOption("--pages <list>", "Comma-separated 1-indexed pages (or 'all')")
-    .requiredOption(
-      "--rect <x1,y1,x2,y2>",
-      'Crop rectangle in PDF user units, e.g. "50,50,562,742"'
-    )
+    .requiredOption("--rect <x1,y1,x2,y2>", 'Crop rectangle in PDF user units, e.g. "50,50,562,742"')
     .requiredOption("--out <path>", "Output PDF path")
     .action(async (file: string, opts: { pages: string; rect: string; out: string }) => {
       await pdfAction(io, async () => {
@@ -722,9 +699,7 @@ function registerMutateCommands(pdf: CommanderCommand, io: IO): void {
 
   pdf
     .command("reset-form <file>")
-    .description(
-      "Reset every form field to its empty/default value. Schema: office-agent/pdf-reset-form@1."
-    )
+    .description("Reset every form field to its empty/default value. Schema: office-agent/pdf-reset-form@1.")
     .requiredOption("--out <path>", "Output PDF path")
     .action(async (file: string, opts: { out: string }) => {
       await pdfAction(io, async () => {
@@ -744,27 +719,18 @@ function registerMutateCommands(pdf: CommanderCommand, io: IO): void {
     .option("--lang <code>", "Tesseract language code(s), e.g. 'eng' or 'deu+eng' (default eng+deu)")
     .option("--dpi <n>", "Render DPI used to rasterize each page (default 200)", parseIntArg)
     .requiredOption("--out <path>", "Output PDF path")
-    .action(
-      async (file: string, opts: { lang?: string; dpi?: number; out: string }) => {
-        await pdfAction(io, async () => {
-          const bytes = await readPdfBytes(file);
-          const out = await addTextLayer(bytes, {
-            ...(opts.lang ? { lang: opts.lang } : {}),
-            ...(opts.dpi !== undefined ? { dpi: opts.dpi } : {}),
-          });
-          await writeMutationOutput(
-            io,
-            "office-agent/pdf-add-text-layer@1",
-            file,
-            opts.out,
-            out,
-            {
-              summary: `added OCR text layer (lang=${opts.lang ?? "eng+deu"})`,
-            }
-          );
+    .action(async (file: string, opts: { lang?: string; dpi?: number; out: string }) => {
+      await pdfAction(io, async () => {
+        const bytes = await readPdfBytes(file);
+        const out = await addTextLayer(bytes, {
+          ...(opts.lang ? { lang: opts.lang } : {}),
+          ...(opts.dpi !== undefined ? { dpi: opts.dpi } : {}),
         });
-      }
-    );
+        await writeMutationOutput(io, "office-agent/pdf-add-text-layer@1", file, opts.out, out, {
+          summary: `added OCR text layer (lang=${opts.lang ?? "eng+deu"})`,
+        });
+      });
+    });
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────
@@ -887,13 +853,7 @@ function parseRect(raw: string): readonly [number, number, number, number] {
 
 function parsePagePosition(
   raw: string
-):
-  | "top-left"
-  | "top-center"
-  | "top-right"
-  | "bottom-left"
-  | "bottom-center"
-  | "bottom-right" {
+): "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right" {
   switch (raw) {
     case "top-left":
     case "top-center":
@@ -940,10 +900,7 @@ async function readJsonValueArg(raw: string): Promise<unknown> {
     try {
       return JSON.parse(text) as unknown;
     } catch (err) {
-      throw new PdfError(
-        "invalid-values",
-        `--values @${path}: invalid JSON (${(err as Error).message})`
-      );
+      throw new PdfError("invalid-values", `--values @${path}: invalid JSON (${(err as Error).message})`);
     }
   }
   try {

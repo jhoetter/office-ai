@@ -9,40 +9,40 @@ like the best online PDF on the public internet.
 
 ## TL;DR
 
-| Area                              | Status      | Notes                                                                                       |
-| --------------------------------- | ----------- | ------------------------------------------------------------------------------------------- |
-| Spec set (clean-room)             | ✅ shipped  | 17 docs in [`spec/pdf/`](../../../spec/pdf/) — analysis, engine, model, edit, forms, etc.   |
-| Engine layer (`@officeai/pdf-engine`) | ✅ shipped  | PDF.js as default, PDFium-WASM as lazy/auto fallback for fidelity-critical glyphs.           |
-| Document model (`@officeai/pdf`)  | ✅ shipped  | Headless `PdfAgent`, command bus, parse/serialize, search, outline, annotation registry.    |
-| Page editing (`@officeai/pdf-edit`)   | ✅ shipped  | rotate / reorder / delete / insert / split / merge / extract / crop / watermark / page numbers. |
-| Annotations (`@officeai/pdf-annotations`) | ✅ shipped  | Typed model, AP-stream writer, XFDF I/O.                                                    |
-| Forms (`@officeai/pdf-forms`)         | ✅ shipped  | AcroForm fill / flatten / reset / list-fields.                                              |
-| OCR (`@officeai/pdf-ocr`)             | ✅ shipped  | Optional `tesseract.js` adapter, peer dep, lazy-loaded.                                     |
-| Web viewer (`apps/web/app/pdf-viewer`) | ✅ shipped  | Toolbar / sidebar / virtualized canvas / dark mode / reflow / shortcuts.                    |
-| Agent CLI (`office-agent pdf …`)  | ✅ shipped  | 24 subcommands + matching `pdf_*` MCP tools.                                                |
-| i18n                              | ✅ shipped  | Full `pdf` namespace in EN + DE.                                                            |
-| Realtime presence                 | ✅ shipped  | `PdfSelection` cursor type wired through Yjs awareness + `RemotePresenceList`.              |
-| Comments                          | ✅ shipped  | New `pdf-region` `CommentAnchor` extends `@officeai/comments`.                              |
-| Fixtures + round-trip suite       | ✅ shipped  | 12 byte-stable fixture PDFs, 31 round-trip vitests.                                         |
-| Agent integration tests           | ✅ shipped  | 5 end-to-end multi-step CLI flows under `tests/agent/pdf/`.                                 |
-| Audit-roundtrip                   | ✅ shipped  | `make audit-roundtrip-pdf` — 12/12 fixtures clean, attribute-fidelity proven.              |
-| `pnpm -r typecheck`               | ✅ green    | All 18 workspace projects pass.                                                             |
-| `pnpm -r lint`                    | ✅ green    | 0 errors. Pre-existing 111 warnings in `apps/web` untouched.                                |
-| `pnpm -r test`                    | ✅ green*   | 169/169 in integration suite, all PDF unit suites pass. (`*` xlsx LibreOffice test fails in sandbox; pre-existing & unrelated.) |
+| Area                                      | Status     | Notes                                                                                                                           |
+| ----------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Spec set (clean-room)                     | ✅ shipped | 17 docs in [`spec/pdf/`](../../../spec/pdf/) — analysis, engine, model, edit, forms, etc.                                       |
+| Engine layer (`@officeai/pdf-engine`)     | ✅ shipped | PDF.js as default, PDFium-WASM as lazy/auto fallback for fidelity-critical glyphs.                                              |
+| Document model (`@officeai/pdf`)          | ✅ shipped | Headless `PdfAgent`, command bus, parse/serialize, search, outline, annotation registry.                                        |
+| Page editing (`@officeai/pdf-edit`)       | ✅ shipped | rotate / reorder / delete / insert / split / merge / extract / crop / watermark / page numbers.                                 |
+| Annotations (`@officeai/pdf-annotations`) | ✅ shipped | Typed model, AP-stream writer, XFDF I/O.                                                                                        |
+| Forms (`@officeai/pdf-forms`)             | ✅ shipped | AcroForm fill / flatten / reset / list-fields.                                                                                  |
+| OCR (`@officeai/pdf-ocr`)                 | ✅ shipped | Optional `tesseract.js` adapter, peer dep, lazy-loaded.                                                                         |
+| Web viewer (`apps/web/app/pdf-viewer`)    | ✅ shipped | Toolbar / sidebar / virtualized canvas / dark mode / reflow / shortcuts.                                                        |
+| Agent CLI (`office-agent pdf …`)          | ✅ shipped | 24 subcommands + matching `pdf_*` MCP tools.                                                                                    |
+| i18n                                      | ✅ shipped | Full `pdf` namespace in EN + DE.                                                                                                |
+| Realtime presence                         | ✅ shipped | `PdfSelection` cursor type wired through Yjs awareness + `RemotePresenceList`.                                                  |
+| Comments                                  | ✅ shipped | New `pdf-region` `CommentAnchor` extends `@officeai/comments`.                                                                  |
+| Fixtures + round-trip suite               | ✅ shipped | 12 byte-stable fixture PDFs, 31 round-trip vitests.                                                                             |
+| Agent integration tests                   | ✅ shipped | 5 end-to-end multi-step CLI flows under `tests/agent/pdf/`.                                                                     |
+| Audit-roundtrip                           | ✅ shipped | `make audit-roundtrip-pdf` — 12/12 fixtures clean, attribute-fidelity proven.                                                   |
+| `pnpm -r typecheck`                       | ✅ green   | All 18 workspace projects pass.                                                                                                 |
+| `pnpm -r lint`                            | ✅ green   | 0 errors. Pre-existing 111 warnings in `apps/web` untouched.                                                                    |
+| `pnpm -r test`                            | ✅ green\* | 169/169 in integration suite, all PDF unit suites pass. (`*` xlsx LibreOffice test fails in sandbox; pre-existing & unrelated.) |
 
 ---
 
 ## Per-phase commit log
 
-| Phase | Commit  | Title                                                                                  |
-| ----- | ------- | -------------------------------------------------------------------------------------- |
-| 0     | `1b4c8c4` | phase 0 (pdf): scaffold pdf-* packages, extend core/realtime/comments unions          |
-| A + B | `0cd3edf` | phase B (pdf): /spec/pdf/ — analysis + 17 spec docs                                    |
-| C w1+2 | (rolled in) | foundation + capability waves landed alongside phase 0 scaffolding                  |
-| —     | `12fcb1f` | fix(pdf): preserve source page identity through reorder + survive PDF.js buffer transfer |
-| C w3  | `d5c56c5` | phase C wave 3 (pdf): viewer UI under apps/web/app/pdf-viewer/ + office-agent pdf CLI |
-| C w4  | `53075c3` | phase C wave 4 (pdf): fixtures + roundtrip + agent + audit-roundtrip                  |
-| D + E | _this commit_ | phase D+E (pdf): lint cleanup, e2e smoke, night report + 10/10 demo                |
+| Phase  | Commit        | Title                                                                                    |
+| ------ | ------------- | ---------------------------------------------------------------------------------------- |
+| 0      | `1b4c8c4`     | phase 0 (pdf): scaffold pdf-\* packages, extend core/realtime/comments unions            |
+| A + B  | `0cd3edf`     | phase B (pdf): /spec/pdf/ — analysis + 17 spec docs                                      |
+| C w1+2 | (rolled in)   | foundation + capability waves landed alongside phase 0 scaffolding                       |
+| —      | `12fcb1f`     | fix(pdf): preserve source page identity through reorder + survive PDF.js buffer transfer |
+| C w3   | `d5c56c5`     | phase C wave 3 (pdf): viewer UI under apps/web/app/pdf-viewer/ + office-agent pdf CLI    |
+| C w4   | `53075c3`     | phase C wave 4 (pdf): fixtures + roundtrip + agent + audit-roundtrip                     |
+| D + E  | _this commit_ | phase D+E (pdf): lint cleanup, e2e smoke, night report + 10/10 demo                      |
 
 ---
 
@@ -168,16 +168,16 @@ binaries, exactly as scoped.
 
 ## Validation matrix (Phase D)
 
-| Gate                                 | Result            |
-| ------------------------------------ | ----------------- |
-| `pnpm -r typecheck`                  | ✅ all packages   |
-| `pnpm -r lint`                       | ✅ 0 new errors   |
-| Per-package vitests (PDF stack)      | ✅ 64/64          |
-| `@officeai/agent` (incl. `pdf-cli`)  | ✅ 102/102        |
-| `@officeai/integration-tests`        | ✅ 169/169        |
-| `make audit-roundtrip-pdf`           | ✅ 12/12 clean    |
-| `make audit-roundtrip` (full)        | ✅ all products   |
-| Web E2E spec authored                | ✅ `pdf-viewer.spec.ts` (6 cases) |
+| Gate                                | Result                            |
+| ----------------------------------- | --------------------------------- |
+| `pnpm -r typecheck`                 | ✅ all packages                   |
+| `pnpm -r lint`                      | ✅ 0 new errors                   |
+| Per-package vitests (PDF stack)     | ✅ 64/64                          |
+| `@officeai/agent` (incl. `pdf-cli`) | ✅ 102/102                        |
+| `@officeai/integration-tests`       | ✅ 169/169                        |
+| `make audit-roundtrip-pdf`          | ✅ 12/12 clean                    |
+| `make audit-roundtrip` (full)       | ✅ all products                   |
+| Web E2E spec authored               | ✅ `pdf-viewer.spec.ts` (6 cases) |
 
 The web E2E suite needs `pnpm --filter @officeai/web build` first
 (`next start` launches Playwright's `webServer`); the spec is wired but

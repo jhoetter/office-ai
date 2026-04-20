@@ -13,10 +13,7 @@ export interface AddWatermarkOptions {
   readonly pages?: ReadonlyArray<number>;
 }
 
-export const addWatermark = async (
-  buffer: Uint8Array,
-  opts: AddWatermarkOptions,
-): Promise<Uint8Array> => {
+export const addWatermark = async (buffer: Uint8Array, opts: AddWatermarkOptions): Promise<Uint8Array> => {
   const pdf = await loadPdf(buffer);
   const font = await pdf.embedFont(StandardFonts.HelveticaBold);
   const fontSize = opts.fontSize ?? 60;

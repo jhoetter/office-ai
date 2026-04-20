@@ -155,7 +155,11 @@ export const moveChartHandler: CommandHandler<MoveChartPayload, XlsxSnapshot> = 
     const nextChart: SheetChart = { ...chart, anchor: nextAnchor };
     const charts = sheet.charts.slice();
     charts[idx] = nextChart;
-    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, { ...sheet, charts }), chartDirtyPatch(sheet));
+    const next = evolveSnapshot(
+      snapshot,
+      replaceSheet(snapshot.root, { ...sheet, charts }),
+      chartDirtyPatch(sheet)
+    );
     return {
       next,
       diff: buildDiff(snapshot.revision, next.revision, [
@@ -290,18 +294,13 @@ export const updateChartHandler: CommandHandler<UpdateChartPayload, XlsxSnapshot
     if (baseTitle === undefined) delete (nextChart as { title?: string }).title;
     if (nextPalette === undefined) delete (nextChart as { palette?: string }).palette;
     if (nextShowLegend === undefined) delete (nextChart as { showLegend?: boolean }).showLegend;
-    if (nextShowDataLabels === undefined)
-      delete (nextChart as { showDataLabels?: boolean }).showDataLabels;
-    if (nextShowGridlines === undefined)
-      delete (nextChart as { showGridlines?: boolean }).showGridlines;
+    if (nextShowDataLabels === undefined) delete (nextChart as { showDataLabels?: boolean }).showDataLabels;
+    if (nextShowGridlines === undefined) delete (nextChart as { showGridlines?: boolean }).showGridlines;
     if (nextXAxisTitle === undefined) delete (nextChart as { xAxisTitle?: string }).xAxisTitle;
     if (nextYAxisTitle === undefined) delete (nextChart as { yAxisTitle?: string }).yAxisTitle;
 
     if (chartShallowEqual(chart, nextChart)) {
-      throw new CommandError(
-        "no-op",
-        `update-chart for ${payload.chartId} did not actually change anything`
-      );
+      throw new CommandError("no-op", `update-chart for ${payload.chartId} did not actually change anything`);
     }
 
     const charts = sheet.charts.slice();
@@ -368,7 +367,11 @@ export const resizeChartHandler: CommandHandler<ResizeChartPayload, XlsxSnapshot
     };
     const charts = sheet.charts.slice();
     charts[idx] = nextChart;
-    const next = evolveSnapshot(snapshot, replaceSheet(snapshot.root, { ...sheet, charts }), chartDirtyPatch(sheet));
+    const next = evolveSnapshot(
+      snapshot,
+      replaceSheet(snapshot.root, { ...sheet, charts }),
+      chartDirtyPatch(sheet)
+    );
     return {
       next,
       diff: buildDiff(snapshot.revision, next.revision, [

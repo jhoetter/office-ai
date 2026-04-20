@@ -34,9 +34,7 @@ import type { PdfEngineGlyphRun, PdfEngineTextItem } from "../types.js";
  * basis: `dx = width * a / |a|`, `dy = width * b / |a|`. Vertical
  * writing (`a==0, b!=0, c!=0, d==0`) falls out naturally.
  */
-export function buildGlyphRuns(
-  items: ReadonlyArray<PdfEngineTextItem>,
-): PdfEngineGlyphRun[] {
+export function buildGlyphRuns(items: ReadonlyArray<PdfEngineTextItem>): PdfEngineGlyphRun[] {
   const out: PdfEngineGlyphRun[] = [];
   for (const it of items) {
     if (!it.str) continue;

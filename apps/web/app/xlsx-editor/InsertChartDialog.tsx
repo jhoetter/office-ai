@@ -101,9 +101,10 @@ const PALETTE_OPTIONS: ReadonlyArray<{
  */
 export function ChartDialog(props: ChartDialogProps): ReactNode {
   const { open, mode, defaultRange, defaultKind, initial, onCancel, onSubmit } = props;
-  const seedRange = mode === "edit" ? initial?.dataRange ?? defaultRange ?? "A1:B5" : defaultRange ?? "A1:B5";
-  const seedKind: ChartKind = mode === "edit" ? initial?.kind ?? "column" : defaultKind ?? "column";
-  const seedTitle = mode === "edit" ? initial?.title ?? "" : "";
+  const seedRange =
+    mode === "edit" ? (initial?.dataRange ?? defaultRange ?? "A1:B5") : (defaultRange ?? "A1:B5");
+  const seedKind: ChartKind = mode === "edit" ? (initial?.kind ?? "column") : (defaultKind ?? "column");
+  const seedTitle = mode === "edit" ? (initial?.title ?? "") : "";
 
   const [kind, setKind] = useState<ChartKind>(seedKind);
   const [range, setRange] = useState(seedRange);
@@ -193,9 +194,9 @@ export function ChartDialog(props: ChartDialogProps): ReactNode {
         return "Pick a range of at least two cells.";
       case "no-values":
         if (validation.axis === "column") {
-          return "Selection has no value cells with these toggles — turn off \"First column contains category labels\".";
+          return 'Selection has no value cells with these toggles — turn off "First column contains category labels".';
         }
-        return "Selection has no value cells with these toggles — turn off \"First row contains series labels\".";
+        return 'Selection has no value cells with these toggles — turn off "First row contains series labels".';
     }
   })();
 
@@ -330,9 +331,7 @@ export function ChartDialog(props: ChartDialogProps): ReactNode {
             borderTop: "1px solid var(--border)",
           }}
         >
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted-foreground)" }}>
-            Appearance
-          </div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted-foreground)" }}>Appearance</div>
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Color palette</div>
@@ -383,11 +382,7 @@ export function ChartDialog(props: ChartDialogProps): ReactNode {
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                type="checkbox"
-                checked={showLegend}
-                onChange={(e) => setShowLegend(e.target.checked)}
-              />
+              <input type="checkbox" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} />
               Show legend
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

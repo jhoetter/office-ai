@@ -31,7 +31,7 @@ interface CharSlot {
 export function findInStructuredPage(
   page: StructuredPage,
   re: RegExp,
-  expectedPlain: string,
+  expectedPlain: string
 ): ReadonlyArray<StructuredSearchHit> | null {
   const slots = buildCharSlots(page);
   // The serializer-derived plain text we receive (`page.text`) is
@@ -107,11 +107,7 @@ function slotsToString(slots: ReadonlyArray<CharSlot>): string {
   return s;
 }
 
-function collectRects(
-  slots: ReadonlyArray<CharSlot>,
-  start: number,
-  end: number,
-): PdfRect[] {
+function collectRects(slots: ReadonlyArray<CharSlot>, start: number, end: number): PdfRect[] {
   const byLine = new Map<StructuredLine, { x1: number; y1: number; x2: number; y2: number }>();
   for (let i = start; i < end; i++) {
     const slot = slots[i];

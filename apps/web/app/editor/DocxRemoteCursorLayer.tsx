@@ -40,7 +40,12 @@ interface CaretRect {
   readonly name: string;
   readonly color: string;
   readonly caret: { readonly left: number; readonly top: number; readonly height: number };
-  readonly band: { readonly left: number; readonly top: number; readonly width: number; readonly height: number } | null;
+  readonly band: {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  } | null;
 }
 
 export function DocxRemoteCursorLayer(props: DocxRemoteCursorLayerProps): ReactNode {
@@ -122,7 +127,11 @@ export function DocxRemoteCursorLayer(props: DocxRemoteCursorLayerProps): ReactN
   if (rects.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-30" data-testid="docx-remote-cursor-layer" aria-hidden>
+    <div
+      className="pointer-events-none fixed inset-0 z-30"
+      data-testid="docx-remote-cursor-layer"
+      aria-hidden
+    >
       {rects.map((r) => (
         <div key={r.clientId} data-testid="docx-remote-caret" data-peer-color={r.color}>
           {r.band && (

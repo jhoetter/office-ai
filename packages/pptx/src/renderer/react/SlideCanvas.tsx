@@ -232,10 +232,7 @@ export interface SlideCanvasProps {
    * leaves the shape selected and does not fall through to text-edit
    * mode.
    */
-  readonly onShapeActivate?: (info: {
-    readonly shapeId: string;
-    readonly shape: Shape;
-  }) => void;
+  readonly onShapeActivate?: (info: { readonly shapeId: string; readonly shape: Shape }) => void;
   /**
    * When non-null, the canvas is in "draw a connector" tool mode: any
    * shape under the pointer surfaces ports (regardless of selection),
@@ -806,8 +803,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           if (sh.kind === "connector" || sh.kind === "group" || sh.kind === "opaque") continue;
           const box = shapeBoundingBox(sh);
           if (!box) continue;
-          const originDeg =
-            "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
+          const originDeg = "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
           targets.push({ id, origin: box, originDeg, shape: sh });
           if (!unionBox) {
             unionBox = box;
@@ -881,8 +877,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         // moves it as a unit and breaks the connections — the user can
         // then re-snap each endpoint by dragging the dots.
         if (sh.kind === "connector" && isResize) continue;
-        const originDeg =
-          "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
+        const originDeg = "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
         targets.push({ id, origin: box, originDeg });
       }
       if (targets.length === 0) {
@@ -980,10 +975,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         if (!rect) return;
         const cursorEmuX = (e.clientX - rect.left) * rotateDraft.emuPerPx;
         const cursorEmuY = (e.clientY - rect.top) * rotateDraft.emuPerPx;
-        const angle = Math.atan2(
-          cursorEmuY - rotateDraft.pivotY,
-          cursorEmuX - rotateDraft.pivotX
-        );
+        const angle = Math.atan2(cursorEmuY - rotateDraft.pivotY, cursorEmuX - rotateDraft.pivotX);
         setRotateDraft({
           ...rotateDraft,
           currentAngleRad: angle,
@@ -1547,9 +1539,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         {drag && preview ? (
           <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} ctx={ctx} />
         ) : null}
-        {rotateDraft ? (
-          <RotateGhostLayer slideSize={slideSize} draft={rotateDraft} ctx={ctx} />
-        ) : null}
+        {rotateDraft ? <RotateGhostLayer slideSize={slideSize} draft={rotateDraft} ctx={ctx} /> : null}
         {drag && preview && preview.guides.length > 0 ? (
           <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
         ) : null}
@@ -2329,10 +2319,7 @@ function DragGhostLayer({ slideSize, ghosts, preview, ctx }: DragGhostLayerProps
     .map((g) => {
       const box = preview.boxes.get(g.id);
       if (!box) return "";
-      const rot =
-        "rotation" in g.shape && typeof g.shape.rotation === "number"
-          ? g.shape.rotation
-          : 0;
+      const rot = "rotation" in g.shape && typeof g.shape.rotation === "number" ? g.shape.rotation : 0;
       if (g.shape.kind === "text" || rot !== 0) {
         // Text and rotated shapes both need a fresh `shapeToSvg` so
         // word-wrap (text) and the rotation pivot (rotated) recalc
@@ -2478,8 +2465,7 @@ function SelectionOverlaySvg({
     // for the static SVG layer too, so chrome and shape stay in sync
     // post-commit.
     const liveRot = liveRotations?.get(id);
-    const savedRot =
-      "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
+    const savedRot = "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
     const rotation = liveRot ?? savedRot;
     entries.push({ id, box: previewBox ?? base, rotatable, rotation });
   }
@@ -2550,8 +2536,7 @@ function SelectionOverlaySvg({
         ? entries.map((e) => {
             const cxPx = px(e.box.x + e.box.cx / 2);
             const cyPx = px(e.box.y + e.box.cy / 2);
-            const rotAttr =
-              e.rotation !== 0 ? `rotate(${e.rotation} ${cxPx} ${cyPx})` : undefined;
+            const rotAttr = e.rotation !== 0 ? `rotate(${e.rotation} ${cxPx} ${cyPx})` : undefined;
             return (
               <g key={`outline-${e.id}`} transform={rotAttr}>
                 <rect
@@ -2581,8 +2566,7 @@ function SelectionOverlaySvg({
       {entries.map((e) => {
         const cxPx = px(e.box.x + e.box.cx / 2);
         const cyPx = px(e.box.y + e.box.cy / 2);
-        const rotAttr =
-          e.rotation !== 0 ? `rotate(${e.rotation} ${cxPx} ${cyPx})` : undefined;
+        const rotAttr = e.rotation !== 0 ? `rotate(${e.rotation} ${cxPx} ${cyPx})` : undefined;
         return (
           <g key={`move-${e.id}`} transform={rotAttr}>
             <rect
@@ -3792,11 +3776,7 @@ const ANIM_BADGE_PALETTE: Record<string, string> = {
   motionPath: "#0ea5e9", // sky-500
 };
 
-function animationBadgesSvg(
-  slide: Slide,
-  slideSize: SlideSize,
-  hiddenIds: ReadonlySet<string>
-): string {
+function animationBadgesSvg(slide: Slide, slideSize: SlideSize, hiddenIds: ReadonlySet<string>): string {
   if (slide.animations.length === 0) return "";
   const byCNvPrId = new Map<number, Shape>();
   collectShapesByCNvPrId(slide.shapes, byCNvPrId);

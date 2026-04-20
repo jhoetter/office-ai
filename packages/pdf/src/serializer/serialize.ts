@@ -25,7 +25,7 @@ export interface PdfSerializeOptions {
 export const serializePdf = async (
   snapshot: PdfSnapshot,
   originalBuffer: Uint8Array,
-  opts: PdfSerializeOptions = {},
+  opts: PdfSerializeOptions = {}
 ): Promise<Uint8Array> => {
   try {
     const pdf = await PDFDocument.load(originalBuffer, {
@@ -51,7 +51,7 @@ export const serializePdf = async (
     if (desiredSourceIndices.some((i) => i < 0 || i >= originalPageCount)) {
       throw new PdfSerializeError(
         `serializer cannot resolve source pages: this snapshot contains pages with no source mapping (sourceIndex out of [0..${originalPageCount - 1}]). ` +
-          `Use @officeai/pdf-edit for structural inserts/extracts/merges and feed the resulting buffer back through parsePdf.`,
+          `Use @officeai/pdf-edit for structural inserts/extracts/merges and feed the resulting buffer back through parsePdf.`
       );
     }
 
@@ -96,7 +96,7 @@ export const serializePdf = async (
     if (err instanceof PdfSerializeError) throw err;
     throw new PdfSerializeError(
       err instanceof Error ? `Failed to serialize PDF: ${err.message}` : "Failed to serialize PDF",
-      err,
+      err
     );
   }
 };

@@ -25,7 +25,7 @@ export interface AddTextLayerOptions {
     pageImage: Uint8Array,
     pageWidth: number,
     pageHeight: number,
-    lang: string,
+    lang: string
   ) => Promise<ReadonlyArray<OcrSpan>>;
 }
 
@@ -47,7 +47,7 @@ const tryLoadTesseract = async (): Promise<unknown | null> => {
  */
 export const addTextLayer = async (
   buffer: Uint8Array,
-  opts: AddTextLayerOptions = {},
+  opts: AddTextLayerOptions = {}
 ): Promise<Uint8Array> => {
   const lang = opts.lang ?? "eng+deu";
   const recognise =
@@ -57,12 +57,12 @@ export const addTextLayer = async (
       if (!mod) {
         throw new Error(
           "pdf-ocr: tesseract.js is not installed. Install with: pnpm add tesseract.js (peer dep), " +
-            "or pass `recognise` directly to addTextLayer for an externally-provided OCR.",
+            "or pass `recognise` directly to addTextLayer for an externally-provided OCR."
         );
       }
       throw new Error(
         "pdf-ocr: built-in tesseract.js bridge requires a rasterizer. " +
-          "Spec: /spec/pdf/text-layer.md §OCR fallback. Provide `recognise` for now.",
+          "Spec: /spec/pdf/text-layer.md §OCR fallback. Provide `recognise` for now."
       );
     });
 

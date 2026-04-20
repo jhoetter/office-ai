@@ -7,10 +7,7 @@ export interface CropPagesOptions {
   readonly pages?: ReadonlyArray<number>;
 }
 
-export const cropPages = async (
-  buffer: Uint8Array,
-  opts: CropPagesOptions,
-): Promise<Uint8Array> => {
+export const cropPages = async (buffer: Uint8Array, opts: CropPagesOptions): Promise<Uint8Array> => {
   const pdf = await loadPdf(buffer);
   const total = pdf.getPageCount();
   const target = opts.pages ?? Array.from({ length: total }, (_, i) => i + 1);

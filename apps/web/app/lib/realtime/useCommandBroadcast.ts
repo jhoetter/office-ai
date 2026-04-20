@@ -47,9 +47,7 @@ export interface BroadcastableAgent {
       }
     ) => void
   ): () => void;
-  applyCommand(
-    command: CommandLite
-  ): Promise<BroadcastableMutationResult> | BroadcastableMutationResult;
+  applyCommand(command: CommandLite): Promise<BroadcastableMutationResult> | BroadcastableMutationResult;
 }
 
 export interface UseCommandBroadcastOptions {

@@ -8,10 +8,7 @@ export interface InsertPagesOptions {
   readonly at: number;
 }
 
-export const insertPages = async (
-  hostBuffer: Uint8Array,
-  opts: InsertPagesOptions,
-): Promise<Uint8Array> => {
+export const insertPages = async (hostBuffer: Uint8Array, opts: InsertPagesOptions): Promise<Uint8Array> => {
   const host = await loadPdf(hostBuffer);
   const src = await loadPdf(opts.source);
   const srcCount = src.getPageCount();
@@ -22,7 +19,10 @@ export const insertPages = async (
   const srcPages = opts.sourcePages ?? Array.from({ length: srcCount }, (_, i) => i + 1);
   validatePages(src, srcPages, "pdf-edit/insert-pages");
 
-  const copied = await host.copyPages(src, srcPages.map((n) => n - 1));
+  const copied = await host.copyPages(
+    src,
+    srcPages.map((n) => n - 1)
+  );
   for (let i = 0; i < copied.length; i++) host.insertPage(opts.at + i, copied[i]);
   return host.save();
 };

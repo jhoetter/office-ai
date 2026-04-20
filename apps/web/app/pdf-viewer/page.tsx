@@ -28,11 +28,7 @@ function PdfEditorPageInner(): React.ReactNode {
   const [ready, setReady] = useState(false);
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden">
-      <PdfEditor
-        onBootstrapReady={setReady}
-        initialSource={initialSource}
-        initialBlank={initialBlank}
-      />
+      <PdfEditor onBootstrapReady={setReady} initialSource={initialSource} initialBlank={initialBlank} />
       <LoadingScreen variant="splash" product="pdf" show={!ready} />
     </main>
   );

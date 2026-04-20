@@ -5,20 +5,20 @@ changed, +6267 / −968.
 
 All six phases from the plan landed and committed. Per-phase
 status, commit hashes, and try-it-locally recipes below. Anything
-deferred is called out with a one-line *Why*.
+deferred is called out with a one-line _Why_.
 
 ---
 
 ## TL;DR
 
-| # | Phase                       | Status      | Commit |
-| - | --------------------------- | ----------- | ------ |
-| 1 | Multi-user (Yjs + presence) | ✅ Shipped  | `6e193ba` |
-| 2 | i18n (en + de, toolbar toggle) | ✅ Shipped | `f4839f0` |
-| 3 | UX pass                     | ✅ Shipped (high-impact items + audit + backlog) | `7954454` |
-| 4 | Excel chart round-trip      | ✅ Shipped (LibreOffice-validated) | `46bf32d` |
-| 5 | Cross-format embed (flag-gated) | ✅ Shipped (XLSX→DOCX, XLSX→PPTX) | `a24b282` |
-| 6 | Round-trip audit            | ✅ Shipped (30/30 fixtures clean) | `51e01ec` |
+| #   | Phase                           | Status                                           | Commit    |
+| --- | ------------------------------- | ------------------------------------------------ | --------- |
+| 1   | Multi-user (Yjs + presence)     | ✅ Shipped                                       | `6e193ba` |
+| 2   | i18n (en + de, toolbar toggle)  | ✅ Shipped                                       | `f4839f0` |
+| 3   | UX pass                         | ✅ Shipped (high-impact items + audit + backlog) | `7954454` |
+| 4   | Excel chart round-trip          | ✅ Shipped (LibreOffice-validated)               | `46bf32d` |
+| 5   | Cross-format embed (flag-gated) | ✅ Shipped (XLSX→DOCX, XLSX→PPTX)                | `a24b282` |
+| 6   | Round-trip audit                | ✅ Shipped (30/30 fixtures clean)                | `51e01ec` |
 
 Verified with `pnpm typecheck` (17/17), `pnpm lint:root` (0 errors,
 2 pre-existing warnings unrelated to night work), and the per-phase
@@ -102,10 +102,10 @@ button leaves are missing.
   editors can opt-in group-by-group without a rewrite.
 - An XLSX **formula-reference picking hint** in the status bar —
   when the user starts editing a formula, the spreadsheet now
-  whispers *"Click cells to insert reference · Esc to cancel"*,
+  whispers _"Click cells to insert reference · Esc to cancel"_,
   removing the most-asked-about Excel-vs-app discrepancy.
-- A PPTX **selection status hint** — *"Slide N of M · K shapes
-  selected"* — closing the most common "where am I?" gap on the
+- A PPTX **selection status hint** — _"Slide N of M · K shapes
+  selected"_ — closing the most common "where am I?" gap on the
   slide canvas.
 - A documented audit + backlog at
   `docs/build-log/ux-audit-night-2026-04-20.md` covering the
@@ -139,7 +139,7 @@ A new `xlsx:add-chart` command path produces real
 `xl/charts/chartN.xml` parts, the `xdr:graphicFrame` anchor in
 the sheet's drawing, the chart relationship in the drawing's
 `_rels`, and the content-type override in `[Content_Types].xml`
-— *and* survives a LibreOffice headless re-save without losing
+— _and_ survives a LibreOffice headless re-save without losing
 the charts (validated by
 `packages/xlsx/src/serializer/charts.libreoffice.test.ts`).
 

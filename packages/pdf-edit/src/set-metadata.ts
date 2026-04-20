@@ -9,10 +9,7 @@ export interface SetMetadataOptions {
   readonly producer?: string;
 }
 
-export const setMetadata = async (
-  buffer: Uint8Array,
-  opts: SetMetadataOptions,
-): Promise<Uint8Array> => {
+export const setMetadata = async (buffer: Uint8Array, opts: SetMetadataOptions): Promise<Uint8Array> => {
   const pdf = await loadPdf(buffer);
   if (opts.title !== undefined) pdf.setTitle(opts.title);
   if (opts.author !== undefined) pdf.setAuthor(opts.author);

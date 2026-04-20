@@ -2,14 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFocusTrap } from "@officeai/ui";
-import {
-  XlsxAgent,
-  cellKey,
-  colToLetter,
-  formatA1,
-  type Cell,
-  type CellValue,
-} from "@officeai/xlsx";
+import { XlsxAgent, cellKey, colToLetter, formatA1, type Cell, type CellValue } from "@officeai/xlsx";
 
 /**
  * "Edit Data" modal for embedded spreadsheets / charts in Word and
@@ -105,7 +98,7 @@ export function EmbeddedXlsxModal(props: Props): React.ReactElement | null {
       const value = parseCellInput(raw);
       await agent.applyCommand({
         type: "xlsx:set-cell-value",
-        payload: { sheet: activeSheet, ref: formatA1(row, col), value },
+        payload: { sheet: activeSheet, ref: formatA1({ row, col }), value },
         source: "human",
       });
       setTick((t) => t + 1);
@@ -207,17 +200,8 @@ export function EmbeddedXlsxModal(props: Props): React.ReactElement | null {
           }}
         >
           {loading && <div style={{ fontSize: 12 }}>Loading workbook…</div>}
-          {!loading && !sheet && !error && (
-            <div style={{ fontSize: 12 }}>No worksheet to edit.</div>
-          )}
-          {sheet && (
-            <SimpleGrid
-              sheet={sheet}
-              rows={dims.rows}
-              cols={dims.cols}
-              onCommit={setCell}
-            />
-          )}
+          {!loading && !sheet && !error && <div style={{ fontSize: 12 }}>No worksheet to edit.</div>}
+          {sheet && <SimpleGrid sheet={sheet} rows={dims.rows} cols={dims.cols} onCommit={setCell} />}
         </div>
 
         {error && (
@@ -327,10 +311,7 @@ function SimpleGrid(props: SimpleGridProps): React.ReactElement {
               const cell = sheet.cells.get(cellKey(r, c));
               return (
                 <td key={c} style={cellTdStyle}>
-                  <CellInput
-                    initial={cellDisplay(cell)}
-                    onCommit={(raw) => onCommit(r, c, raw)}
-                  />
+                  <CellInput initial={cellDisplay(cell)} onCommit={(raw) => onCommit(r, c, raw)} />
                 </td>
               );
             })}

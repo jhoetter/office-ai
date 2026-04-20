@@ -826,6 +826,103 @@ describe("office-agent pptx subcommand group", () => {
       expect(code).not.toBe(0);
       expect(stderr.text()).toMatch(/length/);
     });
+
+    it("insert-chart authors a brand-new chart shape backed by an embedded xlsx", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-insert-chart-"));
+      const dataPath = join(dir, "data.json");
+      const out = join(dir, "out.pptx");
+      writeFileSync(
+        dataPath,
+        JSON.stringify({
+          categories: ["Mon", "Tue", "Wed"],
+          series: [{ name: "Visits", values: [3, 7, 11] }],
+        })
+      );
+      const { io } = makeIO();
+      const code = await runCli(
+        [
+          "pptx",
+          "insert-chart",
+          "--file",
+          MULTI,
+          "--out",
+          out,
+          "--slide",
+          "0",
+          "--x",
+          "500000",
+          "--y",
+          "500000",
+          "--chart-type",
+          "line",
+          "--title",
+          "Daily traffic",
+          "--data",
+          dataPath,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const after = await loadDeterministic(out);
+      const slide = after.getSnapshot().root.slides[0];
+      const ch = slide.shapes.find((s) => s.kind === "chart");
+      expect(ch).toBeDefined();
+      if (!ch || ch.kind !== "chart") throw new Error("chart missing");
+      const part = after.getSnapshot().root.charts.get(ch.chartPartPath);
+      expect(part?.chartType).toBe("line");
+      expect(part?.title).toBe("Daily traffic");
+      expect(part?.categories).toEqual(["Mon", "Tue", "Wed"]);
+      expect(part?.series[0]?.values).toEqual([3, 7, 11]);
+      // Embedded workbook must exist so PowerPoint's "Edit Data" works.
+      expect(part?.embeddingPartPath).toMatch(/Microsoft_Excel_Worksheet\d+\.xlsx$/);
+    });
+
+    it("insert-spreadsheet authors a typed OLE-embedded Excel shape", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "pptx-cli-insert-ss-"));
+      const dataPath = join(dir, "data.json");
+      const out = join(dir, "out.pptx");
+      writeFileSync(
+        dataPath,
+        JSON.stringify([
+          ["Name", "Score"],
+          ["Ada", 91],
+          ["Linus", 88],
+        ])
+      );
+      const { io } = makeIO();
+      const code = await runCli(
+        [
+          "pptx",
+          "insert-spreadsheet",
+          "--file",
+          MULTI,
+          "--out",
+          out,
+          "--slide",
+          "0",
+          "--x",
+          "500000",
+          "--y",
+          "500000",
+          "--data",
+          dataPath,
+        ],
+        io
+      );
+      expect(code).toBe(0);
+      const after = await loadDeterministic(out);
+      const slide = after.getSnapshot().root.slides[0];
+      const ole = slide.shapes.find((s) => s.kind === "ole-spreadsheet");
+      expect(ole).toBeDefined();
+      if (!ole || ole.kind !== "ole-spreadsheet") throw new Error("OLE shape missing");
+      expect(ole.embeddingKind).toBe("xlsx");
+      expect(ole.embeddingPartPath).toMatch(/^ppt\/embeddings\//);
+      // The workbook bytes are materialised by the serializer, so the
+      // round-tripped agent's embeddings map carries real bytes.
+      const part = after.getSnapshot().root.embeddings.get(ole.embeddingPartPath);
+      expect(part).toBeDefined();
+      expect(part?.bytes && part.bytes.byteLength).toBeGreaterThan(0);
+    });
   });
 
   describe("animation CLI subcommands", () => {

@@ -52,7 +52,7 @@ const ANNOT_KIND_BY_SUBTYPE: Record<string, PdfAnnotationKind> = {
 
 export const parsePdf = async (
   input: ArrayBuffer | Uint8Array,
-  opts: PdfParseOptions = {},
+  opts: PdfParseOptions = {}
 ): Promise<PdfSnapshot> => {
   const buffer = input instanceof Uint8Array ? input : new Uint8Array(input);
   const mint = opts.idMinter ?? defaultIdMinter;
@@ -69,7 +69,7 @@ export const parsePdf = async (
   } catch (err) {
     throw new PdfParseError(
       err instanceof Error ? `Failed to parse PDF: ${err.message}` : "Failed to parse PDF",
-      err,
+      err
     );
   }
 
@@ -92,9 +92,7 @@ export const parsePdf = async (
       // pass yielded nothing (e.g. PDFium-style pages whose text
       // items lack per-character metrics).
       const readingOrderText = serializeReadingOrder(structured);
-      const text = readingOrderText.length > 0
-        ? readingOrderText
-        : (await page.getTextContent()).plain;
+      const text = readingOrderText.length > 0 ? readingOrderText : (await page.getTextContent()).plain;
       const hasTextLayer = runs.length > 0;
 
       pages.push({
@@ -194,9 +192,14 @@ const mapOutline = (
     title: string;
     pageNumber?: number;
     uri?: string;
-    children: ReadonlyArray<{ title: string; pageNumber?: number; uri?: string; children: ReadonlyArray<unknown> }>;
+    children: ReadonlyArray<{
+      title: string;
+      pageNumber?: number;
+      uri?: string;
+      children: ReadonlyArray<unknown>;
+    }>;
   }>,
-  mint: () => string,
+  mint: () => string
 ): PdfOutlineNode[] =>
   nodes.map((n) => ({
     id: mint(),

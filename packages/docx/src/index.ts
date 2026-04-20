@@ -21,7 +21,12 @@ export {
 } from "./agent/index.js";
 export { docxPlugin } from "./plugin.js";
 export * from "./commands/index.js";
-export { docxActions, docxActionsById, docxActionsByCommandType, type DocxActionSection } from "./actions/index.js";
+export {
+  docxActions,
+  docxActionsById,
+  docxActionsByCommandType,
+  type DocxActionSection,
+} from "./actions/index.js";
 export {
   docxSchema,
   docToPM,
