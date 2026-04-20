@@ -91,7 +91,11 @@ export function PdfSidebar(props: PdfSidebarProps): ReactNode {
             onJumpToPage={onJumpToPage}
           />
         ) : tab === "outline" ? (
-          <OutlinePanel snapshot={snapshot} onJumpToPage={onJumpToPage} />
+          <OutlinePanel
+            snapshot={snapshot}
+            currentPage={currentPage}
+            onJumpToPage={onJumpToPage}
+          />
         ) : (
           <AnnotationsPanel
             snapshot={snapshot}
@@ -313,19 +317,61 @@ function ThumbnailItem({ page, engineDoc, rotation, active, onClick }: Thumbnail
 
 interface OutlinePanelProps {
   readonly snapshot: PdfSnapshot | null;
+  readonly currentPage: number;
   readonly onJumpToPage: (pageNumber: number) => void;
 }
 
-function OutlinePanel({ snapshot, onJumpToPage }: OutlinePanelProps): ReactNode {
+function OutlinePanel({ snapshot, currentPage, onJumpToPage }: OutlinePanelProps): ReactNode {
   const { t } = useTranslator();
   const outline = snapshot?.root.outline ?? [];
+
+  // Resolve which outline node represents the user's current page.
+  // We walk the tree in document order and pick the *last* entry
+  // whose destination page is ≤ currentPage — i.e. the deepest
+  // section the reader has scrolled into. This mirrors how Preview
+  // / Acrobat highlight the active heading.
+  const { activeId, ancestorIds } = useMemo(
+    () => resolveActiveOutline(outline, currentPage),
+    [outline, currentPage]
+  );
+
+  // Per-node controlled open state. Defaults expand the top level
+  // and any ancestor of the active node, so navigating into a deep
+  // chapter automatically opens the reader's path through the tree.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    if (ancestorIds.length === 0) return;
+    setOpenMap((prev) => {
+      let next = prev;
+      for (const id of ancestorIds) {
+        if (!next[id]) {
+          if (next === prev) next = { ...prev };
+          next[id] = true;
+        }
+      }
+      return next;
+    });
+  }, [ancestorIds]);
+  const onToggle = useCallback((id: string) => {
+    setOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
   if (outline.length === 0) {
     return <p className="p-4 text-xs text-tertiary">{t("pdf.noOutline")}</p>;
   }
   return (
     <ul className="px-1 py-2 text-xs" role="tree">
       {outline.map((node) => (
-        <OutlineEntry key={node.id} node={node} depth={0} onJumpToPage={onJumpToPage} />
+        <OutlineEntry
+          key={node.id}
+          node={node}
+          depth={0}
+          activeId={activeId}
+          ancestorIds={ancestorIds}
+          openMap={openMap}
+          onToggle={onToggle}
+          onJumpToPage={onJumpToPage}
+        />
       ))}
     </ul>
   );
@@ -334,12 +380,42 @@ function OutlinePanel({ snapshot, onJumpToPage }: OutlinePanelProps): ReactNode 
 interface OutlineEntryProps {
   readonly node: PdfOutlineNode;
   readonly depth: number;
+  readonly activeId: string | null;
+  readonly ancestorIds: ReadonlyArray<string>;
+  readonly openMap: Readonly<Record<string, boolean>>;
+  readonly onToggle: (id: string) => void;
   readonly onJumpToPage: (pageNumber: number) => void;
 }
 
-function OutlineEntry({ node, depth, onJumpToPage }: OutlineEntryProps): ReactNode {
-  const [open, setOpen] = useState(depth < 1);
+function OutlineEntry({
+  node,
+  depth,
+  activeId,
+  ancestorIds,
+  openMap,
+  onToggle,
+  onJumpToPage,
+}: OutlineEntryProps): ReactNode {
   const hasChildren = node.children.length > 0;
+  const isActive = activeId === node.id;
+  const isAncestor = ancestorIds.includes(node.id);
+  // Default: expand top-level + any ancestor of the active entry.
+  // The controlled openMap overrides — once a user clicks a chevron
+  // we honour their choice and stop auto-expanding.
+  const explicit = openMap[node.id];
+  const open = explicit !== undefined ? explicit : depth < 1 || isAncestor;
+  const labelRef = useRef<HTMLButtonElement | null>(null);
+  // Scroll the active entry into view when the user navigates
+  // outside the sidebar (page change via canvas scroll, toolbar,
+  // etc.). `block: "nearest"` avoids jumpy auto-scroll when the
+  // entry is already visible.
+  useEffect(() => {
+    if (!isActive) return;
+    const el = labelRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [isActive]);
+
   const handleClick = useCallback((): void => {
     if (typeof node.pageNumber === "number") {
       onJumpToPage(node.pageNumber);
@@ -347,16 +423,21 @@ function OutlineEntry({ node, depth, onJumpToPage }: OutlineEntryProps): ReactNo
       window.open(node.uri, "_blank", "noopener,noreferrer");
     }
   }, [node.pageNumber, node.uri, onJumpToPage]);
+  const labelClass =
+    "flex flex-1 items-baseline justify-between gap-2 truncate text-left rounded px-1 py-0.5 " +
+    (isActive
+      ? "bg-[var(--accent-light)] font-medium text-[var(--accent)]"
+      : "text-primary hover:text-[var(--accent)]");
   return (
-    <li role="treeitem" aria-expanded={hasChildren ? open : undefined}>
+    <li role="treeitem" aria-expanded={hasChildren ? open : undefined} aria-current={isActive ? "page" : undefined}>
       <div
-        className="group flex items-center gap-1 rounded px-1 py-0.5 hover:bg-hover"
+        className="group flex items-center gap-1 rounded hover:bg-hover"
         style={{ paddingLeft: 4 + depth * 12 }}
       >
         {hasChildren ? (
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => onToggle(node.id)}
             className="flex h-4 w-4 items-center justify-center text-tertiary"
             title={open ? "Collapse" : "Expand"}
           >
@@ -366,15 +447,24 @@ function OutlineEntry({ node, depth, onJumpToPage }: OutlineEntryProps): ReactNo
           <span className="inline-block h-4 w-4" aria-hidden />
         )}
         <button
+          ref={labelRef}
           type="button"
           onClick={handleClick}
-          className="flex flex-1 items-baseline justify-between gap-2 truncate text-left text-primary hover:text-[var(--accent)]"
+          className={labelClass}
           title={node.title}
           data-testid={`pdf-outline-${node.id}`}
+          data-active={isActive ? "true" : undefined}
         >
           <span className="truncate">{node.title}</span>
           {typeof node.pageNumber === "number" ? (
-            <span className="shrink-0 text-[10px] tabular-nums text-tertiary">{node.pageNumber}</span>
+            <span
+              className={
+                "shrink-0 text-[10px] tabular-nums " +
+                (isActive ? "text-[var(--accent)]" : "text-tertiary")
+              }
+            >
+              {node.pageNumber}
+            </span>
           ) : node.uri ? (
             <span className="shrink-0 text-[10px] text-tertiary" aria-hidden>
               ↗
@@ -389,6 +479,10 @@ function OutlineEntry({ node, depth, onJumpToPage }: OutlineEntryProps): ReactNo
               key={child.id}
               node={child}
               depth={depth + 1}
+              activeId={activeId}
+              ancestorIds={ancestorIds}
+              openMap={openMap}
+              onToggle={onToggle}
               onJumpToPage={onJumpToPage}
             />
           ))}
@@ -396,6 +490,42 @@ function OutlineEntry({ node, depth, onJumpToPage }: OutlineEntryProps): ReactNo
       ) : null}
     </li>
   );
+}
+
+/**
+ * Walk the outline in document order and pick the deepest entry
+ * whose destination page is ≤ `currentPage`. Returns both the
+ * winning node id and the chain of ancestor ids leading to it so
+ * the panel can auto-expand the reader's path.
+ *
+ * Why "deepest": if the reader is on page 42 and the outline says
+ * Chapter 3 starts on page 40 with section 3.2 on page 42, we want
+ * the active entry to be 3.2 — that's where the user is reading,
+ * not the chapter header.
+ */
+function resolveActiveOutline(
+  outline: ReadonlyArray<PdfOutlineNode>,
+  currentPage: number
+): { activeId: string | null; ancestorIds: ReadonlyArray<string> } {
+  let bestId: string | null = null;
+  let bestPage = -Infinity;
+  let bestPath: ReadonlyArray<string> = [];
+  const visit = (nodes: ReadonlyArray<PdfOutlineNode>, path: ReadonlyArray<string>): void => {
+    for (const node of nodes) {
+      if (
+        typeof node.pageNumber === "number" &&
+        node.pageNumber <= currentPage &&
+        node.pageNumber >= bestPage
+      ) {
+        bestId = node.id;
+        bestPage = node.pageNumber;
+        bestPath = path;
+      }
+      if (node.children.length > 0) visit(node.children, [...path, node.id]);
+    }
+  };
+  visit(outline, []);
+  return { activeId: bestId, ancestorIds: bestPath };
 }
 
 // ─────────────────────────────────────────────────────────────────────
