@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { PdfEngineDocument, PdfEnginePage, PdfEngineTextItem } from "@officeai/pdf-engine";
 import type { PdfPage, PdfRotation, PdfSnapshot } from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";
@@ -538,6 +546,35 @@ function PdfTextLayer({
   const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
   const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
   const transform = textLayerTransform(rotation, innerWidth, innerHeight);
+  const innerRef = useRef<HTMLDivElement | null>(null);
+
+  // PDF.js's reference text layer measures each synthesised span's
+  // browser-rendered width against the desired (rasterised) glyph
+  // width and applies a per-span `transform: scaleX(target/measured)`
+  // so the invisible selection rect lines up with the visible
+  // letters. We do the same: without it, click-drag selection
+  // floats noticeably to the right of the rasterised text on most
+  // body fonts because the platform's default sans-serif is wider
+  // than the PDF's embedded font.
+  useLayoutEffect(() => {
+    const root = innerRef.current;
+    if (!root) return;
+    const spans = root.querySelectorAll<HTMLSpanElement>("[data-text-span]");
+    spans.forEach((span) => {
+      span.style.transform = "";
+      const target = Number(span.dataset.targetWidth ?? "0");
+      if (!target) return;
+      const measured = span.getBoundingClientRect().width;
+      if (measured <= 0) return;
+      const ratio = target / measured;
+      // Only correct when the discrepancy matters; tiny ratios just
+      // burn paint cycles for sub-pixel adjustments invisible to
+      // the eye but expensive on long documents.
+      if (Math.abs(ratio - 1) < 0.01) return;
+      span.style.transform = `scaleX(${ratio.toFixed(4)})`;
+    });
+  }, [items, scale, rotation]);
+
   return (
     <div
       aria-hidden
@@ -545,6 +582,7 @@ function PdfTextLayer({
       style={{ lineHeight: 1, width: rotatedW, height: rotatedH }}
     >
       <div
+        ref={innerRef}
         style={{
           position: "absolute",
           left: 0,
@@ -561,16 +599,17 @@ function PdfTextLayer({
           const fontHeight = Math.abs(tx[3]) || it.height || 1;
           const left = tx[4] * scale;
           const top = (pageHeight - tx[5] - fontHeight) * scale;
-          const width = it.width * scale;
+          const targetWidth = it.width * scale;
           const height = fontHeight * scale;
           return (
             <span
               key={idx}
+              data-text-span
+              data-target-width={targetWidth}
               style={{
                 position: "absolute",
                 left,
                 top,
-                width,
                 height,
                 fontSize: height,
                 whiteSpace: "pre",
