@@ -197,18 +197,22 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
   useEffect(() => {
     if (!onZoomMetricsChange) return;
     if (!pages.length || baseScale === 0) return;
+    // Wait until the container has been measured in *both* axes —
+    // emitting fit-page metrics with `containerHeight === 0` would
+    // give the editor a bogus fitPageZoom of 1 and (since the
+    // editor consumes only the first metrics callback after a
+    // document load) lock the page in at "way too zoomed in".
+    if (containerHeight === 0) return;
     const tallest = pages.reduce(
       (acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation)),
       0
     );
+    if (tallest === 0) return;
     const verticalGutter = 32;
-    const fitPageScale =
-      containerHeight > 0 && tallest > 0
-        ? Math.min(
-            baseScale,
-            Math.max(0.05, (containerHeight - verticalGutter) / tallest)
-          )
-        : baseScale;
+    const fitPageScale = Math.min(
+      baseScale,
+      Math.max(0.05, (containerHeight - verticalGutter) / tallest)
+    );
     const actualSizeZoom = 1 / baseScale;
     const fitPageZoom = fitPageScale / baseScale;
     onZoomMetricsChange({ actualSizeZoom, fitPageZoom });
