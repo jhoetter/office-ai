@@ -4,18 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { PdfEngineDocument, PdfEnginePage, PdfEngineTextItem } from "@officeai/pdf-engine";
 import type { PdfPage, PdfRotation, PdfSnapshot } from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";
-import { applyDarkModeToContext, darkModeCssFilter } from "./darkMode";
+import { darkModeCssFilter } from "./darkMode";
 
 /** Canvas-side view modes — 1:1 with the toolbar enum. */
 export type PdfViewMode = "single" | "continuous" | "two-up";
 
 /**
- * Smart-invert dark mode mode picker. The toolbar lets the user
- * pick between the cheap CSS filter (instant, photo-inverting),
- * the per-pixel pass that preserves photographs (~5 ms / page on
- * an A4 at scale 1.5), or `off`.
+ * Binary dark-mode toggle. CSS-filter based, no per-pixel pass.
  */
-export type PdfDarkModeStrategy = "off" | "css" | "smart";
+export type PdfDarkModeStrategy = "off" | "on";
 
 export interface PdfHighlight {
   readonly pageNumber: number;
@@ -360,11 +357,6 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         await enginePage.render({ canvas, scale: scale * dpr });
         if (cancelled || token !== renderTokenRef.current) return;
 
-        if (darkMode === "smart") {
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          applyDarkModeToContext(ctx, canvas.width, canvas.height);
-        }
-
         try {
           const text = await enginePage.getTextContent();
           if (cancelled || token !== renderTokenRef.current) return;
@@ -406,7 +398,7 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         ref={canvasRef}
         className="block h-full w-full rounded-md"
         style={{
-          filter: darkMode === "css" ? darkModeCssFilter(true) : "none",
+          filter: darkMode === "on" ? darkModeCssFilter(true) : "none",
           transform: viewportRotation === 0 ? undefined : `rotate(${viewportRotation}deg)`,
         }}
         aria-label={t("pdf.pageOf", { n: page.pageNumber, total: totalPages })}

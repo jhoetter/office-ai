@@ -538,7 +538,7 @@ export function PdfEditor({
 
   // ── Keyboard shortcuts ────────────────────────────────────────────
   const cycleDarkMode = useCallback(() => {
-    setDarkMode((m) => (m === "off" ? "css" : m === "css" ? "smart" : "off"));
+    setDarkMode((m) => (m === "off" ? "on" : "off"));
   }, []);
 
   usePdfShortcuts({
@@ -603,7 +603,7 @@ export function PdfEditor({
       { id: "pdf.actual-size", label: "Actual size (100 %)", section: "View", run: onActualSize },
       { id: "pdf.rotate-cw", label: "Rotate view clockwise", section: "View", run: onRotateClockwise },
       { id: "pdf.rotate-ccw", label: "Rotate view counter-clockwise", section: "View", run: onRotateCounterClockwise },
-      { id: "pdf.toggle-dark", label: "Toggle smart dark mode", section: "View", run: cycleDarkMode },
+      { id: "pdf.toggle-dark", label: "Toggle dark mode", section: "View", run: cycleDarkMode },
       { id: "pdf.toggle-reflow", label: "Toggle reflow", section: "View", run: onToggleReflow },
       { id: "pdf.rotate-page", label: "Rotate current page 90°", section: "Pages", run: () => void onRotatePages(), enabled: totalPages > 0 },
       { id: "pdf.delete-page", label: "Delete current page", section: "Pages", run: () => void onDeletePages(), enabled: totalPages > 1 },

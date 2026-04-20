@@ -884,7 +884,7 @@
     "exportMarkdown": "Export as Markdown",
     "exportText": "Export as text",
     "downloadPdf": "Download PDF",
-    "darkMode": "Smart dark mode",
+    "darkMode": "Dark mode",
     "reflow": "Reflow (single column)",
     "scanned": "Scanned page — no text layer",
     "ocrPage": "Run OCR on this page",

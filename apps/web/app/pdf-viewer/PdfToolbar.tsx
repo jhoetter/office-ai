@@ -68,7 +68,7 @@ export interface PdfToolbarProps {
  *   Annotate         · highlight / sticky / free-text
  *   Page ops         · rotate / reorder / delete pages dropdowns
  *   Form             · fill / flatten
- *   Dark mode        · off / css / smart toggle group
+ *   Dark mode        · binary on/off toggle
  *   Reflow           · single-column toggle
  *
  * Every label is sourced from `t("pdf.*")`. The toolbar is a thin
@@ -633,24 +633,12 @@ interface DarkModeToggleProps {
 }
 
 /**
- * Three-state dark-mode toggle. Cycles `off → css → smart → off`
- * on click; the icon's background reads as "off" when the value
- * is `off` and as "armed" otherwise. We expose all three states
- * (rather than a binary toggle) because the per-pixel "smart"
- * pass is materially slower on long documents and some users
- * deliberately prefer the cheap CSS strategy even though it
- * inverts photographs.
+ * Binary dark-mode toggle. Click flips between `off` and `on`.
  */
 function DarkModeToggle({ value, disabled, onChange }: DarkModeToggleProps): React.ReactNode {
   const { t } = useTranslator();
-  const next: PdfDarkModeStrategy =
-    value === "off" ? "css" : value === "css" ? "smart" : "off";
-  const label =
-    value === "off"
-      ? t("pdf.darkMode")
-      : value === "css"
-        ? `${t("pdf.darkMode")} (CSS)`
-        : `${t("pdf.darkMode")} (smart)`;
+  const next: PdfDarkModeStrategy = value === "off" ? "on" : "off";
+  const label = t("pdf.darkMode");
   return (
     <button
       type="button"
@@ -658,12 +646,12 @@ function DarkModeToggle({ value, disabled, onChange }: DarkModeToggleProps): Rea
       disabled={disabled}
       title={label}
       aria-label={label}
-      aria-pressed={value !== "off"}
+      aria-pressed={value === "on"}
       data-testid="pdf-dark-mode-toggle"
       data-mode={value}
       className={
         "inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 " +
-        (value !== "off" ? "bg-hover ring-1 ring-[var(--accent)]/40" : "")
+        (value === "on" ? "bg-hover ring-1 ring-[var(--accent)]/40" : "")
       }
     >
       <Moon size={14} />
