@@ -104,3 +104,7 @@ test-results/
 /*.docx
 /*.xlsx
 /*.pptx
+
+# Local-only sample documents used for ad-hoc testing in the web app.
+# These are large binaries (PDF/DOCX/XLSX/PPTX) and intentionally not tracked.
+apps/web/public/sample-files/
