@@ -21,10 +21,7 @@ import type { PptxSnapshot, Slide } from "@officeai/pptx";
  * slides". Out-of-range entries are dropped silently — the caller
  * owns user-facing error messages.
  */
-export function parseSlideRange(
-  input: string,
-  totalSlides: number
-): ReadonlyArray<number> {
+export function parseSlideRange(input: string, totalSlides: number): ReadonlyArray<number> {
   const trimmed = input.trim();
   if (trimmed.length === 0) {
     return Array.from({ length: totalSlides }, (_, i) => i);
@@ -80,11 +77,7 @@ interface RenderedSlide {
   readonly viewBoxHeight: number;
 }
 
-function renderSlide(
-  snapshot: PptxSnapshot,
-  slide: Slide,
-  index: number
-): RenderedSlide {
+function renderSlide(snapshot: PptxSnapshot, slide: Slide, index: number): RenderedSlide {
   const ctx: SvgRenderCtx = {
     slideSize: snapshot.root.slideSize,
     theme: snapshot.root.themeDefault,
@@ -104,10 +97,7 @@ interface IndexedSlide {
   readonly index: number;
 }
 
-function selectSlides(
-  snapshot: PptxSnapshot,
-  indices?: ReadonlyArray<number>
-): ReadonlyArray<IndexedSlide> {
+function selectSlides(snapshot: PptxSnapshot, indices?: ReadonlyArray<number>): ReadonlyArray<IndexedSlide> {
   const all = snapshot.root.slides;
   if (!indices || indices.length === 0) {
     return all.map((slide, index) => ({ slide, index }));
@@ -172,10 +162,7 @@ export async function snapshotToPngZip(
  * server-side (used by `snapshotToSlideSvg` and shared with the zip
  * helpers).
  */
-export function snapshotToSlideSvg(
-  snapshot: PptxSnapshot,
-  slideIndex: number
-): string {
+export function snapshotToSlideSvg(snapshot: PptxSnapshot, slideIndex: number): string {
   const slide = snapshot.root.slides[slideIndex];
   if (!slide) {
     throw new Error(`Slide index out of range: ${slideIndex}`);
@@ -242,10 +229,7 @@ async function rasterizeSvg(
   const targetHeight = Math.max(1, Math.round(rendered.viewBoxHeight * scale));
   // Wrap the SVG with explicit width/height so `<img>` rasterizes at
   // the right pixel dimensions regardless of viewBox setup.
-  const sized = rendered.svg.replace(
-    /<svg(\s)/i,
-    `<svg width="${targetWidth}" height="${targetHeight}"$1`
-  );
+  const sized = rendered.svg.replace(/<svg(\s)/i, `<svg width="${targetWidth}" height="${targetHeight}"$1`);
   const svgBlob = new Blob([sized], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
   try {

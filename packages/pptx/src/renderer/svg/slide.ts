@@ -12,12 +12,9 @@ export function slideToSvgString(slide: Slide, ctx: SvgRenderCtx): string {
   // filters out its own anchored target shapes downstream. We skip
   // collection when the caller already supplied obstacles or the
   // slide has no non-connector shapes (cheap predicate).
-  const connectorObstacles =
-    ctx.connectorObstacles ?? collectObstacles(slide.shapes, EMPTY_NUMBER_SET);
+  const connectorObstacles = ctx.connectorObstacles ?? collectObstacles(slide.shapes, EMPTY_NUMBER_SET);
   const ctxWithExtras: SvgRenderCtx =
-    ctx.shapesByCNvPrId && ctx.connectorObstacles
-      ? ctx
-      : { ...ctx, shapesByCNvPrId, connectorObstacles };
+    ctx.shapesByCNvPrId && ctx.connectorObstacles ? ctx : { ...ctx, shapesByCNvPrId, connectorObstacles };
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${slideViewBox(ctx.slideSize)}" preserveAspectRatio="xMidYMid meet">`,
     CONNECTOR_DEFS_SVG,

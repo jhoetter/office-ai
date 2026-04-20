@@ -226,9 +226,7 @@ describe("CommandBus", () => {
       expect(bus.getWorking().root.value).toBe(7);
 
       const events: Array<{ id: string; status: string; code?: string }> = [];
-      bus.subscribe((_s, m) =>
-        events.push({ id: m.id, status: m.status, code: m.rejection?.code })
-      );
+      bus.subscribe((_s, m) => events.push({ id: m.id, status: m.status, code: m.rejection?.code }));
 
       // Undo the human mutation — value drops to 0, rebase of the
       // pending `requires-five` mutation now throws.

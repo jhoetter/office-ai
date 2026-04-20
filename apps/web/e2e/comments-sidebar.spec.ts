@@ -30,6 +30,12 @@ test.describe("editor: comments sidebar", () => {
     await expect(thread).toContainText("Looks good?");
     await expect(thread).toHaveAttribute("data-resolved", "false");
 
+    // The author swatch is rendered next to every comment author (it
+    // becomes a real peer-coloured dot once a realtime room is joined).
+    // Without realtime identity, we still expect a fallback swatch in
+    // the DOM so the layout is stable.
+    await expect(thread.getByTestId("comment-author-swatch").first()).toBeVisible();
+
     // Clicking the author scrolls the editor to and flashes the comment
     // anchor; the temporary class is added then removed after ~1.6s. We
     // assert it lands at all by waiting for the highlight class.

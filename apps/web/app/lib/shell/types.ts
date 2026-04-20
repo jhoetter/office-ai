@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 /** Identity of the active editor product. Drives the per-product
  * shortcuts catalogue, the export menu, and the right-rail tabs
  * (Outline is DOCX-only). */
-export type ProductKind = "docx" | "xlsx" | "pptx";
+export type ProductKind = "docx" | "xlsx" | "pptx" | "pdf";
 
 /** Save / dirty state surfaced as a small pill in the top bar. The
  * product reports its current state and the shell decides how to
@@ -41,13 +41,7 @@ export type ExportFormatKind = "instant" | "dialog";
  *  - `data`    — CSV/TSV/JSON/MD;
  *  - `images`  — PNG/SVG/JPEG bundles;
  *  - `current` — exports of the current page / slide / sheet. */
-export type ExportFormatGroup =
-  | "deck"
-  | "native"
-  | "pdf-web"
-  | "data"
-  | "images"
-  | "current";
+export type ExportFormatGroup = "deck" | "native" | "pdf-web" | "data" | "images" | "current";
 
 /** Lucide icon family used for the format row. The shell maps these
  * to concrete icons (kept here so adapters don't import lucide). */

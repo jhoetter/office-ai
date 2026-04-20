@@ -85,9 +85,7 @@ test.describe("pptx editor: keyboard shortcuts", () => {
     await expect
       .poll(
         async () =>
-          page
-            .locator(`[data-testid="pptx-slide-surface"] svg g.shape[data-shape-id="${targetId}"]`)
-            .count(),
+          page.locator(`[data-testid="pptx-slide-surface"] svg g.shape[data-shape-id="${targetId}"]`).count(),
         { timeout: 5_000 }
       )
       .toBe(0);

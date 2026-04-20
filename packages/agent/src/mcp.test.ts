@@ -67,7 +67,7 @@ describe("OfficeAI MCP server", () => {
   beforeEach(() => __resetMcpSessionsForTests());
   afterEach(() => __resetMcpSessionsForTests());
 
-  it("lists every registered docx_*, xlsx_* and pptx_* tool", async () => {
+  it("lists every registered docx_*, xlsx_*, pptx_* and pdf_* tool", async () => {
     const client = await makeClient();
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name).sort();
@@ -84,6 +84,25 @@ describe("OfficeAI MCP server", () => {
       "docx_reject",
       "docx_save",
       "docx_search",
+      "pdf_add_page_numbers",
+      "pdf_add_watermark",
+      "pdf_annotations",
+      "pdf_delete_pages",
+      "pdf_export_markdown",
+      "pdf_extract_pages",
+      "pdf_fill_form",
+      "pdf_flatten_form",
+      "pdf_list_form_fields",
+      "pdf_load",
+      "pdf_merge",
+      "pdf_metadata",
+      "pdf_outline",
+      "pdf_read_page",
+      "pdf_reorder_pages",
+      "pdf_reset_form",
+      "pdf_rotate_pages",
+      "pdf_search",
+      "pdf_set_metadata",
       "pptx_apply_command",
       "pptx_diff",
       "pptx_get_text",

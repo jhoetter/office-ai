@@ -1,7 +1,6 @@
 import * as React from "react";
 import type { PptxAgent } from "../../agent/agent.js";
 import type {
-  ConnectorEndpoint,
   ConnectorShape,
   ConnectorType,
   Shape,
@@ -12,17 +11,9 @@ import type {
 } from "../../model/types.js";
 import { resolveEndpoint } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME } from "../layout/color.js";
-import { boxesIntersect, pointInBox, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
-import {
-  SVG_UNIT_PER_EMU,
-  computeStageLayout,
-  slideStageViewBox,
-} from "../layout/slide.js";
-import {
-  findLayoutPlaceholder,
-  resolvePlaceholderTextDefaults,
-  resolvedShapeBoundingBox,
-} from "../layout/placeholder-defaults.js";
+import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
+import { computeStageLayout, slideStageViewBox } from "../layout/slide.js";
+import { resolvePlaceholderTextDefaults, resolvedShapeBoundingBox } from "../layout/placeholder-defaults.js";
 import { computeSnap, type SnapGuide } from "../layout/snap.js";
 import { anchorsFor, snapToAnchor, type AnchorSide, type ShapeAnchor } from "../layout/anchors.js";
 import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js";
@@ -100,7 +91,10 @@ interface StageLayout {
  * shapes positioned in the scratch margin (negative EMU) sit in the
  * surrounding gray area exactly where the user dropped them.
  */
-function useStageLayout(slideSize: SlideSize, zoom: number): {
+function useStageLayout(
+  slideSize: SlideSize,
+  zoom: number
+): {
   readonly containerRef: React.RefObject<HTMLDivElement | null>;
   readonly layout: StageLayout | null;
 } {
@@ -241,6 +235,24 @@ export interface SlideCanvasProps {
    * indicator stays in sync.
    */
   readonly onConnectorToolExit?: () => void;
+  /**
+   * Optional remote-peer selection presence (Yjs awareness). For each
+   * peer whose `slideId` matches the active slide, the canvas paints
+   * a colored 2px outline around the shape(s) they have selected,
+   * with a small name tag in the peer color. When a peer is on the
+   * slide but has no shape selected (`shapeIds: []`), the canvas
+   * paints a small "X is here" badge in the top-right corner instead.
+   * Empty / undefined → nothing is drawn.
+   */
+  readonly remotePeers?: ReadonlyArray<RemoteSelectionPeer>;
+}
+
+export interface RemoteSelectionPeer {
+  readonly clientId: number;
+  readonly slideId: string;
+  readonly shapeIds: ReadonlyArray<string>;
+  readonly name: string;
+  readonly color: string;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
@@ -541,10 +553,11 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             const ep = which === "start" ? sh.start : sh.end;
             const otherEp = which === "start" ? sh.end : sh.start;
             const cur = resolveEndpoint(ep, shapesByCNvPrId) ?? fallbackEndpoint(sh, which);
-            const otherPt = resolveEndpoint(otherEp, shapesByCNvPrId) ?? fallbackEndpoint(sh, which === "start" ? "end" : "start");
+            const otherPt =
+              resolveEndpoint(otherEp, shapesByCNvPrId) ??
+              fallbackEndpoint(sh, which === "start" ? "end" : "start");
             const otherSide = otherEp.kind === "anchored" ? otherEp.side : null;
-            const otherEndpointCNvPrId =
-              otherEp.kind === "anchored" ? otherEp.targetCNvPrId : null;
+            const otherEndpointCNvPrId = otherEp.kind === "anchored" ? otherEp.targetCNvPrId : null;
             setEndpointDraft({
               shapeId: cShapeId,
               which,
@@ -1012,8 +1025,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         if (mayEnterEditOnClick && targets[0]) {
           const id = targets[0].id;
           const sh = slide ? findShape(slide.shapes, id) : null;
-          const placeholderActivation =
-            sh?.kind === "text" ? activatableEmptyPlaceholder(sh) : null;
+          const placeholderActivation = sh?.kind === "text" ? activatableEmptyPlaceholder(sh) : null;
           if (placeholderActivation) {
             props.onPlaceholderActivate?.({ shapeId: id, placeholder: placeholderActivation });
           } else {
@@ -1050,13 +1062,11 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
             const startPt =
               startEp.kind === "free"
                 ? { x: startEp.xEmu, y: startEp.yEmu }
-                : (resolveEndpoint(startEp, shapesByCNvPrId) ??
-                  fallbackEndpoint(draggedShape, "start"));
+                : (resolveEndpoint(startEp, shapesByCNvPrId) ?? fallbackEndpoint(draggedShape, "start"));
             const endPt =
               endEp.kind === "free"
                 ? { x: endEp.xEmu, y: endEp.yEmu }
-                : (resolveEndpoint(endEp, shapesByCNvPrId) ??
-                  fallbackEndpoint(draggedShape, "end"));
+                : (resolveEndpoint(endEp, shapesByCNvPrId) ?? fallbackEndpoint(draggedShape, "end"));
             await props.agent.applyCommand({
               type: "pptx:set-connector-endpoint",
               source: "human",
@@ -1118,7 +1128,18 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         props.onError?.(err as Error);
       }
     },
-    [connectorDraft, endpointDraft, waypointDraft, drag, marquee, props, selectedIds, setSelectedIds, slide, slideSize]
+    [
+      connectorDraft,
+      endpointDraft,
+      waypointDraft,
+      drag,
+      marquee,
+      props,
+      selectedIds,
+      setSelectedIds,
+      slide,
+      slideSize,
+    ]
   );
 
   const onTextSelectionChange = props.onTextSelectionChange;
@@ -1216,178 +1237,179 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
 
   return (
     <StageViewBoxContext.Provider value={stageViewBox}>
-    <div
-      ref={containerRef}
-      data-testid="pptx-slide-canvas"
-      data-zoom={zoom.toFixed(2)}
-      data-dpi={dpi}
-      className="officeai-pptx-canvas"
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        // The slide rests on the shared "grey desk" backdrop used by
-        // every editor surface (var(--page-backdrop), defined in
-        // apps/web/app/globals.css). The fallback hex keeps the look
-        // sensible when the canvas is rendered outside the app shell
-        // (e.g. Storybook, isolated tests, embedded preview).
-        background: "var(--page-backdrop, #ecebe8)",
-        userSelect: "none",
-        cursor: drag
-          ? cursorForDrag(drag.mode)
-          : connectorDraft && connectorDraft.snapped
-            ? "copy"
-            : endpointDraft && endpointDraft.snapped
+      <div
+        ref={containerRef}
+        data-testid="pptx-slide-canvas"
+        data-zoom={zoom.toFixed(2)}
+        data-dpi={dpi}
+        className="officeai-pptx-canvas"
+        style={{
+          position: "relative",
+          width: "100%",
+          height: "100%",
+          // The slide rests on the shared "grey desk" backdrop used by
+          // every editor surface (var(--page-backdrop), defined in
+          // apps/web/app/globals.css). The fallback hex keeps the look
+          // sensible when the canvas is rendered outside the app shell
+          // (e.g. Storybook, isolated tests, embedded preview).
+          background: "var(--page-backdrop, #ecebe8)",
+          userSelect: "none",
+          cursor: drag
+            ? cursorForDrag(drag.mode)
+            : connectorDraft && connectorDraft.snapped
               ? "copy"
-              : isToolMode || connectorDraft || endpointDraft
-                ? "crosshair"
-                : "default",
-        touchAction: "none",
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      onDoubleClick={(e) => {
-        const t = e.target as Element | null;
-        const shapeEl = t?.closest("[data-shape-id]") as SVGGElement | null;
-        const id = shapeEl?.dataset.shapeId;
-        if (!id) return;
-        const sh = findShape(slide.shapes, id);
-        if (sh?.kind !== "text") return;
-        // Empty non-text placeholder (pic / chart / tbl / dgm / media):
-        // hand the activation to the parent instead of opening the
-        // text-edit overlay. Typing into a picture placeholder would
-        // produce real `<a:t>` runs and silently turn it into a text
-        // box on save, which is exactly the wrong default.
-        const placeholderActivation = activatableEmptyPlaceholder(sh as TextShape);
-        if (placeholderActivation) {
-          props.onPlaceholderActivate?.({ shapeId: id, placeholder: placeholderActivation });
-          return;
-        }
-        startEditing(id);
-      }}
-    >
-      {/* Visual slide card sized to the slide rectangle; pointer events
+              : endpointDraft && endpointDraft.snapped
+                ? "copy"
+                : isToolMode || connectorDraft || endpointDraft
+                  ? "crosshair"
+                  : "default",
+          touchAction: "none",
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onDoubleClick={(e) => {
+          const t = e.target as Element | null;
+          const shapeEl = t?.closest("[data-shape-id]") as SVGGElement | null;
+          const id = shapeEl?.dataset.shapeId;
+          if (!id) return;
+          const sh = findShape(slide.shapes, id);
+          if (sh?.kind !== "text") return;
+          // Empty non-text placeholder (pic / chart / tbl / dgm / media):
+          // hand the activation to the parent instead of opening the
+          // text-edit overlay. Typing into a picture placeholder would
+          // produce real `<a:t>` runs and silently turn it into a text
+          // box on save, which is exactly the wrong default.
+          const placeholderActivation = activatableEmptyPlaceholder(sh as TextShape);
+          if (placeholderActivation) {
+            props.onPlaceholderActivate?.({ shapeId: id, placeholder: placeholderActivation });
+            return;
+          }
+          startEditing(id);
+        }}
+      >
+        {/* Visual slide card sized to the slide rectangle; pointer events
           fall through to the stage div so a click on the white area
           still reaches `onPointerDown`. The SVG below paints the real
           slide background fill on top of this card. Positioned in
           absolute pixels (vs % of an aspect-locked stage) because the
           stage now fills the user's entire viewport — see
           `useStageLayout`. */}
-      <div
-        ref={slideRectRef}
-        data-testid="pptx-slide-card"
-        style={{
-          position: "absolute",
-          left: `${slidePxLeft}px`,
-          top: `${slidePxTop}px`,
-          width: `${slidePxW}px`,
-          height: `${slidePxH}px`,
-          background: "white",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-          pointerEvents: "none",
-        }}
-      />
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox={stageViewBox}
-        preserveAspectRatio="xMidYMid meet"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
-        dangerouslySetInnerHTML={{
-          __html: `<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
-        }}
-      />
-      {drag && preview ? (
-        <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} ctx={ctx} />
-      ) : null}
-      {drag && preview && preview.guides.length > 0 ? (
-        <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
-      ) : null}
-      {drag && preview && preview.anchorCandidates.length > 0 ? (
-        <AnchorOverlay
-          slideSize={slideSize}
-          candidates={preview.anchorCandidates}
-          snapped={preview.anchorSnap}
+        <div
+          ref={slideRectRef}
+          data-testid="pptx-slide-card"
+          style={{
+            position: "absolute",
+            left: `${slidePxLeft}px`,
+            top: `${slidePxTop}px`,
+            width: `${slidePxW}px`,
+            height: `${slidePxH}px`,
+            background: "white",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+            pointerEvents: "none",
+          }}
         />
-      ) : null}
-      {props.commentedShapeIds && props.commentedShapeIds.length > 0 ? (
-        <CommentMarkerOverlay slide={slide} slideSize={slideSize} shapeIds={props.commentedShapeIds} />
-      ) : null}
-      {props.commentFlashTarget ? (
-        <CommentFlashOverlay
-          key={`flash-${props.commentFlashTarget.nonce}`}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox={stageViewBox}
+          preserveAspectRatio="xMidYMid meet"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
+          dangerouslySetInnerHTML={{
+            __html: `<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
+          }}
+        />
+        {drag && preview ? (
+          <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} ctx={ctx} />
+        ) : null}
+        {drag && preview && preview.guides.length > 0 ? (
+          <SmartGuidesOverlay slideSize={slideSize} guides={preview.guides} />
+        ) : null}
+        {drag && preview && preview.anchorCandidates.length > 0 ? (
+          <AnchorOverlay
+            slideSize={slideSize}
+            candidates={preview.anchorCandidates}
+            snapped={preview.anchorSnap}
+          />
+        ) : null}
+        {props.commentedShapeIds && props.commentedShapeIds.length > 0 ? (
+          <CommentMarkerOverlay slide={slide} slideSize={slideSize} shapeIds={props.commentedShapeIds} />
+        ) : null}
+        {props.remotePeers && props.remotePeers.length > 0 ? (
+          <RemoteSelectionOverlay slide={slide} slideSize={slideSize} peers={props.remotePeers} />
+        ) : null}
+        {props.commentFlashTarget ? (
+          <CommentFlashOverlay
+            key={`flash-${props.commentFlashTarget.nonce}`}
+            slide={slide}
+            slideSize={slideSize}
+            target={props.commentFlashTarget}
+          />
+        ) : null}
+        <SelectionOverlaySvg
           slide={slide}
           slideSize={slideSize}
-          target={props.commentFlashTarget}
+          selectedIds={selectedIds}
+          previewBoxes={preview?.boxes ?? null}
+          dragMode={drag?.mode ?? null}
+          editingId={editingId}
+          endpointDraft={endpointDraft}
+          waypointDraft={waypointDraft}
         />
-      ) : null}
-      <SelectionOverlaySvg
-        slide={slide}
-        slideSize={slideSize}
-        selectedIds={selectedIds}
-        previewBoxes={preview?.boxes ?? null}
-        dragMode={drag?.mode ?? null}
-        editingId={editingId}
-        endpointDraft={endpointDraft}
-        waypointDraft={waypointDraft}
-      />
-      {marquee && containerRef.current ? (
-        <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
-      ) : null}
-      {/* Port-hover layer — surfaced when the user is idling over a
+        {marquee && containerRef.current ? (
+          <MarqueeOverlay marquee={marquee} containerRect={containerRef.current.getBoundingClientRect()} />
+        ) : null}
+        {/* Port-hover layer — surfaced when the user is idling over a
           non-connector shape, so the four cardinal anchor dots become
           drag-from sources for new connectors. We always show ports
           while the connector tool is armed (the user came here
           specifically to draw something), and the live target halo
           stays visible during draft / endpoint-edit gestures. */}
-      {/* Slide-wide "you can connect to any of these" hint: shown
+        {/* Slide-wide "you can connect to any of these" hint: shown
           whenever the user has armed the connector tool (about to
           start a brand-new connector) or is mid-drag of an existing
           connector endpoint. Skipped during slide-shape body drags
           and marquee selection because those gestures aren't about
           establishing new attachments. */}
-      {!drag && !marquee && (isToolMode || connectorDraft || endpointDraft) ? (
-        <ConnectableShapesOverlay
-          slide={slide}
-          slideSize={slideSize}
-          skipId={endpointDraft?.shapeId ?? null}
-          emphasisedId={
-            connectorDraft?.snapped?.shapeId ??
-            endpointDraft?.snapped?.shapeId ??
-            hoveredShapeId
-          }
-        />
-      ) : null}
-      {!drag && !marquee && !connectorDraft && !endpointDraft && hoveredShapeId
-        ? renderPortHoverOverlay(slide, slideSize, hoveredShapeId, isToolMode)
-        : null}
-      {connectorDraft && connectorDraft.snapped ? (
-        <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={connectorDraft.snapped.shapeId} />
-      ) : null}
-      {endpointDraft && endpointDraft.snapped ? (
-        <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={endpointDraft.snapped.shapeId} />
-      ) : null}
-      {connectorDraft ? (
-        <ConnectorDraftOverlay slide={slide} slideSize={slideSize} draft={connectorDraft} />
-      ) : null}
-      {endpointDraft ? (
-        <EndpointDraftOverlay slide={slide} slideSize={slideSize} draft={endpointDraft} />
-      ) : null}
-      {editingId
-        ? renderEditingOverlay(
-            slide,
-            editingId,
-            slideSize,
-            dpi,
-            slide.layoutPartPath ? snap.root.layouts.get(slide.layoutPartPath) : undefined,
-            finishEditing,
-            onTextSelectionChange,
-            editCommitRef
-          )
-        : null}
-      {isToolMode ? <ConnectorToolBanner type={props.connectorTool!.type} /> : null}
-    </div>
+        {!drag && !marquee && (isToolMode || connectorDraft || endpointDraft) ? (
+          <ConnectableShapesOverlay
+            slide={slide}
+            slideSize={slideSize}
+            skipId={endpointDraft?.shapeId ?? null}
+            emphasisedId={
+              connectorDraft?.snapped?.shapeId ?? endpointDraft?.snapped?.shapeId ?? hoveredShapeId
+            }
+          />
+        ) : null}
+        {!drag && !marquee && !connectorDraft && !endpointDraft && hoveredShapeId
+          ? renderPortHoverOverlay(slide, slideSize, hoveredShapeId, isToolMode)
+          : null}
+        {connectorDraft && connectorDraft.snapped ? (
+          <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={connectorDraft.snapped.shapeId} />
+        ) : null}
+        {endpointDraft && endpointDraft.snapped ? (
+          <TargetHaloOverlay slide={slide} slideSize={slideSize} shapeId={endpointDraft.snapped.shapeId} />
+        ) : null}
+        {connectorDraft ? (
+          <ConnectorDraftOverlay slide={slide} slideSize={slideSize} draft={connectorDraft} />
+        ) : null}
+        {endpointDraft ? (
+          <EndpointDraftOverlay slide={slide} slideSize={slideSize} draft={endpointDraft} />
+        ) : null}
+        {editingId
+          ? renderEditingOverlay(
+              slide,
+              editingId,
+              slideSize,
+              dpi,
+              slide.layoutPartPath ? snap.root.layouts.get(slide.layoutPartPath) : undefined,
+              finishEditing,
+              onTextSelectionChange,
+              editCommitRef
+            )
+          : null}
+        {isToolMode ? <ConnectorToolBanner type={props.connectorTool!.type} /> : null}
+      </div>
     </StageViewBoxContext.Provider>
   );
 }
@@ -1512,7 +1534,7 @@ function findShapeWithOffset(
  * everything decorative lives in the opaque tail to keep byte-roundtrip
  * cheap.
  */
-function isCornerHandle(h: ResizeHandle): boolean {
+function _isCornerHandle(h: ResizeHandle): boolean {
   return h === "nw" || h === "ne" || h === "sw" || h === "se";
 }
 
@@ -1525,7 +1547,7 @@ function isCornerHandle(h: ResizeHandle): boolean {
  * flip in the canvas — both handles edit the same endpoint as if
  * flip were absent, which lets the reflow logic re-pick flips).
  */
-function endpointForHandleSide(h: ResizeHandle): "start" | "end" {
+function _endpointForHandleSide(h: ResizeHandle): "start" | "end" {
   switch (h) {
     case "nw":
     case "ne":
@@ -1577,13 +1599,7 @@ function findCNvPrIdByShapeId(shapes: ReadonlyArray<Shape>, id: string): number 
  * (double-click or PowerPoint-style second-click) to
  * `onPlaceholderActivate` instead of opening the text overlay.
  */
-const NON_TEXT_PLACEHOLDER_TYPES: ReadonlySet<string> = new Set([
-  "pic",
-  "chart",
-  "tbl",
-  "dgm",
-  "media",
-]);
+const NON_TEXT_PLACEHOLDER_TYPES: ReadonlySet<string> = new Set(["pic", "chart", "tbl", "dgm", "media"]);
 
 /**
  * Returns the `placeholder` descriptor when `shape` is an empty layout
@@ -1594,9 +1610,7 @@ const NON_TEXT_PLACEHOLDER_TYPES: ReadonlySet<string> = new Set([
  * already carry user-entered text (we don't want a typed-in title to
  * suddenly fire the file picker on the next click).
  */
-function activatableEmptyPlaceholder(
-  shape: TextShape
-): { type?: string; idx?: number } | null {
+function activatableEmptyPlaceholder(shape: TextShape): { type?: string; idx?: number } | null {
   const ph = shape.placeholder;
   if (!ph) return null;
   if (!ph.type || !NON_TEXT_PLACEHOLDER_TYPES.has(ph.type)) return null;
@@ -2291,14 +2305,9 @@ function ConnectorSelectionChrome({
   waypointDraft,
 }: ConnectorSelectionChromeProps): React.ReactElement | null {
   const stageViewBox = useStageViewBox(slideSize);
-  const shapesByCNvPrId = React.useMemo(
-    () => buildShapesByCNvPrId(slide.shapes),
-    [slide.shapes]
-  );
-  const startPt =
-    resolveEndpoint(connector.start, shapesByCNvPrId) ?? fallbackEndpoint(connector, "start");
-  const endPt =
-    resolveEndpoint(connector.end, shapesByCNvPrId) ?? fallbackEndpoint(connector, "end");
+  const shapesByCNvPrId = React.useMemo(() => buildShapesByCNvPrId(slide.shapes), [slide.shapes]);
+  const startPt = resolveEndpoint(connector.start, shapesByCNvPrId) ?? fallbackEndpoint(connector, "start");
+  const endPt = resolveEndpoint(connector.end, shapesByCNvPrId) ?? fallbackEndpoint(connector, "end");
   const startSide = connector.start.kind === "anchored" ? connector.start.side : null;
   const endSide = connector.end.kind === "anchored" ? connector.end.side : null;
   // Live waypoint preview: substitute the dragged offset into the
@@ -2393,9 +2402,7 @@ function ConnectorSelectionChrome({
           each one slides perpendicular to the segment's axis. Skip
           when the connector type isn't elbow — straight has no bend,
           and curved doesn't expose explicit waypoints in our model. */}
-      {connector.connectorType === "elbow"
-        ? renderWaypointSliders(connector.id, points, purple)
-        : null}
+      {connector.connectorType === "elbow" ? renderWaypointSliders(connector.id, points, purple) : null}
     </svg>
   );
 }
@@ -2773,11 +2780,7 @@ interface TargetHaloOverlayProps {
  * also reveals all four cardinal ports on the target so the user can
  * see how the connector might re-route if they slide the cursor.
  */
-function TargetHaloOverlay({
-  slide,
-  slideSize,
-  shapeId,
-}: TargetHaloOverlayProps): React.ReactElement | null {
+function TargetHaloOverlay({ slide, slideSize, shapeId }: TargetHaloOverlayProps): React.ReactElement | null {
   const stageViewBox = useStageViewBox(slideSize);
   const located = findShapeWithOffset(slide.shapes, shapeId);
   if (!located) return null;
@@ -3036,11 +3039,7 @@ interface EndpointDraftOverlayProps {
  * understands they're about to convert an anchored endpoint to a
  * free one.
  */
-function EndpointDraftOverlay({
-  slide,
-  slideSize,
-  draft,
-}: EndpointDraftOverlayProps): React.ReactElement {
+function EndpointDraftOverlay({ slide, slideSize, draft }: EndpointDraftOverlayProps): React.ReactElement {
   const stageViewBox = useStageViewBox(slideSize);
   const sx = draft.otherPoint.x;
   const sy = draft.otherPoint.y;
@@ -3379,6 +3378,143 @@ function CommentMarkerOverlay({
   );
 }
 
+interface RemoteSelectionOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly peers: ReadonlyArray<RemoteSelectionPeer>;
+}
+
+/**
+ * SVG overlay that paints a per-peer colored outline around every
+ * shape a remote peer has selected on the active slide, plus an
+ * "X is here" badge for peers viewing this slide without a shape
+ * selection. Filters by `slideId` so peers on a different slide are
+ * silent here (the slide rail dots cover cross-slide visibility).
+ *
+ * Drawn behind the local selection chrome (`SelectionOverlaySvg`)
+ * so the local user's selection visually wins on overlap.
+ */
+function RemoteSelectionOverlay({
+  slide,
+  slideSize,
+  peers,
+}: RemoteSelectionOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
+  const onSlide = peers.filter((p) => p.slideId === slide.id);
+  if (onSlide.length === 0) return null;
+  const outlines: React.ReactElement[] = [];
+  const idleBadges: { peer: RemoteSelectionPeer; index: number }[] = [];
+  for (let i = 0; i < onSlide.length; i++) {
+    const peer = onSlide[i]!;
+    if (peer.shapeIds.length === 0) {
+      idleBadges.push({ peer, index: idleBadges.length });
+      continue;
+    }
+    for (const shapeId of peer.shapeIds) {
+      const sh = findShape(slide.shapes, shapeId);
+      if (!sh) continue;
+      const box = shapeBoundingBox(sh);
+      if (!box) continue;
+      const x = px(box.x);
+      const y = px(box.y);
+      const w = px(box.cx);
+      const h = px(box.cy);
+      outlines.push(
+        <g
+          key={`remote-shape-${peer.clientId}-${shapeId}`}
+          data-testid="pptx-remote-shape-outline"
+          data-peer-color={peer.color}
+        >
+          <rect
+            x={x}
+            y={y}
+            width={w}
+            height={h}
+            fill="none"
+            stroke={peer.color}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            strokeOpacity={0.95}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+          <foreignObject
+            x={x}
+            y={Math.max(0, y - px(180000))}
+            width={Math.max(60, w)}
+            height={px(180000)}
+            pointerEvents="none"
+          >
+            <div
+              style={{
+                display: "inline-block",
+                padding: "1px 6px",
+                fontSize: 10,
+                fontFamily: "system-ui, sans-serif",
+                fontWeight: 500,
+                color: "#fff",
+                backgroundColor: peer.color,
+                borderRadius: "2px 2px 2px 0",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {peer.name}
+            </div>
+          </foreignObject>
+        </g>
+      );
+    }
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={stageViewBox}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+      data-testid="pptx-remote-selection-layer"
+    >
+      {outlines}
+      {idleBadges.length > 0 ? (
+        <foreignObject
+          x={px(slideSize.cxEmu) - px(2400000)}
+          y={px(120000)}
+          width={px(2400000)}
+          height={px(180000) * idleBadges.length}
+          pointerEvents="none"
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 4,
+              fontFamily: "system-ui, sans-serif",
+            }}
+          >
+            {idleBadges.map(({ peer }) => (
+              <div
+                key={`remote-idle-${peer.clientId}`}
+                style={{
+                  padding: "1px 6px",
+                  fontSize: 10,
+                  fontWeight: 500,
+                  color: "#fff",
+                  backgroundColor: peer.color,
+                  borderRadius: 4,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {peer.name} is here
+              </div>
+            ))}
+          </div>
+        </foreignObject>
+      ) : null}
+    </svg>
+  );
+}
+
 interface CommentFlashOverlayProps {
   readonly slide: Slide;
   readonly slideSize: SlideSize;
@@ -3685,10 +3821,7 @@ function TextEditOverlay({
   // The SVG renderer paints this hint when the overlay isn't open;
   // while editing, we reproduce it as a contentEditable=false sibling
   // node so the user sees the same prompt instead of a blank box.
-  const isEffectivelyEmpty = React.useMemo(
-    () => initialPlain.trim().length === 0,
-    [initialPlain]
-  );
+  const isEffectivelyEmpty = React.useMemo(() => initialPlain.trim().length === 0, [initialPlain]);
   const [hasInput, setHasInput] = React.useState(false);
   const placeholderType = shape.placeholder?.type;
   const showPrompt = isEffectivelyEmpty && !hasInput && !!placeholderType;

@@ -24,13 +24,8 @@ import {
 import { ThemeToggle, cn } from "@officeai/ui";
 import { ExportDialog } from "./ExportDialog";
 import { InlineSpinner } from "./InlineSpinner";
-import type {
-  ExportFormat,
-  ExportFormatGroup,
-  ExportFormatIcon,
-  ProductAdapter,
-  SaveState,
-} from "./types";
+import { LocaleToggle, useTranslator } from "@/lib/i18n";
+import type { ExportFormat, ExportFormatGroup, ExportFormatIcon, ProductAdapter, SaveState } from "./types";
 
 export interface EditorTopBarProps {
   readonly adapter: ProductAdapter;
@@ -40,6 +35,12 @@ export interface EditorTopBarProps {
   readonly railOpen: boolean;
   /** Editing the filename triggers this. */
   readonly onRenameFilename?: (next: string) => void;
+  /**
+   * Optional ambient slot rendered just left of the file ops. Used
+   * by the realtime layer to hang a `PresenceStack` on every editor
+   * without each one re-implementing the placement.
+   */
+  readonly extras?: React.ReactNode;
 }
 
 /**
@@ -63,14 +64,16 @@ export function EditorTopBar({
   onToggleRail,
   railOpen,
   onRenameFilename,
+  extras,
 }: EditorTopBarProps): React.ReactNode {
+  const { t } = useTranslator();
   return (
     <header className="flex h-11 items-center gap-2 border-b border-divider bg-background px-3" role="banner">
       <Link
         href="/"
         className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-sm text-secondary hover:bg-hover hover:text-foreground"
-        aria-label="Back to home"
-        title="Back to home"
+        aria-label={t("common.backToHome")}
+        title={t("common.backToHome")}
       >
         <ArrowLeft size={14} />
       </Link>
@@ -85,9 +88,16 @@ export function EditorTopBar({
 
       <div className="flex-1" />
 
+      {extras ? (
+        <>
+          <div className="mr-1 inline-flex items-center">{extras}</div>
+          <Sep />
+        </>
+      ) : null}
+
       {/* Primary file ops */}
       <ToolbarIcon
-        label="Open"
+        label={t("shell.openTooltip")}
         shortcut="Cmd+O"
         onClick={adapter.onOpenFile}
         disabled={!adapter.canOpen}
@@ -96,7 +106,7 @@ export function EditorTopBar({
         <FolderOpen size={15} />
       </ToolbarIcon>
       <ToolbarIcon
-        label="Save"
+        label={t("shell.saveTooltip")}
         shortcut="Cmd+S"
         onClick={() => void adapter.onSave()}
         disabled={!adapter.canSave}
@@ -109,7 +119,7 @@ export function EditorTopBar({
       <Sep />
 
       <ToolbarIcon
-        label="Undo"
+        label={t("shell.undoTooltip")}
         shortcut="Cmd+Z"
         onClick={adapter.onUndo}
         disabled={!adapter.canUndo}
@@ -118,7 +128,7 @@ export function EditorTopBar({
         <Undo2 size={15} />
       </ToolbarIcon>
       <ToolbarIcon
-        label="Redo"
+        label={t("shell.redoTooltip")}
         shortcut="Cmd+Shift+Z"
         onClick={adapter.onRedo}
         disabled={!adapter.canRedo}
@@ -130,12 +140,12 @@ export function EditorTopBar({
       <Sep />
 
       {adapter.findAdapter ? (
-        <ToolbarIcon label="Find" shortcut="Cmd+F" onClick={onOpenFindReplace} testId="shell-find">
+        <ToolbarIcon label={t("shell.findTooltip")} shortcut="Cmd+F" onClick={onOpenFindReplace} testId="shell-find">
           <Search size={15} />
         </ToolbarIcon>
       ) : null}
       <ToolbarIcon
-        label="Command palette"
+        label={t("shell.commandPaletteTooltip")}
         shortcut="Cmd+K"
         onClick={onOpenCommandPalette}
         testId="shell-palette"
@@ -143,7 +153,7 @@ export function EditorTopBar({
         <PaletteIcon />
       </ToolbarIcon>
       <ToolbarIcon
-        label={railOpen ? "Hide comments" : "Show comments"}
+        label={railOpen ? t("common.hideComments") : t("common.showComments")}
         shortcut="Cmd+Alt+M"
         onClick={onToggleRail}
         testId="shell-comments-toggle"
@@ -155,9 +165,10 @@ export function EditorTopBar({
 
       <Sep />
 
+      <LocaleToggle />
       <ThemeToggle />
       <ToolbarIcon
-        label="Keyboard shortcuts"
+        label={t("shell.shortcutsTooltip")}
         shortcut="Cmd+/"
         onClick={adapter.onOpenShortcuts}
         testId="shell-shortcuts"
@@ -175,6 +186,7 @@ function FilenameField({
   readonly value: string;
   readonly onCommit?: (next: string) => void;
 }): React.ReactNode {
+  const { t } = useTranslator();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -194,11 +206,11 @@ function FilenameField({
       <button
         type="button"
         className="max-w-[260px] truncate rounded-sm px-1 text-sm font-medium text-foreground hover:bg-hover"
-        title={onCommit ? "Click to rename" : value}
+        title={onCommit ? t("shell.filenameRenameHint") : value}
         onClick={() => onCommit && setEditing(true)}
         data-testid="shell-filename"
       >
-        {value || "Untitled"}
+        {value || t("common.untitled")}
       </button>
     );
   }
@@ -237,15 +249,16 @@ function FilenameField({
 }
 
 function SaveStatePill({ state }: { readonly state: SaveState }): React.ReactNode {
+  const { t } = useTranslator();
   if (state === "unknown") return null;
   const label =
     state === "saved"
-      ? "Saved"
+      ? t("common.saved")
       : state === "modified"
-        ? "Modified"
+        ? t("common.modified")
         : state === "saving"
-          ? "Saving…"
-          : "Save error";
+          ? t("common.saving")
+          : t("common.saveError");
   const tone =
     state === "error"
       ? "text-[color:var(--error)]"
@@ -272,25 +285,23 @@ const GROUP_ORDER: ReadonlyArray<ExportFormatGroup> = [
   "images",
   "current",
 ];
-const GROUP_LABEL: Record<ExportFormatGroup, string> = {
-  deck: "Whole deck",
-  native: "Native",
-  "pdf-web": "PDF & web",
-  data: "Data",
-  images: "Images",
-  current: "This slide",
+const GROUP_LABEL_KEY: Record<ExportFormatGroup, string> = {
+  deck: "shell.wholeDeck",
+  native: "shell.native",
+  "pdf-web": "shell.pdfWeb",
+  data: "shell.data",
+  images: "shell.images",
+  current: "shell.currentSlide",
 };
 
 function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.ReactNode {
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogInitialId, setDialogInitialId] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLDivElement | null>(null);
 
-  const groups = useMemo(
-    () => groupFormats(adapter.exportFormats),
-    [adapter.exportFormats]
-  );
+  const groups = useMemo(() => groupFormats(adapter.exportFormats), [adapter.exportFormats]);
 
   useEffect(() => {
     if (!open) return;
@@ -321,7 +332,7 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
     return (
       <>
         <ToolbarIcon
-          label={`Export ${fmt.label}`}
+          label={`${t("common.export")} ${fmt.label}`}
           onClick={() => {
             if (needsDialog) {
               setDialogInitialId(fmt.id);
@@ -361,7 +372,7 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
           onClick={() => setOpen((v) => !v)}
           aria-haspopup="menu"
           aria-expanded={open}
-          title="Export"
+          title={t("shell.exportTooltip")}
           data-testid="shell-export"
         >
           <Download size={15} />
@@ -376,7 +387,7 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
               <div key={group}>
                 {gi > 0 ? <div className="my-1 h-px bg-divider" aria-hidden /> : null}
                 <div className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-tertiary">
-                  {GROUP_LABEL[group]}
+                  {t(GROUP_LABEL_KEY[group])}
                 </div>
                 {items.map((fmt) => {
                   const dialogish =
@@ -401,12 +412,8 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
                         <FormatIcon icon={fmt.icon ?? guessIcon(fmt)} />
                       </span>
                       <span className="min-w-0 flex-1 truncate">{fmt.label}</span>
-                      {dialogish ? (
-                        <span
-                          className="text-tertiary"
-                          aria-label="Has options"
-                          title="Has options"
-                        >
+                      {                    dialogish ? (
+                        <span className="text-tertiary" aria-label={t("common.moreOptions")} title={t("common.moreOptions")}>
                           <Sliders size={11} />
                         </span>
                       ) : null}
@@ -426,7 +433,7 @@ function ExportMenu({ adapter }: { readonly adapter: ProductAdapter }): React.Re
               <span className="text-secondary">
                 <Sliders size={12} />
               </span>
-              <span>More options…</span>
+              <span>{t("common.moreOptions")}</span>
             </button>
           </div>
         )}
@@ -516,9 +523,7 @@ function defaultGroup(format: ExportFormat): ExportFormatGroup {
   }
 }
 
-function groupFormats(
-  formats: ReadonlyArray<ExportFormat>
-): ReadonlyArray<{
+function groupFormats(formats: ReadonlyArray<ExportFormat>): ReadonlyArray<{
   readonly group: ExportFormatGroup;
   readonly items: ReadonlyArray<ExportFormat>;
 }> {

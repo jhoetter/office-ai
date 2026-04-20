@@ -1,0 +1,30 @@
+{
+  "name": "@officeai/pdf-edit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Page-level PDF operations (rotate, reorder, delete, split, merge, extract, crop, watermark, page numbers, set-metadata) backed by pdf-lib. Pure functions that take + return Uint8Array.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@officeai/pdf": "workspace:*",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
+}

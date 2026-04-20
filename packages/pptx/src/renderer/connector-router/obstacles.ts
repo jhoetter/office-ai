@@ -24,12 +24,7 @@ export function inflateBox(box: RouterBox, pad: number): RouterBox {
 
 /** True when `pt` lies inside `box` (inclusive on the right/bottom). */
 export function pointInBox(pt: RouterPoint, box: RouterBox): boolean {
-  return (
-    pt.x >= box.x &&
-    pt.x <= box.x + box.cx &&
-    pt.y >= box.y &&
-    pt.y <= box.y + box.cy
-  );
+  return pt.x >= box.x && pt.x <= box.x + box.cx && pt.y >= box.y && pt.y <= box.y + box.cy;
 }
 
 /**
@@ -65,11 +60,7 @@ export function segmentHitsObstacle(
  * enter, which matches the "endpoint anchored to a shape's edge
  * doesn't count as colliding with that shape" feel.
  */
-export function segmentIntersectsBox(
-  a: RouterPoint,
-  b: RouterPoint,
-  box: RouterBox
-): boolean {
+export function segmentIntersectsBox(a: RouterPoint, b: RouterPoint, box: RouterBox): boolean {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const xMin = box.x;

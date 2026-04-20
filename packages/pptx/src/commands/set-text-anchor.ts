@@ -67,10 +67,7 @@ export const setTextAnchorHandler: CommandHandler<SetTextAnchorPayload, PptxSnap
   },
 };
 
-function applyAnchor(
-  current: OpaqueXml | undefined,
-  anchor: TextAnchor | null
-): OpaqueXml | undefined {
+function applyAnchor(current: OpaqueXml | undefined, anchor: TextAnchor | null): OpaqueXml | undefined {
   const base: OpaqueXml = current ?? defaultBodyPr();
   const attrs: Record<string, string> = { ...base.attrs };
   const rawAttrs: Record<string, string> = { ...base.rawAttrs };

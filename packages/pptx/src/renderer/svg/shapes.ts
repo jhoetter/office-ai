@@ -398,7 +398,7 @@ function renderPlaceholderHint(
   // Auto-shrink for tiny placeholder boxes so the hint never overflows
   // — preserves the "what you'd see typed" feel without breaking the
   // dashed bounding box.
-  const fitFontSize = Math.min(baseFontSize, h * 0.55, w / Math.max(1, style.label?.length ?? 1) * 1.6);
+  const fitFontSize = Math.min(baseFontSize, h * 0.55, (w / Math.max(1, style.label?.length ?? 1)) * 1.6);
   const label = style.label ?? placeholderHintLabel(type);
   // Inset the label so it doesn't kiss the dashed outline (real
   // placeholders carry `lIns`/`tIns` defaults of ~0.1" / 0.05").
@@ -469,13 +469,41 @@ function placeholderHintStyle(type: string): PlaceholderHintStyle {
       // a bullet at outline level 1.
       return { fontPt: 18, fontFamily: FAMILY, fontWeight: 400, align: "left", anchor: "top" };
     case "ftr":
-      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle", label: "Footer" };
+      return {
+        fontPt: 12,
+        fontFamily: FAMILY,
+        fontWeight: 400,
+        align: "center",
+        anchor: "middle",
+        label: "Footer",
+      };
     case "hdr":
-      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "center", anchor: "middle", label: "Header" };
+      return {
+        fontPt: 12,
+        fontFamily: FAMILY,
+        fontWeight: 400,
+        align: "center",
+        anchor: "middle",
+        label: "Header",
+      };
     case "dt":
-      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "left", anchor: "middle", label: "Date" };
+      return {
+        fontPt: 12,
+        fontFamily: FAMILY,
+        fontWeight: 400,
+        align: "left",
+        anchor: "middle",
+        label: "Date",
+      };
     case "sldNum":
-      return { fontPt: 12, fontFamily: FAMILY, fontWeight: 400, align: "right", anchor: "middle", label: "‹#›" };
+      return {
+        fontPt: 12,
+        fontFamily: FAMILY,
+        fontWeight: 400,
+        align: "right",
+        anchor: "middle",
+        label: "‹#›",
+      };
     case "chart":
     case "tbl":
     case "dgm":

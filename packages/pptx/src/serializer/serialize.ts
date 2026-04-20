@@ -643,9 +643,7 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
     // fill but before the head/tail end markers — we follow that order
     // so re-saved files diff cleanly against authentic PowerPoint
     // output.
-    lnChildren.push(
-      makeEntry("a:prstDash", [], { val: prstDashValue(shape.stroke.dash) })
-    );
+    lnChildren.push(makeEntry("a:prstDash", [], { val: prstDashValue(shape.stroke.dash) }));
   }
   if (shape.headEnd) {
     lnChildren.push(makeEntry("a:headEnd", [], { type: shape.headEnd }));
@@ -656,9 +654,7 @@ function buildConnectorLn(shape: ConnectorShape): Record<string, unknown> {
   return makeEntry("a:ln", lnChildren, lnAttrs);
 }
 
-function prstDashValue(
-  dash: "dashed" | "dotted" | "longDash" | "dashDot"
-): string {
+function prstDashValue(dash: "dashed" | "dotted" | "longDash" | "dashDot"): string {
   // OOXML preset names live in `ST_PresetLineDashVal`. We pick the
   // closest match for each editor-exposed style; `mapPrstDash` in the
   // parser maps these back to the same enum on re-load so a save→load

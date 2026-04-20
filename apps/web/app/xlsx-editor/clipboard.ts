@@ -8,6 +8,7 @@ import {
   snapshotToTsv,
   type XlsxClipboardSnapshot,
 } from "@officeai/xlsx";
+import { EMBED_MIME, isEmbedEnabled, makeEnvelope, serializeEnvelope } from "@/lib/embed/envelope";
 
 /**
  * Web-side system-clipboard bridge for the XLSX editor.
@@ -34,13 +35,34 @@ const FINGERPRINT_ATTR = "data-xlsx-fingerprint";
 export interface MarshalResult {
   readonly tsv: string;
   readonly html: string;
+  /**
+   * Structured embed envelope for cross-format pastes (XLSX → DOCX
+   * table, XLSX → PPTX table). Only present when the
+   * `NEXT_PUBLIC_OAI_EMBED` flag is on; readers tolerate its
+   * absence and fall back to the HTML/TSV channels.
+   */
+  readonly embed?: string;
 }
 
-/** Build the TSV + HTML payloads for a snapshot. */
+/**
+ * Build the TSV + HTML (+ embed) payloads for a snapshot.
+ *
+ * Outputs are pure strings so the caller decides which channels to
+ * paint onto the clipboard (synchronous `event.clipboardData.setData`
+ * vs async `ClipboardItem` write).
+ */
 export function marshalClipboard(snapshot: XlsxClipboardSnapshot): MarshalResult {
   const tsv = snapshotToTsv(snapshot);
   const html = buildHtmlTable(snapshot);
-  return { tsv, html };
+  if (!isEmbedEnabled()) {
+    return { tsv, html };
+  }
+  const env = makeEnvelope("xlsx", {
+    kind: "xlsx-range",
+    snapshot,
+    originLabel: `${snapshot.origin.sheet}!${snapshot.origin.range}`,
+  });
+  return { tsv, html, embed: serializeEnvelope(env) };
 }
 
 function buildHtmlTable(snapshot: XlsxClipboardSnapshot): string {
@@ -98,10 +120,17 @@ export async function writeToSystemClipboard(payload: MarshalResult): Promise<vo
   if (!clip) return;
   try {
     if (typeof window !== "undefined" && "ClipboardItem" in window) {
-      const item = new (window as unknown as { ClipboardItem: typeof ClipboardItem }).ClipboardItem({
+      // Browsers reject `ClipboardItem` if any value is not a Blob,
+      // so we conditionally include the embed MIME only when the
+      // marshal layer produced one (i.e. the flag is on).
+      const parts: Record<string, Blob> = {
         "text/plain": new Blob([payload.tsv], { type: "text/plain" }),
         "text/html": new Blob([payload.html], { type: "text/html" }),
-      });
+      };
+      if (payload.embed) {
+        parts[EMBED_MIME] = new Blob([payload.embed], { type: EMBED_MIME });
+      }
+      const item = new (window as unknown as { ClipboardItem: typeof ClipboardItem }).ClipboardItem(parts);
       await clip.write([item]);
       return;
     }

@@ -35,7 +35,12 @@ export function docxToText(snapshot: DocxSnapshot): string {
   for (const block of snapshot.root.body) {
     appendBlockAsText(block, ctx, lines, 0);
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  return (
+    lines
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim() + "\n"
+  );
 }
 
 /**
@@ -49,17 +54,17 @@ export function docxToMarkdown(snapshot: DocxSnapshot): string {
   for (const block of snapshot.root.body) {
     appendBlockAsMarkdown(block, ctx, out);
   }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  return (
+    out
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim() + "\n"
+  );
 }
 
 /* ── plain text ───────────────────────────────────────────────────── */
 
-function appendBlockAsText(
-  block: BlockNode,
-  ctx: SerializeContext,
-  out: string[],
-  indent: number
-): void {
+function appendBlockAsText(block: BlockNode, ctx: SerializeContext, out: string[], indent: number): void {
   switch (block.kind) {
     case "paragraph": {
       const text = paragraphToPlain(block);
@@ -172,11 +177,7 @@ function runChildToPlain(child: RunChild): string {
 
 /* ── Markdown ─────────────────────────────────────────────────────── */
 
-function appendBlockAsMarkdown(
-  block: BlockNode,
-  ctx: SerializeContext,
-  out: string[]
-): void {
+function appendBlockAsMarkdown(block: BlockNode, ctx: SerializeContext, out: string[]): void {
   switch (block.kind) {
     case "paragraph": {
       const heading = headingLevel(block);
@@ -224,15 +225,9 @@ function appendBlockAsMarkdown(
   }
 }
 
-function appendTableAsMarkdown(
-  table: Table,
-  ctx: SerializeContext,
-  out: string[]
-): void {
+function appendTableAsMarkdown(table: Table, ctx: SerializeContext, out: string[]): void {
   if (table.rows.length === 0) return;
-  const rows = table.rows.map((row) =>
-    row.cells.map((cell) => cellToMarkdownLine(cell, ctx))
-  );
+  const rows = table.rows.map((row) => row.cells.map((cell) => cellToMarkdownLine(cell, ctx)));
   const headerCells = rows[0]!;
   const colCount = headerCells.length;
   const align = new Array<string>(colCount).fill("---");

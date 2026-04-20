@@ -92,7 +92,7 @@ undo() / redo()`). Renderers must not install parallel histories
 Concretely:
 
 - The toolbar `Undo` / `Redo` buttons read `agent.canUndo() /
-  canRedo()` and call `agent.undo() / redo()`.
+canRedo()` and call `agent.undo() / redo()`.
 - The keyboard chord (`Cmd-Z` / `Cmd-Shift-Z` / `Cmd-Y`) routes
   through the same `agent.undo() / redo()` (see
   `apps/web/app/lib/undo-redo.ts` for the shared chord helper).

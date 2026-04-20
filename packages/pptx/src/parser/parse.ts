@@ -893,9 +893,7 @@ function mapPrstToConnectorType(prst: string): ConnectorType {
   return "unsupported";
 }
 
-function mapPrstDash(
-  v: string
-): "solid" | "dashed" | "dotted" | "longDash" | "dashDot" {
+function mapPrstDash(v: string): "solid" | "dashed" | "dotted" | "longDash" | "dashDot" {
   // PowerPoint exposes ~10 dash presets; we collapse them to the five
   // the editor exposes. Mapping mirrors `serialize.ts` so a round-trip
   // doesn't drift between presets. Unknown presets fall through to

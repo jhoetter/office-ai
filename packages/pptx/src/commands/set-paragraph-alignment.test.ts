@@ -20,7 +20,7 @@ function findFirstTextShape(slideShapes: ReadonlyArray<unknown>): TextShape | nu
 }
 
 describe("pptx:set-paragraph-alignment", () => {
-  it("applies center alignment to a single paragraph and re-emits algn=\"ctr\"", async () => {
+  it('applies center alignment to a single paragraph and re-emits algn="ctr"', async () => {
     const agent = await loadAgent("04-multi-shape.pptx");
     const slide = agent.getSnapshot().root.slides[0];
     const ts = findFirstTextShape(slide.shapes);
@@ -39,9 +39,7 @@ describe("pptx:set-paragraph-alignment", () => {
     });
     expect(m.status).toBe("approved");
 
-    const updated = agent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is TextShape => s.id === ts.id
-    )!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     expect(updated.txBody.paragraphs[0].properties.alignment).toBe("center");
     expect(updated.txBody.paragraphs[0].properties.opaqueAttrs?.algn).toBe("ctr");
 
@@ -65,9 +63,7 @@ describe("pptx:set-paragraph-alignment", () => {
       source: "system",
     });
 
-    const updated = agent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is TextShape => s.id === ts.id
-    )!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     for (const p of updated.txBody.paragraphs) {
       expect(p.properties.alignment).toBe("right");
       expect(p.properties.opaqueAttrs?.algn).toBe("r");
@@ -91,9 +87,7 @@ describe("pptx:set-paragraph-alignment", () => {
       source: "system",
     });
 
-    const updated = agent.getSnapshot().root.slides[0].shapes.find(
-      (s): s is TextShape => s.id === ts.id
-    )!;
+    const updated = agent.getSnapshot().root.slides[0].shapes.find((s): s is TextShape => s.id === ts.id)!;
     expect(updated.txBody.paragraphs[0].properties.alignment).toBeUndefined();
     expect(updated.txBody.paragraphs[0].properties.opaqueAttrs?.algn).toBeUndefined();
 

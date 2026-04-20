@@ -58,10 +58,7 @@ export class ConvertError extends Error {
  */
 export async function convertViaServer(args: ConvertViaServerArgs): Promise<Blob> {
   const sourceMime = args.sourceMime ?? SOURCE_MIME[args.sourceExt];
-  const buffer =
-    args.bytes instanceof Uint8Array
-      ? new Uint8Array(args.bytes)
-      : new Uint8Array(args.bytes);
+  const buffer = args.bytes instanceof Uint8Array ? new Uint8Array(args.bytes) : new Uint8Array(args.bytes);
   const sourceBlob = new Blob([buffer as BlobPart], { type: sourceMime });
 
   const form = new FormData();

@@ -1,10 +1,5 @@
 import type { CommandHandler } from "@officeai/core";
-import type {
-  PptxSnapshot,
-  TextParagraph,
-  TextParagraphProperties,
-  TextShape,
-} from "../model/types.js";
+import type { PptxSnapshot, TextParagraph, TextParagraphProperties, TextShape } from "../model/types.js";
 import {
   buildDiff,
   evolveSnapshot,
@@ -37,10 +32,7 @@ const VALID_ALIGNMENTS: ReadonlySet<string> = new Set(Object.keys(ALGN_MAP));
  * `algn` attribute in sync — otherwise a typed change here would be
  * silently lost on re-emit.
  */
-export const setParagraphAlignmentHandler: CommandHandler<
-  SetParagraphAlignmentPayload,
-  PptxSnapshot
-> = {
+export const setParagraphAlignmentHandler: CommandHandler<SetParagraphAlignmentPayload, PptxSnapshot> = {
   type: "pptx:set-paragraph-alignment",
   apply(snapshot, payload) {
     const { slide, index: sIdx } = findSlide(snapshot, payload.slideIndex);
@@ -88,10 +80,7 @@ export const setParagraphAlignmentHandler: CommandHandler<
   },
 };
 
-function resolveTargets(
-  requested: ReadonlyArray<number> | undefined,
-  total: number
-): Set<number> {
+function resolveTargets(requested: ReadonlyArray<number> | undefined, total: number): Set<number> {
   if (requested === undefined) {
     const out = new Set<number>();
     for (let i = 0; i < total; i++) out.add(i);

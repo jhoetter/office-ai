@@ -11,6 +11,15 @@ import {
 import { cn } from "../lib/cn";
 import { Button } from "./button";
 
+export interface CommentAuthorIdentity {
+  /** Display name (e.g. realtime identity name, or "You"). */
+  readonly name: string;
+  /** Stable peer id; threaded into `authorId` on the replied comment. */
+  readonly id?: string;
+  /** Hex color from `colorForPeer`; threaded into `authorColor`. */
+  readonly color?: string;
+}
+
 export interface CommentsSidebarProps {
   /**
    * Either a `CommentsProvider` (preferred — adapter style for new
@@ -21,6 +30,13 @@ export interface CommentsSidebarProps {
   threads?: ReadonlyArray<CommentThread>;
   /** Author name to attach to new replies; defaults to `"You"`. */
   author?: string;
+  /**
+   * Realtime identity used to stamp `authorId` + `authorColor` on
+   * replies. When supplied it takes precedence over the legacy
+   * `author` prop's name. Optional so callers without realtime wiring
+   * still work as before.
+   */
+  authorIdentity?: CommentAuthorIdentity;
   /** Editor-specific scroll-to-anchor side-effect. */
   onScrollTo?: (commentId: string) => void;
   /** Empty-state copy. Defaults to a generic "no comments yet" line. */
@@ -43,12 +59,19 @@ export interface CommentsSidebarProps {
  */
 export function CommentsSidebar(props: CommentsSidebarProps): ReactNode {
   const threads = resolveThreads(props);
-  const author = props.author ?? "You";
+  const identity = props.authorIdentity;
+  const author = identity?.name ?? props.author ?? "You";
   const scrollTo = props.onScrollTo ?? props.provider?.onScrollTo ?? noop;
 
   const onReply = async (parentId: string, text: string) => {
     if (!props.provider) return;
-    await props.provider.reply({ parentId, author, text });
+    await props.provider.reply({
+      parentId,
+      author,
+      text,
+      ...(identity?.id ? { authorId: identity.id } : {}),
+      ...(identity?.color ? { authorColor: identity.color } : {}),
+    });
   };
   const onResolve = async (commentId: string, resolved: boolean) => {
     if (!props.provider) return;
@@ -189,11 +212,19 @@ function CommentRow(props: {
   indent?: boolean;
 }): ReactNode {
   const text = props.comment.text;
+  const swatchColor = props.comment.authorColor ?? null;
   return (
     <div className={cn("flex items-start gap-2", props.indent && "text-[11px]")}>
       {props.indent && <CornerDownRight size={10} className="mt-1 shrink-0 text-tertiary" />}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            data-testid="comment-author-swatch"
+            className="inline-block size-2 shrink-0 rounded-full ring-1 ring-divider"
+            style={{ backgroundColor: swatchColor ?? "var(--divider)" }}
+            title={`Comment by ${props.comment.author || "Anonymous"}`}
+          />
           <button
             type="button"
             onClick={() => props.onScrollTo(props.comment.id)}

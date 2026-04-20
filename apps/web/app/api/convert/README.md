@@ -8,13 +8,13 @@ XLSX, or PPTX upload.
 
 `multipart/form-data` with these fields:
 
-| Field       | Type    | Required | Notes                                                                                                          |
-| ----------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| `file`      | Blob    | yes      | Source document bytes.                                                                                         |
-| `sourceExt` | string  | yes      | One of `docx`, `xlsx`, `pptx`.                                                                                 |
-| `targetExt` | string  | yes      | One of `pdf`, `html`.                                                                                          |
-| `filename`  | string  | no       | Base filename for the response (no extension).                                                                 |
-| `pageRange` | string  | no       | PDF only. LibreOffice page-range expression (`"1-3,5,7"`). Used for DOCX page ranges and PPTX single/multi-slide PDFs. |
+| Field       | Type   | Required | Notes                                                                                                                  |
+| ----------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `file`      | Blob   | yes      | Source document bytes.                                                                                                 |
+| `sourceExt` | string | yes      | One of `docx`, `xlsx`, `pptx`.                                                                                         |
+| `targetExt` | string | yes      | One of `pdf`, `html`.                                                                                                  |
+| `filename`  | string | no       | Base filename for the response (no extension).                                                                         |
+| `pageRange` | string | no       | PDF only. LibreOffice page-range expression (`"1-3,5,7"`). Used for DOCX page ranges and PPTX single/multi-slide PDFs. |
 
 Limits: input ≤ 50 MB, conversion ≤ 60 s wall-clock. `pageRange` is
 validated against `/^\d+(-\d+)?(,\d+(-\d+)?)*$/` (whitespace allowed)
@@ -38,7 +38,7 @@ installed and `soffice` on `PATH`.
   `/Applications/LibreOffice.app/Contents/MacOS/soffice` is reachable
   via `PATH`, or set `OFFICEAI_SOFFICE_BIN`).
 - Debian/Ubuntu: `sudo apt-get install -y libreoffice-core
-  libreoffice-writer libreoffice-calc libreoffice-impress`.
+libreoffice-writer libreoffice-calc libreoffice-impress`.
 - Alpine: `apk add --no-cache libreoffice` (in a container, also
   install fonts: `ttf-dejavu ttf-liberation fontconfig`).
 - Containers: include LibreOffice in the production image. Cold

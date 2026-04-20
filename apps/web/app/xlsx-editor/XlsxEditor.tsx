@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CommentComposer, CommentsSidebar, cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   EditorShell,
@@ -25,12 +26,7 @@ import {
   saveFile as saveFileViaService,
 } from "@/lib/files/file-service";
 import { convertViaServer } from "@/lib/files/convert-client";
-import {
-  sheetToCsv,
-  sheetToTsv,
-  workbookToCsvZip,
-  workbookToJson,
-} from "./lib/export-data";
+import { sheetToCsv, sheetToTsv, workbookToCsvZip, workbookToJson } from "./lib/export-data";
 import {
   XlsxAgent,
   assignRefColors,
@@ -93,6 +89,16 @@ import { InsertChartDialog } from "./InsertChartDialog";
 import type { ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
+import {
+  PresenceSlot,
+  readExplicitRoomFromUrl,
+  RemotePresenceList,
+  roomIdForSource,
+  useCommandBroadcast,
+  usePublishPresence,
+  useRealtimeRoom,
+  useStableTabId,
+} from "@/lib/realtime";
 import { TextToColumnsPopover } from "./TextToColumnsPopover";
 import { FilterDropdown } from "./FilterDropdown";
 import { sniffDelimiter } from "@officeai/xlsx";
@@ -103,6 +109,7 @@ import {
   writeToSystemClipboard,
   readFromSystemClipboard,
 } from "./clipboard";
+import { EMBED_MIME } from "@/lib/embed/envelope";
 
 const SAMPLE_NAME = "sample.xlsx";
 const BLANK_NAME = "Untitled.xlsx";
@@ -313,6 +320,7 @@ export function XlsxEditor({
   initialSource,
   initialBlank,
 }: XlsxEditorProps = {}): ReactNode {
+  const { t } = useTranslator();
   const agentRef = useRef<XlsxAgent | null>(null);
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
   const [snapshot, setSnapshot] = useState<XlsxSnapshot | null>(null);
@@ -412,10 +420,7 @@ export function XlsxEditor({
         // Without this toast a pending agent mutation that
         // becomes inconsistent after an undo just vanishes —
         // the user has no way to know what happened.
-        if (
-          mutation.status === "rejected" &&
-          mutation.rejection?.code === "rebase-failed"
-        ) {
+        if (mutation.status === "rejected" && mutation.rejection?.code === "rebase-failed") {
           pushToast(
             "warn",
             `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
@@ -585,9 +590,7 @@ export function XlsxEditor({
   // surfaced, the EmptyState is the recovery UI the user should see
   // — the splash's job is done.
   useEffect(() => {
-    const ready = initialLoadFailed
-      ? true
-      : Boolean(agent && activeSheet && snapshot);
+    const ready = initialLoadFailed ? true : Boolean(agent && activeSheet && snapshot);
     onBootstrapReady?.(ready);
   }, [agent, activeSheet, snapshot, initialLoadFailed, onBootstrapReady]);
 
@@ -1145,6 +1148,7 @@ export function XlsxEditor({
         const payload = marshalClipboard(snap);
         e.clipboardData.setData("text/plain", payload.tsv);
         e.clipboardData.setData("text/html", payload.html);
+        if (payload.embed) e.clipboardData.setData(EMBED_MIME, payload.embed);
         setMarchingAnts({
           sheet: activeSheet.name,
           r1: range.start.row,
@@ -1175,6 +1179,7 @@ export function XlsxEditor({
         const payload = marshalClipboard(snap);
         e.clipboardData.setData("text/plain", payload.tsv);
         e.clipboardData.setData("text/html", payload.html);
+        if (payload.embed) e.clipboardData.setData(EMBED_MIME, payload.embed);
         setMarchingAnts({
           sheet: activeSheet.name,
           r1: range.start.row,
@@ -1357,9 +1362,7 @@ export function XlsxEditor({
         const allSheets = snapshotRef.current?.root.sheets ?? [];
         // Skip hidden / very-hidden sheets so the chord matches what
         // the tab strip actually shows the user.
-        const visible = allSheets.filter(
-          (s) => s.state !== "hidden" && s.state !== "veryHidden"
-        );
+        const visible = allSheets.filter((s) => s.state !== "hidden" && s.state !== "veryHidden");
         if (visible.length === 0) return;
         e.preventDefault();
         const idx = Math.max(
@@ -1394,9 +1397,7 @@ export function XlsxEditor({
         const a = agentRef.current;
         if (!a) return;
         const r = selectionToRange(selection);
-        const anchorCell = activeSheet.cells.get(
-          cellKey(selection.anchor.row, selection.anchor.col)
-        );
+        const anchorCell = activeSheet.cells.get(cellKey(selection.anchor.row, selection.anchor.col));
         const anchorFormula = anchorCell?.formula?.text ?? null;
         const anchorValue: CellValue = anchorCell?.value ?? null;
         for (let row = r.start.row; row <= r.end.row; row++) {
@@ -1404,21 +1405,19 @@ export function XlsxEditor({
             if (row === selection.anchor.row && col === selection.anchor.col) continue;
             const ref = formatA1({ row, col });
             const cmd = anchorFormula
-              ? ({
+              ? {
                   type: "xlsx:set-cell-formula" as const,
                   payload: { sheet: activeSheet.name, ref, formula: anchorFormula },
                   source: "human" as const,
-                })
-              : ({
+                }
+              : {
                   type: "xlsx:set-cell-value" as const,
                   payload: { sheet: activeSheet.name, ref, value: anchorValue },
                   source: "human" as const,
-                });
+                };
             void a
               .applyCommand(cmd)
-              .catch((err: unknown) =>
-                pushToast("error", err instanceof Error ? err.message : String(err))
-              );
+              .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
           }
         }
         return;
@@ -1661,9 +1660,7 @@ export function XlsxEditor({
             payload: { sheet: activeSheet.name, ref, value: serial },
             source: "human",
           })
-          .catch((err: unknown) =>
-            pushToast("error", err instanceof Error ? err.message : String(err))
-          );
+          .catch((err: unknown) => pushToast("error", err instanceof Error ? err.message : String(err)));
         // Built-in numFmtIds: 14 = m/d/yyyy, 19 = h:mm:ss AM/PM.
         // Pushed through `onApplyFormat` so multi-area selections
         // (Ctrl-clicked extras) also pick up the format.
@@ -1934,10 +1931,7 @@ export function XlsxEditor({
         switch (format.id) {
           case "xlsx": {
             const buf = await a.exportFile();
-            downloadBlob(
-              new Blob([buf as BlobPart], { type: format.mime }),
-              downloadName
-            );
+            downloadBlob(new Blob([buf as BlobPart], { type: format.mime }), downloadName);
             break;
           }
           case "pdf":
@@ -3564,6 +3558,15 @@ export function XlsxEditor({
               onScrollTo: scrollToComment,
             })}
             author="You"
+            {...(realtimeRoom.room?.identity
+              ? {
+                  authorIdentity: {
+                    name: realtimeRoom.room.identity.name,
+                    id: realtimeRoom.room.identity.id,
+                    color: realtimeRoom.room.identity.color,
+                  },
+                }
+              : {})}
             emptyHint="No comments on this sheet yet. Select a cell and press Add comment in the toolbar."
             onScrollTo={scrollToComment}
           />
@@ -3850,6 +3853,42 @@ export function XlsxEditor({
     dispatchOrToast,
   ]);
 
+  const tabFallback = useStableTabId("xlsx");
+  const realtimeRoomId = useMemo<string | null>(() => {
+    if (!agent) return null;
+    if (!tabFallback && !initialSource) return null;
+    return roomIdForSource({
+      product: "xlsx",
+      src: initialSource?.url,
+      tabFallback,
+      explicitRoom: readExplicitRoomFromUrl(),
+    });
+  }, [agent, initialSource, tabFallback]);
+  const realtimeRoom = useRealtimeRoom({
+    roomId: realtimeRoomId,
+    product: "xlsx",
+  });
+  useCommandBroadcast({
+    agent,
+    room: realtimeRoom.room,
+  });
+
+  // Publish XLSX selection (sheet + A1 range) on every change so
+  // peers see "Quick Quokka is on Sheet1!B4:D7" in real time.
+  const presenceCursor = useMemo(() => {
+    if (!activeSheet || !selection) return null;
+    const r = selectionToRange(selection);
+    const a = `${colToLetter(r.start.col)}${r.start.row + 1}`;
+    const b = `${colToLetter(r.end.col)}${r.end.row + 1}`;
+    return {
+      product: "xlsx" as const,
+      sheetName: activeSheet.name,
+      anchor: a,
+      range: a === b ? a : `${a}:${b}`,
+    };
+  }, [activeSheet, selection]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "xlsx",
@@ -3903,8 +3942,10 @@ export function XlsxEditor({
 
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           snapshot ? (
             <Toolbar
@@ -3952,8 +3993,25 @@ export function XlsxEditor({
           )
         }
         statusBarLeft={
-          <span className="text-[11px] tabular-nums text-tertiary">
-            rev {revision} · {pendingCount} pending
+          <span className="flex items-center gap-3 text-[11px] tabular-nums text-tertiary">
+            <span>
+              rev {revision} · {pendingCount} pending
+            </span>
+            {formulaEditing ? (
+              <span
+                className="inline-flex items-center gap-1 rounded bg-[var(--accent-light)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)] shadow-sm"
+                data-testid="xlsx-formula-ref-hint"
+                aria-live="polite"
+              >
+                {/*
+                  Surfaces what cell-grid clicks do while the formula
+                  bar is open. Without this hint users routinely think
+                  clicks deselect their formula draft; in fact they
+                  insert the picked cell as a reference.
+                */}
+                {t("xlsx.selection.formulaPickHint")}
+              </span>
+            ) : null}
           </span>
         }
         body={
@@ -4254,6 +4312,7 @@ export function XlsxEditor({
                           });
                           setSelectedChartId(null);
                         }}
+                        remotePeers={realtimeRoom.remotePeers}
                       />
                     ) : null}
                   </div>
@@ -4262,6 +4321,18 @@ export function XlsxEditor({
                 <SheetTabBar
                   sheets={sheets.map((s) => ({ id: String(s.id), name: s.name, state: s.state }))}
                   activeName={activeSheetName}
+                  peers={realtimeRoom.remotePeers
+                    .map((p) => {
+                      const c = p.state.cursor;
+                      if (!c || c.product !== "xlsx") return null;
+                      return {
+                        clientId: p.clientId,
+                        sheetName: c.sheetName,
+                        name: p.state.user.name,
+                        color: p.state.user.color,
+                      };
+                    })
+                    .filter((x): x is NonNullable<typeof x> => x !== null)}
                   onActivate={(name) => {
                     // If the user clicks a hidden sheet's "unhide" chip the
                     // sheet may not yet be visible — flip it to visible first

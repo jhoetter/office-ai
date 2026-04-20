@@ -13,6 +13,7 @@ import type {
   XlsxSnapshot,
   XlsxWorkbook,
 } from "../model/types.js";
+import { CHART_CONTENT_TYPE, mintChartPartPath, serializeChartPart } from "./charts.js";
 import { serializeCommentsPart } from "./comments.js";
 import {
   buildDrawingRels,
@@ -80,8 +81,16 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   // pass can splice the freshly-minted `<drawing r:id>` reference
   // straight into the regenerated worksheet XML.
   const drawingRidByPath = new Map<string, string | null>();
+  const emittedChartParts = new Set<string>();
   if (dirty.drawings.size > 0) {
-    rewriteDirtyDrawings(snapshot.root, container, dirty.drawings, drawingRidByPath);
+    rewriteDirtyDrawings(
+      snapshot.root,
+      container,
+      dirty.drawings,
+      drawingRidByPath,
+      emittedChartParts
+    );
+    dropOrphanChartParts(container, emittedChartParts);
   }
   if (dirty.media.size > 0) {
     rewriteDirtyMedia(snapshot.root, container, dirty.media);
@@ -226,17 +235,22 @@ function rewriteDirtyDrawings(
   workbook: XlsxWorkbook,
   container: ooxml.OoxmlContainer,
   paths: ReadonlySet<string>,
-  drawingRidByPath: Map<string, string | null>
+  drawingRidByPath: Map<string, string | null>,
+  emittedChartParts: Set<string>
 ): void {
   for (const sheetPartPath of paths) {
     const sheet = workbook.sheets.find((s) => s.partPath === sheetPartPath);
     if (!sheet) continue;
 
     const sheetRels = ooxml.RelationshipGraph.loadFor(container, sheetPartPath);
+    const hasDrawables = sheet.images.length > 0 || sheet.charts.length > 0;
 
-    if (sheet.images.length === 0) {
-      // No images left → drop the drawing part + rels and clear the
-      // sheet's drawing relationship.
+    if (!hasDrawables) {
+      // Nothing left → drop the drawing part + rels and clear the
+      // sheet's drawing relationship. Chart parts that the dropped
+      // drawing was pointing at are reaped lazily — the next save
+      // sees them as orphaned in the container and they get cleaned
+      // up the same way orphan media is, in `dropOrphanChartParts`.
       if (sheet.drawingPartPath) {
         if (container.has(sheet.drawingPartPath)) container.removePart(sheet.drawingPartPath);
         const drawingRelsPath = ooxml.RelationshipGraph.relsPathFor(sheet.drawingPartPath);
@@ -249,12 +263,39 @@ function rewriteDirtyDrawings(
     }
 
     const drawingPartPath = sheet.drawingPartPath ?? mintDrawingPartPath(container);
-    const { graph: drawingRels, embedRidByMediaPath } = buildDrawingRels(
+
+    // Mint a fresh chart-part path per typed chart. We don't try to
+    // reuse the chart's old slot across saves because the typed
+    // model doesn't carry a `partPath` (deliberately — chart parts
+    // are derived state). The previously-written chart part files
+    // in this slot get overwritten if the path collides; otherwise
+    // `dropOrphanChartParts` reaps the stale ones.
+    const chartDescs: Array<{ readonly id: string; readonly chartPartPath: string }> = [];
+    for (const chart of sheet.charts) {
+      const chartPartPath = mintChartPartPath(container, emittedChartParts);
+      emittedChartParts.add(chartPartPath);
+      const chartXml = serializeChartPart(chart, sheet.name);
+      container.writeText(chartPartPath, chartXml);
+      // Charts authored by us do not (yet) reference embedded data
+      // sources, themes, or images — they only need a presence in
+      // the drawing rels graph below. The chart-rels file is
+      // therefore omitted entirely; Office tolerates a missing
+      // `xl/charts/_rels/chartN.xml.rels` for stand-alone charts.
+      chartDescs.push({ id: chart.id, chartPartPath });
+    }
+
+    const { graph: drawingRels, embedRidByMediaPath, chartRidByChartId } = buildDrawingRels(
       drawingPartPath,
       sheet.images,
-      workbook.images
+      workbook.images,
+      chartDescs
     );
-    const xml = serializeDrawingPart(sheet.images, embedRidByMediaPath);
+    const xml = serializeDrawingPart(
+      sheet.images,
+      embedRidByMediaPath,
+      sheet.charts,
+      chartRidByChartId
+    );
     container.writeText(drawingPartPath, xml);
     drawingRels.writeBack(container);
 
@@ -262,6 +303,68 @@ function rewriteDirtyDrawings(
     sheetRels.writeBack(container);
     drawingRidByPath.set(sheetPartPath, rid);
   }
+}
+
+/**
+ * After every drawing has been (re)written, prune any `xl/charts/*.xml`
+ * part that's no longer referenced from any sheet's drawing rels.
+ * This keeps brand-new charts from accreting on each save when a
+ * previous save authored a chart that has since been removed via
+ * `xlsx:remove-chart`.
+ */
+function dropOrphanChartParts(
+  container: ooxml.OoxmlContainer,
+  emittedChartParts: ReadonlySet<string>
+): void {
+  const live = new Set<string>(emittedChartParts);
+  // Anything we did NOT emit this round AND that lives under
+  // xl/charts/ AND is not referenced from any drawing's rels
+  // graph is by definition orphaned.
+  const allParts: string[] = [];
+  for (const path of container.parts.keys()) {
+    if (path.startsWith("xl/charts/") && /chart\d+\.xml$/.test(path)) {
+      allParts.push(path);
+    }
+  }
+  if (allParts.length === 0) return;
+
+  // Reference scan: walk every drawing-rels file and collect targets.
+  for (const path of container.parts.keys()) {
+    if (!path.startsWith("xl/drawings/_rels/") || !path.endsWith(".xml.rels")) continue;
+    const text = container.readText(path);
+    // We rely on the relationship-graph parser indirectly via a
+    // very small regex here — the only thing that matters is that
+    // a chart's filename appears as a Target. Re-loading every rel
+    // graph just to read targets would be a lot of allocation for
+    // a cleanup pass.
+    for (const m of text.matchAll(/Target="([^"]+)"/g)) {
+      const t = m[1] ?? "";
+      // Resolve relative to `xl/drawings/` (the rels owner's dir).
+      const ownerDir = "xl/drawings";
+      const resolved = resolveRelTarget(ownerDir, t);
+      if (resolved && resolved.startsWith("xl/charts/")) live.add(resolved);
+    }
+  }
+
+  for (const part of allParts) {
+    if (!live.has(part)) {
+      container.removePart(part);
+      const relsPath = ooxml.RelationshipGraph.relsPathFor(part);
+      if (container.has(relsPath)) container.removePart(relsPath);
+    }
+  }
+}
+
+function resolveRelTarget(ownerDir: string, target: string): string | null {
+  if (!target) return null;
+  if (target.startsWith("/")) return target.slice(1);
+  const segs = ownerDir.split("/").filter(Boolean);
+  for (const part of target.split("/")) {
+    if (part === "..") segs.pop();
+    else if (part === "." || part === "") continue;
+    else segs.push(part);
+  }
+  return segs.join("/");
 }
 
 /**
@@ -606,7 +709,8 @@ function rewriteContentTypes(
         mutated = true;
       }
     }
-    if (sheet.drawingPartPath && sheet.images.length > 0) {
+    const hasDrawables = sheet.images.length > 0 || sheet.charts.length > 0;
+    if (sheet.drawingPartPath && hasDrawables) {
       const drawingPartName = `/${sheet.drawingPartPath}`;
       if (!ct.hasOverride(drawingPartName)) {
         ct.addOverride(drawingPartName, DRAWING_CONTENT_TYPE);
@@ -618,12 +722,35 @@ function rewriteContentTypes(
   // Drop overrides for drawing parts no sheet still references.
   const liveDrawingPartNames = new Set<string>();
   for (const sheet of workbook.sheets) {
-    if (sheet.drawingPartPath && sheet.images.length > 0) {
+    if (sheet.drawingPartPath && (sheet.images.length > 0 || sheet.charts.length > 0)) {
       liveDrawingPartNames.add(`/${sheet.drawingPartPath}`);
     }
   }
   for (const o of [...ct.overrides]) {
     if (o.contentType === DRAWING_CONTENT_TYPE && !liveDrawingPartNames.has(o.partName)) {
+      ct.removeOverride(o.partName);
+      mutated = true;
+    }
+  }
+
+  // Chart content-type overrides: one per `xl/charts/chartN.xml`
+  // currently in the container. We register against the container
+  // rather than the workbook model because chart parts are derived
+  // state — the model doesn't carry their paths.
+  const liveChartPartNames = new Set<string>();
+  for (const path of container.parts.keys()) {
+    if (path.startsWith("xl/charts/") && /chart\d+\.xml$/.test(path)) {
+      liveChartPartNames.add(`/${path}`);
+    }
+  }
+  for (const partName of liveChartPartNames) {
+    if (!ct.hasOverride(partName)) {
+      ct.addOverride(partName, CHART_CONTENT_TYPE);
+      mutated = true;
+    }
+  }
+  for (const o of [...ct.overrides]) {
+    if (o.contentType === CHART_CONTENT_TYPE && !liveChartPartNames.has(o.partName)) {
       ct.removeOverride(o.partName);
       mutated = true;
     }

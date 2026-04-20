@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommentComposer, CommentsSidebar } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import { createPptxCommentsProvider } from "./pptxCommentsProvider";
 import { PptxAgent } from "@officeai/pptx/agent";
 import {
   SlideCanvas,
   SlidesSidebar,
   type PptxTextSelection,
+  type RemoteSelectionPeer,
   type SlideContextAction,
+  type SlideRailPeerDot,
 } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import {
@@ -24,11 +27,7 @@ import {
 } from "@officeai/pptx";
 import { buildBlankPptx, buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
-import {
-  ConnectorContextBar,
-  type ConnectorAction,
-  type ConnectorStylePatch,
-} from "./ConnectorContextBar";
+import { ConnectorContextBar, type ConnectorAction, type ConnectorStylePatch } from "./ConnectorContextBar";
 import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
 import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
@@ -36,6 +35,16 @@ import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { handleUndoRedo, isFormField } from "@/lib/undo-redo";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
+import {
+  PresenceSlot,
+  readExplicitRoomFromUrl,
+  RemotePresenceList,
+  roomIdForSource,
+  useCommandBroadcast,
+  usePublishPresence,
+  useRealtimeRoom,
+  useStableTabId,
+} from "@/lib/realtime";
 import {
   EditorShell,
   EmptyState,
@@ -48,12 +57,7 @@ import {
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
-import {
-  PRODUCT_FILE_TYPES,
-  downloadBlob,
-  openFile,
-  saveFile,
-} from "@/lib/files/file-service";
+import { PRODUCT_FILE_TYPES, downloadBlob, openFile, saveFile } from "@/lib/files/file-service";
 import { convertViaServer } from "@/lib/files/convert-client";
 import {
   parseSlideRange,
@@ -63,6 +67,8 @@ import {
   snapshotToSlideSvg,
   snapshotToSvgZip,
 } from "./lib/export-images";
+import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import { applyXlsxRangeToPptx } from "@/lib/embed/applyXlsxRangeToPptx";
 
 const SCALE_OPTIONS = {
   type: "select" as const,
@@ -405,10 +411,7 @@ export function PptxEditor({
       // A pending agent mutation that no longer applies after
       // an undo gets flipped to `rejected` with the
       // `rebase-failed` code; previously it just disappeared.
-      if (
-        mutation.status === "rejected" &&
-        mutation.rejection?.code === "rebase-failed"
-      ) {
+      if (mutation.status === "rejected" && mutation.rejection?.code === "rebase-failed") {
         pushToastRef.current?.(
           "warn",
           `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
@@ -528,6 +531,47 @@ export function PptxEditor({
     return () => window.removeEventListener("keydown", onKey);
   }, [activeIndex, selectedShapeIds]);
 
+  // Cross-format embed paste (XLSX → PPTX text box). Gated on the
+  // NEXT_PUBLIC_OAI_EMBED flag. Lives on `window` rather than a
+  // canvas-scoped element because the slide canvas itself doesn't
+  // own a tab-focusable host (selection is mouse-driven), and the
+  // paste shortcut should land on whichever slide is active.
+  useEffect(() => {
+    if (!isEmbedEnabled()) return;
+    const isFormField = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (target.isContentEditable) return true;
+      return false;
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isFormField(e.target)) return;
+      const raw = e.clipboardData?.getData(EMBED_MIME);
+      const env = parseEnvelope(raw);
+      if (!env || env.payload.kind !== "xlsx-range") return;
+      const agent = agentRef.current;
+      if (!agent) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const slideIndex = slideIndexRef.current;
+      const payload = env.payload;
+      void (async () => {
+        try {
+          await applyXlsxRangeToPptx({
+            agent,
+            snapshot: payload.snapshot,
+            slideIndex,
+          });
+        } catch (err) {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        }
+      })();
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [pushToast]);
+
   const handleFile = useCallback(
     async (file: File, handle?: FileSystemFileHandle) => {
       const buf = await file.arrayBuffer();
@@ -596,12 +640,7 @@ export function PptxEditor({
         switch (format.id) {
           case "pptx": {
             const buf = await a.exportFile();
-            await saveFile(
-              new Uint8Array(buf),
-              downloadName,
-              format.mime,
-              undefined
-            );
+            await saveFile(new Uint8Array(buf), downloadName, format.mime, undefined);
             break;
           }
           case "pdf":
@@ -744,9 +783,7 @@ export function PptxEditor({
     return null;
   }, [slide, textSelection, selectedShape, tick]);
 
-  const activeTextAlignment = useMemo<
-    "left" | "center" | "right" | "justify" | null
-  >(() => {
+  const activeTextAlignment = useMemo<"left" | "center" | "right" | "justify" | null>(() => {
     if (!activeTextShape) return null;
     const paraIdx = textSelection?.paragraph ?? 0;
     const para = activeTextShape.txBody.paragraphs[paraIdx];
@@ -1046,12 +1083,9 @@ export function PptxEditor({
   // from inside the canvas once the user finishes their drag — that's
   // what makes the experience feel like a real drawing tool instead
   // of a "click button → guess where the line landed" form.
-  const startConnectorTool = useCallback(
-    (connectorType: "straight" | "elbow" | "curved") => {
-      setConnectorTool((prev) => (prev?.type === connectorType ? null : { type: connectorType }));
-    },
-    []
-  );
+  const startConnectorTool = useCallback((connectorType: "straight" | "elbow" | "curved") => {
+    setConnectorTool((prev) => (prev?.type === connectorType ? null : { type: connectorType }));
+  }, []);
   const exitConnectorTool = useCallback(() => setConnectorTool(null), []);
 
   // Apply a partial style patch from the floating connector mini-bar.
@@ -1819,6 +1853,15 @@ export function PptxEditor({
               onScrollTo: scrollToComment,
             })}
             author="You"
+            {...(realtimeRoom.room?.identity
+              ? {
+                  authorIdentity: {
+                    name: realtimeRoom.room.identity.name,
+                    id: realtimeRoom.room.identity.id,
+                    color: realtimeRoom.room.identity.color,
+                  },
+                }
+              : {})}
             emptyHint="No comments on this slide yet. Select a shape and press Add comment, or comment on the slide as a whole."
             onScrollTo={scrollToComment}
           />
@@ -1993,6 +2036,40 @@ export function PptxEditor({
     ungroupSelectedShape,
   ]);
 
+  const tabFallback = useStableTabId("pptx");
+  const realtimeRoomId = useMemo<string | null>(() => {
+    if (!ready) return null;
+    if (!tabFallback && !initialSource) return null;
+    return roomIdForSource({
+      product: "pptx",
+      src: initialSource?.url,
+      tabFallback,
+      explicitRoom: readExplicitRoomFromUrl(),
+    });
+  }, [ready, initialSource, tabFallback]);
+  const realtimeRoom = useRealtimeRoom({
+    roomId: realtimeRoomId,
+    product: "pptx",
+  });
+  useCommandBroadcast({
+    agent,
+    room: realtimeRoom.room,
+  });
+
+  // Publish PPTX selection (active slide + currently-selected
+  // shapes) so peers see "Quick Quokka has 2 shapes selected on
+  // slide 3" in real time.
+  const presenceCursor = useMemo(() => {
+    const slideId = slide?.id;
+    if (!slideId) return null;
+    return {
+      product: "pptx" as const,
+      slideId,
+      shapeIds: selectedShapeIds,
+    };
+  }, [slide?.id, selectedShapeIds]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "pptx",
@@ -2062,10 +2139,40 @@ export function PptxEditor({
     ]
   );
 
+  const remotePptxPeers: ReadonlyArray<RemoteSelectionPeer> = useMemo(
+    () =>
+      realtimeRoom.remotePeers
+        .map((p): RemoteSelectionPeer | null => {
+          const c = p.state.cursor;
+          if (!c || c.product !== "pptx") return null;
+          return {
+            clientId: p.clientId,
+            slideId: c.slideId,
+            shapeIds: c.shapeIds,
+            name: p.state.user.name,
+            color: p.state.user.color,
+          };
+        })
+        .filter((x): x is RemoteSelectionPeer => x !== null),
+    [realtimeRoom.remotePeers]
+  );
+  const slideRailPeers: ReadonlyArray<SlideRailPeerDot> = useMemo(
+    () =>
+      remotePptxPeers.map((p) => ({
+        clientId: p.clientId,
+        slideId: p.slideId,
+        name: p.name,
+        color: p.color,
+      })),
+    [remotePptxPeers]
+  );
+
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           <PptxToolbar
             disabled={!ready}
@@ -2109,6 +2216,13 @@ export function PptxEditor({
             notesOpen={notesOpen}
           />
         }
+        statusBarLeft={
+          <PptxSelectionHint
+            selectedCount={selectedShapeIds.length}
+            slideIndex={activeIndex}
+            slideCount={slides.length}
+          />
+        }
         statusBarRight={
           <ZoomControl
             value={zoom}
@@ -2140,6 +2254,7 @@ export function PptxEditor({
                         thumbnailWidth={170}
                         onReorder={(from, to) => void moveSlide(from, to)}
                         onContextAction={(idx, action) => void handleSlideContextAction(idx, action)}
+                        peers={slideRailPeers}
                       />
                     ) : null}
                   </aside>
@@ -2196,8 +2311,11 @@ export function PptxEditor({
                         onPlaceholderActivate={(info) => void handlePlaceholderActivate(info)}
                         connectorTool={connectorTool}
                         onConnectorToolExit={exitConnectorTool}
+                        remotePeers={remotePptxPeers}
                       />
-                      {selectedShape && selectedShape.kind === "connector" && selectedShapeIds.length === 1 ? (
+                      {selectedShape &&
+                      selectedShape.kind === "connector" &&
+                      selectedShapeIds.length === 1 ? (
                         <div className="pointer-events-auto absolute left-1/2 top-2 z-20 -translate-x-1/2">
                           <ConnectorContextBar
                             connector={selectedShape}
@@ -2424,3 +2542,40 @@ async function readIntrinsicSize(
     img.src = url;
   });
 }
+
+/**
+ * Status-bar hint that surfaces "what is selected" and "where am I"
+ * for the slide canvas. Live region so screen readers announce
+ * selection changes; tabular numerals so the slide counter doesn't
+ * jitter as the index advances.
+ */
+function PptxSelectionHint({
+  selectedCount,
+  slideIndex,
+  slideCount,
+}: {
+  readonly selectedCount: number;
+  readonly slideIndex: number;
+  readonly slideCount: number;
+}): ReactNode {
+  const { t } = useTranslator();
+  return (
+    <span
+      className="flex items-center gap-3 text-[11px] tabular-nums text-tertiary"
+      data-testid="pptx-selection-hint"
+      aria-live="polite"
+    >
+      {slideCount > 0 ? (
+        <span>{t("status.slideOf", { n: slideIndex + 1, total: slideCount })}</span>
+      ) : null}
+      {selectedCount > 0 ? (
+        <span className="rounded bg-[var(--accent-light)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+          {t("status.shapesSelected", { n: selectedCount })}
+        </span>
+      ) : (
+        <span className="opacity-60">{t("status.selectionEmpty")}</span>
+      )}
+    </span>
+  );
+}
+

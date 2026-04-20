@@ -26,11 +26,7 @@ function PptxEditorPageInner(): React.ReactNode {
   const [ready, setReady] = useState(false);
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden">
-      <PptxEditor
-        onBootstrapReady={setReady}
-        initialSource={initialSource}
-        initialBlank={initialBlank}
-      />
+      <PptxEditor onBootstrapReady={setReady} initialSource={initialSource} initialBlank={initialBlank} />
       <LoadingScreen variant="splash" product="pptx" show={!ready} />
     </main>
   );

@@ -38,20 +38,40 @@ export function createDocxCommentsProvider(opts: DocxCommentsProviderOptions): C
   const { agent } = opts;
   const author = opts.defaultAuthor ?? { name: "You", initials: "Y" };
   const toast = opts.onToast;
+  // OOXML doesn't carry our realtime peer id / color — only an
+  // author display name. We stash the realtime identity for newly
+  // authored comments here so `normalize()` can hydrate
+  // `authorId` / `authorColor` on the next `threads()` snapshot.
+  // Cleared implicitly when the document is reloaded (the provider
+  // is recreated alongside the new agent).
+  const localIdentity = new Map<string, { readonly authorId?: string; readonly authorColor?: string }>();
+  const stamp = (id: string, input: { authorId?: string; authorColor?: string }): void => {
+    if (!input.authorId && !input.authorColor) return;
+    const next: { authorId?: string; authorColor?: string } = {};
+    if (input.authorId) next.authorId = input.authorId;
+    if (input.authorColor) next.authorColor = input.authorColor;
+    localIdentity.set(id, next);
+  };
+  const toast_ = toast;
   const guarded = async <T>(label: string, op: () => Promise<T>): Promise<T | undefined> => {
     try {
       const result = await op();
-      if (toast && label) toast("info", label);
+      if (toast_ && label) toast_("info", label);
       return result;
     } catch (err) {
-      if (toast) toast("error", err instanceof Error ? err.message : String(err));
+      if (toast_) toast_("error", err instanceof Error ? err.message : String(err));
       return undefined;
     }
   };
   return {
     threads(): ReadonlyArray<CommentThread> {
       const snap = agent.getSnapshot();
-      const bodies: CommentBody[] = snap.root.comments.map((c) => normalize(c, snap));
+      const bodies: CommentBody[] = snap.root.comments.map((c) => {
+        const base = normalize(c, snap);
+        const stamped = localIdentity.get(c.id);
+        if (!stamped) return base;
+        return { ...base, ...stamped };
+      });
       return groupThreads(bodies);
     },
     async add(input) {
@@ -74,7 +94,9 @@ export function createDocxCommentsProvider(opts: DocxCommentsProviderOptions): C
           source: "human",
         })
       );
-      return lastCommentId(agent) ?? "";
+      const newId = lastCommentId(agent) ?? "";
+      if (newId) stamp(newId, input);
+      return newId;
     },
     async reply(input) {
       await guarded("Reply added.", () =>
@@ -89,7 +111,9 @@ export function createDocxCommentsProvider(opts: DocxCommentsProviderOptions): C
           source: "human",
         })
       );
-      return lastCommentId(agent) ?? "";
+      const newId = lastCommentId(agent) ?? "";
+      if (newId) stamp(newId, input);
+      return newId;
     },
     async resolve(commentId, resolved) {
       await guarded(resolved ? "Comment resolved." : "Comment reopened.", () =>

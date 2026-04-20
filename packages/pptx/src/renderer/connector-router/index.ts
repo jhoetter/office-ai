@@ -9,10 +9,7 @@
 export { routeConnector, routeAsPoints } from "./routeConnector.js";
 export { routeElbow, routeCost, LEAD_EMU } from "./routeElbow.js";
 export { routeCurved, curvedPathD } from "./routeCurved.js";
-export {
-  collectObstacles,
-  endpointCNvPrId,
-} from "./collectObstacles.js";
+export { collectObstacles, endpointCNvPrId } from "./collectObstacles.js";
 export {
   OBSTACLE_PAD_EMU,
   inflateBox,
@@ -21,11 +18,7 @@ export {
   segmentIntersectsBox,
   polylineHitsObstacle,
 } from "./obstacles.js";
-export {
-  sideUnitVector,
-  chordPerpendicular,
-  exitDirection,
-} from "./exitVector.js";
+export { sideUnitVector, chordPerpendicular, exitDirection } from "./exitVector.js";
 export { __clearRouteCache } from "./cache.js";
 export type {
   RouteResult,

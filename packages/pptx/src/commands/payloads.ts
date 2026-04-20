@@ -513,12 +513,7 @@ export type ConnectorTypePayload = "straight" | "elbow" | "curved";
 
 export type ConnectorEndShapePayload = "none" | "arrow" | "triangle" | "oval";
 
-export type ConnectorDashStylePayload =
-  | "solid"
-  | "dashed"
-  | "dotted"
-  | "longDash"
-  | "dashDot";
+export type ConnectorDashStylePayload = "solid" | "dashed" | "dotted" | "longDash" | "dashDot";
 
 export interface AddConnectorPayload {
   readonly slideIndex: number;

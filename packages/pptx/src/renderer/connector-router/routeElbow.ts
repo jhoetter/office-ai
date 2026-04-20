@@ -175,10 +175,7 @@ function freeFreeZ(
  * Read a waypoint slot as an absolute coordinate. Returns `undefined`
  * for missing / non-finite values so callers fall back to defaults.
  */
-function absoluteWaypoint(
-  waypoints: ReadonlyArray<number> | undefined,
-  index: number
-): number | undefined {
+function absoluteWaypoint(waypoints: ReadonlyArray<number> | undefined, index: number): number | undefined {
   if (!waypoints) return undefined;
   const v = waypoints[index];
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -251,8 +248,7 @@ function orthogonalAStar(
     readonly dir: number;
     readonly parent: Node | null;
   };
-  const heuristic = (ix: number, iy: number) =>
-    Math.abs(xArr[ix] - ep.x) + Math.abs(yArr[iy] - ep.y);
+  const heuristic = (ix: number, iy: number) => Math.abs(xArr[ix] - ep.x) + Math.abs(yArr[iy] - ep.y);
   const open: Node[] = [];
   const closed = new Map<string, number>();
   const startH = heuristic(startIx, startIy);

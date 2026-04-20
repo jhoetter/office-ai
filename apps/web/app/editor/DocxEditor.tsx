@@ -86,9 +86,22 @@ import { HyperlinkPopover } from "./HyperlinkPopover";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesHover, TrackedChangesMargin } from "./TrackedChangesUI";
 import { CommentComposer } from "./CommentComposer";
+import { DocxRemoteCursorLayer } from "./DocxRemoteCursorLayer";
 import { collectRevisions } from "@/lib/format-helpers";
 import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
+import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
+import {
+  PresenceSlot,
+  readExplicitRoomFromUrl,
+  RemotePresenceList,
+  roomIdForSource,
+  useCommandBroadcast,
+  usePublishPresence,
+  useRealtimeRoom,
+  useStableTabId,
+} from "@/lib/realtime";
 
 const DOCX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
   {
@@ -343,10 +356,7 @@ export function DocxEditor({
         // one notify per rejected mutation with the
         // `rebase-failed` code. The user sees a toast instead
         // of the suggestion silently disappearing.
-        if (
-          mutation.status === "rejected" &&
-          mutation.rejection?.code === "rebase-failed"
-        ) {
+        if (mutation.status === "rejected" && mutation.rejection?.code === "rebase-failed") {
           pushToast(
             "warn",
             `An agent suggestion couldn't be re-applied after the last edit (${mutation.rejection.message})`
@@ -520,10 +530,7 @@ export function DocxEditor({
         switch (format.id) {
           case "docx": {
             const buf = await agent.exportFile();
-            downloadBlob(
-              new Blob([buf as BlobPart], { type: format.mime }),
-              downloadName
-            );
+            downloadBlob(new Blob([buf as BlobPart], { type: format.mime }), downloadName);
             break;
           }
           case "pdf":
@@ -533,9 +540,7 @@ export function DocxEditor({
             // trim whitespace defensively because the dialog's text
             // input can carry leading/trailing spaces from copy-paste.
             const pageRange =
-              format.id === "pdf" && typeof options?.pageRange === "string"
-                ? options.pageRange.trim()
-                : "";
+              format.id === "pdf" && typeof options?.pageRange === "string" ? options.pageRange.trim() : "";
             const out = await convertViaServer({
               bytes: new Uint8Array(buf),
               sourceExt: "docx",
@@ -651,6 +656,16 @@ export function DocxEditor({
     anchor: { left: number; top: number; bottom: number } | null;
   } | null>(null);
 
+  // Realtime author identity, mirrored from `realtimeRoom.room?.identity`
+  // by an effect declared after the `useRealtimeRoom` call below.
+  // Hoisted up here so memoized renderers (e.g. `renderCommentsPanel`)
+  // can read it without forward-referencing `realtimeRoom`.
+  const [authorIdentity, setAuthorIdentity] = useState<{
+    readonly name: string;
+    readonly id: string;
+    readonly color: string;
+  } | null>(null);
+
   // B5 — hyperlink popover state. Captures the requesting paragraph
   // + flat-text range (so the eventual command targets the same
   // selection even if the user clicks elsewhere while the popover
@@ -708,30 +723,14 @@ export function DocxEditor({
     setComposer({ range, selectionText, anchor });
   }, [pushToast]);
 
-  const submitComment = useCallback(
-    async (text: string) => {
-      const agent = agentRef.current;
-      if (!agent || !composer) return;
-      try {
-        await agent.applyCommand({
-          type: "docx:add-comment",
-          payload: {
-            range: composer.range,
-            text,
-            author: "You",
-            initials: "Y",
-          },
-          source: "human",
-        });
-        pushToast("info", "Comment added.");
-      } catch (err) {
-        pushToast("error", err instanceof Error ? err.message : String(err));
-      } finally {
-        setComposer(null);
-      }
-    },
-    [composer, pushToast]
-  );
+  // The actual implementation lives later (it depends on the
+  // commentsProvider memo, which is declared further below). We
+  // expose a stable wrapper here so callers higher in the file can
+  // bind it without hoisting the heavy `useMemo`.
+  const submitCommentRef = useRef<(text: string) => void>(() => undefined);
+  const submitComment = useCallback((text: string) => {
+    submitCommentRef.current(text);
+  }, []);
 
   // Word-shortcut bridge: the keymap plugin can't open prompts /
   // composers itself (it lives in the renderer layer), so it
@@ -1180,6 +1179,34 @@ export function DocxEditor({
       void handleImageFile(file);
     };
     const onPaste = (e: ClipboardEvent) => {
+      // 1) Cross-format embed (XLSX → DOCX table). Gated on the
+      //    NEXT_PUBLIC_OAI_EMBED flag so existing PM HTML-table
+      //    paste behaviour stays the default in production.
+      if (isEmbedEnabled()) {
+        const raw = e.clipboardData?.getData(EMBED_MIME);
+        const env = parseEnvelope(raw);
+        if (env && env.payload.kind === "xlsx-range") {
+          const agent = agentRef.current;
+          const mount = mountRef.current;
+          if (!agent) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const paragraphIndex = mount ? currentParagraphIndex(mount.view.state) : 0;
+          void (async () => {
+            try {
+              await applyXlsxRangeToDocx({
+                agent,
+                snapshot: env.payload.kind === "xlsx-range" ? env.payload.snapshot : (() => { throw new Error("unreachable"); })(),
+                paragraphIndex: Math.max(0, paragraphIndex),
+              });
+            } catch (err) {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            }
+          })();
+          return;
+        }
+      }
+      // 2) Image paste — screenshots, drag-and-drop file pastes.
       const file = pickImageFile(e.clipboardData?.files);
       if (!file) return;
       e.preventDefault();
@@ -1193,7 +1220,7 @@ export function DocxEditor({
       hostEl.removeEventListener("drop", onDrop);
       hostEl.removeEventListener("paste", onPaste);
     };
-  }, [hostEl, handleImageFile]);
+  }, [hostEl, handleImageFile, pushToast]);
 
   const scrollToComment = useCallback(
     (commentId: string) => {
@@ -1349,6 +1376,7 @@ export function DocxEditor({
     [agent, scrollToComment, pushToast]
   );
   /* eslint-enable react-hooks/refs */
+
   const hasRevisions = snapshot ? collectRevisions(snapshot).length > 0 : false;
   const showRail = hasComments;
   // Width of the right-margin balloon column, used both to reserve
@@ -1486,10 +1514,14 @@ export function DocxEditor({
     }
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <CommentsSidebar provider={commentsProvider} onScrollTo={scrollToComment} />
+        <CommentsSidebar
+          provider={commentsProvider}
+          onScrollTo={scrollToComment}
+          {...(authorIdentity ? { authorIdentity } : {})}
+        />
       </div>
     );
-  }, [commentsProvider, scrollToComment]);
+  }, [commentsProvider, scrollToComment, authorIdentity]);
 
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
     return [
@@ -1567,6 +1599,77 @@ export function DocxEditor({
     return para ? `${para} · ${stats}` : stats;
   }, [activeParagraphIndex, docInfo]);
 
+  const tabFallback = useStableTabId("docx");
+  const realtimeRoomId = useMemo<string | null>(() => {
+    if (!agentReady) return null;
+    if (!tabFallback && !initialSource) return null;
+    return roomIdForSource({
+      product: "docx",
+      src: initialSource?.url,
+      tabFallback,
+      explicitRoom: readExplicitRoomFromUrl(),
+    });
+  }, [agentReady, initialSource, tabFallback]);
+  const realtimeRoom = useRealtimeRoom({
+    roomId: realtimeRoomId,
+    product: "docx",
+  });
+  useCommandBroadcast({
+    agent,
+    room: realtimeRoom.room,
+  });
+
+  // Publish a DocxCursor into the awareness payload whenever the
+  // ProseMirror selection changes. `uiTick` already bumps on every
+  // `selectionchange`, so it's the cheapest re-trigger we have.
+  const presenceCursor = useMemo(() => {
+    if (!view) return null;
+    const sel = view.state.selection;
+    void uiTick;
+    return { product: "docx" as const, head: sel.head, anchor: sel.anchor };
+  }, [view, uiTick]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
+
+  // Mirror the realtime identity into the local `authorIdentity` state
+  // declared near the top so memoized renderers (e.g. the comments
+  // panel) can read it without forward-referencing `realtimeRoom`.
+  const liveIdentity = realtimeRoom.room?.identity ?? null;
+  useEffect(() => {
+    if (!liveIdentity) {
+      setAuthorIdentity(null);
+      return;
+    }
+    setAuthorIdentity({
+      name: liveIdentity.name,
+      id: liveIdentity.id,
+      color: liveIdentity.color,
+    });
+  }, [liveIdentity]);
+
+  // Bind the late `submitComment` impl now that `commentsProvider`
+  // is in scope. The earlier `submitComment` useCallback (declared
+  // next to the composer state) just dispatches through this ref —
+  // see the comment on `submitCommentRef` for why.
+  useEffect(() => {
+    submitCommentRef.current = (text: string) => {
+      if (!composer) return;
+      if (!commentsProvider) return;
+      const authorName = authorIdentity?.name ?? "You";
+      void commentsProvider
+        .add({
+          author: authorName,
+          text,
+          anchor: { kind: "docx-range", paragraphIndex: 0, range: composer.range },
+          ...(authorIdentity?.id ? { authorId: authorIdentity.id } : {}),
+          ...(authorIdentity?.color ? { authorColor: authorIdentity.color } : {}),
+        })
+        .catch((err) => {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => setComposer(null));
+    };
+  }, [composer, commentsProvider, authorIdentity, pushToast]);
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "docx",
@@ -1620,8 +1723,11 @@ export function DocxEditor({
 
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
+      <DocxRemoteCursorLayer view={view} host={scrollEl} peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           <Toolbar
             agentReady={agentReady}

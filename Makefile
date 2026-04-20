@@ -9,7 +9,7 @@
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
-        roundtrip-libre-all \
+        roundtrip-libre-all audit-roundtrip audit-roundtrip-pdf fixtures-pdf \
         e2e-web perf perf-docx perf-xlsx perf-pptx perf-all \
         licenses metrics heavy \
         xsd-fetch schema-validate schema-validate-docx schema-validate-xlsx \
@@ -86,7 +86,14 @@ install:
 # — Next.js HMR will pick up the new dist on next request.
 dev:
 	pnpm build
-	pnpm --filter @officeai/web dev
+	@echo ""
+	@echo "→ next dev      http://localhost:3000"
+	@echo "→ realtime ws   ws://localhost:1234   (health: http://localhost:1234/health)"
+	@echo ""
+	pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev
+
+dev-realtime:
+	pnpm --filter @officeai/realtime-server dev
 
 build:
 	pnpm build
@@ -225,6 +232,32 @@ roundtrip-libre-pptx:
 roundtrip-libre-all: roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx
 	@echo ""
 	@echo "✅ roundtrip-libre-all: docx + xlsx + pptx fixtures roundtrip clean."
+
+# ── Attribute-fidelity round-trip audit ──────────────────────────────
+# Parses → exports → re-parses every fixture and counts the curated
+# set of formatting attributes (font, size, alignment, list, page,
+# charts, …) on both sides. Fails-soft (exit 0) but writes a JSON
+# summary to docs/build-log/roundtrip-audit-night.json that ops can
+# diff between runs to catch regressions. Cheap (~ 1s for the 30
+# bundled fixtures) so it's safe to call from any developer machine
+# without LibreOffice installed.
+.PHONY: audit-roundtrip audit-roundtrip-pdf fixtures-pdf
+audit-roundtrip:
+	pnpm --filter @officeai/docx --filter @officeai/xlsx --filter @officeai/pptx --filter @officeai/pdf build
+	node scripts/audit-roundtrip.mjs
+
+# PDF-only variant. Useful while iterating on the PDF parser /
+# serializer without paying the docx + xlsx + pptx audit cost. The
+# script keeps the existing per-format JSON entries intact when run
+# with --product, so this can be chained with the others.
+audit-roundtrip-pdf:
+	pnpm --filter @officeai/pdf build
+	node scripts/audit-roundtrip.mjs --product pdf
+
+# Regenerate the synthetic PDF fixture corpus (12 files). Idempotent;
+# only rewrites a fixture when its bytes change.
+fixtures-pdf:
+	node fixtures/pdf/build-fixtures.mjs
 
 # `e2e-web` builds the workspace first so apps/web's Next.js compile and
 # the @officeai/docx dist outputs are ready, then runs Playwright against

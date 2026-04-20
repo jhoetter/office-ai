@@ -10,11 +10,24 @@ export interface IO {
 }
 
 export class CliError extends Error {
+  /**
+   * When true the top-level error mapper in `cli.ts` skips its
+   * `error: <msg>` prefix line. PDF subcommands rely on this so they
+   * can emit a structured `{ "error": "<code>", "message": "..." }`
+   * envelope to stderr themselves while still returning a non-zero
+   * exit code via commander's preAction hook.
+   */
+  public readonly silent: boolean;
+
+  constructor(code: number, message: string);
+  constructor(code: number, message: string, opts: { silent?: boolean });
   constructor(
     public readonly code: number,
-    message: string
+    message: string,
+    opts: { silent?: boolean } = {}
   ) {
     super(message);
+    this.silent = opts.silent === true;
   }
 }
 

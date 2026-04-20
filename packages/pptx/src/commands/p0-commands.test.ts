@@ -246,7 +246,9 @@ describe("P0 shape commands", () => {
     });
     const out = await agent.exportFile();
     const reparsed = await parsePptx(out);
-    const reparsedShape = reparsed.root.slides[0].shapes.find((s) => s.id === ts.id || s.cNvPrId === ts.cNvPrId);
+    const reparsedShape = reparsed.root.slides[0].shapes.find(
+      (s) => s.id === ts.id || s.cNvPrId === ts.cNvPrId
+    );
     expect(reparsedShape).toBeDefined();
     expect(reparsedShape?.position).toEqual({ xEmu: offSlideX, yEmu: offSlideY });
   });

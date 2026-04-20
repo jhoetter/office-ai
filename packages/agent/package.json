@@ -26,6 +26,11 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@officeai/core": "workspace:*",
     "@officeai/docx": "workspace:*",
+    "@officeai/pdf": "workspace:*",
+    "@officeai/pdf-annotations": "workspace:*",
+    "@officeai/pdf-edit": "workspace:*",
+    "@officeai/pdf-forms": "workspace:*",
+    "@officeai/pdf-ocr": "workspace:*",
     "@officeai/pptx": "workspace:*",
     "@officeai/xlsx": "workspace:*",
     "commander": "^12.1.0",
@@ -35,6 +40,7 @@
     "@types/node": "^22",
     "docx": "^9.1.0",
     "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
     "typescript": "^5",
     "vitest": "^2.1.9"
   }

@@ -77,7 +77,10 @@ export interface RouterOptions {
  */
 export type RouteResult =
   | { readonly kind: "polyline"; readonly points: ReadonlyArray<RouterPoint> }
-  | { readonly kind: "cubic"; readonly points: readonly [RouterPoint, RouterPoint, RouterPoint, RouterPoint] };
+  | {
+      readonly kind: "cubic";
+      readonly points: readonly [RouterPoint, RouterPoint, RouterPoint, RouterPoint];
+    };
 
 /**
  * Stable, side-effect-free routing entry point.

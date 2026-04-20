@@ -21,10 +21,7 @@ export interface SheetBounds {
  * become empty strings; the row count tracks the highest row that
  * holds data so we don't emit gigabytes of trailing blank lines.
  */
-export function sheetToCsv(
-  sheet: Sheet,
-  delimiter: string = CSV_DELIMITER
-): string {
+export function sheetToCsv(sheet: Sheet, delimiter: string = CSV_DELIMITER): string {
   const bounds = computeSheetBounds(sheet);
   if (bounds.rows === 0 || bounds.cols === 0) return "";
   const lines: string[] = [];
@@ -141,10 +138,7 @@ function cellToJson(cell: Cell): unknown {
 function escapeField(field: string, delimiter: string): string {
   if (field.length === 0) return "";
   const needsQuoting =
-    field.includes(delimiter) ||
-    field.includes('"') ||
-    field.includes("\n") ||
-    field.includes("\r");
+    field.includes(delimiter) || field.includes('"') || field.includes("\n") || field.includes("\r");
   if (!needsQuoting) return field;
   return `"${field.replace(/"/g, '""')}"`;
 }

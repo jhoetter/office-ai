@@ -1,0 +1,43 @@
+{
+  "name": "@officeai/pdf-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Engine-agnostic PDF rendering + read API. Default backend: PDF.js (Apache 2.0). Optional fidelity fallback: PDFium-WASM (BSD-3-Clause via @embedpdf/pdfium), lazy-loaded behind the same interface.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pdfjs": {
+      "types": "./dist/backends/pdfjs.d.ts",
+      "import": "./dist/backends/pdfjs.js"
+    },
+    "./pdfium": {
+      "types": "./dist/backends/pdfium.d.ts",
+      "import": "./dist/backends/pdfium.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.10.38"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
+}

@@ -81,9 +81,7 @@ export function ToolbarRow({
         {children}
       </div>
       {trailing ? (
-        <div className="flex shrink-0 items-center gap-1 border-l border-divider/60 px-3">
-          {trailing}
-        </div>
+        <div className="flex shrink-0 items-center gap-1 border-l border-divider/60 px-3">{trailing}</div>
       ) : null}
     </div>
   );

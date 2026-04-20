@@ -478,9 +478,7 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
           alignment,
         };
         if (opts.paragraph.length > 0) payload.paragraphs = opts.paragraph;
-        await dispatchAndWrite(opts, io, [
-          { type: "pptx:set-paragraph-alignment", payload },
-        ]);
+        await dispatchAndWrite(opts, io, [{ type: "pptx:set-paragraph-alignment", payload }]);
       }
     );
 

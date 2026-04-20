@@ -34,9 +34,7 @@ function locateRunByText(agent: DocxAgent, needle: string): { paragraphIndex: nu
     for (let r = 0; r < block.children.length; r++) {
       const child = block.children[r];
       if (child?.kind !== "run") continue;
-      const txt = child.children
-        .map((leaf) => (leaf.kind === "text" ? leaf.text : ""))
-        .join("");
+      const txt = child.children.map((leaf) => (leaf.kind === "text" ? leaf.text : "")).join("");
       if (txt.includes(needle)) return { paragraphIndex: p, runIndex: r };
     }
   }
@@ -108,9 +106,7 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
       expect(handled).toBe(true);
       const block = agent.getSnapshot().root.body[0];
       if (block?.kind !== "paragraph") throw new Error("expected paragraph");
-      const someRunBold = block.children.some(
-        (c) => c.kind === "run" && c.properties.bold === true
-      );
+      const someRunBold = block.children.some((c) => c.kind === "run" && c.properties.bold === true);
       expect(someRunBold).toBe(true);
     });
 
@@ -123,10 +119,7 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
       if (block0?.kind !== "paragraph") throw new Error("expected paragraph");
       const flatLen = block0.children.reduce((n, c) => {
         if (c.kind !== "run") return n;
-        return (
-          n +
-          c.children.reduce((m, leaf) => m + (leaf.kind === "text" ? leaf.text.length : 0), 0)
-        );
+        return n + c.children.reduce((m, leaf) => m + (leaf.kind === "text" ? leaf.text.length : 0), 0);
       }, 0);
       await agent.applyCommand({
         type: "docx:format-range",
@@ -152,9 +145,7 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
       expect(handled).toBe(true);
       const blockAfter = agent.getSnapshot().root.body[0];
       if (blockAfter?.kind !== "paragraph") throw new Error("expected paragraph");
-      const anyRunBold = blockAfter.children.some(
-        (c) => c.kind === "run" && c.properties.bold === true
-      );
+      const anyRunBold = blockAfter.children.some((c) => c.kind === "run" && c.properties.bold === true);
       // The fix: bold must be cleared on every run, not re-applied.
       expect(anyRunBold).toBe(false);
     });
@@ -162,9 +153,7 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
     it("returns false (no-op) when the selection is collapsed", async () => {
       const agent = await loadAgent();
       const view = buildView(agent);
-      view.state = view.state.apply(
-        view.state.tr.setSelection(TextSelection.create(view.state.doc, 2, 2))
-      );
+      view.state = view.state.apply(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2, 2)));
       const handled = dispatchShortcut(view as never, modKeyEvent("b"), agent);
       expect(handled).toBe(false);
     });
@@ -194,23 +183,20 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
       ["e", "center"],
       ["r", "right"],
       ["j", "justify"],
-    ] as const)(
-      "Mod+Shift+%s applies %s alignment",
-      async (k, alignment) => {
-        const agent = await loadAgent();
-        const view = buildView(agent);
-        const range = selectFirstParagraph(view.state);
-        view.state = view.state.apply(
-          view.state.tr.setSelection(TextSelection.create(view.state.doc, range.from, range.to))
-        );
-        const handled = dispatchShortcut(view as never, modKeyEvent(k, { shift: true }), agent);
-        await flushBus();
-        expect(handled).toBe(true);
-        const block = agent.getSnapshot().root.body[0];
-        if (block?.kind !== "paragraph") throw new Error("expected paragraph");
-        expect(block.properties.alignment).toBe(alignment);
-      }
-    );
+    ] as const)("Mod+Shift+%s applies %s alignment", async (k, alignment) => {
+      const agent = await loadAgent();
+      const view = buildView(agent);
+      const range = selectFirstParagraph(view.state);
+      view.state = view.state.apply(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, range.from, range.to))
+      );
+      const handled = dispatchShortcut(view as never, modKeyEvent(k, { shift: true }), agent);
+      await flushBus();
+      expect(handled).toBe(true);
+      const block = agent.getSnapshot().root.body[0];
+      if (block?.kind !== "paragraph") throw new Error("expected paragraph");
+      expect(block.properties.alignment).toBe(alignment);
+    });
   });
 
   describe("Mod-Shift-X toggle (strikethrough)", () => {
@@ -222,10 +208,7 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
       if (block0?.kind !== "paragraph") throw new Error("expected paragraph");
       const flatLen = block0.children.reduce((n, c) => {
         if (c.kind !== "run") return n;
-        return (
-          n +
-          c.children.reduce((m, leaf) => m + (leaf.kind === "text" ? leaf.text.length : 0), 0)
-        );
+        return n + c.children.reduce((m, leaf) => m + (leaf.kind === "text" ? leaf.text.length : 0), 0);
       }, 0);
       await agent.applyCommand({
         type: "docx:format-range",
@@ -251,9 +234,7 @@ describe("word-shortcuts-keymap — dispatchShortcut", () => {
       expect(handled).toBe(true);
       const blockAfter = agent.getSnapshot().root.body[0];
       if (blockAfter?.kind !== "paragraph") throw new Error("expected paragraph");
-      const anyStrike = blockAfter.children.some(
-        (c) => c.kind === "run" && c.properties.strike === true
-      );
+      const anyStrike = blockAfter.children.some((c) => c.kind === "run" && c.properties.strike === true);
       expect(anyStrike).toBe(false);
     });
   });

@@ -4,7 +4,7 @@
 
 export type NodeId = string;
 
-export type DocumentFormat = "docx" | "xlsx" | "pptx";
+export type DocumentFormat = "docx" | "xlsx" | "pptx" | "pdf";
 
 export interface DocumentSnapshot<TRoot = unknown> {
   readonly format: DocumentFormat;

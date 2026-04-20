@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Replace, Search, X } from "lucide-react";
 import { cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import type { FindAdapter, FindMatch, FindOptions } from "./types";
 
 export interface FindReplacePanelProps {
@@ -24,6 +25,7 @@ export interface FindReplacePanelProps {
  * Enter advances; Shift+Enter goes back; Esc closes.
  */
 export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePanelProps): ReactNode {
+  const { t } = useTranslator();
   const [query, setQuery] = useState("");
   const [replacement, setReplacement] = useState("");
   const [showReplace, setShowReplace] = useState(mode === "replace");
@@ -86,7 +88,7 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
   return (
     <div
       role="dialog"
-      aria-label="Find and replace"
+      aria-label={t("common.findAndReplace")}
       className="absolute right-3 top-3 z-20 w-[320px] rounded-md border border-divider bg-background p-2 shadow-lg"
       data-testid="find-replace"
     >
@@ -95,8 +97,8 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
           type="button"
           onClick={() => setShowReplace((v) => !v)}
           className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-hover hover:text-foreground"
-          title={showReplace ? "Hide replace" : "Show replace"}
-          aria-label={showReplace ? "Hide replace" : "Show replace"}
+          title={showReplace ? t("common.hideReplace") : t("common.showReplace")}
+          aria-label={showReplace ? t("common.hideReplace") : t("common.showReplace")}
           data-testid="find-toggle-replace"
         >
           {showReplace ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -120,9 +122,9 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
                 onClose();
               }
             }}
-            placeholder="Find"
+            placeholder={t("common.findPlaceholder")}
             className="h-7 w-full rounded-md border border-divider bg-background pl-6 pr-12 text-sm text-foreground placeholder:text-tertiary focus:border-[var(--accent)] focus:outline-none"
-            aria-label="Find"
+            aria-label={t("common.find")}
             data-testid="find-input"
           />
           <span
@@ -136,8 +138,8 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
           type="button"
           onClick={prev}
           className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-hover hover:text-foreground"
-          aria-label="Previous match"
-          title="Previous match (Shift+Enter)"
+          aria-label={t("common.previousMatch")}
+          title={`${t("common.previousMatch")} (Shift+Enter)`}
           data-testid="find-prev"
         >
           <ChevronUp size={14} />
@@ -146,8 +148,8 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
           type="button"
           onClick={next}
           className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-hover hover:text-foreground"
-          aria-label="Next match"
-          title="Next match (Enter)"
+          aria-label={t("common.nextMatch")}
+          title={`${t("common.nextMatch")} (Enter)`}
           data-testid="find-next"
         >
           <ChevronDown size={14} />
@@ -156,8 +158,8 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
           type="button"
           onClick={onClose}
           className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-hover hover:text-foreground"
-          aria-label="Close find"
-          title="Close (Esc)"
+          aria-label={t("common.closeFind")}
+          title={`${t("common.close")} (Esc)`}
           data-testid="find-close"
         >
           <X size={14} />
@@ -172,9 +174,9 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
           <input
             value={replacement}
             onChange={(e) => setReplacement(e.target.value)}
-            placeholder="Replace with"
+            placeholder={t("common.replacePlaceholder")}
             className="h-7 flex-1 rounded-md border border-divider bg-background px-2 text-sm text-foreground placeholder:text-tertiary focus:border-[var(--accent)] focus:outline-none"
-            aria-label="Replace with"
+            aria-label={t("common.replacePlaceholder")}
             data-testid="replace-input"
           />
           <button
@@ -187,7 +189,7 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
             )}
             data-testid="replace-one"
           >
-            Replace
+            {t("common.replace")}
           </button>
           <button
             type="button"
@@ -199,7 +201,7 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
             )}
             data-testid="replace-all"
           >
-            All
+            {t("common.replaceAll")}
           </button>
         </div>
       ) : null}
@@ -207,19 +209,22 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
       <div className="mt-1.5 flex items-center gap-2 px-1 text-[11px] text-secondary">
         <FindOptToggle
           label="Aa"
-          tip="Case sensitive"
+          tip={t("common.caseSensitive")}
+          testId="case-sensitive"
           active={opts.caseSensitive}
           onClick={() => setOpts((o) => ({ ...o, caseSensitive: !o.caseSensitive }))}
         />
         <FindOptToggle
           label="ab"
-          tip="Whole word"
+          tip={t("common.wholeWord")}
+          testId="whole-word"
           active={opts.wholeWord}
           onClick={() => setOpts((o) => ({ ...o, wholeWord: !o.wholeWord }))}
         />
         <FindOptToggle
           label=".*"
-          tip="Regular expression"
+          tip={t("common.regex")}
+          testId="regex"
           active={opts.regex}
           onClick={() => setOpts((o) => ({ ...o, regex: !o.regex }))}
         />
@@ -231,11 +236,13 @@ export function FindReplacePanel({ adapter, open, mode, onClose }: FindReplacePa
 function FindOptToggle({
   label,
   tip,
+  testId,
   active,
   onClick,
 }: {
   readonly label: string;
   readonly tip: string;
+  readonly testId: string;
   readonly active: boolean;
   readonly onClick: () => void;
 }): ReactNode {
@@ -250,7 +257,7 @@ function FindOptToggle({
         "inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-medium",
         active ? "bg-[var(--accent)] text-white" : "text-secondary hover:bg-hover"
       )}
-      data-testid={`find-opt-${tip.toLowerCase().replace(/\s+/g, "-")}`}
+      data-testid={`find-opt-${testId}`}
     >
       {label}
     </button>

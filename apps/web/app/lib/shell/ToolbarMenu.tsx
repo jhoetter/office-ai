@@ -74,8 +74,7 @@ export function ToolbarMenu({
     if (!trigger || !panel) return;
     const rect = trigger.getBoundingClientRect();
     const panelRect = panel.getBoundingClientRect();
-    let left =
-      align === "right" ? rect.right - panelRect.width : rect.left;
+    let left = align === "right" ? rect.right - panelRect.width : rect.left;
     // Keep the panel inside the viewport — clamp with an 8 px gutter
     // on each side so a long menu near a screen edge still reads
     // cleanly.

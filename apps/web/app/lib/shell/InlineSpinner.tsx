@@ -31,11 +31,7 @@ export interface InlineSpinnerProps {
   readonly decorative?: boolean;
 }
 
-export function InlineSpinner({
-  size = 12,
-  className,
-  decorative = true,
-}: InlineSpinnerProps): ReactNode {
+export function InlineSpinner({ size = 12, className, decorative = true }: InlineSpinnerProps): ReactNode {
   return (
     <Loader2
       size={size}

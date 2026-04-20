@@ -25,6 +25,12 @@ export { TextFormatBar, type TextFormatBarProps } from "./primitives/text-format
 export { CommentsSidebar, type CommentsSidebarProps } from "./primitives/comments-sidebar";
 export { CommentComposer, type CommentComposerProps } from "./primitives/comment-composer";
 
+/* Realtime presence */
+export { PresenceStack, type PresenceStackProps, type PresencePeer } from "./primitives/presence-stack";
+
+/* Toolbar grouping (Word/Excel/PowerPoint cluster + caption) */
+export { ToolbarGroup, type ToolbarGroupProps } from "./primitives/toolbar-group";
+
 /* Hooks */
 export { useFocusTrap } from "./hooks/use-focus-trap";
 

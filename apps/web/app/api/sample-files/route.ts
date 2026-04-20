@@ -18,12 +18,13 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Kind = "docx" | "xlsx" | "pptx";
+type Kind = "docx" | "xlsx" | "pptx" | "pdf";
 
 const EXT_TO_KIND: Record<string, Kind> = {
   ".docx": "docx",
   ".xlsx": "xlsx",
   ".pptx": "pptx",
+  ".pdf": "pdf",
 };
 
 interface SampleFileEntry {
@@ -47,33 +48,46 @@ export async function GET(): Promise<NextResponse> {
     if (code === "ENOENT") {
       return NextResponse.json({ files: [] satisfies SampleFileEntry[] });
     }
-    return NextResponse.json(
-      { message: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 
   const files: SampleFileEntry[] = [];
-  for (const name of entries) {
-    const ext = path.extname(name).toLowerCase();
-    const kind = EXT_TO_KIND[ext];
-    if (!kind) continue;
-    const full = path.join(dir, name);
-    let info;
+
+  const collect = async (subdir: string): Promise<void> => {
+    const dirToWalk = subdir.length > 0 ? path.join(dir, subdir) : dir;
+    let dirEntries: string[];
     try {
-      info = await stat(full);
+      dirEntries = await readdir(dirToWalk);
     } catch {
-      continue;
+      return;
     }
-    if (!info.isFile()) continue;
-    files.push({
-      name,
-      url: `/sample-files/${encodeURIComponent(name)}`,
-      kind,
-      size: info.size,
-      modifiedAt: info.mtime.toISOString(),
-    });
-  }
+    for (const name of dirEntries) {
+      const ext = path.extname(name).toLowerCase();
+      const kind = EXT_TO_KIND[ext];
+      const full = path.join(dirToWalk, name);
+      let info;
+      try {
+        info = await stat(full);
+      } catch {
+        continue;
+      }
+      if (!kind) {
+        if (info.isDirectory() && subdir.length === 0) await collect(name);
+        continue;
+      }
+      if (!info.isFile()) continue;
+      const relativeName = subdir.length > 0 ? `${subdir}/${name}` : name;
+      files.push({
+        name,
+        url: `/sample-files/${relativeName.split("/").map(encodeURIComponent).join("/")}`,
+        kind,
+        size: info.size,
+        modifiedAt: info.mtime.toISOString(),
+      });
+    }
+  };
+
+  await collect("");
 
   files.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   return NextResponse.json({ files });
