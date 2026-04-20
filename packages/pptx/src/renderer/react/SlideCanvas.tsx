@@ -235,6 +235,24 @@ export interface SlideCanvasProps {
    * indicator stays in sync.
    */
   readonly onConnectorToolExit?: () => void;
+  /**
+   * Optional remote-peer selection presence (Yjs awareness). For each
+   * peer whose `slideId` matches the active slide, the canvas paints
+   * a colored 2px outline around the shape(s) they have selected,
+   * with a small name tag in the peer color. When a peer is on the
+   * slide but has no shape selected (`shapeIds: []`), the canvas
+   * paints a small "X is here" badge in the top-right corner instead.
+   * Empty / undefined → nothing is drawn.
+   */
+  readonly remotePeers?: ReadonlyArray<RemoteSelectionPeer>;
+}
+
+export interface RemoteSelectionPeer {
+  readonly clientId: number;
+  readonly slideId: string;
+  readonly shapeIds: ReadonlyArray<string>;
+  readonly name: string;
+  readonly color: string;
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
@@ -1316,6 +1334,9 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
         ) : null}
         {props.commentedShapeIds && props.commentedShapeIds.length > 0 ? (
           <CommentMarkerOverlay slide={slide} slideSize={slideSize} shapeIds={props.commentedShapeIds} />
+        ) : null}
+        {props.remotePeers && props.remotePeers.length > 0 ? (
+          <RemoteSelectionOverlay slide={slide} slideSize={slideSize} peers={props.remotePeers} />
         ) : null}
         {props.commentFlashTarget ? (
           <CommentFlashOverlay
@@ -3353,6 +3374,143 @@ function CommentMarkerOverlay({
           </g>
         );
       })}
+    </svg>
+  );
+}
+
+interface RemoteSelectionOverlayProps {
+  readonly slide: Slide;
+  readonly slideSize: SlideSize;
+  readonly peers: ReadonlyArray<RemoteSelectionPeer>;
+}
+
+/**
+ * SVG overlay that paints a per-peer colored outline around every
+ * shape a remote peer has selected on the active slide, plus an
+ * "X is here" badge for peers viewing this slide without a shape
+ * selection. Filters by `slideId` so peers on a different slide are
+ * silent here (the slide rail dots cover cross-slide visibility).
+ *
+ * Drawn behind the local selection chrome (`SelectionOverlaySvg`)
+ * so the local user's selection visually wins on overlap.
+ */
+function RemoteSelectionOverlay({
+  slide,
+  slideSize,
+  peers,
+}: RemoteSelectionOverlayProps): React.ReactElement | null {
+  const stageViewBox = useStageViewBox(slideSize);
+  const onSlide = peers.filter((p) => p.slideId === slide.id);
+  if (onSlide.length === 0) return null;
+  const outlines: React.ReactElement[] = [];
+  const idleBadges: { peer: RemoteSelectionPeer; index: number }[] = [];
+  for (let i = 0; i < onSlide.length; i++) {
+    const peer = onSlide[i]!;
+    if (peer.shapeIds.length === 0) {
+      idleBadges.push({ peer, index: idleBadges.length });
+      continue;
+    }
+    for (const shapeId of peer.shapeIds) {
+      const sh = findShape(slide.shapes, shapeId);
+      if (!sh) continue;
+      const box = shapeBoundingBox(sh);
+      if (!box) continue;
+      const x = px(box.x);
+      const y = px(box.y);
+      const w = px(box.cx);
+      const h = px(box.cy);
+      outlines.push(
+        <g
+          key={`remote-shape-${peer.clientId}-${shapeId}`}
+          data-testid="pptx-remote-shape-outline"
+          data-peer-color={peer.color}
+        >
+          <rect
+            x={x}
+            y={y}
+            width={w}
+            height={h}
+            fill="none"
+            stroke={peer.color}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            strokeOpacity={0.95}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+          <foreignObject
+            x={x}
+            y={Math.max(0, y - px(180000))}
+            width={Math.max(60, w)}
+            height={px(180000)}
+            pointerEvents="none"
+          >
+            <div
+              style={{
+                display: "inline-block",
+                padding: "1px 6px",
+                fontSize: 10,
+                fontFamily: "system-ui, sans-serif",
+                fontWeight: 500,
+                color: "#fff",
+                backgroundColor: peer.color,
+                borderRadius: "2px 2px 2px 0",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {peer.name}
+            </div>
+          </foreignObject>
+        </g>
+      );
+    }
+  }
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={stageViewBox}
+      preserveAspectRatio="xMidYMid meet"
+      pointerEvents="none"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+      data-testid="pptx-remote-selection-layer"
+    >
+      {outlines}
+      {idleBadges.length > 0 ? (
+        <foreignObject
+          x={px(slideSize.cxEmu) - px(2400000)}
+          y={px(120000)}
+          width={px(2400000)}
+          height={px(180000) * idleBadges.length}
+          pointerEvents="none"
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 4,
+              fontFamily: "system-ui, sans-serif",
+            }}
+          >
+            {idleBadges.map(({ peer }) => (
+              <div
+                key={`remote-idle-${peer.clientId}`}
+                style={{
+                  padding: "1px 6px",
+                  fontSize: 10,
+                  fontWeight: 500,
+                  color: "#fff",
+                  backgroundColor: peer.color,
+                  borderRadius: 4,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {peer.name} is here
+              </div>
+            ))}
+          </div>
+        </foreignObject>
+      ) : null}
     </svg>
   );
 }

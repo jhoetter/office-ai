@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
 import { ImageOverlay, type AnchorFromPx } from "./ImageOverlay";
 import { ChartOverlay } from "./ChartOverlay";
+import { XlsxRemoteSelectionLayer, type RemoteXlsxPeer } from "./XlsxRemoteSelectionLayer";
 import {
   containsCell,
   isSingle,
@@ -198,6 +199,14 @@ export interface GridProps {
   readonly selectedChartId?: string | null;
   readonly onSelectChart?: (id: string | null) => void;
   readonly onRemoveChart?: (id: string) => void;
+  /**
+   * Remote peers from the realtime layer. The Grid renders a 2px
+   * colored outline + name tag around the range each peer has
+   * selected on the active sheet. Filtered by `sheetName` so peers
+   * on a different sheet are silent here (the sheet tab strip
+   * shows them via colored dots instead).
+   */
+  readonly remotePeers?: ReadonlyArray<RemoteXlsxPeer>;
 }
 
 export interface CommentMarker {
@@ -272,6 +281,7 @@ export function Grid(props: GridProps): ReactNode {
     selectedChartId,
     onSelectChart,
     onRemoveChart,
+    remotePeers,
   } = props;
   const extras: ReadonlyArray<Selection> = extraAreas ?? [];
 
@@ -1791,6 +1801,15 @@ export function Grid(props: GridProps): ReactNode {
         {fillPreviewOverlay}
         {tableOverlays}
         {extraAreaOverlays}
+        {remotePeers && remotePeers.length > 0 ? (
+          <XlsxRemoteSelectionLayer
+            peers={remotePeers}
+            activeSheetName={sheet.name}
+            colXs={colXs}
+            rowYs={rowYs}
+            headerOffset={{ x: HEADER_COL_WIDTH, y: HEADER_ROW_HEIGHT }}
+          />
+        ) : null}
         {marquee}
         {fillHandle}
         {/* Freeze divider lines — pinned to viewport top-left via a

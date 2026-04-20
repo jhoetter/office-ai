@@ -3558,6 +3558,15 @@ export function XlsxEditor({
               onScrollTo: scrollToComment,
             })}
             author="You"
+            {...(realtimeRoom.room?.identity
+              ? {
+                  authorIdentity: {
+                    name: realtimeRoom.room.identity.name,
+                    id: realtimeRoom.room.identity.id,
+                    color: realtimeRoom.room.identity.color,
+                  },
+                }
+              : {})}
             emptyHint="No comments on this sheet yet. Select a cell and press Add comment in the toolbar."
             onScrollTo={scrollToComment}
           />
@@ -4303,6 +4312,7 @@ export function XlsxEditor({
                           });
                           setSelectedChartId(null);
                         }}
+                        remotePeers={realtimeRoom.remotePeers}
                       />
                     ) : null}
                   </div>
@@ -4311,6 +4321,18 @@ export function XlsxEditor({
                 <SheetTabBar
                   sheets={sheets.map((s) => ({ id: String(s.id), name: s.name, state: s.state }))}
                   activeName={activeSheetName}
+                  peers={realtimeRoom.remotePeers
+                    .map((p) => {
+                      const c = p.state.cursor;
+                      if (!c || c.product !== "xlsx") return null;
+                      return {
+                        clientId: p.clientId,
+                        sheetName: c.sheetName,
+                        name: p.state.user.name,
+                        color: p.state.user.color,
+                      };
+                    })
+                    .filter((x): x is NonNullable<typeof x> => x !== null)}
                   onActivate={(name) => {
                     // If the user clicks a hidden sheet's "unhide" chip the
                     // sheet may not yet be visible — flip it to visible first

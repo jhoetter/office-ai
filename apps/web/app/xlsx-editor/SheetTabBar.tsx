@@ -31,6 +31,13 @@ export interface SheetTabDescriptor {
   readonly state: "visible" | "hidden" | "veryHidden";
 }
 
+export interface SheetTabPeerDot {
+  readonly clientId: number;
+  readonly sheetName: string;
+  readonly name: string;
+  readonly color: string;
+}
+
 export interface SheetTabBarProps {
   readonly sheets: ReadonlyArray<SheetTabDescriptor>;
   readonly activeName: string | null;
@@ -40,10 +47,23 @@ export interface SheetTabBarProps {
   readonly onMove: (name: string, to: number) => void;
   readonly onAdd: () => void;
   readonly onSetState: (name: string, state: "visible" | "hidden") => void;
+  /**
+   * Realtime peers projected to a per-sheet dot. Rendered as a tiny
+   * stack of colored dots after each tab whose `sheetName` matches a
+   * remote peer's currently-published `XlsxSelection.sheetName`. The
+   * tooltip lists the peer names so collisions still resolve.
+   */
+  readonly peers?: ReadonlyArray<SheetTabPeerDot>;
 }
 
 export function SheetTabBar(props: SheetTabBarProps): ReactNode {
-  const { sheets, activeName, onActivate, onRename, onDelete, onMove, onAdd, onSetState } = props;
+  const { sheets, activeName, onActivate, onRename, onDelete, onMove, onAdd, onSetState, peers } = props;
+  const peersBySheet = new Map<string, SheetTabPeerDot[]>();
+  for (const p of peers ?? []) {
+    const existing = peersBySheet.get(p.sheetName);
+    if (existing) existing.push(p);
+    else peersBySheet.set(p.sheetName, [p]);
+  }
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>("");
   const [ctx, setCtx] = useState<{ name: string; x: number; y: number } | null>(null);
@@ -168,13 +188,37 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
                     setCtx({ name: s.name, x: e.clientX, y: e.clientY });
                   }}
                   className={cn(
-                    "shrink-0 rounded px-3 py-1 text-xs font-medium transition-colors",
+                    "inline-flex shrink-0 items-center gap-1.5 rounded px-3 py-1 text-xs font-medium transition-colors",
                     isActive
                       ? "bg-background text-foreground shadow-sm border border-divider"
                       : "text-secondary hover:text-foreground hover:bg-hover"
                   )}
                 >
-                  {s.name}
+                  <span>{s.name}</span>
+                  {(() => {
+                    const dots = peersBySheet.get(s.name);
+                    if (!dots || dots.length === 0) return null;
+                    const tooltip = dots.map((d) => d.name).join(", ");
+                    return (
+                      <span
+                        className="inline-flex items-center -space-x-0.5"
+                        title={tooltip}
+                        data-testid={`sheet-tab-peers-${s.name}`}
+                      >
+                        {dots.slice(0, 3).map((d) => (
+                          <span
+                            key={d.clientId}
+                            aria-hidden
+                            className="inline-block size-1.5 rounded-full ring-1 ring-surface"
+                            style={{ backgroundColor: d.color }}
+                          />
+                        ))}
+                        {dots.length > 3 ? (
+                          <span className="ml-1 text-[10px] font-normal text-secondary">+{dots.length - 3}</span>
+                        ) : null}
+                      </span>
+                    );
+                  })()}
                 </button>
               )}
             </div>

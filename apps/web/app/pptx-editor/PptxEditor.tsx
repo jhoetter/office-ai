@@ -9,7 +9,9 @@ import {
   SlideCanvas,
   SlidesSidebar,
   type PptxTextSelection,
+  type RemoteSelectionPeer,
   type SlideContextAction,
+  type SlideRailPeerDot,
 } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import {
@@ -1851,6 +1853,15 @@ export function PptxEditor({
               onScrollTo: scrollToComment,
             })}
             author="You"
+            {...(realtimeRoom.room?.identity
+              ? {
+                  authorIdentity: {
+                    name: realtimeRoom.room.identity.name,
+                    id: realtimeRoom.room.identity.id,
+                    color: realtimeRoom.room.identity.color,
+                  },
+                }
+              : {})}
             emptyHint="No comments on this slide yet. Select a shape and press Add comment, or comment on the slide as a whole."
             onScrollTo={scrollToComment}
           />
@@ -2128,6 +2139,34 @@ export function PptxEditor({
     ]
   );
 
+  const remotePptxPeers: ReadonlyArray<RemoteSelectionPeer> = useMemo(
+    () =>
+      realtimeRoom.remotePeers
+        .map((p): RemoteSelectionPeer | null => {
+          const c = p.state.cursor;
+          if (!c || c.product !== "pptx") return null;
+          return {
+            clientId: p.clientId,
+            slideId: c.slideId,
+            shapeIds: c.shapeIds,
+            name: p.state.user.name,
+            color: p.state.user.color,
+          };
+        })
+        .filter((x): x is RemoteSelectionPeer => x !== null),
+    [realtimeRoom.remotePeers]
+  );
+  const slideRailPeers: ReadonlyArray<SlideRailPeerDot> = useMemo(
+    () =>
+      remotePptxPeers.map((p) => ({
+        clientId: p.clientId,
+        slideId: p.slideId,
+        name: p.name,
+        color: p.color,
+      })),
+    [remotePptxPeers]
+  );
+
   return (
     <>
       <RemotePresenceList peers={realtimeRoom.remotePeers} />
@@ -2215,6 +2254,7 @@ export function PptxEditor({
                         thumbnailWidth={170}
                         onReorder={(from, to) => void moveSlide(from, to)}
                         onContextAction={(idx, action) => void handleSlideContextAction(idx, action)}
+                        peers={slideRailPeers}
                       />
                     ) : null}
                   </aside>
@@ -2271,6 +2311,7 @@ export function PptxEditor({
                         onPlaceholderActivate={(info) => void handlePlaceholderActivate(info)}
                         connectorTool={connectorTool}
                         onConnectorToolExit={exitConnectorTool}
+                        remotePeers={remotePptxPeers}
                       />
                       {selectedShape &&
                       selectedShape.kind === "connector" &&

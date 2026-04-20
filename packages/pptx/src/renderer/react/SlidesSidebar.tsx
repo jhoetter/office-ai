@@ -35,6 +35,20 @@ export interface SlidesSidebarProps {
    * action; the host is responsible for the actual command dispatch.
    */
   readonly onContextAction?: (slideIndex: number, action: SlideContextAction) => void;
+  /**
+   * Realtime peers projected to slide-rail dots. Rendered as a tiny
+   * stack of colored dots beside each slide row whose `slideId`
+   * matches a remote peer's currently-published `PptxSelection.slideId`.
+   * Tooltip lists the peer names so collisions still resolve.
+   */
+  readonly peers?: ReadonlyArray<SlideRailPeerDot>;
+}
+
+export interface SlideRailPeerDot {
+  readonly clientId: number;
+  readonly slideId: string;
+  readonly name: string;
+  readonly color: string;
 }
 
 interface MenuState {
@@ -55,7 +69,14 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
     thumbnailWidth = 180,
     onReorder,
     onContextAction,
+    peers,
   } = props;
+  const peersBySlide = new Map<string, SlideRailPeerDot[]>();
+  for (const p of peers ?? []) {
+    const list = peersBySlide.get(p.slideId);
+    if (list) list.push(p);
+    else peersBySlide.set(p.slideId, [p]);
+  }
 
   const [dragIndex, setDragIndex] = React.useState<number | null>(null);
   const [dropTarget, setDropTarget] = React.useState<{ index: number; before: boolean } | null>(null);
@@ -172,17 +193,61 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
             }}
           >
             <span style={{ fontSize: 12, color: "#71717a", width: 18, textAlign: "right" }}>{i + 1}</span>
-            <SlideThumbnail
-              slide={s}
-              slideSize={slideSize}
-              mediaUrls={mediaUrls}
-              theme={theme}
-              charts={charts}
-              width={thumbnailWidth}
-              active={isActive}
-              onClick={() => onSelect(i)}
-              label={`Slide ${i + 1}`}
-            />
+            <div style={{ position: "relative", display: "inline-block" }}>
+              <SlideThumbnail
+                slide={s}
+                slideSize={slideSize}
+                mediaUrls={mediaUrls}
+                theme={theme}
+                charts={charts}
+                width={thumbnailWidth}
+                active={isActive}
+                onClick={() => onSelect(i)}
+                label={`Slide ${i + 1}`}
+              />
+              {(() => {
+                const dots = peersBySlide.get(s.id);
+                if (!dots || dots.length === 0) return null;
+                const tooltip = dots.map((d) => d.name).join(", ");
+                return (
+                  <div
+                    title={tooltip}
+                    data-testid={`pptx-slide-peers-${i}`}
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      right: 4,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 0,
+                      padding: "2px 4px",
+                      borderRadius: 999,
+                      background: "rgba(255,255,255,0.85)",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                    }}
+                  >
+                    {dots.slice(0, 3).map((d, idx) => (
+                      <span
+                        key={d.clientId}
+                        aria-hidden
+                        style={{
+                          display: "inline-block",
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          backgroundColor: d.color,
+                          marginLeft: idx === 0 ? 0 : -2,
+                          boxShadow: "0 0 0 1px #fff",
+                        }}
+                      />
+                    ))}
+                    {dots.length > 3 ? (
+                      <span style={{ marginLeft: 2, fontSize: 9, color: "#52525b" }}>+{dots.length - 3}</span>
+                    ) : null}
+                  </div>
+                );
+              })()}
+            </div>
           </li>
         );
       })}

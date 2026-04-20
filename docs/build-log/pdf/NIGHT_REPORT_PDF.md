@@ -188,7 +188,9 @@ takes ~2 min and isn't on the sandbox's hot path.
 
 ## Deferred / out-of-scope items
 
-These are flagged so the next-day reviewer doesn't think they're missing:
+These are flagged so the next-day reviewer doesn't think they're missing.
+The full backlog — with priority, acceptance criteria and effort estimates —
+lives in [`GAPS.md`](./GAPS.md).
 
 1. **PDFium-WASM fallback at runtime** — the engine layer ships the
    adapter and the lazy-loader, but the bundled `.wasm` blob isn't

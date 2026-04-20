@@ -86,6 +86,7 @@ import { HyperlinkPopover } from "./HyperlinkPopover";
 import { CommentsSidebar } from "./CommentsSidebar";
 import { TrackedChangesHover, TrackedChangesMargin } from "./TrackedChangesUI";
 import { CommentComposer } from "./CommentComposer";
+import { DocxRemoteCursorLayer } from "./DocxRemoteCursorLayer";
 import { collectRevisions } from "@/lib/format-helpers";
 import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
@@ -655,6 +656,16 @@ export function DocxEditor({
     anchor: { left: number; top: number; bottom: number } | null;
   } | null>(null);
 
+  // Realtime author identity, mirrored from `realtimeRoom.room?.identity`
+  // by an effect declared after the `useRealtimeRoom` call below.
+  // Hoisted up here so memoized renderers (e.g. `renderCommentsPanel`)
+  // can read it without forward-referencing `realtimeRoom`.
+  const [authorIdentity, setAuthorIdentity] = useState<{
+    readonly name: string;
+    readonly id: string;
+    readonly color: string;
+  } | null>(null);
+
   // B5 — hyperlink popover state. Captures the requesting paragraph
   // + flat-text range (so the eventual command targets the same
   // selection even if the user clicks elsewhere while the popover
@@ -712,30 +723,14 @@ export function DocxEditor({
     setComposer({ range, selectionText, anchor });
   }, [pushToast]);
 
-  const submitComment = useCallback(
-    async (text: string) => {
-      const agent = agentRef.current;
-      if (!agent || !composer) return;
-      try {
-        await agent.applyCommand({
-          type: "docx:add-comment",
-          payload: {
-            range: composer.range,
-            text,
-            author: "You",
-            initials: "Y",
-          },
-          source: "human",
-        });
-        pushToast("info", "Comment added.");
-      } catch (err) {
-        pushToast("error", err instanceof Error ? err.message : String(err));
-      } finally {
-        setComposer(null);
-      }
-    },
-    [composer, pushToast]
-  );
+  // The actual implementation lives later (it depends on the
+  // commentsProvider memo, which is declared further below). We
+  // expose a stable wrapper here so callers higher in the file can
+  // bind it without hoisting the heavy `useMemo`.
+  const submitCommentRef = useRef<(text: string) => void>(() => undefined);
+  const submitComment = useCallback((text: string) => {
+    submitCommentRef.current(text);
+  }, []);
 
   // Word-shortcut bridge: the keymap plugin can't open prompts /
   // composers itself (it lives in the renderer layer), so it
@@ -1381,6 +1376,7 @@ export function DocxEditor({
     [agent, scrollToComment, pushToast]
   );
   /* eslint-enable react-hooks/refs */
+
   const hasRevisions = snapshot ? collectRevisions(snapshot).length > 0 : false;
   const showRail = hasComments;
   // Width of the right-margin balloon column, used both to reserve
@@ -1518,10 +1514,14 @@ export function DocxEditor({
     }
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <CommentsSidebar provider={commentsProvider} onScrollTo={scrollToComment} />
+        <CommentsSidebar
+          provider={commentsProvider}
+          onScrollTo={scrollToComment}
+          {...(authorIdentity ? { authorIdentity } : {})}
+        />
       </div>
     );
-  }, [commentsProvider, scrollToComment]);
+  }, [commentsProvider, scrollToComment, authorIdentity]);
 
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
     return [
@@ -1630,6 +1630,46 @@ export function DocxEditor({
   }, [view, uiTick]);
   usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
+  // Mirror the realtime identity into the local `authorIdentity` state
+  // declared near the top so memoized renderers (e.g. the comments
+  // panel) can read it without forward-referencing `realtimeRoom`.
+  const liveIdentity = realtimeRoom.room?.identity ?? null;
+  useEffect(() => {
+    if (!liveIdentity) {
+      setAuthorIdentity(null);
+      return;
+    }
+    setAuthorIdentity({
+      name: liveIdentity.name,
+      id: liveIdentity.id,
+      color: liveIdentity.color,
+    });
+  }, [liveIdentity]);
+
+  // Bind the late `submitComment` impl now that `commentsProvider`
+  // is in scope. The earlier `submitComment` useCallback (declared
+  // next to the composer state) just dispatches through this ref —
+  // see the comment on `submitCommentRef` for why.
+  useEffect(() => {
+    submitCommentRef.current = (text: string) => {
+      if (!composer) return;
+      if (!commentsProvider) return;
+      const authorName = authorIdentity?.name ?? "You";
+      void commentsProvider
+        .add({
+          author: authorName,
+          text,
+          anchor: { kind: "docx-range", paragraphIndex: 0, range: composer.range },
+          ...(authorIdentity?.id ? { authorId: authorIdentity.id } : {}),
+          ...(authorIdentity?.color ? { authorColor: authorIdentity.color } : {}),
+        })
+        .catch((err) => {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => setComposer(null));
+    };
+  }, [composer, commentsProvider, authorIdentity, pushToast]);
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "docx",
@@ -1684,6 +1724,7 @@ export function DocxEditor({
   return (
     <>
       <RemotePresenceList peers={realtimeRoom.remotePeers} />
+      <DocxRemoteCursorLayer view={view} host={scrollEl} peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}

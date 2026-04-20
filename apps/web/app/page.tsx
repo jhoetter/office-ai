@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import { BookOpen, FileSpreadsheet, FileText, FolderOpen, Loader2, Plus, Presentation, Sparkles } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
+import { openFile } from "@/lib/files/file-service";
 
 type Kind = "docx" | "xlsx" | "pptx" | "pdf";
 
@@ -110,8 +112,42 @@ function sampleHref(file: SampleFileEntry): string {
 
 export default function HomePage() {
   const { t } = useTranslator();
+  const router = useRouter();
   const [files, setFiles] = useState<ReadonlyArray<SampleFileEntry> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openingPdf, setOpeningPdf] = useState(false);
+
+  // Open a PDF from the user's disk and route into the viewer. We
+  // deliberately go through a `blob:` URL rather than threading the
+  // bytes via React state because /pdf-viewer is a sibling page —
+  // the only handoff that survives a Next client navigation without
+  // mutating its URL contract is the `?src=` param the viewer
+  // already consumes for sample-files clicks. The blob stays valid
+  // for the lifetime of the document, which matches the editor
+  // session. We don't capture the FileSystemFileHandle here because
+  // it isn't serialisable across the navigation; if the user wants
+  // save-back-to-disk they can re-open via the in-editor "Open"
+  // button which keeps the handle locally.
+  const handleOpenPdf = useCallback(async () => {
+    if (openingPdf) return;
+    setOpeningPdf(true);
+    try {
+      const opened = await openFile({
+        description: "PDF document",
+        mimeToExt: { "application/pdf": [".pdf"] },
+        accept: ".pdf,application/pdf",
+      });
+      if (!opened) return;
+      const blob = new Blob([opened.bytes as BlobPart], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const params = new URLSearchParams({ src: url, name: opened.name });
+      router.push(`/pdf-viewer?${params.toString()}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOpeningPdf(false);
+    }
+  }, [openingPdf, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,7 +192,7 @@ export default function HomePage() {
 
       <section className="mt-8">
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-tertiary">{t("home.createNew")}</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {NEW_ACTIONS.map((action) => {
             const Icon = action.icon;
             return (
@@ -176,6 +212,25 @@ export default function HomePage() {
               </Link>
             );
           })}
+          <button
+            type="button"
+            onClick={handleOpenPdf}
+            disabled={openingPdf}
+            className="group flex items-center gap-3 rounded-lg border border-divider bg-surface p-4 text-left transition hover:border-[var(--office-blue)] hover:shadow-sm disabled:cursor-progress disabled:opacity-70"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-hover">
+              {openingPdf ? (
+                <Loader2 size={20} className="animate-spin text-rose-600 dark:text-rose-400" />
+              ) : (
+                <BookOpen size={20} className="text-rose-600 dark:text-rose-400" />
+              )}
+            </div>
+            <div className="flex flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">{t("home.openPdf")}</span>
+              <span className="text-xs text-secondary">{t("home.subOpenPdf")}</span>
+            </div>
+            <FolderOpen size={16} className="text-tertiary transition group-hover:text-[var(--office-blue)]" />
+          </button>
         </div>
       </section>
 

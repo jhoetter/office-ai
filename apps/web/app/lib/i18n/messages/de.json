@@ -103,6 +103,8 @@
     "subDocx": "Word-kompatible .docx",
     "subXlsx": "Excel-kompatible .xlsx",
     "subPptx": "PowerPoint-kompatible .pptx",
+    "openPdf": "PDF öffnen",
+    "subOpenPdf": "Eine .pdf-Datei vom Computer auswählen",
     "openFile": "Datei öffnen",
     "sampleFiles": "Beispieldateien",
     "fileOne": "Datei",
