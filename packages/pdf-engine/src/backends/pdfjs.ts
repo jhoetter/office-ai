@@ -181,7 +181,8 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
 
   const render = async (renderOpts: PdfEngineRenderOptions = {}): Promise<Uint8Array | undefined> => {
     const scale = renderOpts.dpi ? renderOpts.dpi / 72 : (renderOpts.scale ?? 1);
-    const renderViewport = raw.getViewport({ scale });
+    const rotation = renderOpts.rotation ?? 0;
+    const renderViewport = raw.getViewport({ scale, rotation });
     const canvas = renderOpts.canvas;
     if (!canvas) return undefined;
     const ctx = (canvas as HTMLCanvasElement).getContext("2d");

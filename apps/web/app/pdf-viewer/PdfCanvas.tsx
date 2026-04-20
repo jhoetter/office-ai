@@ -399,7 +399,11 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = "white";
         ctx.fillRect(0, 0, cssWidth, cssHeight);
-        await enginePage.render({ canvas, scale: scale * dpr });
+        await enginePage.render({
+          canvas,
+          scale: scale * dpr,
+          rotation: viewportRotation,
+        });
         if (cancelled || token !== renderTokenRef.current) return;
 
         try {
@@ -426,7 +430,7 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [visible, engineDoc, page.pageNumber, scale, cssWidth, cssHeight, darkMode]);
+  }, [visible, engineDoc, page.pageNumber, scale, cssWidth, cssHeight, darkMode, viewportRotation]);
 
   return (
     <div
@@ -444,12 +448,17 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
         className="block h-full w-full rounded-md"
         style={{
           filter: darkMode === "on" ? darkModeCssFilter(true) : "none",
-          transform: viewportRotation === 0 ? undefined : `rotate(${viewportRotation}deg)`,
         }}
         aria-label={t("pdf.pageOf", { n: page.pageNumber, total: totalPages })}
       />
       {visible && textItems.length > 0 ? (
-        <PdfTextLayer items={textItems} scale={scale} pageHeight={page.height} />
+        <PdfTextLayer
+          items={textItems}
+          scale={scale}
+          pageWidth={page.width}
+          pageHeight={page.height}
+          rotation={viewportRotation}
+        />
       ) : null}
       {highlight ? <PdfMatchHighlight highlight={highlight} /> : null}
       {renderError ? (
@@ -472,7 +481,9 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
 interface PdfTextLayerProps {
   readonly items: ReadonlyArray<PdfEngineTextItem>;
   readonly scale: number;
+  readonly pageWidth: number;
   readonly pageHeight: number;
+  readonly rotation: PdfRotation;
 }
 
 /**
@@ -484,42 +495,92 @@ interface PdfTextLayerProps {
  * so the synthesised glyphs roughly cover the rendered ones — that
  * makes click-and-drag selection feel native even though the
  * actual glyph shapes are rasterised by the engine.
+ *
+ * The inner box is sized to the un-rotated page dimensions and
+ * then CSS-rotated to match the viewport rotation that the engine
+ * baked into the canvas, so spans always land on top of the
+ * corresponding glyphs.
  */
-function PdfTextLayer({ items, scale, pageHeight }: PdfTextLayerProps): ReactNode {
+function PdfTextLayer({
+  items,
+  scale,
+  pageWidth,
+  pageHeight,
+  rotation,
+}: PdfTextLayerProps): ReactNode {
+  const innerWidth = pageWidth * scale;
+  const innerHeight = pageHeight * scale;
+  const rotatedW = rotation === 90 || rotation === 270 ? innerHeight : innerWidth;
+  const rotatedH = rotation === 90 || rotation === 270 ? innerWidth : innerHeight;
+  const transform = textLayerTransform(rotation, innerWidth, innerHeight);
   return (
     <div
       aria-hidden
       className="pointer-events-auto absolute inset-0 select-text overflow-hidden text-transparent"
-      style={{ lineHeight: 1 }}
+      style={{ lineHeight: 1, width: rotatedW, height: rotatedH }}
     >
-      {items.map((it, idx) => {
-        if (!it.str) return null;
-        const tx = it.transform;
-        const fontHeight = Math.abs(tx[3]) || it.height || 1;
-        const left = tx[4] * scale;
-        const top = (pageHeight - tx[5] - fontHeight) * scale;
-        const width = it.width * scale;
-        const height = fontHeight * scale;
-        return (
-          <span
-            key={idx}
-            style={{
-              position: "absolute",
-              left,
-              top,
-              width,
-              height,
-              fontSize: height,
-              whiteSpace: "pre",
-              transformOrigin: "0 0",
-            }}
-          >
-            {it.str}
-          </span>
-        );
-      })}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: innerWidth,
+          height: innerHeight,
+          transform,
+          transformOrigin: "0 0",
+        }}
+      >
+        {items.map((it, idx) => {
+          if (!it.str) return null;
+          const tx = it.transform;
+          const fontHeight = Math.abs(tx[3]) || it.height || 1;
+          const left = tx[4] * scale;
+          const top = (pageHeight - tx[5] - fontHeight) * scale;
+          const width = it.width * scale;
+          const height = fontHeight * scale;
+          return (
+            <span
+              key={idx}
+              style={{
+                position: "absolute",
+                left,
+                top,
+                width,
+                height,
+                fontSize: height,
+                whiteSpace: "pre",
+                transformOrigin: "0 0",
+              }}
+            >
+              {it.str}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+/**
+ * CSS transform that maps the un-rotated text-layer box onto the
+ * rotated visual frame. Mirrors PDF.js's viewport rotation so
+ * synthesised spans line up with the rasterised glyphs.
+ */
+function textLayerTransform(rotation: PdfRotation, width: number, height: number): string {
+  switch (rotation) {
+    case 0:
+      return "none";
+    case 90:
+      return `translate(${height}px, 0) rotate(90deg)`;
+    case 180:
+      return `translate(${width}px, ${height}px) rotate(180deg)`;
+    case 270:
+      return `translate(0, ${width}px) rotate(270deg)`;
+    default: {
+      const _exhaustive: never = rotation;
+      return _exhaustive;
+    }
+  }
 }
 
 function PdfMatchHighlight({ highlight }: { readonly highlight: PdfHighlight }): ReactNode {

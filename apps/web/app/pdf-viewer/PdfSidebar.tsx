@@ -12,6 +12,7 @@ export interface PdfSidebarProps {
   readonly snapshot: PdfSnapshot | null;
   readonly engineDoc: PdfEngineDocument | null;
   readonly currentPage: number;
+  readonly viewportRotation: 0 | 90 | 180 | 270;
   readonly tab: PdfSidebarTab;
   readonly onTabChange: (tab: PdfSidebarTab) => void;
   readonly onJumpToPage: (pageNumber: number) => void;
@@ -50,7 +51,7 @@ export interface PdfSidebarProps {
  * active.
  */
 export function PdfSidebar(props: PdfSidebarProps): ReactNode {
-  const { snapshot, engineDoc, currentPage, tab, onTabChange, onJumpToPage } = props;
+  const { snapshot, engineDoc, currentPage, viewportRotation, tab, onTabChange, onJumpToPage } = props;
   const { t } = useTranslator();
   return (
     <aside
@@ -86,6 +87,7 @@ export function PdfSidebar(props: PdfSidebarProps): ReactNode {
             snapshot={snapshot}
             engineDoc={engineDoc}
             currentPage={currentPage}
+            viewportRotation={viewportRotation}
             onJumpToPage={onJumpToPage}
           />
         ) : tab === "outline" ? (
@@ -139,6 +141,7 @@ interface ThumbnailsPanelProps {
   readonly snapshot: PdfSnapshot | null;
   readonly engineDoc: PdfEngineDocument | null;
   readonly currentPage: number;
+  readonly viewportRotation: 0 | 90 | 180 | 270;
   readonly onJumpToPage: (pageNumber: number) => void;
 }
 
@@ -149,6 +152,7 @@ function ThumbnailsPanel({
   snapshot,
   engineDoc,
   currentPage,
+  viewportRotation,
   onJumpToPage,
 }: ThumbnailsPanelProps): ReactNode {
   const { t } = useTranslator();
@@ -188,6 +192,7 @@ function ThumbnailsPanel({
           key={p.id}
           page={p}
           engineDoc={engineDoc}
+          rotation={viewportRotation}
           active={p.pageNumber === currentPage}
           onClick={() => onJumpToPage(p.pageNumber)}
         />
@@ -199,22 +204,25 @@ function ThumbnailsPanel({
 interface ThumbnailItemProps {
   readonly page: PdfPage;
   readonly engineDoc: PdfEngineDocument | null;
+  readonly rotation: 0 | 90 | 180 | 270;
   readonly active: boolean;
   readonly onClick: () => void;
 }
 
-function ThumbnailItem({ page, engineDoc, active, onClick }: ThumbnailItemProps): ReactNode {
+function ThumbnailItem({ page, engineDoc, rotation, active, onClick }: ThumbnailItemProps): ReactNode {
   const ref = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [renderedAt, setRenderedAt] = useState<number | null>(null);
 
-  // Derive a CSS size that respects the page aspect ratio while
-  // capping the width at THUMB_MAX_WIDTH. We don't honour viewport
-  // rotation here — the thumbnail strip mirrors the document's
-  // intrinsic orientation, same as Acrobat.
-  const widthCss = Math.min(THUMB_MAX_WIDTH, Math.round(page.width * THUMB_SCALE * 4));
-  const heightCss = Math.round((widthCss * page.height) / page.width);
+  // Derive a CSS size that respects the page aspect ratio (with the
+  // viewport rotation applied) while capping the width at
+  // THUMB_MAX_WIDTH. The strip mirrors the main canvas so a 90°
+  // landscape spin in the toolbar lands in the rail too.
+  const intrinsicW = rotation === 90 || rotation === 270 ? page.height : page.width;
+  const intrinsicH = rotation === 90 || rotation === 270 ? page.width : page.height;
+  const widthCss = Math.min(THUMB_MAX_WIDTH, Math.round(intrinsicW * THUMB_SCALE * 4));
+  const heightCss = Math.round((widthCss * intrinsicH) / intrinsicW);
 
   useEffect(() => {
     const el = ref.current;
@@ -255,8 +263,8 @@ function ThumbnailItem({ page, engineDoc, active, onClick }: ThumbnailItemProps)
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = "white";
         ctx.fillRect(0, 0, widthCss, heightCss);
-        const renderScale = (widthCss / page.width) * dpr;
-        await enginePage.render({ canvas, scale: renderScale });
+        const renderScale = (widthCss / intrinsicW) * dpr;
+        await enginePage.render({ canvas, scale: renderScale, rotation });
         if (cancelled) return;
         setRenderedAt(Date.now());
       } catch {
@@ -275,7 +283,7 @@ function ThumbnailItem({ page, engineDoc, active, onClick }: ThumbnailItemProps)
     return () => {
       cancelled = true;
     };
-  }, [visible, engineDoc, page.pageNumber, page.width, widthCss, heightCss]);
+  }, [visible, engineDoc, page.pageNumber, intrinsicW, widthCss, heightCss, rotation]);
 
   return (
     <div ref={ref} data-thumb-page={page.pageNumber} className="flex flex-col items-center gap-1">

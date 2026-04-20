@@ -786,6 +786,7 @@ export function PdfEditor({
                   snapshot={snap}
                   engineDoc={engineDoc}
                   currentPage={currentPage}
+                  viewportRotation={viewportRotation}
                   tab={sidebarTab}
                   onTabChange={setSidebarTab}
                   onJumpToPage={onJumpToPage}

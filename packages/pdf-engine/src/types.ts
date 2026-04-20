@@ -46,6 +46,14 @@ export interface PdfEngineRenderOptions {
   format?: "png" | "jpeg" | "webp";
   /** Target DPI shortcut. Overrides `scale` if both set. */
   dpi?: number;
+  /**
+   * Extra clockwise rotation to apply on top of the page's intrinsic
+   * rotation, in 90° increments. Default 0. The engine bakes the
+   * rotation into the rasterised bitmap and the canvas dimensions
+   * (width/height swap at 90°/270°) — callers should size their
+   * canvas using the rotated viewport, not the un-rotated page.
+   */
+  rotation?: 0 | 90 | 180 | 270;
 }
 
 export interface PdfEngineTextItem {
