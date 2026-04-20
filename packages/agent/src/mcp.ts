@@ -20,6 +20,26 @@ import { z } from "zod";
 import { DocxAgent } from "@officeai/docx";
 import { XlsxAgent, diffXlsxSnapshots } from "@officeai/xlsx";
 import { PptxAgent } from "@officeai/pptx";
+import { PdfAgent } from "@officeai/pdf";
+import {
+  addPageNumbers,
+  addWatermark,
+  deletePages,
+  extractPages,
+  mergePdfs,
+  reorderPages,
+  rotatePages,
+  setMetadata,
+} from "@officeai/pdf-edit";
+import { fillForm, flattenForm, resetForm } from "@officeai/pdf-forms";
+import {
+  projectAnnotations,
+  projectFormFields,
+  projectMetadata,
+  projectOutline,
+  projectPage,
+  projectSearch,
+} from "./pdf-cli.js";
 import { diffSnapshots, inspectSnapshot, snapshotToJsonProjection } from "./cli.js";
 import { inspectXlsxSnapshot, xlsxRangeToJson } from "./cli-xlsx.js";
 import {
@@ -34,6 +54,8 @@ const xlsxSessions = new Map<string, XlsxAgent>();
 const xlsxSessionPaths = new Map<string, string>();
 const pptxSessions = new Map<string, PptxAgent>();
 const pptxSessionPaths = new Map<string, string>();
+const pdfSessions = new Map<string, { agent: PdfAgent; bytes: Uint8Array }>();
+const pdfSessionPaths = new Map<string, string>();
 
 /** Test hook: drop in-memory state between test cases. */
 export function __resetMcpSessionsForTests(): void {
@@ -43,6 +65,8 @@ export function __resetMcpSessionsForTests(): void {
   xlsxSessionPaths.clear();
   pptxSessions.clear();
   pptxSessionPaths.clear();
+  pdfSessions.clear();
+  pdfSessionPaths.clear();
 }
 
 function lookupAgent(handle: string): DocxAgent {
@@ -67,6 +91,14 @@ function lookupPptxAgent(handle: string): PptxAgent {
     throw new Error(`Unknown PPTX handle: "${handle}". Call pptx_load first.`);
   }
   return agent;
+}
+
+function lookupPdfSession(handle: string): { agent: PdfAgent; bytes: Uint8Array } {
+  const session = pdfSessions.get(handle);
+  if (!session) {
+    throw new Error(`Unknown PDF handle: "${handle}". Call pdf_load first.`);
+  }
+  return session;
 }
 
 function ok(payload: unknown): {
@@ -476,6 +508,7 @@ export function createMcpServer(): McpServer {
   );
 
   registerXlsxTools(server);
+  registerPdfTools(server);
 
   // ── pptx_load ─────────────────────────────────────────────────────────
   server.registerTool(
@@ -1438,6 +1471,485 @@ async function applyXlsxCommand(
     },
     revision: agent.getSnapshot().revision,
   });
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// pdf_* tools
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Register the PDF surface as MCP tools. Mirrors `office-agent pdf …` —
+ * the same JSON schemas (office-agent/pdf-<verb>@1) flow through the
+ * read tools, and every mutation tool returns the `{ schema, in, out,
+ * bytes, summary }` envelope a CLI caller would have seen.
+ *
+ * Reads are handle-based (cheap re-projection from a single parsed
+ * snapshot). Mutations are file-in / file-out and re-load the input
+ * each call: the PdfAgent command bus only covers the page-rotation +
+ * reorder subset today, so we drive `@officeai/pdf-edit` /
+ * `@officeai/pdf-forms` directly here for parity with the CLI.
+ */
+function registerPdfTools(server: McpServer): void {
+  // ── pdf_load ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_load",
+    {
+      description:
+        "Load a .pdf file from disk. Returns an opaque `handle` plus a metadata summary; pass the handle to subsequent pdf_* read tools. PDF mutation tools take paths directly and do not need a handle.",
+      inputSchema: {
+        path: z.string().describe("Absolute or workspace-relative path to a .pdf file."),
+      },
+    },
+    async ({ path }) => {
+      try {
+        const buf = await readFile(resolve(path));
+        const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+        const agent = await PdfAgent.fromBuffer(bytes);
+        const handle = randomUUID();
+        pdfSessions.set(handle, { agent, bytes });
+        pdfSessionPaths.set(handle, resolve(path));
+        return ok({ handle, path: resolve(path), summary: projectMetadata(agent.getSnapshot()) });
+      } catch (err) {
+        return fail(`pdf_load failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_metadata ──────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_metadata",
+    {
+      description:
+        "Return PDF document metadata, page count, signature count, encryption flags, engine, version, and linearization. Schema: office-agent/pdf-read-metadata@1.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        return ok(projectMetadata(lookupPdfSession(handle).agent.getSnapshot()));
+      } catch (err) {
+        return fail(`pdf_metadata failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_read_page ─────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_read_page",
+    {
+      description:
+        "Project a single page (1-indexed) with size, rotation, text layer flag, text, annotations, and form fields. Schema: office-agent/pdf-read-page@1.",
+      inputSchema: { handle: z.string(), page: z.number().int().positive() },
+    },
+    async ({ handle, page }) => {
+      try {
+        return ok(projectPage(lookupPdfSession(handle).agent.getSnapshot(), page));
+      } catch (err) {
+        return fail(`pdf_read_page failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_outline ───────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_outline",
+    {
+      description:
+        "Return the recursive outline tree (each entry has title, optional pageNumber, and children). Schema: office-agent/pdf-read-outline@1.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        return ok(projectOutline(lookupPdfSession(handle).agent.getSnapshot()));
+      } catch (err) {
+        return fail(`pdf_outline failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_annotations ───────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_annotations",
+    {
+      description:
+        "Return a flat list of annotations in the PDF, optionally restricted to one 1-indexed page. Schema: office-agent/pdf-read-annotations@1.",
+      inputSchema: {
+        handle: z.string(),
+        page: z.number().int().positive().optional(),
+      },
+    },
+    async ({ handle, page }) => {
+      try {
+        const snap = lookupPdfSession(handle).agent.getSnapshot();
+        return ok(projectAnnotations(snap, page !== undefined ? { page } : undefined));
+      } catch (err) {
+        return fail(`pdf_annotations failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_list_form_fields ──────────────────────────────────────────────
+  server.registerTool(
+    "pdf_list_form_fields",
+    {
+      description:
+        "List AcroForm fields with name, type, value, options, readOnly, required, and the page they live on. Schema: office-agent/pdf-list-form-fields@1.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        const session = lookupPdfSession(handle);
+        return ok(await projectFormFields(session.agent.getSnapshot(), session.bytes));
+      } catch (err) {
+        return fail(`pdf_list_form_fields failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_search ────────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_search",
+    {
+      description:
+        "Search every page's text layer for `query`, optionally as a regex / case-sensitive. Returns per-page hits ({ page, start, end, preview, match }). Schema: office-agent/pdf-search-text@1.",
+      inputSchema: {
+        handle: z.string(),
+        query: z.string().min(1),
+        regex: z.boolean().optional().default(false),
+        case_sensitive: z.boolean().optional().default(false),
+      },
+    },
+    async ({ handle, query, regex, case_sensitive }) => {
+      try {
+        return ok(
+          projectSearch(lookupPdfSession(handle).agent, {
+            query,
+            regex: regex === true,
+            caseSensitive: case_sensitive === true,
+          })
+        );
+      } catch (err) {
+        return fail(`pdf_search failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── pdf_export_markdown ───────────────────────────────────────────────
+  server.registerTool(
+    "pdf_export_markdown",
+    {
+      description:
+        "Render the loaded PDF as Markdown via PdfAgent.toMarkdown(). Returns the markdown payload directly. The CLI counterpart `office-agent pdf export-markdown` writes to disk when --out is given.",
+      inputSchema: { handle: z.string() },
+    },
+    async ({ handle }) => {
+      try {
+        const md = lookupPdfSession(handle).agent.toMarkdown();
+        return ok({
+          schema: "office-agent/pdf-export-markdown@1",
+          format: "markdown",
+          content: md,
+        });
+      } catch (err) {
+        return fail(`pdf_export_markdown failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  // ── Mutations: file in → file out (no handle, mirrors CLI) ────────────
+  registerPdfMutationTool(
+    server,
+    "pdf_rotate_pages",
+    "office-agent/pdf-rotate-pages@1",
+    {
+      pages: z.array(z.number().int().positive()).min(1),
+      delta: z.number().int(),
+    },
+    async (bytes, opts) => {
+      const pages = opts.pages as number[];
+      const delta = opts.delta as number;
+      if (![90, 180, 270, -90, -180, -270].includes(delta)) {
+        throw new Error(`pdf_rotate_pages: delta must be ±90/±180/±270 (got ${delta})`);
+      }
+      const out = await rotatePages(bytes, {
+        pages,
+        delta: delta as 90 | 180 | 270 | -90 | -180 | -270,
+      });
+      return { bytes: out, summary: `rotated ${pages.length} page(s) by ${delta}°` };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_reorder_pages",
+    "office-agent/pdf-reorder-pages@1",
+    { order: z.array(z.number().int().positive()).min(1) },
+    async (bytes, opts) => {
+      const order = opts.order as number[];
+      return {
+        bytes: await reorderPages(bytes, { order }),
+        summary: `reordered ${order.length} pages`,
+      };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_delete_pages",
+    "office-agent/pdf-delete-pages@1",
+    { pages: z.array(z.number().int().positive()).min(1) },
+    async (bytes, opts) => {
+      const pages = opts.pages as number[];
+      return {
+        bytes: await deletePages(bytes, { pages }),
+        summary: `deleted ${pages.length} page(s)`,
+      };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_extract_pages",
+    "office-agent/pdf-extract-pages@1",
+    { pages: z.array(z.number().int().positive()).min(1) },
+    async (bytes, opts) => {
+      const pages = opts.pages as number[];
+      return {
+        bytes: await extractPages(bytes, { pages }),
+        summary: `extracted ${pages.length} page(s)`,
+      };
+    }
+  );
+
+  // pdf_merge: variadic input list, no source-bytes parameter.
+  server.registerTool(
+    "pdf_merge",
+    {
+      description:
+        "Concatenate two-or-more PDFs into a single document. Schema: office-agent/pdf-merge@1.",
+      inputSchema: {
+        inputs: z.array(z.string()).min(2),
+        out_path: z.string(),
+      },
+    },
+    async ({ inputs, out_path }) => {
+      try {
+        const buffers = await Promise.all(
+          inputs.map(async (p) => {
+            const b = await readFile(resolve(p));
+            return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+          })
+        );
+        const out = await mergePdfs({ inputs: buffers });
+        const target = resolve(out_path);
+        const buf = Buffer.from(out);
+        await writeFile(target, buf);
+        return ok({
+          schema: "office-agent/pdf-merge@1",
+          inputs,
+          out: out_path,
+          bytes: buf.byteLength,
+          summary: `merged ${inputs.length} PDFs`,
+        });
+      } catch (err) {
+        return fail(`pdf_merge failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_set_metadata",
+    "office-agent/pdf-set-metadata@1",
+    {
+      title: z.string().optional(),
+      author: z.string().optional(),
+      subject: z.string().optional(),
+      keywords: z.string().optional(),
+      creator: z.string().optional(),
+      producer: z.string().optional(),
+    },
+    async (bytes, opts) => {
+      const patch: Record<string, string> = {};
+      for (const k of ["title", "author", "subject", "keywords", "creator", "producer"] as const) {
+        const v = opts[k];
+        if (typeof v === "string") patch[k] = v;
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new Error("pdf_set_metadata: pass at least one of title/author/subject/keywords/creator/producer");
+      }
+      return {
+        bytes: await setMetadata(bytes, patch),
+        summary: `set ${Object.keys(patch).join(", ")}`,
+      };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_add_watermark",
+    "office-agent/pdf-add-watermark@1",
+    {
+      text: z.string().min(1),
+      opacity: z.number().min(0).max(1).optional(),
+      rotation: z.number().optional(),
+      font_size: z.number().positive().optional(),
+      pages: z.array(z.number().int().positive()).optional(),
+    },
+    async (bytes, opts) => {
+      const text = opts.text as string;
+      const opacity = opts.opacity as number | undefined;
+      const rotation = opts.rotation as number | undefined;
+      const fontSize = opts.font_size as number | undefined;
+      const pages = opts.pages as number[] | undefined;
+      return {
+        bytes: await addWatermark(bytes, {
+          text,
+          ...(opacity !== undefined ? { opacity } : {}),
+          ...(rotation !== undefined ? { rotate: rotation } : {}),
+          ...(fontSize !== undefined ? { fontSize } : {}),
+          ...(pages ? { pages } : {}),
+        }),
+        summary: `stamped "${text}" watermark`,
+      };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_add_page_numbers",
+    "office-agent/pdf-add-page-numbers@1",
+    {
+      start: z.number().int().positive().optional(),
+      position: z
+        .enum([
+          "top-left",
+          "top-center",
+          "top-right",
+          "bottom-left",
+          "bottom-center",
+          "bottom-right",
+        ])
+        .optional(),
+      font_size: z.number().positive().optional(),
+      margin: z.number().nonnegative().optional(),
+      format: z.string().optional(),
+    },
+    async (bytes, opts) => {
+      const start = opts.start as number | undefined;
+      const position = opts.position as
+        | "top-left"
+        | "top-center"
+        | "top-right"
+        | "bottom-left"
+        | "bottom-center"
+        | "bottom-right"
+        | undefined;
+      const fontSize = opts.font_size as number | undefined;
+      const margin = opts.margin as number | undefined;
+      const format = opts.format as string | undefined;
+      return {
+        bytes: await addPageNumbers(bytes, {
+          ...(start !== undefined ? { startAt: start } : {}),
+          ...(position ? { position } : {}),
+          ...(fontSize !== undefined ? { fontSize } : {}),
+          ...(margin !== undefined ? { margin } : {}),
+          ...(format ? { format } : {}),
+        }),
+        summary: `added page numbers (position=${position ?? "bottom-center"})`,
+      };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_fill_form",
+    "office-agent/pdf-fill-form@1",
+    { values: z.record(z.string(), z.unknown()) },
+    async (bytes, opts) => {
+      const values = opts.values as Record<string, unknown>;
+      const coerced: Record<string, string | boolean | ReadonlyArray<string>> = {};
+      for (const [k, v] of Object.entries(values)) {
+        if (typeof v === "string" || typeof v === "boolean") coerced[k] = v;
+        else if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+          coerced[k] = v as ReadonlyArray<string>;
+        } else {
+          throw new Error(
+            `pdf_fill_form: field "${k}" expects string|boolean|string[] (got ${typeof v})`
+          );
+        }
+      }
+      return {
+        bytes: await fillForm(bytes, { values: coerced }),
+        summary: `filled ${Object.keys(coerced).length} form field(s)`,
+      };
+    }
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_flatten_form",
+    "office-agent/pdf-flatten-form@1",
+    {},
+    async (bytes) => ({ bytes: await flattenForm(bytes), summary: "flattened form fields" })
+  );
+
+  registerPdfMutationTool(
+    server,
+    "pdf_reset_form",
+    "office-agent/pdf-reset-form@1",
+    {},
+    async (bytes) => ({ bytes: await resetForm(bytes), summary: "reset form fields to defaults" })
+  );
+}
+
+/**
+ * Shared registration for every file-in / file-out PDF mutation tool.
+ * Reads `in_path` from disk, runs `mutate(bytes, opts)`, writes the
+ * resulting bytes to `out_path`, and returns the standard
+ * `{ schema, in, out, bytes, summary }` envelope.
+ */
+function registerPdfMutationTool(
+  server: McpServer,
+  name: string,
+  schema: string,
+  extraSchema: z.ZodRawShape,
+  mutate: (
+    bytes: Uint8Array,
+    opts: Record<string, unknown>
+  ) => Promise<{ bytes: Uint8Array; summary: string }>
+): void {
+  server.registerTool(
+    name,
+    {
+      description: `${name} — mutation tool emitting JSON envelope ${schema}. File-in / file-out.`,
+      inputSchema: {
+        in_path: z.string().describe("Path to the source .pdf"),
+        out_path: z.string().describe("Path to write the resulting .pdf"),
+        ...extraSchema,
+      },
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        const inPath = args.in_path as string;
+        const outPath = args.out_path as string;
+        const buf = await readFile(resolve(inPath));
+        const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+        const { bytes: outBytes, summary } = await mutate(bytes, args);
+        const target = resolve(outPath);
+        const outBuf = Buffer.from(outBytes);
+        await writeFile(target, outBuf);
+        return ok({
+          schema,
+          in: inPath,
+          out: outPath,
+          bytes: outBuf.byteLength,
+          summary,
+        });
+      } catch (err) {
+        return fail(`${name} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
 }
 
 /**

@@ -84,6 +84,12 @@ importers:
       '@officeai/docx':
         specifier: workspace:^
         version: link:../../packages/docx
+      '@officeai/pdf':
+        specifier: workspace:^
+        version: link:../../packages/pdf
+      '@officeai/pdf-engine':
+        specifier: workspace:^
+        version: link:../../packages/pdf-engine
       '@officeai/pptx':
         specifier: workspace:^
         version: link:../../packages/pptx
@@ -111,6 +117,9 @@ importers:
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      pdfjs-dist:
+        specifier: ^4.10.38
+        version: 4.10.38
       prosemirror-model:
         specifier: ^1.24.1
         version: 1.25.4
@@ -181,6 +190,21 @@ importers:
       '@officeai/docx':
         specifier: workspace:*
         version: link:../docx
+      '@officeai/pdf':
+        specifier: workspace:*
+        version: link:../pdf
+      '@officeai/pdf-annotations':
+        specifier: workspace:*
+        version: link:../pdf-annotations
+      '@officeai/pdf-edit':
+        specifier: workspace:*
+        version: link:../pdf-edit
+      '@officeai/pdf-forms':
+        specifier: workspace:*
+        version: link:../pdf-forms
+      '@officeai/pdf-ocr':
+        specifier: workspace:*
+        version: link:../pdf-ocr
       '@officeai/pptx':
         specifier: workspace:*
         version: link:../pptx
@@ -203,6 +227,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      pdf-lib:
+        specifier: ^1.17.1
+        version: 1.17.1
       typescript:
         specifier: ^5
         version: 5.9.3
@@ -502,9 +529,6 @@ importers:
       '@types/react-dom':
         specifier: ^19
         version: 19.2.3(@types/react@19.2.14)
-      jsdom:
-        specifier: ^29.0.2
-        version: 29.0.2
       react:
         specifier: ^19
         version: 19.2.5
@@ -514,9 +538,6 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@25.6.0)(jsdom@29.0.2)(lightningcss@1.32.0)
 
   packages/xlsx:
     dependencies:

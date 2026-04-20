@@ -17,6 +17,7 @@ import {
   type IO,
 } from "./cli-shared.js";
 import { registerXlsxSubcommands } from "./cli-xlsx.js";
+import { registerPdfSubcommands } from "./pdf-cli.js";
 import { registerPptxSubcommands } from "./pptx-cli.js";
 import { deterministicIdMinter } from "@officeai/core";
 
@@ -27,7 +28,7 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
   program
     .name("office-agent")
     .description(
-      "Headless agent CLI for OfficeAI. DOCX, XLSX and PPTX are all supported in this build. The 'docx', 'xlsx' and 'pptx' subcommand groups are the canonical surfaces; top-level read/search/insert-text/comment/apply remain as backward-compatible shims for DOCX."
+      "Headless agent CLI for OfficeAI. DOCX, XLSX, PPTX and PDF are all supported in this build. The 'docx', 'xlsx', 'pptx' and 'pdf' subcommand groups are the canonical surfaces; top-level read/search/insert-text/comment/apply remain as backward-compatible shims for DOCX."
     )
     .version("0.1.0")
     .option(
@@ -52,6 +53,14 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
   // ── pptx subcommand group ───────────────────────────────────────────────
   const pptx = program.command("pptx").description("PPTX-specific commands. See `office-agent pptx --help`.");
   registerPptxSubcommands(pptx, io);
+
+  // ── pdf subcommand group ────────────────────────────────────────────────
+  const pdf = program
+    .command("pdf")
+    .description(
+      "PDF read + mutate commands. Every subcommand emits JSON envelopes versioned as office-agent/pdf-<verb>@1; failures land on stderr as { error, message }. See `office-agent pdf --help`."
+    );
+  registerPdfSubcommands(pdf, io);
 
   // ── Backward-compatible top-level shims ─────────────────────────────────
   // Old commands forwarded the same payloads. We keep them aliased so existing
@@ -1770,7 +1779,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
 
 function mapErrorToExitCode(err: unknown, io: IO): number {
   if (err instanceof CliError) {
-    io.stderr.write(`error: ${err.message}\n`);
+    if (!err.silent) io.stderr.write(`error: ${err.message}\n`);
     return err.code;
   }
   if (err instanceof SelectorError) {
