@@ -355,6 +355,11 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
 
   const renderTargets = collectRenderTargets(pages, viewMode, currentPage);
   const totalPages = pages.length;
+  // Fully-scanned ⇒ no page reports a text layer. We deliberately
+  // don't fire the banner for partially-scanned documents (e.g.
+  // a TOC + scanned chapters) — pages that *do* have text behave
+  // normally and per-page badges would just add noise.
+  const isFullyScanned = pages.length > 0 && pages.every((p) => !p.hasTextLayer);
 
   return (
     <div
@@ -362,6 +367,15 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
       className="h-full w-full overflow-y-auto bg-[var(--page-backdrop)]"
       data-testid="pdf-canvas"
     >
+      {isFullyScanned ? (
+        <div
+          className="mx-auto mt-4 flex w-full max-w-3xl items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950"
+          data-testid="pdf-scanned-banner"
+        >
+          <span className="mt-0.5 font-semibold">{t("pdf.scannedBannerTitle")}</span>
+          <span className="text-amber-900/90">{t("pdf.scannedBannerHint")}</span>
+        </div>
+      ) : null}
       <div className="mx-auto flex max-w-full flex-col items-center gap-4 py-6">
         {renderTargets.map((row) => (
           <div
@@ -648,14 +662,10 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
           {t("pdf.loadError")}: {renderError}
         </div>
       ) : null}
-      {!page.hasTextLayer && visible ? (
-        <div
-          className="pointer-events-none absolute bottom-1 right-1 rounded bg-surface/80 px-1.5 py-0.5 text-[10px] text-tertiary"
-          aria-label={t("pdf.scanned")}
-        >
-          {t("pdf.scanned")}
-        </div>
-      ) : null}
+      {/* The per-page "scanned" badge was removed in WP10 — it
+          fired far too eagerly (any page without a text layer,
+          including blank cover pages). The document-level banner
+          surfaces the same hint exactly when it's actionable. */}
     </div>
   );
 }
