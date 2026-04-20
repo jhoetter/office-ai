@@ -1,0 +1,73 @@
+/**
+ * Adapter that turns a per-format `ActionDescriptor[]` (the central
+ * catalogue, e.g. `docxActions` from `@officeai/docx`) into the
+ * `PaletteCommand[]` the shell's Cmd+K palette consumes.
+ *
+ * The catalogue owns metadata (id, label, section, description,
+ * shortcut) so the palette and CLI surfaces never drift. The product
+ * editor (DocxEditor, XlsxEditor, …) supplies a `runners` map keyed by
+ * action id with the closure-bound side effect for each entry whose
+ * `surfaces` includes "palette".
+ *
+ * The function:
+ *   • silently skips catalogue entries not flagged with "palette"
+ *   • silently skips palette entries that have no runner (so a catalogue
+ *     entry can be added before the editor wires it up — a temporary
+ *     gap surfaces as a missing palette item rather than a runtime error)
+ *   • throws if a runner key references an action id absent from the
+ *     catalogue (typo guard — the editor is the place that breaks)
+ *   • respects per-runner `enabled` flags so the editor can gate by
+ *     selection / cursor without re-listing the palette
+ *
+ * Intent: every palette item visible in Cmd+K is also a CLI subcommand
+ * (when the catalogue entry declares `surfaces.includes("cli")`). The
+ * inverse holds too — adding a CLI subcommand to the catalogue and
+ * tagging it with "palette" automatically surfaces it in Cmd+K once the
+ * editor wires the runner.
+ */
+
+import type { ActionDescriptor } from "@officeai/core";
+import type { PaletteCommand } from "./types";
+
+export interface PaletteRunner {
+  readonly run: () => void | Promise<void>;
+  /** Optional: hide the palette entry without removing it from the
+   * runners map (e.g. "switch to editing mode" while already editing). */
+  readonly enabled?: boolean;
+}
+
+export type PaletteRunners = Record<string, PaletteRunner | undefined>;
+
+export function buildPaletteFromCatalogue(
+  catalogue: ReadonlyArray<ActionDescriptor>,
+  runners: PaletteRunners
+): ReadonlyArray<PaletteCommand> {
+  const byId = new Map<string, ActionDescriptor>();
+  for (const a of catalogue) byId.set(a.id, a);
+
+  for (const id of Object.keys(runners)) {
+    if (!byId.has(id)) {
+      throw new Error(
+        `buildPaletteFromCatalogue: runner declared for unknown action id "${id}". Add it to the catalogue or fix the typo.`
+      );
+    }
+  }
+
+  const out: PaletteCommand[] = [];
+  for (const action of catalogue) {
+    if (action.hidden) continue;
+    if (!action.surfaces.includes("palette")) continue;
+    const runner = runners[action.id];
+    if (!runner) continue;
+    out.push({
+      id: action.id,
+      label: action.label,
+      section: action.section,
+      ...(action.shortcut ? { shortcut: action.shortcut } : {}),
+      ...(action.description ? { hint: action.description } : {}),
+      run: runner.run,
+      ...(runner.enabled !== undefined ? { enabled: runner.enabled } : {}),
+    });
+  }
+  return out;
+}

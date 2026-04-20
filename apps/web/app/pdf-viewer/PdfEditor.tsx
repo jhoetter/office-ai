@@ -27,16 +27,19 @@ import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import {
   EditorShell,
   ZoomControl,
+  buildPaletteFromCatalogue,
   createToastId,
   type ExportFormat,
   type ExportOptionValues,
   type FindAdapter,
   type FindMatch,
   type PaletteCommand,
+  type PaletteRunners,
   type ProductAdapter,
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
+import { pdfActions } from "@officeai/pdf";
 import { downloadBlob, openFile, saveFile } from "@/lib/files/file-service";
 import {
   PresenceSlot,
@@ -744,25 +747,30 @@ export function PdfEditor({
   }, [currentPage, ready, t, totalPages]);
 
   // ── Palette commands ──────────────────────────────────────────────
+  // Generated from the central pdf action catalogue (see
+  // packages/pdf/src/actions/catalogue.ts). Labels/sections flow from
+  // the catalogue; this map only carries the closure-bound side
+  // effects + per-id `enabled` gating.
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
-    return [
-      { id: "pdf.next-page", label: "Next page", section: "Navigate", run: onNextPage, enabled: currentPage < totalPages },
-      { id: "pdf.prev-page", label: "Previous page", section: "Navigate", run: onPrevPage, enabled: currentPage > 1 },
-      { id: "pdf.first-page", label: "First page", section: "Navigate", run: onFirstPage, enabled: totalPages > 0 },
-      { id: "pdf.last-page", label: "Last page", section: "Navigate", run: onLastPage, enabled: totalPages > 0 },
-      { id: "pdf.zoom-in", label: "Zoom in", section: "View", run: onZoomIn },
-      { id: "pdf.zoom-out", label: "Zoom out", section: "View", run: onZoomOut },
-      { id: "pdf.fit-width", label: "Fit width", section: "View", run: onFitWidth },
-      { id: "pdf.fit-page", label: "Fit page", section: "View", run: onFitPage },
-      { id: "pdf.actual-size", label: "Actual size (100 %)", section: "View", run: onActualSize },
-      { id: "pdf.rotate-cw", label: "Rotate view clockwise", section: "View", run: onRotateClockwise },
-      { id: "pdf.rotate-ccw", label: "Rotate view counter-clockwise", section: "View", run: onRotateCounterClockwise },
-      { id: "pdf.toggle-dark", label: "Toggle dark mode", section: "View", run: cycleDarkMode },
-      { id: "pdf.toggle-reflow", label: "Toggle reflow", section: "View", run: onToggleReflow },
-      { id: "pdf.rotate-page", label: "Rotate current page 90°", section: "Pages", run: () => void onRotatePages(), enabled: totalPages > 0 },
-      { id: "pdf.delete-page", label: "Delete current page", section: "Pages", run: () => void onDeletePages(), enabled: totalPages > 1 },
-      { id: "pdf.print", label: "Print…", section: "File", run: () => void onPrint(), enabled: totalPages > 0 },
-    ];
+    const runners: PaletteRunners = {
+      "pdf.next-page": { run: onNextPage, enabled: currentPage < totalPages },
+      "pdf.prev-page": { run: onPrevPage, enabled: currentPage > 1 },
+      "pdf.first-page": { run: onFirstPage, enabled: totalPages > 0 },
+      "pdf.last-page": { run: onLastPage, enabled: totalPages > 0 },
+      "pdf.zoom-in": { run: onZoomIn },
+      "pdf.zoom-out": { run: onZoomOut },
+      "pdf.fit-width": { run: onFitWidth },
+      "pdf.fit-page": { run: onFitPage },
+      "pdf.actual-size": { run: onActualSize },
+      "pdf.rotate-cw": { run: onRotateClockwise },
+      "pdf.rotate-ccw": { run: onRotateCounterClockwise },
+      "pdf.toggle-dark": { run: cycleDarkMode },
+      "pdf.toggle-reflow": { run: onToggleReflow },
+      "pdf.rotate-page": { run: () => void onRotatePages(), enabled: totalPages > 0 },
+      "pdf.delete-page": { run: () => void onDeletePages(), enabled: totalPages > 1 },
+      "pdf.print": { run: () => void onPrint(), enabled: totalPages > 0 },
+    };
+    return buildPaletteFromCatalogue(pdfActions, runners);
   }, [
     currentPage,
     cycleDarkMode,

@@ -230,6 +230,8 @@ export {
   type RegisteredFunctionInfo,
 } from "./formula/registered-functions.js";
 
+export { xlsxActions, xlsxActionsById, xlsxActionsByCommandType } from "./actions/index.js";
+
 export {
   tokenizeForDisplay,
   assignRefColors,

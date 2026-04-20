@@ -4,6 +4,7 @@ export { PdfParseError } from "./parser/errors.js";
 export { serializePdf, type PdfSerializeOptions } from "./serializer/serialize.js";
 export { PdfSerializeError } from "./serializer/errors.js";
 export { allPdfHandlers } from "./commands/index.js";
+export { pdfActions, pdfActionsById, pdfActionsByCommandType } from "./actions/index.js";
 export {
   PDF_COMMAND_TYPES,
   type PdfCommandType,

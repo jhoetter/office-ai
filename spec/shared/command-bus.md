@@ -2,6 +2,30 @@
 
 > The single mutation path for every editor. Required reading.
 
+## Action catalogue (UI ↔ palette ↔ CLI parity)
+
+Each registered handler should also appear in its format's action
+catalogue (`packages/<format>/src/actions/catalogue.ts`). The catalogue
+is the single source of truth for the human-facing surfaces — toolbar
+buttons, the Cmd+K palette, and the `office-agent` CLI — and is keyed
+by stable action `id`s. See [`spec/agent/cli.md`](../agent/cli.md#action-catalogue-single-source-of-truth)
+for the full descriptor shape.
+
+`scripts/check-action-parity.mjs` (run by `make verify` and CI) fails
+the build if a handler is missing from the catalogue or if a catalogue
+entry references a `commandType` that no handler implements. Read-only
+or palette-only sugar (e.g. "Zoom in") sets `commandType: null` and is
+exempt from this check.
+
+When you add a new handler:
+
+1. register it in `packages/<format>/src/commands/registry.ts`,
+2. add a matching `ActionDescriptor` to that format's catalogue,
+3. either declare `args` + `buildPayload` so the CLI adapter can
+   generate the subcommand, or hand-roll the commander block in
+   `packages/agent/src/cli*.ts` (the catalogue then documents intent
+   only).
+
 ## Invariant
 
 **No code anywhere in this monorepo mutates a document snapshot directly.**

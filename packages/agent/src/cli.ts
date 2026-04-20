@@ -20,6 +20,11 @@ import { registerXlsxSubcommands } from "./cli-xlsx.js";
 import { registerPdfSubcommands } from "./pdf-cli.js";
 import { registerPptxSubcommands } from "./pptx-cli.js";
 import { deterministicIdMinter } from "@officeai/core";
+import { docxActions } from "@officeai/docx";
+import { pptxActions } from "@officeai/pptx";
+import { xlsxActions } from "@officeai/xlsx";
+import { pdfActions } from "@officeai/pdf";
+import { registerActionsAsSubcommands, type AgentDispatchContext } from "./actions-to-cli.js";
 
 const defaultIO: IO = { stdout: process.stdout, stderr: process.stderr };
 
@@ -43,16 +48,25 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
     .exitOverride();
 
   // ── docx subcommand group ───────────────────────────────────────────────
+  // Hand-rolled subcommands first; catalogue-driven entries (new commands
+  // that opt into auto-generation by declaring `args` + `buildPayload` in
+  // packages/docx/src/actions/catalogue.ts) get registered after, with
+  // collision-skipping so the catalogue can expand without touching this
+  // file. See packages/agent/src/actions-to-cli.ts and
+  // packages/docx/src/actions/catalogue.ts.
   const docx = program.command("docx").description("DOCX-specific commands. See `office-agent docx --help`.");
   registerDocxSubcommands(docx, io);
+  registerCatalogueSubcommands(docx, docxActions, io, "docx");
 
   // ── xlsx subcommand group ───────────────────────────────────────────────
   const xlsx = program.command("xlsx").description("XLSX-specific commands. See `office-agent xlsx --help`.");
   registerXlsxSubcommands(xlsx, io);
+  registerCatalogueSubcommands(xlsx, xlsxActions, io, "xlsx");
 
   // ── pptx subcommand group ───────────────────────────────────────────────
   const pptx = program.command("pptx").description("PPTX-specific commands. See `office-agent pptx --help`.");
   registerPptxSubcommands(pptx, io);
+  registerCatalogueSubcommands(pptx, pptxActions, io, "pptx");
 
   // ── pdf subcommand group ────────────────────────────────────────────────
   const pdf = program
@@ -61,6 +75,7 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       "PDF read + mutate commands. Every subcommand emits JSON envelopes versioned as office-agent/pdf-<verb>@1; failures land on stderr as { error, message }. See `office-agent pdf --help`."
     );
   registerPdfSubcommands(pdf, io);
+  registerCatalogueSubcommands(pdf, pdfActions, io, "pdf");
 
   // ── Backward-compatible top-level shims ─────────────────────────────────
   // Old commands forwarded the same payloads. We keep them aliased so existing
@@ -761,27 +776,9 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
       }
     );
 
-  docx
-    .command("remove-list")
-    .description("Remove numbering (list) from a paragraph.")
-    .requiredOption("--file <path>", "Path to a .docx file")
-    .requiredOption("--paragraph-id <id>", "Target paragraph id")
-    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
-    .option("--no-approve", "Leave the resulting mutation pending instead of auto-approving it")
-    .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: {
-        file: string;
-        paragraphId: string;
-        out?: string;
-        approve: boolean;
-        pretty: boolean;
-      }) => {
-        await runWrite(io, opts, "docx:remove-paragraph-list", {
-          paragraphId: opts.paragraphId,
-        });
-      }
-    );
+  // `docx remove-list` is now driven by the action catalogue; see
+  // packages/docx/src/actions/catalogue.ts ("docx.remove-list") and
+  // registerCatalogueSubcommands() below.
 
   docx
     .command("align")
@@ -984,6 +981,136 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
       const summary = diffSnapshots(before.getSnapshot(), after.getSnapshot());
       io.stdout.write(stringifyJson(summary, opts.pretty) + "\n");
     });
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Catalogue-driven subcommand wiring
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Bridge each format's `ActionDescriptor[]` into the generic
+ * `registerActionsAsSubcommands` adapter, supplying a per-format
+ * `AgentDispatchContext` that knows how to load the relevant agent and
+ * dispatch one command through the bus.
+ *
+ * This is intentionally a no-op for catalogue entries that lack
+ * `args` + `buildPayload` (the adapter skips them), so existing
+ * hand-rolled commander blocks remain authoritative until a catalogue
+ * entry is upgraded with a payload builder. Subcommand names that
+ * collide with already-registered hand-rolled commands are skipped to
+ * keep the wiring additive.
+ */
+type FormatKey = "docx" | "xlsx" | "pptx" | "pdf";
+
+function registerCatalogueSubcommands(
+  parent: Command,
+  actions: ReadonlyArray<import("@officeai/core").ActionDescriptor>,
+  io: IO,
+  format: FormatKey
+): void {
+  const taken = new Set(parent.commands.map((c) => c.name()));
+  const filtered = actions.filter((a) => {
+    const sub = a.id.includes(".") ? a.id.slice(a.id.indexOf(".") + 1) : a.id;
+    return !taken.has(sub);
+  });
+  registerActionsAsSubcommands(parent, filtered, io, dispatchContextFor(format));
+}
+
+function dispatchContextFor(format: FormatKey): AgentDispatchContext {
+  switch (format) {
+    case "docx":
+      return {
+        format,
+        loadAgent: (filePath) => loadAgent(filePath),
+        dispatchAndWrite: dispatchBusCommand,
+      };
+    case "xlsx":
+      return {
+        format,
+        loadAgent: async (filePath) => {
+          const { loadXlsxAgent } = await import("./cli-xlsx.js");
+          return loadXlsxAgent(filePath);
+        },
+        dispatchAndWrite: dispatchBusCommand,
+      };
+    case "pptx":
+      return {
+        format,
+        loadAgent: async (filePath) => {
+          const { loadAgent: loadPptxAgent } = await import("./pptx-cli.js");
+          return loadPptxAgent(filePath);
+        },
+        dispatchAndWrite: dispatchBusCommand,
+      };
+    case "pdf":
+      return {
+        format,
+        loadAgent: async (filePath) => {
+          const { PdfAgent } = await import("@officeai/pdf");
+          const buf = await readFile(resolve(filePath));
+          return PdfAgent.fromBuffer(new Uint8Array(buf));
+        },
+        dispatchAndWrite: dispatchBusCommand,
+      };
+    default: {
+      const _exhaustive: never = format;
+      void _exhaustive;
+      throw new Error(`registerCatalogueSubcommands: unknown format ${format as string}`);
+    }
+  }
+}
+
+/**
+ * Generic dispatch-and-write used by every format whose agent exposes
+ * `applyCommand`, `getPendingMutations`, `approveMutation`, and
+ * `exportFile`. Returns a JSON-serialisable summary that the adapter
+ * forwards to stdout.
+ */
+async function dispatchBusCommand(args: {
+  agent: unknown;
+  filePath: string;
+  outPath: string;
+  commandType: string;
+  payload: unknown;
+  source: "agent" | "human";
+  agentId: string;
+  approve: boolean;
+}): Promise<unknown> {
+  const a = args.agent as {
+    applyCommand: (cmd: {
+      type: string;
+      payload: unknown;
+      source: "agent" | "human";
+      agentId: string;
+    }) => Promise<{ id: string; status: string; rejection?: { code: string; message: string } }>;
+    getPendingMutations: () => ReadonlyArray<{ id: string }>;
+    approveMutation: (id: string) => unknown;
+    exportFile: () => Promise<Uint8Array>;
+  };
+  const m = await a.applyCommand({
+    type: args.commandType,
+    payload: args.payload,
+    source: args.source,
+    agentId: args.agentId,
+  });
+  if (args.approve) {
+    for (const p of a.getPendingMutations()) a.approveMutation(p.id);
+  }
+  await writeFile(resolve(args.outPath), Buffer.from(await a.exportFile()));
+  if (m.status === "rejected") {
+    throw new CliError(
+      2,
+      `${args.commandType}: mutation rejected (${m.rejection?.code ?? "unknown"}): ${m.rejection?.message ?? "no message"}`
+    );
+  }
+  return {
+    wrote: args.outPath,
+    mutation: {
+      id: m.id,
+      status: args.approve ? m.status : "pending",
+      type: args.commandType,
+    },
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

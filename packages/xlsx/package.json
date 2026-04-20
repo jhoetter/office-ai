@@ -23,6 +23,10 @@
     "./formula": {
       "types": "./dist/formula/index.d.ts",
       "import": "./dist/formula/index.js"
+    },
+    "./actions": {
+      "types": "./dist/actions/index.d.ts",
+      "import": "./dist/actions/index.js"
     }
   },
   "files": [

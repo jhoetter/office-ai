@@ -6,6 +6,7 @@ import {
   EditorShell,
   EmptyState,
   ZoomControl,
+  buildPaletteFromCatalogue,
   createToastId,
   type ExportFormat,
   type ExportOptionValues,
@@ -14,10 +15,12 @@ import {
   type FindOptions,
   type OutlineEntry,
   type PaletteCommand,
+  type PaletteRunners,
   type ProductAdapter,
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
+import { docxActions } from "@officeai/docx";
 import {
   PRODUCT_FILE_TYPES,
   downloadBlob,
@@ -1523,69 +1526,26 @@ export function DocxEditor({
     );
   }, [commentsProvider, scrollToComment, authorIdentity]);
 
+  // Palette is generated from the central docx action catalogue (see
+  // packages/docx/src/actions/catalogue.ts) so labels/sections/shortcuts
+  // never drift between Cmd+K and the CLI. The runners map only carries
+  // the closure-bound side effect for each id; metadata flows from the
+  // catalogue.
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
-    return [
-      {
-        id: "docx.add-comment",
-        label: "Add comment",
-        section: "Collaboration",
-        run: () => openCommentComposer(),
-      },
-      {
-        id: "docx.page-setup",
-        label: "Page setup…",
-        section: "Layout",
-        run: () => setPageSetupOpen(true),
-      },
-      {
-        id: "docx.insert-table-3x3",
-        label: "Insert table (3 × 3)",
-        section: "Insert",
-        run: () => void insertTable(3, 3),
-      },
-      {
-        id: "docx.insert-table-2x2",
-        label: "Insert table (2 × 2)",
-        section: "Insert",
-        run: () => void insertTable(2, 2),
-      },
-      {
-        id: "docx.insert-hyperlink",
-        label: "Insert hyperlink…",
-        section: "Insert",
-        run: () => openHyperlinkPopover(),
-      },
-      {
-        id: "docx.toggle-marks",
-        label: formattingMarksOn ? "Hide formatting marks" : "Show formatting marks",
-        section: "View",
-        run: () => handleToggleFormattingMarks(),
-      },
-      {
-        id: "docx.set-mode-edit",
-        label: "Switch to Editing mode",
-        section: "Mode",
-        run: () => setEditMode("edit"),
-        enabled: editMode !== "edit",
-      },
-      {
-        id: "docx.set-mode-suggest",
-        label: "Switch to Suggesting mode",
-        section: "Mode",
-        run: () => setEditMode("suggest"),
-        enabled: editMode !== "suggest",
-      },
-      {
-        id: "docx.set-mode-view",
-        label: "Switch to Viewing mode",
-        section: "Mode",
-        run: () => setEditMode("view"),
-        enabled: editMode !== "view",
-      },
-    ];
+    const runners: PaletteRunners = {
+      "docx.add-comment": { run: () => openCommentComposer() },
+      "docx.page-setup": { run: () => setPageSetupOpen(true) },
+      "docx.insert-table-3x3": { run: () => void insertTable(3, 3) },
+      "docx.insert-table-2x2": { run: () => void insertTable(2, 2) },
+      "docx.insert-hyperlink": { run: () => openHyperlinkPopover() },
+      "docx.toggle-marks": { run: () => handleToggleFormattingMarks() },
+      "docx.set-mode-edit": { run: () => setEditMode("edit"), enabled: editMode !== "edit" },
+      "docx.set-mode-suggest": { run: () => setEditMode("suggest"), enabled: editMode !== "suggest" },
+      "docx.set-mode-view": { run: () => setEditMode("view"), enabled: editMode !== "view" },
+    };
+    return buildPaletteFromCatalogue(docxActions, runners);
   }, [
     editMode,
-    formattingMarksOn,
     handleToggleFormattingMarks,
     insertTable,
     openCommentComposer,

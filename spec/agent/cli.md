@@ -4,6 +4,38 @@ The CLI is a thin shell over the `DocumentAgent` interface. Designed to be
 **pipeable, scriptable, and composable** with standard UNIX tools per
 [`prompt.md`](../../prompt.md) lines 453–493.
 
+## Action catalogue (single source of truth)
+
+Every CLI subcommand is mirrored by a `Cmd+K` palette entry and (for the
+mutations) a typed bus handler. The mapping lives in one place per format:
+
+- `packages/docx/src/actions/catalogue.ts` → `docxActions`
+- `packages/xlsx/src/actions/catalogue.ts` → `xlsxActions`
+- `packages/pptx/src/actions/catalogue.ts` → `pptxActions`
+- `packages/pdf/src/actions/catalogue.ts`  → `pdfActions`
+
+Each `ActionDescriptor` carries:
+
+- `id` (e.g. `"docx.insert-image"`) — stable across surfaces
+- `commandType` — bus handler key, or `null` for read-only / palette-only sugar
+- `label`, `description`, `section`, optional `icon` / `shortcut`
+- `surfaces: ("toolbar" | "palette" | "cli" | "contextMenu")[]`
+- optional `args` + `buildPayload` so the CLI adapter can auto-generate
+  the commander subcommand without a hand-rolled block
+
+`scripts/check-action-parity.mjs` runs in `make verify` (and in CI) and
+fails the build when:
+
+1. a registered bus handler has no catalogue entry, or
+2. a catalogue entry references a `commandType` that no handler implements, or
+3. two catalogue entries share the same `id`.
+
+The CLI wires `registerActionsAsSubcommands(group, actions, io, ctx)` from
+`packages/agent/src/actions-to-cli.ts` after each hand-rolled commander
+block. Catalogue entries that opt in (by declaring `args` + `buildPayload`)
+get auto-registered; entries that collide with an existing hand-rolled
+subcommand are silently skipped, so the wiring is additive.
+
 ## Install / run
 
 ```bash

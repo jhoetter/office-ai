@@ -25,7 +25,8 @@ import {
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import { ToolbarMenu, ToolbarRow } from "../lib/shell";
+import { ToolbarMenu, ToolbarRow, useAction } from "../lib/shell";
+import { docxActions } from "@officeai/docx";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -145,6 +146,14 @@ export type EditModeValue = "edit" | "suggest" | "view";
  * "no mark on this run" and renders blank.
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
+  // Toolbar buttons that double as Cmd+K palette actions read their
+  // label/shortcut from the central docx action catalogue. A typo'd
+  // id throws at first render (loud failure beats a silently
+  // mislabelled button) so adding/renaming an action only happens in
+  // one place — packages/docx/src/actions/catalogue.ts.
+  const insertImageAction = useAction(docxActions, "docx.insert-image");
+  const addCommentAction = useAction(docxActions, "docx.add-comment");
+
   return (
     <ToolbarRow
       ariaLabel="Document toolbar"
@@ -268,7 +277,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <Divider />
 
       {/* Image insert */}
-      <ToolbarBtn label="Insert image" onClick={props.onInsertImage}>
+      <ToolbarBtn label={insertImageAction.label} onClick={props.onInsertImage}>
         <ImageIcon size={14} />
       </ToolbarBtn>
 
@@ -279,7 +288,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <SectionBreakMenu disabled={!props.agentReady} onInsert={props.onInsertSectionBreak} />
 
       {/* Comment */}
-      <ToolbarBtn label="Add comment" onClick={props.onAddComment}>
+      <ToolbarBtn label={addCommentAction.label} onClick={props.onAddComment}>
         <MessageSquarePlus size={14} />
       </ToolbarBtn>
     </ToolbarRow>

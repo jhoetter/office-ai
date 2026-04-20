@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev build lint lint-root lint-web format format-check architecture \
+.PHONY: help install dev build lint lint-root lint-web format format-check architecture actions \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -27,6 +27,7 @@ help:
 	@echo "  format-check   Check formatting (CI-safe, no writes)"
 	@echo "  lint           Lint root + apps/web (== lint-root + lint-web)"
 	@echo "  architecture   Validate package dep graph (separation of concerns)"
+	@echo "  actions        Validate CLI/palette/UI action parity (every bus handler is catalogued)"
 	@echo "  typecheck      Typecheck all packages"
 	@echo "  test           Run every test in the workspace (turbo)"
 	@echo "  test-docx      Run only @officeai/docx tests"
@@ -120,6 +121,13 @@ format-check:
 architecture:
 	pnpm architecture
 
+# `actions` checks that every command-bus handler has a catalogue entry.
+# Cheap (<1s) source-only scan; runs BEFORE typecheck so missing
+# catalogue coverage surfaces in seconds, not after a slow build. See
+# scripts/check-action-parity.mjs and packages/{format}/src/actions/.
+actions:
+	pnpm actions
+
 typecheck:
 	pnpm typecheck
 
@@ -150,11 +158,12 @@ test-web:
 #   2. lint-root     — packages/** + tests/** lint (correctness + arch boundaries)
 #   3. lint-web      — apps/web lint (Next.js config). Split out so an apps/web
 #                       regression fails in seconds, before the slower steps.
-#   4. architecture  — catches package-level dep-graph violations
-#   5. typecheck     — catches type-system violations
-#   6. test          — catches behavioural regressions
-#   7. build         — catches build-time/integration issues
-verify: format-check lint-root lint-web architecture typecheck test build
+#   4. actions       — catches CLI/palette parity drift (every bus handler is catalogued)
+#   5. architecture  — catches package-level dep-graph violations
+#   6. typecheck     — catches type-system violations
+#   7. test          — catches behavioural regressions
+#   8. build         — catches build-time/integration issues
+verify: format-check lint-root lint-web actions architecture typecheck test build
 	@echo ""
 	@echo "✅ verify: all quality gates passed."
 

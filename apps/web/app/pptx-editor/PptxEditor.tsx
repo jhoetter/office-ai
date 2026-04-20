@@ -49,14 +49,17 @@ import {
   EditorShell,
   EmptyState,
   ZoomControl,
+  buildPaletteFromCatalogue,
   createToastId,
   type ExportFormat,
   type ExportOptionValues,
   type PaletteCommand,
+  type PaletteRunners,
   type ProductAdapter,
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
+import { pptxActions } from "@officeai/pptx";
 import { PRODUCT_FILE_TYPES, downloadBlob, openFile, saveFile } from "@/lib/files/file-service";
 import { convertViaServer } from "@/lib/files/convert-client";
 import {
@@ -1918,106 +1921,32 @@ export function PptxEditor({
     return `${selectedShapeIds.length} shapes selected · Slide ${activeIndex + 1} of ${slides.length}`;
   }, [activeIndex, ready, selectedShape?.name, selectedShapeIds.length, slides.length]);
 
-  // Curated palette commands. The PPTX agent's typed command bus is
-  // also indexable here; we surface only the user-facing entries.
+  // Palette is generated from the central pptx action catalogue (see
+  // packages/pptx/src/actions/catalogue.ts). Labels, sections, and
+  // shortcut hints flow from the catalogue; this map only carries the
+  // closure-bound side effects + per-id `enabled` gating.
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
-    return [
-      { id: "pptx.add-slide", label: "Insert new slide", section: "Slide", run: () => void addSlide() },
-      {
-        id: "pptx.duplicate-slide",
-        label: "Duplicate slide",
-        section: "Slide",
-        run: () => void duplicateSlide(),
-      },
-      {
-        id: "pptx.delete-slide",
-        label: "Delete slide",
-        section: "Slide",
-        run: () => void deleteSlide(),
-        enabled: slides.length > 1,
-      },
-      { id: "pptx.add-text", label: "Insert text box", section: "Insert", run: () => void addTextBox() },
-      { id: "pptx.add-rect", label: "Insert rectangle", section: "Insert", run: () => void addShape("rect") },
-      {
-        id: "pptx.add-ellipse",
-        label: "Insert ellipse",
-        section: "Insert",
-        run: () => void addShape("ellipse"),
-      },
-      {
-        id: "pptx.add-arrow",
-        label: "Insert arrow",
-        section: "Insert",
-        run: () => void addShape("rightArrow"),
-      },
-      {
-        id: "pptx.add-connector-elbow",
-        label: "Draw elbow connector",
-        section: "Insert",
-        run: () => startConnectorTool("elbow"),
-      },
-      {
-        id: "pptx.add-connector-straight",
-        label: "Draw straight connector",
-        section: "Insert",
-        run: () => startConnectorTool("straight"),
-      },
-      {
-        id: "pptx.add-connector-curved",
-        label: "Draw curved connector",
-        section: "Insert",
-        run: () => startConnectorTool("curved"),
-      },
-      {
-        id: "pptx.add-comment",
-        label: "Add comment",
-        section: "Collaboration",
-        run: () => focusCommentComposer(),
-      },
-      {
-        id: "pptx.delete-shape",
-        label: "Delete selected shape(s)",
-        section: "Edit",
-        run: () => void deleteSelectedShape(),
-        enabled: selectedShapeIds.length > 0,
-      },
-      {
-        id: "pptx.duplicate-shape",
-        label: "Duplicate selected shape(s)",
-        section: "Edit",
-        run: () => void duplicateSelectedShapes(),
-        enabled: selectedShapeIds.length > 0,
-      },
-      {
-        id: "pptx.group-shapes",
-        label: "Group selected shapes",
-        section: "Arrange",
-        run: () => void groupSelectedShapes(),
-        enabled: selectedShapeIds.length >= 2,
-      },
-      {
-        id: "pptx.ungroup-shape",
-        label: "Ungroup",
-        section: "Arrange",
-        run: () => void ungroupSelectedShape(),
-        enabled: selectedShapeIds.length === 1,
-      },
-      { id: "pptx.zoom-reset", label: "Reset zoom to 100%", section: "View", run: () => setZoom(1) },
-      {
-        id: "pptx.present-from-start",
-        label: "Start presentation from beginning (F5)",
-        section: "View",
-        run: () => startPresenting(false),
-        enabled: ready && slides.length > 0,
-      },
-      {
-        id: "pptx.present-from-current",
-        label: "Start presentation from current slide (Shift+F5)",
-        section: "View",
-        run: () => startPresenting(true),
-        enabled: ready && slides.length > 0,
-      },
-    ];
+    const runners: PaletteRunners = {
+      "pptx.add-slide": { run: () => void addSlide() },
+      "pptx.duplicate-slide": { run: () => void duplicateSlide() },
+      "pptx.delete-slide": { run: () => void deleteSlide(), enabled: slides.length > 1 },
+      "pptx.add-text-box": { run: () => void addTextBox() },
+      "pptx.add-rect": { run: () => void addShape("rect") },
+      "pptx.add-ellipse": { run: () => void addShape("ellipse") },
+      "pptx.add-arrow": { run: () => void addShape("rightArrow") },
+      "pptx.add-connector-elbow": { run: () => startConnectorTool("elbow") },
+      "pptx.add-connector-straight": { run: () => startConnectorTool("straight") },
+      "pptx.add-connector-curved": { run: () => startConnectorTool("curved") },
+      "pptx.add-comment": { run: () => focusCommentComposer() },
+      "pptx.delete-shape": { run: () => void deleteSelectedShape(), enabled: selectedShapeIds.length > 0 },
+      "pptx.duplicate-shape": { run: () => void duplicateSelectedShapes(), enabled: selectedShapeIds.length > 0 },
+      "pptx.group-shapes": { run: () => void groupSelectedShapes(), enabled: selectedShapeIds.length >= 2 },
+      "pptx.ungroup-shape": { run: () => void ungroupSelectedShape(), enabled: selectedShapeIds.length === 1 },
+      "pptx.zoom-reset": { run: () => setZoom(1) },
+      "pptx.present-from-start": { run: () => startPresenting(false), enabled: ready && slides.length > 0 },
+      "pptx.present-from-current": { run: () => startPresenting(true), enabled: ready && slides.length > 0 },
+    };
+    return buildPaletteFromCatalogue(pptxActions, runners);
   }, [
     startConnectorTool,
     addShape,

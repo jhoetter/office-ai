@@ -12,6 +12,12 @@ export { ZoomControl, type ZoomControlProps } from "./ZoomControl";
 export { ToolbarRow, type ToolbarRowProps } from "./ToolbarRow";
 export { ToolbarMenu, type ToolbarMenuProps } from "./ToolbarMenu";
 export { ExportDialog, type ExportDialogProps } from "./ExportDialog";
+export {
+  buildPaletteFromCatalogue,
+  type PaletteRunner,
+  type PaletteRunners,
+} from "./buildPaletteFromCatalogue";
+export { useAction, getAction, type ResolvedAction } from "./useAction";
 export type {
   CommentsBadge,
   ExportFormat,

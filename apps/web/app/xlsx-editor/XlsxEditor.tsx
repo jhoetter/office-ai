@@ -8,6 +8,7 @@ import { createXlsxCommentsProvider } from "./xlsxCommentsProvider";
 import {
   EditorShell,
   EmptyState,
+  buildPaletteFromCatalogue,
   createToastId,
   type ExportFormat,
   type ExportOptionValues,
@@ -15,10 +16,12 @@ import {
   type FindMatch,
   type FindOptions,
   type PaletteCommand,
+  type PaletteRunners,
   type ProductAdapter,
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
+import { xlsxActions } from "@officeai/xlsx";
 import {
   PRODUCT_FILE_TYPES,
   downloadBlob,
@@ -3588,117 +3591,28 @@ export function XlsxEditor({
     );
   }, [activeSheet, agent, revision, scrollToComment, selection]);
 
+  // Palette is generated from the central xlsx action catalogue (see
+  // packages/xlsx/src/actions/catalogue.ts). Labels/sections/shortcuts
+  // flow from the catalogue; this map only carries the closure-bound
+  // side-effects + per-id `enabled` gating.
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
-    return [
-      {
-        id: "xlsx.toggle-filter",
-        label: activeSheet?.autoFilter ? "Remove filter" : "Apply filter",
-        section: "Data",
-        run: () => onToggleFilter(),
-        enabled: Boolean(agent),
-      },
-      {
-        id: "xlsx.text-to-columns",
-        label: "Split text to columns",
-        section: "Data",
-        run: () => onTextToColumns(),
-        enabled: canTextToColumns,
-      },
-      {
-        id: "xlsx.format-cells",
-        label: "Format cells…",
-        section: "Format",
-        run: () => setFormatCellsTab("number"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.format-cells-alignment",
-        label: "Format cells: Alignment",
-        section: "Format",
-        run: () => setFormatCellsTab("alignment"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.format-cells-font",
-        label: "Format cells: Font",
-        section: "Format",
-        run: () => setFormatCellsTab("font"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.format-cells-border",
-        label: "Format cells: Border",
-        section: "Format",
-        run: () => setFormatCellsTab("border"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.format-cells-fill",
-        label: "Format cells: Fill",
-        section: "Format",
-        run: () => setFormatCellsTab("fill"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.format-cells-protection",
-        label: "Format cells: Protection",
-        section: "Format",
-        run: () => setFormatCellsTab("protection"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.borders-all",
-        label: "Borders: All",
-        section: "Format",
-        run: () => onApplyBorderPreset("all"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.borders-outside",
-        label: "Borders: Outside",
-        section: "Format",
-        run: () => onApplyBorderPreset("outside"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.borders-thick-outside",
-        label: "Borders: Thick outside",
-        section: "Format",
-        run: () => onApplyBorderPreset("thick-outside"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.borders-none",
-        label: "Borders: Clear",
-        section: "Format",
-        run: () => onApplyBorderPreset("none"),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.paste-special",
-        label: "Paste Special…",
-        section: "Edit",
-        run: () => setPasteSpecialOpen(true),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.format-painter",
-        label: formatPainter ? "Format Painter: cancel" : "Format Painter",
-        section: "Format",
-        run: () => activateFormatPainter(false),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.add-sheet",
-        label: "New sheet",
-        section: "Sheet",
-        run: () => onAddSheet(),
-        enabled: Boolean(agent),
-      },
-      {
-        id: "xlsx.rename-sheet",
-        label: "Rename sheet…",
-        section: "Sheet",
+    const runners: PaletteRunners = {
+      "xlsx.toggle-filter": { run: () => onToggleFilter(), enabled: Boolean(agent) },
+      "xlsx.text-to-columns": { run: () => onTextToColumns(), enabled: canTextToColumns },
+      "xlsx.format-cells": { run: () => setFormatCellsTab("number"), enabled: Boolean(agent && selection) },
+      "xlsx.format-cells-alignment": { run: () => setFormatCellsTab("alignment"), enabled: Boolean(agent && selection) },
+      "xlsx.format-cells-font": { run: () => setFormatCellsTab("font"), enabled: Boolean(agent && selection) },
+      "xlsx.format-cells-border": { run: () => setFormatCellsTab("border"), enabled: Boolean(agent && selection) },
+      "xlsx.format-cells-fill": { run: () => setFormatCellsTab("fill"), enabled: Boolean(agent && selection) },
+      "xlsx.format-cells-protection": { run: () => setFormatCellsTab("protection"), enabled: Boolean(agent && selection) },
+      "xlsx.borders-all": { run: () => onApplyBorderPreset("all"), enabled: Boolean(agent && selection) },
+      "xlsx.borders-outside": { run: () => onApplyBorderPreset("outside"), enabled: Boolean(agent && selection) },
+      "xlsx.borders-thick-outside": { run: () => onApplyBorderPreset("thick-outside"), enabled: Boolean(agent && selection) },
+      "xlsx.borders-none": { run: () => onApplyBorderPreset("none"), enabled: Boolean(agent && selection) },
+      "xlsx.paste-special": { run: () => setPasteSpecialOpen(true), enabled: Boolean(agent && selection) },
+      "xlsx.format-painter": { run: () => activateFormatPainter(false), enabled: Boolean(agent && selection) },
+      "xlsx.add-sheet": { run: () => onAddSheet(), enabled: Boolean(agent) },
+      "xlsx.rename-sheet": {
         run: () => {
           if (!activeSheet) return;
           const next = window.prompt("New sheet name", activeSheet.name);
@@ -3708,100 +3622,36 @@ export function XlsxEditor({
         },
         enabled: Boolean(agent && activeSheet),
       },
-      {
-        id: "xlsx.delete-sheet",
-        label: "Delete sheet",
-        section: "Sheet",
-        run: () => {
-          if (!activeSheet) return;
-          onDeleteSheet(activeSheet.name);
-        },
+      "xlsx.delete-sheet": {
+        run: () => { if (activeSheet) onDeleteSheet(activeSheet.name); },
         enabled: Boolean(agent && activeSheet && (snapshot?.root.sheets.length ?? 0) > 1),
       },
-      {
-        id: "xlsx.hide-sheet",
-        label: "Hide sheet",
-        section: "Sheet",
-        run: () => {
-          if (!activeSheet) return;
-          onSetSheetState(activeSheet.name, "hidden");
-        },
+      "xlsx.hide-sheet": {
+        run: () => { if (activeSheet) onSetSheetState(activeSheet.name, "hidden"); },
         enabled: Boolean(
           agent && activeSheet && (snapshot?.root.sheets.filter((s) => s.state === "visible").length ?? 0) > 1
         ),
       },
-      {
-        id: "xlsx.conditional-format",
-        label: "Conditional Formatting…",
-        section: "Format",
-        run: () => setConditionalFormatOpen(true),
-        enabled: Boolean(agent && activeSheet),
-      },
-      {
-        id: "xlsx.conditional-format-clear",
-        label: "Clear conditional formatting from this sheet",
-        section: "Format",
+      "xlsx.conditional-format": { run: () => setConditionalFormatOpen(true), enabled: Boolean(agent && activeSheet) },
+      "xlsx.conditional-format-clear": {
         run: () => onClearConditionalFormats(),
         enabled: Boolean(agent && activeSheet && (activeSheet.conditionalFormats.length ?? 0) > 0),
       },
-      {
-        id: "xlsx.data-validation",
-        label: "Data Validation…",
-        section: "Data",
-        run: () => setDataValidationOpen(true),
-        enabled: Boolean(agent && activeSheet),
-      },
-      {
-        id: "xlsx.data-validation-clear",
-        label: "Clear data validation from this sheet",
-        section: "Data",
+      "xlsx.data-validation": { run: () => setDataValidationOpen(true), enabled: Boolean(agent && activeSheet) },
+      "xlsx.data-validation-clear": {
         run: () => onClearDataValidations(),
         enabled: Boolean(
           agent &&
-          activeSheet &&
-          ((activeSheet.dataValidations.length ?? 0) > 0 || activeSheet.opaqueDataValidations)
+            activeSheet &&
+            ((activeSheet.dataValidations.length ?? 0) > 0 || activeSheet.opaqueDataValidations)
         ),
       },
-      {
-        id: "xlsx.name-manager",
-        label: "Name Manager…",
-        section: "Data",
-        shortcut: "F3",
-        run: () => setNameManagerOpen(true),
-        enabled: Boolean(agent),
-      },
-      {
-        id: "xlsx.define-name",
-        label: "Define name from selection…",
-        section: "Data",
-        run: () => setNameManagerOpen(true),
-        enabled: Boolean(agent && selection),
-      },
-      {
-        id: "xlsx.merge",
-        label: "Merge cells",
-        section: "Format",
-        run: () => onMerge(),
-        enabled: canMerge,
-      },
-      {
-        id: "xlsx.unmerge",
-        label: "Unmerge cells",
-        section: "Format",
-        run: () => onUnmerge(),
-        enabled: canUnmerge,
-      },
-      {
-        id: "xlsx.insert-image",
-        label: "Insert image",
-        section: "Insert",
-        run: () => onInsertImageClick(),
-      },
-      {
-        id: "xlsx.format-as-table",
-        label: "Format as Table…",
-        section: "Insert",
-        shortcut: "Mod+T",
+      "xlsx.name-manager": { run: () => setNameManagerOpen(true), enabled: Boolean(agent) },
+      "xlsx.define-name": { run: () => setNameManagerOpen(true), enabled: Boolean(agent && selection) },
+      "xlsx.merge": { run: () => onMerge(), enabled: canMerge },
+      "xlsx.unmerge": { run: () => onUnmerge(), enabled: canUnmerge },
+      "xlsx.insert-image": { run: () => onInsertImageClick() },
+      "xlsx.format-as-table": {
         run: () => {
           if (!activeSheet || !selection) return;
           dispatchOrToast("xlsx:add-table", {
@@ -3811,23 +3661,11 @@ export function XlsxEditor({
         },
         enabled: Boolean(activeSheet && selection),
       },
-      {
-        id: "xlsx.insert-chart",
-        label: "Insert chart…",
-        section: "Insert",
-        run: () => setInsertChartOpen(true),
-        enabled: Boolean(activeSheet && selection),
-      },
-      {
-        id: "xlsx.add-comment",
-        label: "Add comment",
-        section: "Collaboration",
-        run: () => focusCommentComposer(),
-        enabled: Boolean(selection),
-      },
-    ];
+      "xlsx.insert-chart": { run: () => setInsertChartOpen(true), enabled: Boolean(activeSheet && selection) },
+      "xlsx.add-comment": { run: () => focusCommentComposer(), enabled: Boolean(selection) },
+    };
+    return buildPaletteFromCatalogue(xlsxActions, runners);
   }, [
-    activeSheet?.autoFilter,
     agent,
     canMerge,
     canTextToColumns,
@@ -3841,7 +3679,6 @@ export function XlsxEditor({
     onUnmerge,
     selection,
     activateFormatPainter,
-    formatPainter,
     onAddSheet,
     onRenameSheet,
     onDeleteSheet,
