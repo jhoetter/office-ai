@@ -125,18 +125,35 @@ function tallyDocx(snapshot) {
     if (p.properties?.alignment) bump(t, "paragraph-alignment");
     if (p.properties?.numPr?.numId !== undefined) bump(t, "paragraph-list");
     for (const child of p.children ?? []) {
+      if (child.kind === "comment-reference") bump(t, "comment-references");
       if (child.kind !== "run") continue;
       const r = child;
       if (r.properties?.bold) bump(t, "run-bold");
       if (r.properties?.italic) bump(t, "run-italic");
       if (r.properties?.fontFamily) bump(t, "run-font-family");
+      // Multi-script + theme font slots (P1 expansion).
+      if (r.properties?.fontFamilyHAnsi) bump(t, "run-font-hAnsi");
+      if (r.properties?.fontFamilyEastAsia) bump(t, "run-font-eastAsia");
+      if (r.properties?.fontFamilyComplexScript) bump(t, "run-font-cs");
+      if (r.properties?.fontFamilyAsciiTheme) bump(t, "run-font-asciiTheme");
+      if (r.properties?.fontFamilyHAnsiTheme) bump(t, "run-font-hAnsiTheme");
+      if (r.properties?.fontFamilyEastAsiaTheme) bump(t, "run-font-eastAsiaTheme");
+      if (r.properties?.fontFamilyComplexScriptTheme) bump(t, "run-font-csTheme");
       if (typeof r.properties?.fontSize === "number") bump(t, "run-font-size");
       if (r.properties?.color) bump(t, "run-color");
       if (r.properties?.highlight) bump(t, "run-highlight");
       for (const leaf of r.children ?? []) {
         if (leaf.kind === "text") bump(t, "text-leaves");
         else if (leaf.kind === "drawing") bump(t, "drawings");
+        else if (leaf.kind === "page-number-field") bump(t, "page-number-fields");
       }
+    }
+  }
+  // Header/footer parts and any tables nested inside them.
+  for (const part of root.headersAndFooters ?? []) {
+    bump(t, "header-footer-parts");
+    for (const block of part.body ?? []) {
+      if (block.kind === "table") bump(t, "header-footer-tables");
     }
   }
   // Page setup lives on the last sectPr; we hash it as a single
@@ -164,10 +181,40 @@ function tallyXlsx(snapshot) {
         if (typeof col.width === "number") bump(t, "col-widths");
       }
     }
+    // Opaque sheet parts (P0 + P2 round-trip work). One bump per
+    // non-empty blob so a fixture losing any of them shows up as a
+    // negative delta in the JSON summary.
+    if (sheet.hyperlinksXml) bump(t, "hyperlinks-blocks");
+    if (sheet.tablePartsXml) bump(t, "table-parts-blocks");
+    if (sheet.colsXml) bump(t, "cols-blocks");
+    if (sheet.sheetViewsXml) bump(t, "sheet-views-blocks");
+    if (sheet.sheetProtectionXml) bump(t, "sheet-protection-blocks");
+    if (sheet.pageMarginsXml) bump(t, "page-margins-blocks");
+    if (sheet.pageSetupXml) bump(t, "page-setup-blocks");
+    if (sheet.headerFooterXml) bump(t, "header-footer-blocks");
+    if (sheet.legacyDrawingXml) bump(t, "legacy-drawing-blocks");
+    if (sheet.ignoredErrorsXml) bump(t, "ignored-errors-blocks");
     for (const cell of sheet.cells?.values?.() ?? []) {
       bump(t, "cells");
-      if (cell.formula) bump(t, "formulas");
+      if (cell.formula) {
+        bump(t, "formulas");
+        // Shared / array formula encoding (P2). Counts both master
+        // and follower cells so a regression that demotes the group
+        // to per-cell formulas surfaces as a negative delta.
+        if (cell.formula.kind === "shared") bump(t, "formulas-shared");
+        if (cell.formula.kind === "array") bump(t, "formulas-array");
+        if (cell.formula.isMaster) bump(t, "formulas-shared-master");
+      }
       if (cell.styleId !== undefined) bump(t, "styled-cells");
+    }
+    // Typed conditional formats and comment rich-text blobs (P2).
+    if (sheet.conditionalFormats) bump(t, "cond-formats", sheet.conditionalFormats.length);
+    if (sheet.opaqueConditionalFormats) bump(t, "cond-formats-opaque", sheet.opaqueConditionalFormats.length);
+    if (sheet.comments) {
+      for (const c of sheet.comments) {
+        bump(t, "comments");
+        if (c.textXml) bump(t, "comments-rich-text");
+      }
     }
   }
   // Style table
@@ -253,10 +300,19 @@ function tallyPptx(snapshot) {
   const pres = snapshot.root;
   bump(t, "slides", pres.slides?.length ?? 0);
   for (const slide of pres.slides ?? []) {
+    if (slide.transition) {
+      bump(t, "transitions");
+      if (slide.transition.raw) bump(t, "transitions-with-raw");
+    }
     for (const shape of slide.shapes ?? []) {
       bump(t, "shapes");
       if (shape.kind === "picture") bump(t, "pictures");
       if (shape.kind === "chart") bump(t, "charts");
+      if (shape.kind === "connector") {
+        bump(t, "connectors");
+        if (shape.stroke?.colorTheme) bump(t, "connectors-theme-color");
+        if (shape.stroke?.dash && shape.stroke.dash !== "solid") bump(t, "connectors-dashed");
+      }
       if (shape.kind === "text" || shape.kind === "shape") {
         for (const para of shape.text?.paragraphs ?? []) {
           if (para.alignment) bump(t, "paragraph-alignment");
@@ -266,6 +322,13 @@ function tallyPptx(snapshot) {
             if (typeof run.properties?.fontSize === "number") bump(t, "run-font-size");
             if (run.properties?.color) bump(t, "run-color");
             if (run.properties?.fontFamily) bump(t, "run-font-family");
+            // Multi-script + theme font slots (P1 expansion).
+            if (run.properties?.fontFamilyEastAsia) bump(t, "run-font-eastAsia");
+            if (run.properties?.fontFamilyComplexScript) bump(t, "run-font-cs");
+            if (run.properties?.fontFamilySymbol) bump(t, "run-font-symbol");
+            if (run.properties?.fontFamilyLatinTheme) bump(t, "run-font-latinTheme");
+            if (run.properties?.fontFamilyEastAsiaTheme) bump(t, "run-font-eastAsiaTheme");
+            if (run.properties?.fontFamilyComplexScriptTheme) bump(t, "run-font-csTheme");
           }
         }
       }
