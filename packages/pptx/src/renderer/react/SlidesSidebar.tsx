@@ -36,16 +36,20 @@ export interface SlidesSidebarProps {
    */
   readonly onContextAction?: (slideIndex: number, action: SlideContextAction) => void;
   /**
-   * Realtime peers projected to slide-rail dots. Rendered as a tiny
-   * stack of colored dots beside each slide row whose `slideId`
-   * matches a remote peer's currently-published `PptxSelection.slideId`.
-   * Tooltip lists the peer names so collisions still resolve.
+   * Realtime peers projected to slide-rail avatars. Each peer gets a
+   * Google-Docs-style colored circle stacked in the lower-left of the
+   * thumbnail whose `slideId` matches a remote peer's currently-
+   * published `PptxSelection.slideId`. The match is on the slide's
+   * stable OOXML `partPath` (e.g. `ppt/slides/slide3.xml`) so two
+   * browsers parsing the same file always agree, regardless of the
+   * randomly-minted local NodeIds.
    */
   readonly peers?: ReadonlyArray<SlideRailPeerDot>;
 }
 
 export interface SlideRailPeerDot {
   readonly clientId: number;
+  /** Stable slide identifier — `Slide.partPath`. */
   readonly slideId: string;
   readonly name: string;
   readonly color: string;
@@ -55,6 +59,24 @@ interface MenuState {
   readonly slideIndex: number;
   readonly x: number;
   readonly y: number;
+}
+
+/**
+ * Pull the first letter of each word in `name`, capped at 2 chars.
+ * `"Lively Hedgehog"` → `"LH"`, `"Plucky Otter"` → `"PO"`, `"Alice"`
+ * → `"A"`. Falls back to `"?"` for empty input so the avatar is
+ * never visually empty.
+ */
+function initialFor(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return "?";
+  const first = parts[0]?.[0] ?? "";
+  const second = parts[1]?.[0] ?? "";
+  const out = (first + second).slice(0, 2);
+  return out.length > 0 ? out : "?";
 }
 
 export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
@@ -206,43 +228,71 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
                 label={`Slide ${i + 1}`}
               />
               {(() => {
-                const dots = peersBySlide.get(s.id);
+                const dots = peersBySlide.get(s.partPath);
                 if (!dots || dots.length === 0) return null;
                 const tooltip = dots.map((d) => d.name).join(", ");
+                const visible = dots.slice(0, 3);
+                const overflow = dots.length - visible.length;
                 return (
                   <div
                     title={tooltip}
                     data-testid={`pptx-slide-peers-${i}`}
                     style={{
                       position: "absolute",
-                      top: 4,
-                      right: 4,
+                      bottom: 4,
+                      left: 4,
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 0,
-                      padding: "2px 4px",
-                      borderRadius: 999,
-                      background: "rgba(255,255,255,0.85)",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                      pointerEvents: "none",
                     }}
                   >
-                    {dots.slice(0, 3).map((d, idx) => (
+                    {visible.map((d, idx) => (
                       <span
                         key={d.clientId}
                         aria-hidden
                         style={{
-                          display: "inline-block",
-                          width: 8,
-                          height: 8,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 22,
+                          height: 22,
                           borderRadius: "50%",
                           backgroundColor: d.color,
-                          marginLeft: idx === 0 ? 0 : -2,
-                          boxShadow: "0 0 0 1px #fff",
+                          color: "#fff",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          fontFamily: "system-ui, sans-serif",
+                          letterSpacing: 0,
+                          marginLeft: idx === 0 ? 0 : -8,
+                          boxShadow: "0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.25)",
+                          textTransform: "uppercase",
                         }}
-                      />
+                      >
+                        {initialFor(d.name)}
+                      </span>
                     ))}
-                    {dots.length > 3 ? (
-                      <span style={{ marginLeft: 2, fontSize: 9, color: "#52525b" }}>+{dots.length - 3}</span>
+                    {overflow > 0 ? (
+                      <span
+                        aria-hidden
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 22,
+                          height: 22,
+                          borderRadius: "50%",
+                          backgroundColor: "#52525b",
+                          color: "#fff",
+                          fontSize: 10,
+                          fontWeight: 600,
+                          fontFamily: "system-ui, sans-serif",
+                          marginLeft: -8,
+                          boxShadow: "0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.25)",
+                        }}
+                      >
+                        +{overflow}
+                      </span>
                     ) : null}
                   </div>
                 );

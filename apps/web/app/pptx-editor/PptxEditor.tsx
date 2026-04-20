@@ -2059,15 +2059,26 @@ export function PptxEditor({
   // Publish PPTX selection (active slide + currently-selected
   // shapes) so peers see "Quick Quokka has 2 shapes selected on
   // slide 3" in real time.
+  //
+  // We deliberately publish *stable* OOXML identifiers (`partPath`
+  // for the slide, `cNvPrId` for shapes) instead of the randomly-
+  // minted local `NodeId`s. Two browsers parsing the same .pptx mint
+  // independent UUIDs, so the local NodeId never matches across
+  // peers — that's why the slide-rail dots and on-canvas selection
+  // outlines used to silently miss every match.
   const presenceCursor = useMemo(() => {
-    const slideId = slide?.id;
-    if (!slideId) return null;
+    if (!slide) return null;
+    const cNvIds: string[] = [];
+    for (const localId of selectedShapeIds) {
+      const sh = findShape(slide.shapes, localId);
+      if (sh && sh.cNvPrId > 0) cNvIds.push(String(sh.cNvPrId));
+    }
     return {
       product: "pptx" as const,
-      slideId,
-      shapeIds: selectedShapeIds,
+      slideId: slide.partPath,
+      shapeIds: cNvIds,
     };
-  }, [slide?.id, selectedShapeIds]);
+  }, [slide, selectedShapeIds]);
   usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(

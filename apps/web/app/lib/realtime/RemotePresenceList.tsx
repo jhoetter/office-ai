@@ -80,7 +80,14 @@ function describePeer(state: AwarenessState): string | null {
 }
 
 function shortSlide(id: string): string {
-  const m = /^slide-(\d+)$/.exec(id);
-  if (m && m[1]) return m[1];
+  // PPTX presence publishes the slide's stable OOXML `partPath`,
+  // e.g. `ppt/slides/slide3.xml`. Pull the trailing slide number out
+  // for a human-friendly pill ("is on slide 3" instead of leaking
+  // the part path or a UUID at the user).
+  const part = /\/slide(\d+)\.xml$/.exec(id);
+  if (part && part[1]) return part[1];
+  // Legacy/test fallbacks.
+  const legacy = /^slide-(\d+)$/.exec(id);
+  if (legacy && legacy[1]) return legacy[1];
   return id;
 }

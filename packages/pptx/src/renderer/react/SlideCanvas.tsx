@@ -1643,6 +1643,25 @@ function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {
   return null;
 }
 
+/**
+ * Locate a shape by its OOXML `cNvPrId` (encoded as a string). Used
+ * by the remote-selection overlay because peers exchange stable
+ * OOXML identifiers — the local `Shape.id` is a randomly-minted
+ * UUID that is *not* shared across browsers.
+ */
+function findShapeByCNvPrId(shapes: ReadonlyArray<Shape>, cNvPrIdStr: string): Shape | null {
+  const target = Number.parseInt(cNvPrIdStr, 10);
+  if (!Number.isFinite(target)) return null;
+  for (const s of shapes) {
+    if (s.cNvPrId === target) return s;
+    if (s.kind === "group") {
+      const inner = findShapeByCNvPrId(s.children, cNvPrIdStr);
+      if (inner) return inner;
+    }
+  }
+  return null;
+}
+
 function sameIds(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -3400,7 +3419,11 @@ function RemoteSelectionOverlay({
   peers,
 }: RemoteSelectionOverlayProps): React.ReactElement | null {
   const stageViewBox = useStageViewBox(slideSize);
-  const onSlide = peers.filter((p) => p.slideId === slide.id);
+  // Match on the slide's stable OOXML `partPath` (e.g.
+  // `ppt/slides/slide3.xml`). Two browsers parsing the same .pptx
+  // mint independent local NodeIds for `slide.id`, so the previous
+  // `slide.id` comparison silently never matched across peers.
+  const onSlide = peers.filter((p) => p.slideId === slide.partPath);
   if (onSlide.length === 0) return null;
   const outlines: React.ReactElement[] = [];
   const idleBadges: { peer: RemoteSelectionPeer; index: number }[] = [];
@@ -3411,7 +3434,10 @@ function RemoteSelectionOverlay({
       continue;
     }
     for (const shapeId of peer.shapeIds) {
-      const sh = findShape(slide.shapes, shapeId);
+      // `shapeId` is the OOXML `cNvPrId` (a small integer encoded as
+      // a string) — also stable across peers, unlike the local
+      // NodeId.
+      const sh = findShapeByCNvPrId(slide.shapes, shapeId);
       if (!sh) continue;
       const box = shapeBoundingBox(sh);
       if (!box) continue;
