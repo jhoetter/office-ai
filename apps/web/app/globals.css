@@ -162,14 +162,23 @@ html {
   height: 100%;
   scroll-behavior: smooth;
   /*
-   * Disable the browser's two-finger horizontal swipe back/forward
-   * gesture. Without this, trackpad/mouse-wheel horizontal scrolling
-   * inside the editor app rubber-bands the whole page sideways,
-   * revealing empty whitespace on the right while the back/forward
-   * navigation is armed. The editor surfaces (slide canvas, grid,
-   * page) own all scroll axes themselves so we never want the
-   * top-level history gesture to fire.
+   * Hard guarantee that the document root never scrolls horizontally
+   * and never rubber-bands the back/forward gesture on a trackpad.
+   *
+   * The editor surfaces (slide canvas, grid, page) own all scroll
+   * axes themselves; nothing at the page root should ever overflow
+   * sideways. If a child does end up wider than the viewport (e.g.
+   * a stray toolbar with too many icons on a narrow window, or a
+   * temporary layout glitch), `overflow-x: hidden` clips it instead
+   * of arming a window-level horizontal scrollbar that would let the
+   * user pan into empty whitespace on the right.
+   *
+   * Pair `overscroll-behavior-x: none` so the gesture is dead even
+   * when an inner scroll container does reach its end — without this
+   * macOS Chrome / Safari still rubber-bands the whole page at the
+   * scroll boundary.
    */
+  overflow-x: hidden;
   overscroll-behavior-x: none;
 }
 
@@ -181,6 +190,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   line-height: 1.6;
+  overflow-x: hidden;
   overscroll-behavior-x: none;
 }
 
