@@ -1516,7 +1516,7 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           preserveAspectRatio="xMidYMid meet"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
           dangerouslySetInnerHTML={{
-            __html: `<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, hiddenIds)}`,
+            __html: `<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, slideSize, hiddenIds)}`,
           }}
         />
         {drag && preview ? (
@@ -3741,35 +3741,155 @@ function cursorForRotatedHandle(h: ResizeHandle, rotationDeg: number): string {
 }
 
 /**
- * F4: render a small badge near each shape that has at least one typed
- * entrance animation. The badge shows the 1-based animation order so the
- * user can see the entrance sequence at a glance. Drawn inside the SVG
- * so it scales with the canvas, but with `pointer-events="none"` so it
- * never steals clicks from the underlying shape.
+ * F4 v2: render a small numbered badge near every shape that carries
+ * a typed animation, plus a path overlay for `motionPath` animations.
+ *
+ * The badge fill colour is keyed by category so the editor reads at a
+ * glance which shape gets which kind of effect — green for entrance,
+ * amber for emphasis, rose for exit, sky for motion paths. The
+ * palette mirrors the right-rail picker in `AnimationsPanel.tsx`.
+ *
+ * Multiple animations on the same shape stack horizontally so each
+ * step is visible and addressable; a shape that holds entrance + spin
+ * + exit shows three coloured circles labelled 1/2/3.
+ *
+ * Motion path overlays are drawn as a dashed stroke from the shape's
+ * starting position along the path string (slide-relative coordinates,
+ * 1 unit = full slide width / height).
+ *
+ * Everything has `pointer-events="none"` so it never steals clicks
+ * from the underlying shape.
  */
-function animationBadgesSvg(slide: Slide, hiddenIds: ReadonlySet<string>): string {
+const ANIM_BADGE_PALETTE: Record<string, string> = {
+  entrance: "#10b981", // emerald-500
+  emphasis: "#f59e0b", // amber-500
+  exit: "#f43f5e", // rose-500
+  motionPath: "#0ea5e9", // sky-500
+};
+
+function animationBadgesSvg(
+  slide: Slide,
+  slideSize: SlideSize,
+  hiddenIds: ReadonlySet<string>
+): string {
   if (slide.animations.length === 0) return "";
   const byCNvPrId = new Map<number, Shape>();
   collectShapesByCNvPrId(slide.shapes, byCNvPrId);
-  const parts: string[] = [];
+  const slideW = slideSize.cxEmu;
+  const slideH = slideSize.cyEmu;
+  const r = px(90000);
+  const stride = r * 2.2;
+
+  const overlays: string[] = [];
+  const badgesByShape = new Map<string, number>();
+
   for (const a of slide.animations) {
     const shape = byCNvPrId.get(a.targetCNvPrId);
     if (!shape) continue;
     if (hiddenIds.has(shape.id)) continue;
     const box = shapeBoundingBox(shape);
     if (!box) continue;
-    const r = px(90000);
-    const cx = px(box.x) + r;
+
+    if (a.category === "motionPath" && a.motionPath) {
+      const startCx = px(box.x + box.cx / 2);
+      const startCy = px(box.y + box.cy / 2);
+      const d = motionPathToSvgD(a.motionPath, startCx, startCy, px(slideW), px(slideH));
+      if (d) {
+        const stroke = ANIM_BADGE_PALETTE.motionPath;
+        overlays.push(
+          `<g class="anim-motion" pointer-events="none">`,
+          `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${px(20000)}" stroke-dasharray="${px(60000)} ${px(40000)}" opacity="0.85"/>`,
+          `</g>`
+        );
+      }
+    }
+
+    const slot = badgesByShape.get(shape.id) ?? 0;
+    badgesByShape.set(shape.id, slot + 1);
+    const cx = px(box.x) + r + slot * stride;
     const cy = px(box.y) + r;
     const order = a.order + 1;
-    parts.push(
-      `<g class="anim-badge" pointer-events="none">`,
-      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#facc15" stroke="#1f2937" stroke-width="${px(12000)}"/>`,
-      `<text x="${cx}" y="${cy + px(36000)}" text-anchor="middle" font-size="${px(100000)}" font-family="sans-serif" font-weight="700" fill="#1f2937">${order}</text>`,
+    const fill = ANIM_BADGE_PALETTE[a.category] ?? "#facc15";
+    overlays.push(
+      `<g class="anim-badge anim-badge-${a.category}" pointer-events="none">`,
+      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="#1f2937" stroke-width="${px(12000)}"/>`,
+      `<text x="${cx}" y="${cy + px(36000)}" text-anchor="middle" font-size="${px(100000)}" font-family="sans-serif" font-weight="700" fill="#ffffff">${order}</text>`,
       `</g>`
     );
   }
-  return parts.join("");
+  return overlays.join("");
+}
+
+/**
+ * Convert an OOXML motion-path string (compact `M x y L x y C x1 y1
+ * x2 y2 x y E` syntax with slide-relative coordinates) to an SVG path
+ * `d` attribute anchored at the shape's centre. Returns `null` when
+ * the string is empty or unparseable.
+ *
+ * OOXML coordinates are deltas from the starting position, so we add
+ * each (dx, dy) to (anchorX, anchorY). The `E` token marks the path
+ * end and is dropped. Anything we can't tokenise causes an early
+ * return so we never paint a partial overlay.
+ */
+function motionPathToSvgD(
+  path: string,
+  anchorX: number,
+  anchorY: number,
+  slideWPx: number,
+  slideHPx: number
+): string | null {
+  const tokens = path.trim().split(/\s+/);
+  const out: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const cmd = tokens[i++];
+    if (cmd === "E" || cmd === "Z" || cmd === "z") {
+      // OOXML "End" marker; nothing to emit for SVG (we leave the path open).
+      continue;
+    }
+    const consume = (n: number): number[] | null => {
+      const xs: number[] = [];
+      for (let k = 0; k < n; k++) {
+        const t = tokens[i++];
+        if (t === undefined) return null;
+        const num = Number(t);
+        if (!Number.isFinite(num)) return null;
+        xs.push(num);
+      }
+      return xs;
+    };
+    if (cmd === "M" || cmd === "L") {
+      const xs = consume(2);
+      if (!xs) return null;
+      const x = anchorX + xs[0]! * slideWPx;
+      const y = anchorY + xs[1]! * slideHPx;
+      out.push(`${cmd}${x.toFixed(2)},${y.toFixed(2)}`);
+    } else if (cmd === "C") {
+      const xs = consume(6);
+      if (!xs) return null;
+      const x1 = anchorX + xs[0]! * slideWPx;
+      const y1 = anchorY + xs[1]! * slideHPx;
+      const x2 = anchorX + xs[2]! * slideWPx;
+      const y2 = anchorY + xs[3]! * slideHPx;
+      const x = anchorX + xs[4]! * slideWPx;
+      const y = anchorY + xs[5]! * slideHPx;
+      out.push(
+        `C${x1.toFixed(2)},${y1.toFixed(2)} ${x2.toFixed(2)},${y2.toFixed(2)} ${x.toFixed(2)},${y.toFixed(2)}`
+      );
+    } else {
+      // Unknown token — bail rather than risk drawing a partial path.
+      return null;
+    }
+  }
+  if (out.length === 0) return null;
+  // OOXML paths often start with a relative `M 0 0`, which collapses
+  // to "the shape's start point". When the first command is a line or
+  // curve (no leading M), prepend an `M anchor` so SVG knows where
+  // the path begins.
+  if (!/^M/.test(out[0]!)) {
+    return `M${anchorX.toFixed(2)},${anchorY.toFixed(2)} ${out.join(" ")}`;
+  }
+  return out.join(" ");
 }
 
 /** EMU → SVG user units (matches `shapes.ts#u`); see `slideViewBox` rationale. */

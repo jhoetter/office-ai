@@ -82,7 +82,15 @@ export interface SvgRenderCtx {
 
 export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
   const inner = shapeBodyToSvg(shape, ctx);
-  return wrapWithRotation(shape, inner);
+  const rotated = wrapWithRotation(shape, inner);
+  // Phase 4 prep: wrap every shape's SVG in a `<g data-cnvprid="N">`
+  // group so the animation playback engine can locate the right DOM
+  // node from a `ShapeAnimation.targetCNvPrId` without having to walk
+  // the React tree. We use a `data-` attribute (not `id`) to avoid
+  // collisions with arbitrary user-defined ids inside shape bodies.
+  // `class="anim-target"` lets the playback CSS reset transforms
+  // cleanly when an animation finishes.
+  return `<g class="anim-target" data-cnvprid="${shape.cNvPrId}">${rotated}</g>`;
 }
 
 function shapeBodyToSvg(shape: Shape, ctx: SvgRenderCtx): string {
