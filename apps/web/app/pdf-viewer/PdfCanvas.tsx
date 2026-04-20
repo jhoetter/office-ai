@@ -69,6 +69,14 @@ export interface PdfCanvasProps {
    * viewport on both axes.
    */
   readonly onZoomMetricsChange?: (metrics: PdfZoomMetrics) => void;
+  /**
+   * Bumped every time the editor wants the canvas to deliberately
+   * scroll to `currentPage`. The canvas only fires its programmatic
+   * `scrollTo` when this nonce changes — purely observation-driven
+   * page changes (the IO callback) do *not* bump it, so the
+   * canvas never fights the user's wheel.
+   */
+  readonly jumpNonce?: number;
 }
 
 /**
@@ -110,6 +118,7 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     onCurrentPageChange,
     highlight,
     onZoomMetricsChange,
+    jumpNonce,
   } = props;
   const { t } = useTranslator();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -250,8 +259,15 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
   }, [currentPage, onCurrentPageChange, pages.length]);
 
   // Programmatic scroll when the toolbar / sidebar / shortcuts ask
-  // for a different page. Skip when we're already there.
+  // for a different page. Gated on `jumpNonce` so that page changes
+  // produced by our own IntersectionObserver (i.e. the user
+  // scrolling) never re-trigger this — that's what made the wheel
+  // feel snappy / fight the user.
+  const lastJumpRef = useRef<number | undefined>(jumpNonce);
   useEffect(() => {
+    if (jumpNonce === undefined) return;
+    if (lastJumpRef.current === jumpNonce) return;
+    lastJumpRef.current = jumpNonce;
     const root = containerRef.current;
     if (!root) return;
     if (viewMode === "single") return;
@@ -260,9 +276,18 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
     );
     if (!target) return;
     const top = target.offsetTop;
-    if (Math.abs(top - root.scrollTop) < 4) return;
-    root.scrollTo({ top, behavior: "smooth" });
-  }, [currentPage, viewMode, scale]);
+    const distance = Math.abs(top - root.scrollTop);
+    if (distance < 4) return;
+    // Smooth feels great for small jumps; for big jumps (e.g.
+    // shift-jumping 50 pages) the animation drags. Snap instantly
+    // past five page-heights.
+    const tallest = pages.reduce(
+      (acc, p) => Math.max(acc, effectiveHeight(p, viewportRotation) * scale),
+      1
+    );
+    const useSmooth = distance < tallest * 5;
+    root.scrollTo({ top, behavior: useSmooth ? "smooth" : "auto" });
+  }, [jumpNonce, currentPage, viewMode, scale, pages, viewportRotation]);
 
   if (!snapshot || !engineDoc) {
     return (

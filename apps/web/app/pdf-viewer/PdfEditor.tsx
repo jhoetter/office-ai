@@ -131,6 +131,7 @@ export function PdfEditor({
   const [fileHandle, setFileHandle] = useState<FileSystemFileHandle | undefined>(undefined);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [currentPage, setCurrentPage] = useState(1);
+  const [jumpNonce, setJumpNonce] = useState(0);
   const [zoom, setZoom] = useState(0.95);
   const [viewMode, setViewMode] = useState<PdfViewMode>("continuous");
   const [darkMode, setDarkMode] = useState<PdfDarkModeStrategy>("off");
@@ -386,6 +387,7 @@ export function PdfEditor({
       if (totalPages === 0) return;
       const clamped = Math.max(1, Math.min(totalPages, n));
       setCurrentPage(clamped);
+      setJumpNonce((nonce) => nonce + 1);
     },
     [totalPages]
   );
@@ -804,6 +806,7 @@ export function PdfEditor({
                     viewportRotation={viewportRotation}
                     onCurrentPageChange={setCurrentPage}
                     onZoomMetricsChange={onZoomMetricsChange}
+                    jumpNonce={jumpNonce}
                     highlight={highlight}
                   />
                 </section>
