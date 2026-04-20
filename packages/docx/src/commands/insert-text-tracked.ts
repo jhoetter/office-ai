@@ -68,10 +68,28 @@ export const insertTextTrackedHandler: CommandHandler<InsertTextTrackedPayload, 
     }
 
     const date = payload.date ?? new Date().toISOString();
+    // Word coalesces consecutive same-author insertions in Suggesting
+    // mode into a single revision (one balloon, one accept/reject).
+    // When the caller pins an explicit `revisionId` we honour that
+    // intent — they're explicitly addressing a distinct wrapper —
+    // otherwise we look for an adjacent same-author `<w:ins>` to
+    // extend. The PM funnel never supplies a `revisionId`, so normal
+    // typing always coalesces.
+    const canCoalesce = payload.revisionId === undefined;
     const revisionId = payload.revisionId ?? mintRevisionId(snapshot);
 
     const nextDoc = withParagraph(snapshot.root, at.paragraph, (p) =>
-      insertRevisionIntoParagraph(p, at.run, at.offset ?? 0, text, author, date, revisionId, ctx.mintNodeId)
+      insertRevisionIntoParagraph(
+        p,
+        at.run,
+        at.offset ?? 0,
+        text,
+        author,
+        date,
+        revisionId,
+        ctx.mintNodeId,
+        canCoalesce
+      )
     );
 
     const next = evolveSnapshot(snapshot, nextDoc, { body: true });
@@ -128,10 +146,9 @@ function insertRevisionIntoParagraph(
   author: string,
   date: string,
   revisionId: string,
-  mintNodeId: () => string
+  mintNodeId: () => string,
+  canCoalesce: boolean
 ): Paragraph {
-  const wrapper = makeInsRevision(text, author, date, revisionId, mintNodeId);
-
   if (runIndex === undefined) {
     // Paragraph-global offset mode. Walk children counting visible
     // text characters (treating revision wrappers, hyperlinks, and
@@ -141,15 +158,29 @@ function insertRevisionIntoParagraph(
     // what callers from the PM funnel use because a paragraph's
     // run/wrapper structure is a model concept that PM positions
     // don't expose.
-    return spliceWrapperAtParagraphOffset(p, wrapper, offset, mintNodeId);
+    return spliceWrapperAtParagraphOffset(
+      p,
+      offset,
+      text,
+      author,
+      date,
+      revisionId,
+      mintNodeId,
+      canCoalesce
+    );
   }
 
+  const wrapper = makeInsRevision(text, author, date, revisionId, mintNodeId);
   const target = p.children[runIndex];
   if (!target || target.kind !== "run") {
     // Non-run target (existing revision wrapper, hyperlink, opaque
     // inline, etc.). Fall back to splicing the wrapper in front of
     // the targeted child without trying to split it; this matches
     // the conservative behaviour of `insert-text` for the same case.
+    if (canCoalesce) {
+      const merged = tryCoalesceAtBoundary(p, runIndex, text, author, mintNodeId);
+      if (merged) return merged;
+    }
     const children = [...p.children];
     children.splice(runIndex, 0, wrapper);
     return { ...p, children };
@@ -157,11 +188,19 @@ function insertRevisionIntoParagraph(
 
   const runLength = runTextLength(target);
   if (offset <= 0) {
+    if (canCoalesce) {
+      const merged = tryCoalesceAtBoundary(p, runIndex, text, author, mintNodeId);
+      if (merged) return merged;
+    }
     const children = [...p.children];
     children.splice(runIndex, 0, wrapper);
     return { ...p, children };
   }
   if (offset >= runLength) {
+    if (canCoalesce) {
+      const merged = tryCoalesceAtBoundary(p, runIndex + 1, text, author, mintNodeId);
+      if (merged) return merged;
+    }
     const children = [...p.children];
     children.splice(runIndex + 1, 0, wrapper);
     return { ...p, children };
@@ -174,6 +213,135 @@ function insertRevisionIntoParagraph(
   const children = [...p.children];
   children.splice(runIndex, 1, before, wrapper, after);
   return { ...p, children };
+}
+
+/**
+ * Attempt to extend a neighbouring same-author `<w:ins>` wrapper at
+ * the splice boundary `boundaryIndex` (the index where a fresh
+ * wrapper would otherwise be inserted into `p.children`).
+ *
+ * Boundary semantics: a splice at index `i` lands between
+ * `children[i-1]` and `children[i]`. We prefer extending the
+ * predecessor (append) to match the typing flow where the cursor
+ * advances past the previously inserted character; if that fails we
+ * try the successor (prepend) so typing immediately in front of an
+ * existing tracked insert still merges.
+ *
+ * Returns `null` when neither neighbour is a same-author `<w:ins>`
+ * wrapper, in which case the caller falls back to creating a fresh
+ * wrapper as before.
+ */
+function tryCoalesceAtBoundary(
+  p: Paragraph,
+  boundaryIndex: number,
+  text: string,
+  author: string,
+  mintNodeId: () => string
+): Paragraph | null {
+  const prev = boundaryIndex > 0 ? p.children[boundaryIndex - 1] : undefined;
+  if (prev && isCoalescableInsRevision(prev, author)) {
+    const extended = appendTextToInsRevision(prev, text, mintNodeId);
+    const children = [...p.children];
+    children[boundaryIndex - 1] = extended;
+    return { ...p, children };
+  }
+  const next = boundaryIndex < p.children.length ? p.children[boundaryIndex] : undefined;
+  if (next && isCoalescableInsRevision(next, author)) {
+    const extended = prependTextToInsRevision(next, text, mintNodeId);
+    const children = [...p.children];
+    children[boundaryIndex] = extended;
+    return { ...p, children };
+  }
+  return null;
+}
+
+function isCoalescableInsRevision(node: InlineNode, author: string): node is RevisionWrapper {
+  return node.kind === "revision" && node.revisionType === "ins" && node.author === author;
+}
+
+/**
+ * Append `text` to the end of an `<w:ins>` wrapper. We extend the
+ * last text leaf of the last inner run when one exists so the
+ * serialized output stays one `<w:t>` per contiguous run; otherwise
+ * we add a fresh text leaf (or a fresh inner run when the wrapper
+ * is empty).
+ */
+function appendTextToInsRevision(
+  wrapper: RevisionWrapper,
+  text: string,
+  mintNodeId: () => string
+): RevisionWrapper {
+  const children = [...wrapper.children];
+  for (let i = children.length - 1; i >= 0; i--) {
+    const child = children[i];
+    if (child.kind !== "run") continue;
+    const runChildren = [...child.children];
+    for (let j = runChildren.length - 1; j >= 0; j--) {
+      const leaf = runChildren[j];
+      if (leaf.kind === "text") {
+        const merged: TextLeaf = {
+          ...leaf,
+          text: leaf.text + text,
+          xmlSpacePreserve: /^\s|\s$/.test(leaf.text + text) || (leaf.text + text).length === 0,
+        };
+        runChildren[j] = merged;
+        children[i] = { ...child, children: runChildren };
+        return { ...wrapper, children };
+      }
+    }
+    runChildren.push(textLeaf(mintNodeId, text));
+    children[i] = { ...child, children: runChildren };
+    return { ...wrapper, children };
+  }
+  const innerRun: Run = {
+    kind: "run",
+    id: mintNodeId(),
+    properties: {},
+    children: [textLeaf(mintNodeId, text)],
+  };
+  children.push(innerRun);
+  return { ...wrapper, children };
+}
+
+/**
+ * Prepend `text` to the start of an `<w:ins>` wrapper. Mirrors
+ * {@link appendTextToInsRevision} for the leading edge.
+ */
+function prependTextToInsRevision(
+  wrapper: RevisionWrapper,
+  text: string,
+  mintNodeId: () => string
+): RevisionWrapper {
+  const children = [...wrapper.children];
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child.kind !== "run") continue;
+    const runChildren = [...child.children];
+    for (let j = 0; j < runChildren.length; j++) {
+      const leaf = runChildren[j];
+      if (leaf.kind === "text") {
+        const merged: TextLeaf = {
+          ...leaf,
+          text: text + leaf.text,
+          xmlSpacePreserve: /^\s|\s$/.test(text + leaf.text) || (text + leaf.text).length === 0,
+        };
+        runChildren[j] = merged;
+        children[i] = { ...child, children: runChildren };
+        return { ...wrapper, children };
+      }
+    }
+    runChildren.unshift(textLeaf(mintNodeId, text));
+    children[i] = { ...child, children: runChildren };
+    return { ...wrapper, children };
+  }
+  const innerRun: Run = {
+    kind: "run",
+    id: mintNodeId(),
+    properties: {},
+    children: [textLeaf(mintNodeId, text)],
+  };
+  children.unshift(innerRun);
+  return { ...wrapper, children };
 }
 
 /**
@@ -194,12 +362,23 @@ function insertRevisionIntoParagraph(
  */
 function spliceWrapperAtParagraphOffset(
   p: Paragraph,
-  wrapper: RevisionWrapper,
   offset: number,
-  mintNodeId: () => string
+  text: string,
+  author: string,
+  date: string,
+  revisionId: string,
+  mintNodeId: () => string,
+  canCoalesce: boolean
 ): Paragraph {
+  const makeWrapper = (): RevisionWrapper =>
+    makeInsRevision(text, author, date, revisionId, mintNodeId);
+
   if (offset <= 0 || p.children.length === 0) {
-    return { ...p, children: [wrapper, ...p.children] };
+    if (canCoalesce) {
+      const merged = tryCoalesceAtBoundary(p, 0, text, author, mintNodeId);
+      if (merged) return merged;
+    }
+    return { ...p, children: [makeWrapper(), ...p.children] };
   }
   let consumed = 0;
   for (let i = 0; i < p.children.length; i++) {
@@ -207,25 +386,39 @@ function spliceWrapperAtParagraphOffset(
     const childLen = inlineTextLength(child);
     const childEnd = consumed + childLen;
     if (offset === consumed) {
+      if (canCoalesce) {
+        const merged = tryCoalesceAtBoundary(p, i, text, author, mintNodeId);
+        if (merged) return merged;
+      }
       const children = [...p.children];
-      children.splice(i, 0, wrapper);
+      children.splice(i, 0, makeWrapper());
       return { ...p, children };
     }
     if (offset > consumed && offset < childEnd) {
       if (child.kind === "run") {
         const [before, after] = splitRunAt(child, offset - consumed, mintNodeId);
         const children = [...p.children];
-        children.splice(i, 1, before, wrapper, after);
+        children.splice(i, 1, before, makeWrapper(), after);
         return { ...p, children };
       }
       // Opaque-ish container: don't split, splice in front of it.
+      // Coalescing applies if the container immediately preceding
+      // the splice point is a same-author `<w:ins>` we can extend.
+      if (canCoalesce) {
+        const merged = tryCoalesceAtBoundary(p, i, text, author, mintNodeId);
+        if (merged) return merged;
+      }
       const children = [...p.children];
-      children.splice(i, 0, wrapper);
+      children.splice(i, 0, makeWrapper());
       return { ...p, children };
     }
     consumed = childEnd;
   }
-  return { ...p, children: [...p.children, wrapper] };
+  if (canCoalesce) {
+    const merged = tryCoalesceAtBoundary(p, p.children.length, text, author, mintNodeId);
+    if (merged) return merged;
+  }
+  return { ...p, children: [...p.children, makeWrapper()] };
 }
 
 function inlineTextLength(node: InlineNode): number {

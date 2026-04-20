@@ -73,7 +73,11 @@ describe("docx:insert-text-tracked", () => {
     expect(paragraphPlainText(p)).toBe("Hello INSERTED world.");
   });
 
-  it("mints a unique revision id when the caller omits one", async () => {
+  it("mints a unique revision id when the caller omits one and there is no neighbour to coalesce with", async () => {
+    // Two inserts by *different* authors so they cannot coalesce
+    // into a single `<w:ins>` wrapper. The second call omits a
+    // revisionId, so the handler must mint the smallest unused
+    // positive integer ("1" — author "U" already pinned "5").
     const agent = await loadAgent("Hi.");
     await agent.applyCommand({
       type: "docx:insert-text-tracked",
@@ -82,16 +86,80 @@ describe("docx:insert-text-tracked", () => {
     });
     await agent.applyCommand({
       type: "docx:insert-text-tracked",
-      payload: { at: { paragraph: 0, run: 0, offset: 0 }, text: "B", author: "U" },
+      payload: { at: { paragraph: 0, run: 0, offset: 0 }, text: "B", author: "V" },
       source: "human",
     });
     const ids = collectRevisions(firstParagraph(agent.getSnapshot()))
       .map((r) => r.revisionId)
       .sort();
     expect(ids).toContain("5");
-    // Second insert should have minted "1" (smallest unused positive int).
     expect(ids).toContain("1");
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("coalesces consecutive same-author inserts at the same boundary into one wrapper (Word-style typing)", async () => {
+    // Simulates the PM funnel: every keystroke is its own
+    // transaction → its own `docx:insert-text-tracked` command, no
+    // explicit revisionId. Word merges these into a single revision
+    // (one balloon, one accept/reject) and so should we.
+    const agent = await loadAgent("Hi.");
+    const author = "Alice";
+    for (let i = 0; i < "test".length; i++) {
+      await agent.applyCommand({
+        type: "docx:insert-text-tracked",
+        payload: { at: { paragraph: 0, offset: i }, text: "test"[i], author },
+        source: "human",
+      });
+    }
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(1);
+    expect(revs[0].revisionType).toBe("ins");
+    expect(revs[0].author).toBe(author);
+    // The merged wrapper carries the full word in its inner run.
+    const innerRun = revs[0].children[0] as Run;
+    const fullText = innerRun.children.reduce(
+      (acc, leaf) => (leaf.kind === "text" ? acc + leaf.text : acc),
+      ""
+    );
+    expect(fullText).toBe("test");
+    expect(paragraphPlainText(firstParagraph(agent.getSnapshot()))).toBe("testHi.");
+  });
+
+  it("does not coalesce across different authors", async () => {
+    const agent = await loadAgent("Hi.");
+    await agent.applyCommand({
+      type: "docx:insert-text-tracked",
+      payload: { at: { paragraph: 0, offset: 0 }, text: "A", author: "Alice" },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:insert-text-tracked",
+      payload: { at: { paragraph: 0, offset: 1 }, text: "B", author: "Bob" },
+      source: "human",
+    });
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(2);
+    expect(new Set(revs.map((r) => r.author))).toEqual(new Set(["Alice", "Bob"]));
+  });
+
+  it("honours an explicit revisionId by always creating a fresh wrapper (no coalescing)", async () => {
+    // Programmatic callers (agent rewrites, tests, etc.) that pin a
+    // revisionId are explicitly addressing a distinct wrapper;
+    // coalescing would silently merge them and break round-trip.
+    const agent = await loadAgent("Hi.");
+    await agent.applyCommand({
+      type: "docx:insert-text-tracked",
+      payload: { at: { paragraph: 0, offset: 0 }, text: "A", author: "U", revisionId: "10" },
+      source: "human",
+    });
+    await agent.applyCommand({
+      type: "docx:insert-text-tracked",
+      payload: { at: { paragraph: 0, offset: 1 }, text: "B", author: "U", revisionId: "11" },
+      source: "human",
+    });
+    const revs = collectRevisions(firstParagraph(agent.getSnapshot()));
+    expect(revs).toHaveLength(2);
+    expect(revs.map((r) => r.revisionId).sort()).toEqual(["10", "11"]);
   });
 
   it("round-trips via accept-change (suggested insert becomes plain text)", async () => {
