@@ -1,6 +1,6 @@
 {
   "name": "@officeai/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Format-agnostic core: command bus, plugin registry, OOXML utilities, document model abstractions.",
   "type": "module",
   "main": "./dist/index.js",

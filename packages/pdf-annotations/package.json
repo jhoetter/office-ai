@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pdf-annotations",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed annotation model + AP-stream writer + FDF/XFDF I/O for PDFs.",
   "type": "module",
   "main": "./dist/index.js",
