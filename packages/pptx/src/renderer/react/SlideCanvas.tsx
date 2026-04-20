@@ -9,7 +9,7 @@ import type {
   SlideSize,
   TextShape,
 } from "../../model/types.js";
-import { resolveEndpoint } from "../../model/connector-geometry.js";
+import { resolveEndpoint, rotateAroundCenter } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME } from "../layout/color.js";
 import { boxesIntersect, shapeBoundingBox, type BoundingBox } from "../layout/shape.js";
 import { resolveRotatedResize } from "../layout/resize.js";
@@ -713,7 +713,14 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
               cx: localBox.cx,
               cy: localBox.cy,
             };
-            const ap = anchorPointFor(box, side);
+            // Rotate the click anchor about the shape centre so the
+            // connector starts on the visually rendered edge of a
+            // rotated shape — same pivot as `wrapWithRotation`.
+            const sourceRotation =
+              "rotation" in sourceShape && typeof sourceShape.rotation === "number"
+                ? sourceShape.rotation
+                : 0;
+            const ap = anchorPointFor(box, side, 0.5, sourceRotation);
             const cursorEmuX = (e.clientX - rect.left) * emuPerPx;
             const cursorEmuY = (e.clientY - rect.top) * emuPerPx;
             setHoveredShapeId(null);
@@ -1650,7 +1657,20 @@ function renderPortHoverOverlay(
     cx: local.cx,
     cy: local.cy,
   };
-  return <PortHoverOverlay slideSize={slideSize} shapeId={shapeId} box={box} emphasised={emphasised} />;
+  // Match the rotation pivot used by `wrapWithRotation` in
+  // `svg/shapes.ts` so port dots track the shape's rotated edge
+  // midpoints instead of clinging to the axis-aligned bbox.
+  const rotation =
+    "rotation" in located.shape && typeof located.shape.rotation === "number" ? located.shape.rotation : 0;
+  return (
+    <PortHoverOverlay
+      slideSize={slideSize}
+      shapeId={shapeId}
+      box={box}
+      rotationDeg={rotation}
+      emphasised={emphasised}
+    />
+  );
 }
 
 function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
@@ -1697,8 +1717,8 @@ function collectAllConnectableBoxes(
   excludeIds: ReadonlySet<string>,
   offsetX: number = 0,
   offsetY: number = 0
-): { id: string; box: BoundingBox }[] {
-  const out: { id: string; box: BoundingBox }[] = [];
+): { id: string; box: BoundingBox; rotation: number }[] {
+  const out: { id: string; box: BoundingBox; rotation: number }[] = [];
   for (const sh of shapes) {
     if (sh.kind === "group") {
       const childOffsetX = offsetX + (sh.position?.xEmu ?? 0);
@@ -1711,9 +1731,11 @@ function collectAllConnectableBoxes(
     if (sh.cNvPrId <= 0) continue;
     const local = shapeBoundingBox(sh);
     if (!local) continue;
+    const rotation = "rotation" in sh && typeof sh.rotation === "number" ? sh.rotation : 0;
     out.push({
       id: sh.id,
       box: { x: local.x + offsetX, y: local.y + offsetY, cx: local.cx, cy: local.cy },
+      rotation,
     });
   }
   return out;
@@ -1929,20 +1951,37 @@ const ANCHOR_THRESHOLD_EMU = 100_000;
  * the two quarter-points, and any future intermediate value resolve to
  * the same coordinate the geometry/route helpers would compute.
  */
-function anchorPointFor(box: BoundingBox, side: AnchorSide, t?: number): { x: number; y: number } {
+function anchorPointFor(
+  box: BoundingBox,
+  side: AnchorSide,
+  t?: number,
+  rotationDeg: number = 0
+): { x: number; y: number } {
   const u = clampT01(t);
+  let pt: { x: number; y: number };
   switch (side) {
     case "n":
-      return { x: Math.round(box.x + box.cx * u), y: box.y };
+      pt = { x: box.x + box.cx * u, y: box.y };
+      break;
     case "s":
-      return { x: Math.round(box.x + box.cx * u), y: box.y + box.cy };
+      pt = { x: box.x + box.cx * u, y: box.y + box.cy };
+      break;
     case "w":
-      return { x: box.x, y: Math.round(box.y + box.cy * u) };
+      pt = { x: box.x, y: box.y + box.cy * u };
+      break;
     case "e":
-      return { x: box.x + box.cx, y: Math.round(box.y + box.cy * u) };
+      pt = { x: box.x + box.cx, y: box.y + box.cy * u };
+      break;
     case "center":
       return { x: Math.round(box.x + box.cx / 2), y: Math.round(box.y + box.cy / 2) };
   }
+  if (rotationDeg !== 0) {
+    const cx = box.x + box.cx / 2;
+    const cy = box.y + box.cy / 2;
+    const r = rotateAroundCenter(pt, { x: cx, y: cy }, rotationDeg);
+    return { x: Math.round(r.x), y: Math.round(r.y) };
+  }
+  return { x: Math.round(pt.x), y: Math.round(pt.y) };
 }
 
 function clampT01(t: number | undefined): number {
@@ -3139,6 +3178,15 @@ interface PortHoverOverlayProps {
   readonly shapeId: string;
   readonly box: BoundingBox;
   /**
+   * Shape rotation in degrees. The dots are placed in the unrotated
+   * frame and then visually rotated around the bbox centre so they
+   * track the shape's actual rendered edges. The hit-zone rotates
+   * with them (the wrapping `<g>` is in the same SVG layer with
+   * `pointer-events="all"`), so a click on the visually rotated dot
+   * still produces a `data-port`/`data-port-shape-id` hit.
+   */
+  readonly rotationDeg?: number;
+  /**
    * When true (e.g. user has armed the connector tool, or the live
    * draft snapped onto this shape), the dots render larger and with a
    * tinted halo so the user clearly sees they're a snap target.
@@ -3160,6 +3208,7 @@ function PortHoverOverlay({
   slideSize,
   shapeId,
   box,
+  rotationDeg,
   emphasised,
 }: PortHoverOverlayProps): React.ReactElement {
   const stageViewBox = useStageViewBox(slideSize);
@@ -3177,6 +3226,10 @@ function PortHoverOverlay({
   const r = emphasised ? 85_000 : 65_000;
   const haloColor = emphasised ? "rgba(14,165,233,0.35)" : "rgba(14,165,233,0.15)";
   const ringWidth = emphasised ? 2 : 1.5;
+  const rot = rotationDeg ?? 0;
+  const cxPx = px(box.x + box.cx / 2);
+  const cyPx = px(box.y + box.cy / 2);
+  const rotAttr = rot !== 0 ? `rotate(${rot} ${cxPx} ${cyPx})` : undefined;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -3184,30 +3237,32 @@ function PortHoverOverlay({
       preserveAspectRatio="xMidYMid meet"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
     >
-      {anchors.map((a) => (
-        <g key={a.side}>
-          <circle
-            cx={px(a.x)}
-            cy={px(a.y)}
-            r={px(r * 1.6)}
-            fill={haloColor}
-            stroke="none"
-            data-port={a.side}
-            data-port-shape-id={shapeId}
-            style={{ pointerEvents: "all", cursor: "crosshair" }}
-          />
-          <circle
-            cx={px(a.x)}
-            cy={px(a.y)}
-            r={px(r)}
-            fill="white"
-            stroke="#0ea5e9"
-            strokeWidth={ringWidth}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        </g>
-      ))}
+      <g transform={rotAttr}>
+        {anchors.map((a) => (
+          <g key={a.side}>
+            <circle
+              cx={px(a.x)}
+              cy={px(a.y)}
+              r={px(r * 1.6)}
+              fill={haloColor}
+              stroke="none"
+              data-port={a.side}
+              data-port-shape-id={shapeId}
+              style={{ pointerEvents: "all", cursor: "crosshair" }}
+            />
+            <circle
+              cx={px(a.x)}
+              cy={px(a.y)}
+              r={px(r)}
+              fill="white"
+              stroke="#0ea5e9"
+              strokeWidth={ringWidth}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          </g>
+        ))}
+      </g>
     </svg>
   );
 }
@@ -3238,6 +3293,11 @@ function TargetHaloOverlay({ slide, slideSize, shapeId }: TargetHaloOverlayProps
     cx: local.cx,
     cy: local.cy,
   };
+  const rotation =
+    "rotation" in located.shape && typeof located.shape.rotation === "number" ? located.shape.rotation : 0;
+  const cxPx = px(box.x + box.cx / 2);
+  const cyPx = px(box.y + box.cy / 2);
+  const rotAttr = rotation !== 0 ? `rotate(${rotation} ${cxPx} ${cyPx})` : undefined;
   // Pad slightly so the halo doesn't visually merge with the shape
   // outline at zoom levels where strokes touch.
   const pad = 40_000;
@@ -3249,20 +3309,22 @@ function TargetHaloOverlay({ slide, slideSize, shapeId }: TargetHaloOverlayProps
       pointerEvents="none"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
     >
-      <rect
-        x={px(box.x - pad)}
-        y={px(box.y - pad)}
-        width={px(box.cx + pad * 2)}
-        height={px(box.cy + pad * 2)}
-        rx={px(40_000)}
-        ry={px(40_000)}
-        fill="none"
-        stroke="#0ea5e9"
-        strokeOpacity={0.6}
-        strokeWidth={2}
-        strokeDasharray="6 3"
-        vectorEffect="non-scaling-stroke"
-      />
+      <g transform={rotAttr}>
+        <rect
+          x={px(box.x - pad)}
+          y={px(box.y - pad)}
+          width={px(box.cx + pad * 2)}
+          height={px(box.cy + pad * 2)}
+          rx={px(40_000)}
+          ry={px(40_000)}
+          fill="none"
+          stroke="#0ea5e9"
+          strokeOpacity={0.6}
+          strokeWidth={2}
+          strokeDasharray="6 3"
+          vectorEffect="non-scaling-stroke"
+        />
+      </g>
     </svg>
   );
 }
@@ -3319,7 +3381,7 @@ function ConnectableShapesOverlay({
       data-testid="pptx-connector-affordance-overlay"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
     >
-      {boxes.map(({ id, box }) => {
+      {boxes.map(({ id, box, rotation }) => {
         // The shape that's about to receive the snap is already
         // outlined by the brighter `TargetHaloOverlay`; suppress the
         // hint here so we don't double-paint it with two strokes.
@@ -3332,8 +3394,12 @@ function ConnectableShapesOverlay({
         const cx = box.x + box.cx / 2;
         const cy = box.y + box.cy / 2;
         const portR = 30_000; // ≈ 3 px @ 96 DPI — small but visible
+        // Rotate the per-shape outline + cardinal dots around the
+        // shape's bbox centre so they track the rendered edges of
+        // rotated shapes — same pivot as `wrapWithRotation`.
+        const rotAttr = rotation !== 0 ? `rotate(${rotation} ${px(cx)} ${px(cy)})` : undefined;
         return (
-          <g key={id}>
+          <g key={id} transform={rotAttr}>
             <rect
               x={px(box.x - pad)}
               y={px(box.y - pad)}

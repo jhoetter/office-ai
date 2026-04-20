@@ -2,7 +2,16 @@
 
 import * as React from "react";
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Monitor, X } from "lucide-react";
-import type { ChartPart, NotesSlide, PptxSnapshot, Slide, SlideSize, ThemeColorScheme } from "@officeai/pptx";
+import {
+  createPlayback,
+  type ChartPart,
+  type NotesSlide,
+  type PlaybackController,
+  type PptxSnapshot,
+  type Slide,
+  type SlideSize,
+  type ThemeColorScheme,
+} from "@officeai/pptx";
 import { slideAspectRatio, slideToSvgString } from "@officeai/pptx/renderer";
 
 /**
@@ -57,10 +66,51 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
   }, []);
 
   const total = slides.length;
-  const next = React.useCallback(() => setIndex((i) => Math.min(i + 1, total - 1)), [total]);
+  // F4 Phase 4 — present-mode playback wiring. The active slide's
+  // SlideStage attaches its SVG to this ref so we can build/tear down
+  // a `PlaybackController` per slide. The controller hides shapes that
+  // carry an entrance animation, then advances one click-group per
+  // forward keypress until exhausted; only then does the slide advance
+  // to the next one — matching PowerPoint's behaviour.
+  const playbackRef = React.useRef<PlaybackController | null>(null);
+  const advanceLockRef = React.useRef(false);
+  const advanceSlide = React.useCallback(() => setIndex((i) => Math.min(i + 1, total - 1)), [total]);
+  const next = React.useCallback(async () => {
+    if (advanceLockRef.current) return;
+    const controller = playbackRef.current;
+    if (controller && controller.hasMore()) {
+      advanceLockRef.current = true;
+      try {
+        await controller.clickAdvance();
+      } finally {
+        advanceLockRef.current = false;
+      }
+      return;
+    }
+    advanceSlide();
+  }, [advanceSlide]);
   const prev = React.useCallback(() => setIndex((i) => Math.max(i - 1, 0)), []);
   const first = React.useCallback(() => setIndex(0), []);
   const last = React.useCallback(() => setIndex(total - 1), [total]);
+
+  // When the slide index changes, drop the previous controller so the
+  // new SlideStage can wire up its own. SlideStage owns the create()
+  // call (it has the SVG ref) and reports back via `onPlaybackReady`.
+  React.useEffect(() => {
+    return () => {
+      playbackRef.current?.reset();
+      playbackRef.current?.destroy();
+      playbackRef.current = null;
+    };
+  }, [index]);
+
+  const handlePlaybackReady = React.useCallback((controller: PlaybackController | null) => {
+    if (playbackRef.current && playbackRef.current !== controller) {
+      playbackRef.current.reset();
+      playbackRef.current.destroy();
+    }
+    playbackRef.current = controller;
+  }, []);
 
   const close = React.useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
@@ -94,7 +144,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
         case "PageDown":
         case " ":
           e.preventDefault();
-          next();
+          void next();
           return;
         case "ArrowLeft":
         case "ArrowUp":
@@ -180,7 +230,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
         {/* Stage */}
         <button
           type="button"
-          onClick={next}
+          onClick={() => void next()}
           className="relative flex min-h-0 flex-1 cursor-pointer items-center justify-center bg-transparent"
           aria-label="Advance slide"
           data-testid="pptx-present-stage"
@@ -193,6 +243,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
               theme={theme}
               charts={props.charts}
               aspectRatio={aspect}
+              onPlaybackReady={handlePlaybackReady}
             />
           ) : (
             <span className="text-sm opacity-60">No slides</span>
@@ -246,7 +297,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
               <span>{formatClock(now)}</span>
               <button
                 type="button"
-                onClick={next}
+                onClick={() => void next()}
                 disabled={index === total - 1}
                 className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-zinc-800 disabled:opacity-30"
               >
@@ -267,6 +318,14 @@ interface SlideStageProps {
   readonly theme?: ThemeColorScheme;
   readonly charts?: ReadonlyMap<string, ChartPart>;
   readonly aspectRatio: number;
+  /**
+   * F4 Phase 4 — once the SVG has been mounted, hand a fresh playback
+   * controller back to the parent (`PresentMode`) so `Space` / `Arrow` /
+   * click can advance through the slide's animations before flipping
+   * to the next slide. Receives `null` on unmount so the parent can
+   * drop the reference cleanly.
+   */
+  readonly onPlaybackReady?: (controller: PlaybackController | null) => void;
 }
 
 function SlideStage(props: SlideStageProps): React.ReactElement {
@@ -280,6 +339,29 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
       }),
     [props.slide, props.slideSize, props.mediaUrls, props.theme, props.charts]
   );
+  const slideHostRef = React.useRef<HTMLDivElement | null>(null);
+  // Build a playback controller against the freshly-mounted SVG and
+  // hand it to the parent. We rebuild whenever the slide swaps so each
+  // visit starts from the canonical "all entrance shapes hidden" state.
+  React.useEffect(() => {
+    const host = slideHostRef.current;
+    const onReady = props.onPlaybackReady;
+    if (!host || !onReady) return;
+    const svgEl = host.querySelector<SVGSVGElement>("svg");
+    if (!svgEl) return;
+    const controller = createPlayback(svgEl, props.slide, {
+      slideSize: props.slideSize,
+    });
+    controller.prepare();
+    onReady(controller);
+    return () => {
+      onReady(null);
+      controller.reset();
+      controller.destroy();
+    };
+    // `svg` is the rendered HTML string; when it changes we have a new
+    // SVG element to attach to, so it belongs in the dependency list.
+  }, [props.slide, props.slideSize, props.onPlaybackReady, svg]);
   // CSS-only `aspect-ratio` + `max-width/max-height: 100%` collapses to
   // 0×0 inside a flex parent because the inline SVG carries no
   // intrinsic size (only viewBox), so neither axis ever resolves to a
@@ -313,6 +395,7 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
     <div ref={fitRef} className="flex h-full w-full items-center justify-center">
       {size ? (
         <div
+          ref={slideHostRef}
           className="bg-white shadow-2xl"
           style={{ width: size.width, height: size.height }}
           dangerouslySetInnerHTML={{ __html: svg }}

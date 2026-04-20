@@ -1122,7 +1122,7 @@ exports[`DOCX renderer snapshots > 06-comments-and-changes.docx: doc-to-pm proje
     {
       "attrs": {
         "alignment": null,
-        "paragraphId": "n-9",
+        "paragraphId": "n-8",
         "propsJson": "{}",
         "styleId": null,
       },
@@ -1139,22 +1139,13 @@ exports[`DOCX renderer snapshots > 06-comments-and-changes.docx: doc-to-pm proje
           "text": "This document was prepared as a fixture for officeAI.",
           "type": "text",
         },
-        {
-          "attrs": {
-            "inlineId": "n-7",
-            "previewText": null,
-            "rawJson": "{"tag":"w:commentReference","attrs":{"w:id":"0"},"subtree":[],"rawAttrs":{"@_w:id":"0"}}",
-            "tag": "w:commentReference",
-          },
-          "type": "opaque_inline",
-        },
       ],
       "type": "paragraph",
     },
     {
       "attrs": {
         "alignment": null,
-        "paragraphId": "n-22",
+        "paragraphId": "n-21",
         "propsJson": "{}",
         "styleId": null,
       },
@@ -1206,7 +1197,7 @@ exports[`DOCX renderer snapshots > 06-comments-and-changes.docx: doc-to-pm proje
     },
     {
       "attrs": {
-        "blockId": "n-23",
+        "blockId": "n-22",
         "rawJson": "{"tag":"w:sectPr","attrs":{},"subtree":[{"w:pgSz":[],":@":{"@_w:w":"11906","@_w:h":"16838","@_w:orient":"portrait"}},{"w:pgMar":[],":@":{"@_w:top":"1440","@_w:right":"1440","@_w:bottom":"1440","@_w:left":"1440","@_w:header":"708","@_w:footer":"708","@_w:gutter":"0"}},{"w:pgNumType":[]},{"w:docGrid":[],":@":{"@_w:linePitch":"360"}}],"rawAttrs":{}}",
       },
       "type": "section_break",

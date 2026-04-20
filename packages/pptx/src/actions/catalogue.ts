@@ -640,8 +640,9 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
   {
     id: "pptx.add-shape-animation",
     commandType: "pptx:add-shape-animation",
-    label: "Add shape animation",
-    description: "Attach an entry/emphasis/exit/motion-path animation to a shape.",
+    label: "Add shape animation…",
+    description:
+      "Open the Animations panel to attach an entrance, emphasis, exit, or motion-path animation to the selected shape.",
     section: "Slide",
     surfaces: ["cli", "palette"],
   },
@@ -656,18 +657,18 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
   {
     id: "pptx.remove-shape-animation",
     commandType: "pptx:remove-shape-animation",
-    label: "Remove shape animation",
-    description: "Remove a shape animation from a slide.",
+    label: "Remove shape animation…",
+    description: "Open the Animations panel to remove an animation from this slide's sequence.",
     section: "Slide",
     surfaces: ["cli", "palette"],
   },
   {
     id: "pptx.reorder-shape-animations",
     commandType: "pptx:reorder-shape-animations",
-    label: "Reorder shape animations",
-    description: "Reorder the animation sequence on a slide.",
+    label: "Reorder shape animations…",
+    description: "Open the Animations panel to reorder the animation sequence on this slide.",
     section: "Slide",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette"],
   },
 
   // ── Connectors ────────────────────────────────────────────────────

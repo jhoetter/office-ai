@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 import type { Command as CommanderCommand } from "commander";
 import { Option } from "commander";
 import {
+  ANIMATION_PRESETS,
   PptxAgent,
   snapshotToMarkdown,
   type PptxSearchResult,
@@ -1081,17 +1082,58 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
 
   pptx
     .command("add-shape-animation")
-    .description("Append (or insert) a typed entrance animation on a shape.")
+    .description(
+      "Append (or insert) a typed animation on a shape. Choose the preset gallery via --category and --preset (run `office-agent pptx list-animation-presets` to see all preset keys); --effect is the legacy entrance shortcut."
+    )
     .requiredOption("--file <path>", "Path to a .pptx file")
     .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
     .requiredOption("--shape <id>", "Shape NodeId to animate")
     .addOption(
-      new Option("--effect <effect>", "Entrance effect")
-        .choices(["appear", "fade", "fly-in", "wipe"])
-        .makeOptionMandatory(true)
+      new Option(
+        "--category <category>",
+        "Animation category. Pair with --preset for the typed API."
+      ).choices(["entrance", "emphasis", "exit", "motionPath"])
     )
-    .option("--at <n>", "Insert position in the entrance sequence", parseIntArg)
+    .option(
+      "--preset <preset>",
+      "Preset key from the registry (e.g. 'flyIn', 'spin', 'fade'). Defaults to entrance when --category is omitted."
+    )
+    .addOption(
+      new Option("--effect <effect>", "Legacy entrance shortcut (entrance category only).").choices([
+        "appear",
+        "fade",
+        "fly-in",
+        "wipe",
+      ])
+    )
+    .addOption(
+      new Option("--direction <direction>", "Direction modifier (varies per preset).").choices([
+        "left",
+        "right",
+        "up",
+        "down",
+        "in",
+        "out",
+        "horizontal",
+        "vertical",
+        "clockwise",
+        "counterclockwise",
+      ])
+    )
+    .addOption(
+      new Option("--trigger <trigger>", "What kicks the animation off (defaults to onClick).").choices([
+        "onClick",
+        "withPrevious",
+        "afterPrevious",
+      ])
+    )
+    .option("--at <n>", "Insert position in the sequence (defaults to append)", parseIntArg)
     .option("--duration-ms <n>", "Effect duration in milliseconds", parseIntArg)
+    .option("--delay-ms <n>", "Effect delay in milliseconds", parseIntArg)
+    .option(
+      "--motion-path <svg>",
+      "Motion-path command string (motionPath category only; SVG-style, slide-relative units)."
+    )
     .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
     .option("--pretty", "Pretty-print JSON output", false)
     .action(
@@ -1099,21 +1141,49 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
         file: string;
         slide: number;
         shape: string;
-        effect: "appear" | "fade" | "fly-in" | "wipe";
+        category?: "entrance" | "emphasis" | "exit" | "motionPath";
+        preset?: string;
+        effect?: "appear" | "fade" | "fly-in" | "wipe";
+        direction?:
+          | "left"
+          | "right"
+          | "up"
+          | "down"
+          | "in"
+          | "out"
+          | "horizontal"
+          | "vertical"
+          | "clockwise"
+          | "counterclockwise";
+        trigger?: "onClick" | "withPrevious" | "afterPrevious";
         at?: number;
         durationMs?: number;
+        delayMs?: number;
+        motionPath?: string;
         out?: string;
         pretty: boolean;
       }) => {
+        if (!opts.category && !opts.preset && !opts.effect) {
+          throw new CliError(
+            64,
+            "pptx add-shape-animation: must supply at least one of --category+--preset, --preset (defaults to entrance), or --effect"
+          );
+        }
         await dispatchAndWrite(opts, io, [
           {
             type: "pptx:add-shape-animation",
             payload: {
               slideIndex: opts.slide,
               shapeId: opts.shape,
-              effect: opts.effect,
+              ...(opts.category ? { category: opts.category } : {}),
+              ...(opts.preset ? { preset: opts.preset } : {}),
+              ...(opts.effect ? { effect: opts.effect } : {}),
+              ...(opts.direction ? { direction: opts.direction } : {}),
+              ...(opts.trigger ? { trigger: opts.trigger } : {}),
               ...(opts.at !== undefined ? { at: opts.at } : {}),
               ...(opts.durationMs !== undefined ? { durationMs: opts.durationMs } : {}),
+              ...(opts.delayMs !== undefined ? { delayMs: opts.delayMs } : {}),
+              ...(opts.motionPath !== undefined ? { motionPath: opts.motionPath } : {}),
             },
           },
         ]);
@@ -1161,6 +1231,126 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
           payload: { slideIndex: opts.slide, order },
         },
       ]);
+    });
+
+  pptx
+    .command("set-shape-animation")
+    .description(
+      "Patch trigger / direction / duration / delay / category+preset on an existing shape animation."
+    )
+    .requiredOption("--file <path>", "Path to a .pptx file")
+    .requiredOption("--slide <n>", "0-based slide index", parseIntArg)
+    .requiredOption("--animation <id>", "Animation NodeId returned by inspect/read")
+    .addOption(
+      new Option(
+        "--category <category>",
+        "New animation category (must be supplied alongside --preset)."
+      ).choices(["entrance", "emphasis", "exit", "motionPath"])
+    )
+    .option("--preset <preset>", "New preset key from the registry.")
+    .addOption(
+      new Option("--direction <direction>", "Direction modifier; pass 'none' to clear.").choices([
+        "left",
+        "right",
+        "up",
+        "down",
+        "in",
+        "out",
+        "horizontal",
+        "vertical",
+        "clockwise",
+        "counterclockwise",
+        "none",
+      ])
+    )
+    .addOption(
+      new Option("--trigger <trigger>", "What kicks the animation off.").choices([
+        "onClick",
+        "withPrevious",
+        "afterPrevious",
+      ])
+    )
+    .option("--duration-ms <n>", "Effect duration in milliseconds (-1 to clear)", parseIntArg)
+    .option("--delay-ms <n>", "Effect delay in milliseconds (-1 to clear)", parseIntArg)
+    .option("--motion-path <svg>", "Motion-path command string (use 'none' to clear).")
+    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action(
+      async (opts: {
+        file: string;
+        slide: number;
+        animation: string;
+        category?: "entrance" | "emphasis" | "exit" | "motionPath";
+        preset?: string;
+        direction?:
+          | "left"
+          | "right"
+          | "up"
+          | "down"
+          | "in"
+          | "out"
+          | "horizontal"
+          | "vertical"
+          | "clockwise"
+          | "counterclockwise"
+          | "none";
+        trigger?: "onClick" | "withPrevious" | "afterPrevious";
+        durationMs?: number;
+        delayMs?: number;
+        motionPath?: string;
+        out?: string;
+        pretty: boolean;
+      }) => {
+        // Mirror the `null = clear` semantics of `pptx:set-shape-animation`
+        // by treating sentinel values on the CLI surface as explicit
+        // clears. This keeps the CLI useable from shells that can't
+        // type a JSON `null` directly.
+        const direction =
+          opts.direction === "none" ? null : opts.direction !== undefined ? opts.direction : undefined;
+        const motionPath =
+          opts.motionPath === "none" ? null : opts.motionPath !== undefined ? opts.motionPath : undefined;
+        const durationMs =
+          opts.durationMs === -1 ? null : opts.durationMs !== undefined ? opts.durationMs : undefined;
+        const delayMs = opts.delayMs === -1 ? null : opts.delayMs !== undefined ? opts.delayMs : undefined;
+        await dispatchAndWrite(opts, io, [
+          {
+            type: "pptx:set-shape-animation",
+            payload: {
+              slideIndex: opts.slide,
+              animationId: opts.animation,
+              ...(opts.category ? { category: opts.category } : {}),
+              ...(opts.preset ? { preset: opts.preset } : {}),
+              ...(opts.trigger ? { trigger: opts.trigger } : {}),
+              ...(direction !== undefined ? { direction } : {}),
+              ...(durationMs !== undefined ? { durationMs } : {}),
+              ...(delayMs !== undefined ? { delayMs } : {}),
+              ...(motionPath !== undefined ? { motionPath } : {}),
+            },
+          },
+        ]);
+      }
+    );
+
+  pptx
+    .command("list-animation-presets")
+    .description(
+      "List every (category, preset) tuple supported by add-shape-animation, with the directions each preset accepts."
+    )
+    .option("--pretty", "Pretty-print JSON output", false)
+    .option("--category <category>", "Filter to a single category (entrance / emphasis / exit / motionPath).")
+    .action((opts: { pretty: boolean; category?: string }) => {
+      const filtered = opts.category
+        ? ANIMATION_PRESETS.filter((p) => p.category === opts.category)
+        : ANIMATION_PRESETS;
+      const out = filtered.map((p) => ({
+        category: p.category,
+        preset: p.preset,
+        directions: p.directions ?? [],
+        defaultDirection: p.defaultDirection ?? null,
+        defaultDurationMs: p.defaultDurationMs,
+      }));
+      io.stdout.write(JSON.stringify(out, null, opts.pretty ? 2 : 0));
+      io.stdout.write("\n");
     });
 
   pptx

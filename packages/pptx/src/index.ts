@@ -62,6 +62,7 @@ export {
   directionForSubtype,
   type PresetSpec,
 } from "./animation/presets.js";
+export { createPlayback, type PlaybackController, type PlaybackOptions } from "./animation/playback.js";
 export { resolveEndpoint as resolveConnectorEndpoint } from "./model/connector-geometry.js";
 export { PPTX_COMMAND_TYPES, type PptxCommandType } from "./commands/payloads.js";
 export {

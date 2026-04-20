@@ -42,7 +42,17 @@ export function resolveEndpoint(
     cx: target.size.cxEmu,
     cy: target.size.cyEmu,
   };
-  return anchorPoint(box, endpoint.side, endpoint.t);
+  // PowerPoint stores connector endpoints relative to the target's
+  // *unrotated* bbox (the anchor index is invariant under rotation),
+  // so the wire frame in the file does not bake the rotation in.
+  // Apply it here at resolution time so the rendered line meets the
+  // shape on its actually-rendered edge — same pivot as
+  // `wrapWithRotation` in `renderer/svg/shapes.ts`.
+  const rotation =
+    "rotation" in target && typeof (target as { rotation?: unknown }).rotation === "number"
+      ? (target as { rotation: number }).rotation
+      : 0;
+  return anchorPoint(box, endpoint.side, endpoint.t, rotation);
 }
 
 /**
@@ -52,20 +62,31 @@ export function resolveEndpoint(
  * edge so quarter-points land cleanly: t=0 hits the corner closest to
  * the prior side in the n→e→s→w cycle (left for n/s, top for w/e),
  * t=1 the opposite corner. `center` ignores `t`.
+ *
+ * `rotationDeg` (default 0) rotates the resulting point clockwise
+ * about the box centre so anchors track the shape's rendered edges
+ * for rotated shapes. Matches the SVG `rotate(deg cx cy)` transform
+ * that `wrapWithRotation` emits, so the visual port dot, the
+ * connector endpoint, and the snap target line up exactly.
  */
-export function anchorPoint(box: Box, side: ConnectorSide, t?: number): Point {
+export function anchorPoint(box: Box, side: ConnectorSide, t?: number, rotationDeg: number = 0): Point {
   const cx = box.x + box.cx / 2;
   const cy = box.y + box.cy / 2;
   const u = clampT(t);
+  let local: Point;
   switch (side) {
     case "n":
-      return { x: box.x + box.cx * u, y: box.y };
+      local = { x: box.x + box.cx * u, y: box.y };
+      break;
     case "s":
-      return { x: box.x + box.cx * u, y: box.y + box.cy };
+      local = { x: box.x + box.cx * u, y: box.y + box.cy };
+      break;
     case "w":
-      return { x: box.x, y: box.y + box.cy * u };
+      local = { x: box.x, y: box.y + box.cy * u };
+      break;
     case "e":
-      return { x: box.x + box.cx, y: box.y + box.cy * u };
+      local = { x: box.x + box.cx, y: box.y + box.cy * u };
+      break;
     case "center":
       return { x: cx, y: cy };
     default: {
@@ -73,6 +94,23 @@ export function anchorPoint(box: Box, side: ConnectorSide, t?: number): Point {
       return { x: cx + (_exhaustive as unknown as number) * 0, y: cy };
     }
   }
+  return rotateAroundCenter(local, { x: cx, y: cy }, rotationDeg);
+}
+
+/**
+ * Rotate a point about a centre by `deg` degrees clockwise (Y-down,
+ * matching SVG's `rotate()`). Pure helper used by anchor / snap
+ * geometry to keep rotated shapes' connection points on their visible
+ * edges.
+ */
+export function rotateAroundCenter(p: Point, center: Point, deg: number): Point {
+  if (deg === 0 || !Number.isFinite(deg)) return p;
+  const rad = (deg * Math.PI) / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  const dx = p.x - center.x;
+  const dy = p.y - center.y;
+  return { x: center.x + dx * c - dy * s, y: center.y + dx * s + dy * c };
 }
 
 function clampT(t: number | undefined): number {

@@ -1304,12 +1304,16 @@
         "description": "Bereich aus einer .xlsx-Datei wählen und als Diagramm auf der Folie einfügen."
       },
       "add-shape-animation": {
-        "label": "Form-Animation hinzufügen",
-        "description": "Fügt einer Form eine Eingangs-/Hervorhebungs-/Ausgangsanimation hinzu."
+        "label": "Form-Animation hinzufügen…",
+        "description": "Öffnet das Animationen-Panel, um der ausgewählten Form eine Eingangs-, Hervorhebungs-, Ausgangs- oder Bewegungspfad-Animation zuzuweisen."
       },
       "remove-shape-animation": {
-        "label": "Form-Animation entfernen",
-        "description": "Entfernt eine Form-Animation von einer Folie."
+        "label": "Form-Animation entfernen…",
+        "description": "Öffnet das Animationen-Panel, um eine Animation aus der Sequenz dieser Folie zu entfernen."
+      },
+      "reorder-shape-animations": {
+        "label": "Form-Animationen umsortieren…",
+        "description": "Öffnet das Animationen-Panel, um die Animationsreihenfolge dieser Folie zu ändern."
       },
       "add-rect": {
         "label": "Rechteck einfügen",

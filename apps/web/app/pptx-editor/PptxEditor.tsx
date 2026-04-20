@@ -15,10 +15,12 @@ import {
 } from "@officeai/pptx/renderer/react";
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import {
+  createPlayback,
   resolveConnectorEndpoint,
   type ConnectorShape,
   type LayoutKindPayload,
   type Picture,
+  type PlaybackController,
   type PptxSnapshot,
   type Shape,
   type ShapePreset,
@@ -56,6 +58,7 @@ import {
   type PaletteCommand,
   type PaletteRunners,
   type ProductAdapter,
+  type RightRailTab,
   type SaveState,
   type ToastItem,
 } from "@/lib/shell";
@@ -336,6 +339,15 @@ export function PptxEditor({
   // what users expect when reopening a deck.
   const [notesOpen, setNotesOpen] = useState(false);
   const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
+  // Imperative request to open the shared right rail to a specific
+  // tab (consumed by `EditorShell` via `requestRailTab`). Bumping the
+  // nonce re-fires the effect even when the same tab is requested
+  // twice in a row, e.g. running "Add shape animation" from Cmd+K
+  // after the user closed the panel.
+  const [railRequest, setRailRequest] = useState<{ tab: RightRailTab; nonce: number } | null>(null);
+  const requestRail = useCallback((tab: RightRailTab) => {
+    setRailRequest({ tab, nonce: Date.now() });
+  }, []);
   /**
    * Active "Edit Data" modal state for double-click on a chart or
    * OLE spreadsheet shape. `null` when the modal is closed; otherwise
@@ -1792,6 +1804,85 @@ export function PptxEditor({
     [activeIndex, onError]
   );
 
+  // Phase 4 — live "Preview" button. The renderer wraps every shape in
+  // `<g class="anim-target" data-cnvprid="…">`, so the playback engine
+  // can address shapes by walking the SVG inside `slideSurfaceRef`.
+  // We hold one controller at a time and reset/destroy it before
+  // starting a new preview so transforms never linger between runs.
+  const playbackRef = useRef<PlaybackController | null>(null);
+  useEffect(() => {
+    return () => {
+      playbackRef.current?.reset();
+      playbackRef.current?.destroy();
+      playbackRef.current = null;
+    };
+  }, []);
+
+  const previewAnimation = useCallback(
+    (animationId: string | null) => {
+      const surface = slideSurfaceRef.current;
+      if (!surface || !snap) return;
+      const slide = snap.root.slides[activeIndex];
+      if (!slide) return;
+      const svg = surface.querySelector<SVGSVGElement>("svg");
+      if (!svg) return;
+      // Tear down any in-flight controller so we don't stack animations
+      // on top of each other when the user spams the preview button.
+      playbackRef.current?.reset();
+      playbackRef.current?.destroy();
+      const controller = createPlayback(svg, slide, {
+        slideSize: snap.root.slideSize,
+      });
+      playbackRef.current = controller;
+      controller.prepare();
+      const run = async () => {
+        try {
+          if (animationId) {
+            // Find the click group that contains the requested step and
+            // fast-forward to it. We walk the same grouping the engine
+            // uses so the indices stay aligned.
+            const ordered = [...slide.animations].sort((a, b) => a.order - b.order);
+            const groups: Array<Array<(typeof ordered)[number]>> = [];
+            let current: Array<(typeof ordered)[number]> = [];
+            for (const a of ordered) {
+              const startsGroup = current.length === 0 || a.trigger === "onClick";
+              if (startsGroup && current.length > 0) {
+                groups.push(current);
+                current = [];
+              }
+              current.push(a);
+            }
+            if (current.length > 0) groups.push(current);
+            const targetGroup = groups.findIndex((g) => g.some((a) => a.id === animationId));
+            for (let i = 0; i < groups.length; i++) {
+              if (i === targetGroup) {
+                await controller.clickAdvance();
+                break;
+              }
+              await controller.clickAdvance();
+            }
+          } else {
+            await controller.playAll();
+          }
+        } catch {
+          // Swallow — the user may have switched slides or the
+          // controller was destroyed mid-playback. The reset() in the
+          // next preview call (or unmount cleanup) restores state.
+        } finally {
+          // Restore the slide to its baseline so the editor doesn't get
+          // stuck in a half-played state once the preview finishes.
+          if (playbackRef.current === controller) {
+            controller.reset();
+            controller.destroy();
+            playbackRef.current = null;
+          }
+        }
+      };
+      void run();
+    },
+    [activeIndex, snap]
+  );
+
   const reorderShapeAnimations = useCallback(
     async (orderIds: ReadonlyArray<string>) => {
       const a = agentRef.current;
@@ -2155,6 +2246,28 @@ export function PptxEditor({
       "pptx.zoom-reset": { run: () => setZoom(1) },
       "pptx.present-from-start": { run: () => startPresenting(false), enabled: ready && slides.length > 0 },
       "pptx.present-from-current": { run: () => startPresenting(true), enabled: ready && slides.length > 0 },
+      // Animations entries reveal the right-rail Animations tab so the
+      // user lands on the panel that has the full preset gallery + the
+      // per-step Effect Options. Hard-wiring a Cmd+K command to a
+      // single (category, preset) tuple would balloon the palette to
+      // 30+ entries; the panel keeps the choice space discoverable
+      // without burying the rest of the palette.
+      "pptx.set-slide-transition": {
+        run: () => requestRail("animations"),
+        enabled: ready && slides.length > 0,
+      },
+      "pptx.add-shape-animation": {
+        run: () => requestRail("animations"),
+        enabled: ready && slides.length > 0,
+      },
+      "pptx.remove-shape-animation": {
+        run: () => requestRail("animations"),
+        enabled: ready && (slide?.animations.length ?? 0) > 0,
+      },
+      "pptx.reorder-shape-animations": {
+        run: () => requestRail("animations"),
+        enabled: ready && (slide?.animations.length ?? 0) >= 2,
+      },
     };
     return buildPaletteFromCatalogue(pptxActions, runners, t);
   }, [
@@ -2171,7 +2284,9 @@ export function PptxEditor({
     groupSelectedShapes,
     insertImage,
     ready,
+    requestRail,
     selectedShapeIds.length,
+    slide?.animations.length,
     slides.length,
     startPresenting,
     ungroupSelectedShape,
@@ -2263,6 +2378,7 @@ export function PptxEditor({
               onSetAnimation={(params) => void setShapeAnimation(params)}
               onRemoveAnimation={(id) => void removeShapeAnimation(id)}
               onReorderAnimations={(orderIds) => void reorderShapeAnimations(orderIds)}
+              onPreviewAnimation={(id) => previewAnimation(id)}
             />
           )
         : undefined,
@@ -2278,6 +2394,7 @@ export function PptxEditor({
       handleSave,
       openCommentCount,
       paletteCommands,
+      previewAnimation,
       ready,
       removeShapeAnimation,
       renderCommentsPanel,
@@ -2327,6 +2444,7 @@ export function PptxEditor({
       <EditorShell
         adapter={adapter}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}
+        requestRailTab={railRequest ?? undefined}
         toolbar={
           <PptxToolbar
             disabled={!ready}

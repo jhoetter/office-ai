@@ -1,3 +1,4 @@
+import { rotateAroundCenter } from "../../model/connector-geometry.js";
 import type { BoundingBox } from "./shape.js";
 
 /**
@@ -30,19 +31,34 @@ export interface ShapeAnchor {
  * cardinal edge is exposed at three points (t = 0.25, 0.5, 0.75) so
  * connectors can land on edge thirds; `center` remains a single
  * anchor at the bbox centre.
+ *
+ * `rotationDeg` (default 0) rotates every emitted anchor point
+ * clockwise about the bbox centre — same pivot as `wrapWithRotation`
+ * in `renderer/svg/shapes.ts` — so connectors snap to the shape's
+ * visually rendered edges, not to its underlying axis-aligned bbox.
+ * The `side` label is preserved through rotation (a "north" anchor
+ * stays the north of the *shape*, even if it's now visually below
+ * the centre after a 180° rotation), which keeps round-tripping to
+ * the OOXML `cxnLst` index straightforward.
  */
-export function anchorsFor(shapeId: string, box: BoundingBox): ShapeAnchor[] {
-  const cx = Math.round(box.x + box.cx / 2);
-  const cy = Math.round(box.y + box.cy / 2);
+export function anchorsFor(shapeId: string, box: BoundingBox, rotationDeg: number = 0): ShapeAnchor[] {
+  const cx = box.x + box.cx / 2;
+  const cy = box.y + box.cy / 2;
+  const center = { x: cx, y: cy };
   const ts: ReadonlyArray<number> = [0.25, 0.5, 0.75];
   const out: ShapeAnchor[] = [];
+  const emit = (side: ShapeAnchor["side"], x: number, y: number, t: number): void => {
+    const r = rotationDeg === 0 ? { x, y } : rotateAroundCenter({ x, y }, center, rotationDeg);
+    out.push({ shapeId, side, x: Math.round(r.x), y: Math.round(r.y), t });
+  };
   for (const t of ts) {
-    out.push({ shapeId, side: "n", x: Math.round(box.x + box.cx * t), y: box.y, t });
-    out.push({ shapeId, side: "s", x: Math.round(box.x + box.cx * t), y: box.y + box.cy, t });
-    out.push({ shapeId, side: "w", x: box.x, y: Math.round(box.y + box.cy * t), t });
-    out.push({ shapeId, side: "e", x: box.x + box.cx, y: Math.round(box.y + box.cy * t), t });
+    emit("n", box.x + box.cx * t, box.y, t);
+    emit("s", box.x + box.cx * t, box.y + box.cy, t);
+    emit("w", box.x, box.y + box.cy * t, t);
+    emit("e", box.x + box.cx, box.y + box.cy * t, t);
   }
-  out.push({ shapeId, side: "center", x: cx, y: cy, t: 0.5 });
+  // Centre is invariant under rotation about itself.
+  out.push({ shapeId, side: "center", x: Math.round(cx), y: Math.round(cy), t: 0.5 });
   return out;
 }
 
@@ -76,7 +92,7 @@ export interface AnchorSnapResult {
  */
 export function snapToAnchor(
   point: { x: number; y: number },
-  shapes: ReadonlyArray<{ id: string; box: BoundingBox }>,
+  shapes: ReadonlyArray<{ id: string; box: BoundingBox; rotation?: number }>,
   thresholdEmu: number
 ): AnchorSnapResult {
   let bestEdge: ShapeAnchor | null = null;
@@ -86,7 +102,7 @@ export function snapToAnchor(
   const nearbyEdges: ShapeAnchor[] = [];
   const nearbyCenters: ShapeAnchor[] = [];
   for (const s of shapes) {
-    for (const a of anchorsFor(s.id, s.box)) {
+    for (const a of anchorsFor(s.id, s.box, s.rotation ?? 0)) {
       const dx = a.x - point.x;
       const dy = a.y - point.y;
       const d = Math.hypot(dx, dy);

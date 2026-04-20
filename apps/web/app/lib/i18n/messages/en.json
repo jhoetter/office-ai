@@ -1304,12 +1304,16 @@
         "description": "Pick a range from an .xlsx file and project it into a chart on the slide."
       },
       "add-shape-animation": {
-        "label": "Add shape animation",
-        "description": "Attach an entry/emphasis/exit animation to a shape."
+        "label": "Add shape animation…",
+        "description": "Open the Animations panel to attach an entrance, emphasis, exit, or motion-path animation to the selected shape."
       },
       "remove-shape-animation": {
-        "label": "Remove shape animation",
-        "description": "Remove a shape animation from a slide."
+        "label": "Remove shape animation…",
+        "description": "Open the Animations panel to remove an animation from this slide's sequence."
+      },
+      "reorder-shape-animations": {
+        "label": "Reorder shape animations…",
+        "description": "Open the Animations panel to reorder the animation sequence on this slide."
       },
       "add-rect": {
         "label": "Insert rectangle",

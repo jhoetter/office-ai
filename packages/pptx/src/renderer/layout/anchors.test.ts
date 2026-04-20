@@ -85,3 +85,60 @@ describe("snapToAnchor", () => {
     expect(r.anchor?.side).toBe("center");
   });
 });
+
+describe("anchorsFor with rotation", () => {
+  it("rotates every anchor about the bbox centre while preserving side labels", () => {
+    // 1000×1000 box at the origin, rotated 90° clockwise. After
+    // rotation the *visual* north edge is to the right of the centre,
+    // but the anchor still calls itself "n" because that's the OOXML
+    // round-trip identity. The (x, y) is rotated to the visual edge.
+    const a = anchorsFor("rect-1", { x: 0, y: 0, cx: 1_000_000, cy: 1_000_000 }, 90);
+    const n = a.find((p) => p.side === "n" && p.t === 0.5);
+    const e = a.find((p) => p.side === "e" && p.t === 0.5);
+    const s = a.find((p) => p.side === "s" && p.t === 0.5);
+    const w = a.find((p) => p.side === "w" && p.t === 0.5);
+    expect(n).toMatchObject({ x: 1_000_000, y: 500_000 });
+    expect(e).toMatchObject({ x: 500_000, y: 1_000_000 });
+    expect(s).toMatchObject({ x: 0, y: 500_000 });
+    expect(w).toMatchObject({ x: 500_000, y: 0 });
+  });
+
+  it("centre anchor is invariant under rotation", () => {
+    const a = anchorsFor("rect-1", { x: 0, y: 0, cx: 1_000_000, cy: 600_000 }, 137.5);
+    const c = a.find((p) => p.side === "center");
+    expect(c).toMatchObject({ x: 500_000, y: 300_000 });
+  });
+});
+
+describe("snapToAnchor with rotation", () => {
+  it("snaps to the visually rendered edge of a rotated shape", () => {
+    // 1000×1000 box at the origin rotated 90° CW: its visual east
+    // edge (cursor side) corresponds to the *south* anchor in shape-
+    // local terms. Cursor at (1_000_000, 500_000) should snap onto
+    // a side-`n` anchor (which after 90° rotation lives at the visual
+    // east mid-edge).
+    const r = snapToAnchor(
+      { x: 1_000_000, y: 500_000 },
+      [{ id: "rotated", box: { x: 0, y: 0, cx: 1_000_000, cy: 1_000_000 }, rotation: 90 }],
+      100_000
+    );
+    expect(r.anchor).not.toBeNull();
+    expect(r.anchor?.shapeId).toBe("rotated");
+    expect(r.anchor?.side).toBe("n");
+    expect(r.dx).toBe(0);
+    expect(r.dy).toBe(0);
+  });
+
+  it("ignores the legacy axis-aligned anchor positions on rotated shapes", () => {
+    // Pre-rotation east mid-edge would have been (1_000_000, 500_000),
+    // but the shape is rotated 90° so that point no longer carries an
+    // anchor. Cursor sitting there should miss the snap when the
+    // threshold is tight.
+    const r = snapToAnchor(
+      { x: 1_000_000, y: 500_000 },
+      [{ id: "rotated", box: { x: 0, y: 0, cx: 1_000_000, cy: 1_000_000 }, rotation: 45 }],
+      10_000
+    );
+    expect(r.anchor).toBeNull();
+  });
+});

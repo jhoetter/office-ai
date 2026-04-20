@@ -40,6 +40,16 @@ export interface EditorShellProps {
    * land here later (e.g. a sync status pill for cloud docs).
    */
   readonly topBarExtras?: ReactNode;
+  /**
+   * Imperative request from the product to open (or switch) the
+   * right rail to a specific tab. Bump the `nonce` to trigger the
+   * effect a second time when the same tab needs re-opening (e.g. a
+   * palette command run twice in a row). The shell honours the
+   * request without taking ownership of the rail's open/close
+   * persistence — once the user closes the rail it stays closed
+   * until the next nonce change.
+   */
+  readonly requestRailTab?: { readonly tab: RightRailTab; readonly nonce: number };
 }
 
 /**
@@ -76,8 +86,20 @@ export function EditorShell({
   dropExtension,
   onRenameFilename,
   topBarExtras,
+  requestRailTab,
 }: EditorShellProps): ReactNode {
   const rail = useRightRailController(adapter);
+
+  // Honour imperative open requests from the product (e.g. palette
+  // commands like "Add shape animation" reveal the Animations tab).
+  // We key the effect on the nonce so back-to-back requests for the
+  // same tab still re-open it after the user closed it.
+  useEffect(() => {
+    if (!requestRailTab) return;
+    rail.setTab(requestRailTab.tab);
+    rail.setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestRailTab?.nonce]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findMode, setFindMode] = useState<"find" | "replace">("find");
@@ -109,11 +131,21 @@ export function EditorShell({
         e.preventDefault();
         rail.setTab("comments");
         rail.setOpen(!rail.open);
+        return;
+      }
+      // Cmd+Alt+A — toggle right rail (Animations) when the active
+      // product exposes a renderAnimationsPanel adapter.
+      if (key === "a" && e.altKey) {
+        if (!adapter.renderAnimationsPanel) return;
+        e.preventDefault();
+        const wasOpenOnAnim = rail.open && rail.tab === "animations";
+        rail.setTab("animations");
+        rail.setOpen(!wasOpenOnAnim);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [adapter.findAdapter, rail]);
+  }, [adapter.findAdapter, adapter.renderAnimationsPanel, rail]);
 
   const handleDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
     if (!onFileDrop) return;

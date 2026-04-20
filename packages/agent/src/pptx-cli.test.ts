@@ -942,7 +942,7 @@ describe("office-agent pptx subcommand group", () => {
       expect(slide0.transition?.kind).toBe("fade");
       expect(slide0.animations.length).toBe(2);
       expect(slide0.animations[0]).toMatchObject({
-        effect: "appear",
+        preset: "appear",
         targetCNvPrId: 2,
         order: 0,
       });
@@ -1040,8 +1040,8 @@ describe("office-agent pptx subcommand group", () => {
       const afterAdd = await loadDeterministic(b);
       const anims = afterAdd.getSnapshot().root.slides[0]!.animations;
       expect(anims.length).toBe(2);
-      expect(anims[0]!.effect).toBe("appear");
-      expect(anims[1]!.effect).toBe("fade");
+      expect(anims[0]!.preset).toBe("appear");
+      expect(anims[1]!.preset).toBe("fade");
       expect(anims[1]!.durationMs).toBe(400);
 
       const reverseOrder = [anims[1]!.id, anims[0]!.id].join(",");
@@ -1063,8 +1063,8 @@ describe("office-agent pptx subcommand group", () => {
       expect(code).toBe(0);
       const afterReorder = await loadDeterministic(c);
       const reordered = afterReorder.getSnapshot().root.slides[0]!.animations;
-      expect(reordered[0]!.effect).toBe("fade");
-      expect(reordered[1]!.effect).toBe("appear");
+      expect(reordered[0]!.preset).toBe("fade");
+      expect(reordered[1]!.preset).toBe("appear");
 
       const dropId = reordered[0]!.id;
       const d = join(dir, "d.pptx");
@@ -1076,7 +1076,7 @@ describe("office-agent pptx subcommand group", () => {
       const afterDel = await loadDeterministic(d);
       const left = afterDel.getSnapshot().root.slides[0]!.animations;
       expect(left.length).toBe(1);
-      expect(left[0]!.effect).toBe("appear");
+      expect(left[0]!.preset).toBe("appear");
     });
   });
 
