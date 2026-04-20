@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-19T23:46:46.311Z",
+  "generatedAt": "2026-04-20T08:03:43.950Z",
   "formats": [
     {
       "id": "docx",
@@ -169,6 +169,169 @@
           "fixture": "fixtures/pptx/real/03-large-real-deck.pptx",
           "ok": true,
           "losses": []
+        }
+      ]
+    },
+    {
+      "id": "pdf",
+      "total": 12,
+      "ok": 12,
+      "fixtures": [
+        {
+          "fixture": "fixtures/pdf/acroform-basic.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 6209,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 95
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/acroform-prefilled.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 6606,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 100
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/large-50page.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 14381,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 50,
+            "markdownBytes": 3192
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/metadata-rich.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 996,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 152
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/multi-size-pages.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 1539,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 4,
+            "markdownBytes": 135
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/rotated-pages.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 1497,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 4,
+            "markdownBytes": 111
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/signed-then-modified.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 1030,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 99
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/simple-text-1page.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 987,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 127
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/simple-text-3page.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 1596,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 3,
+            "markdownBytes": 319
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/with-highlight-annot.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 1118,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 68
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/with-link-annot.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 962,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 1,
+            "markdownBytes": 61
+          }
+        },
+        {
+          "fixture": "fixtures/pdf/with-outline.pdf",
+          "ok": true,
+          "losses": [],
+          "pdf": {
+            "bytes": 1718,
+            "isPdfMagic": true,
+            "hasPageHeading": true,
+            "hasTitleHeading": true,
+            "pages": 3,
+            "markdownBytes": 371
+          }
         }
       ]
     }

@@ -566,12 +566,24 @@ importers:
 
   tests:
     dependencies:
+      '@officeai/agent':
+        specifier: workspace:*
+        version: link:../packages/agent
       '@officeai/core':
         specifier: workspace:*
         version: link:../packages/core
       '@officeai/docx':
         specifier: workspace:*
         version: link:../packages/docx
+      '@officeai/pdf':
+        specifier: workspace:*
+        version: link:../packages/pdf
+      '@officeai/pdf-edit':
+        specifier: workspace:*
+        version: link:../packages/pdf-edit
+      '@officeai/pdf-forms':
+        specifier: workspace:*
+        version: link:../packages/pdf-forms
       '@officeai/pptx':
         specifier: workspace:*
         version: link:../packages/pptx
@@ -582,6 +594,9 @@ importers:
       '@types/node':
         specifier: ^22
         version: 22.19.17
+      pdf-lib:
+        specifier: ^1.17.1
+        version: 1.17.1
       typescript:
         specifier: ^5
         version: 5.9.3

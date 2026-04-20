@@ -67,6 +67,20 @@ const FORMATS = [
     agentName: "PptxAgent",
     tally: tallyPptx,
   },
+  {
+    id: "pdf",
+    extension: ".pdf",
+    fixtureDirs: ["fixtures/pdf"],
+    agentEntry: "packages/pdf/dist/index.js",
+    agentName: "PdfAgent",
+    tally: tallyPdf,
+    // PDFs use a bespoke audit (parse + valid bytes + markdown sanity)
+    // instead of the generic tally diff because the serializer
+    // intentionally rewrites the byte stream and only guarantees
+    // attribute fidelity for the page-rotation / reorder / metadata
+    // subset (see packages/pdf/src/serializer/serialize.ts).
+    audit: auditPdfFixture,
+  },
 ];
 
 async function loadAgent(fmt) {
@@ -166,6 +180,73 @@ function tallyXlsx(snapshot) {
   return t;
 }
 
+/** ── PDF walker ──────────────────────────────────────────────── */
+function tallyPdf(snapshot) {
+  const t = blankTally();
+  const root = snapshot.root;
+  bump(t, "pages", root.pages?.length ?? 0);
+  bump(t, "outline-entries", flattenOutlineCount(root.outline ?? []));
+  bump(t, "annotations", root.annotations?.length ?? 0);
+  bump(t, "form-fields", root.formFields?.length ?? 0);
+  bump(t, "signatures", root.signatureCount ?? 0);
+  for (const p of root.pages ?? []) {
+    if (p.rotation && p.rotation !== 0) bump(t, "rotated-pages");
+    if (p.hasTextLayer) bump(t, "pages-with-text");
+  }
+  const md = root.metadata ?? {};
+  for (const k of ["title", "author", "subject", "keywords", "creator", "producer"]) {
+    if (md[k] !== undefined) bump(t, `meta-${k}`);
+  }
+  return t;
+}
+
+function flattenOutlineCount(nodes) {
+  let n = 0;
+  for (const node of nodes) {
+    n += 1 + flattenOutlineCount(node.children ?? []);
+  }
+  return n;
+}
+
+/**
+ * PDF-specific per-fixture auditor. Three gates:
+ *   (a) PdfAgent.fromBuffer succeeds
+ *   (b) agent.exportFile() returns bytes that start with %PDF-
+ *   (c) agent.toMarkdown() emits at least one page heading (and the
+ *       title when one is present in the Info dict)
+ */
+async function auditPdfFixture(Agent, path) {
+  const buf = readFileSync(path);
+  const before = await Agent.fromBuffer(buf);
+  const beforeTally = tallyPdf(before.getSnapshot());
+  const exported = Buffer.from(await before.exportFile());
+  const isPdf = exported.length > 5 && exported.slice(0, 5).toString("ascii") === "%PDF-";
+  const after = await Agent.fromBuffer(exported);
+  const afterTally = tallyPdf(after.getSnapshot());
+  const md = before.toMarkdown();
+  const hasPageHeading = /^### Page \d+/m.test(md);
+  const expectedTitle = before.getSnapshot().root.metadata?.title;
+  const hasTitleHeading =
+    expectedTitle === undefined ? true : md.startsWith(`# ${expectedTitle}`);
+  const diffs = diffTallies(beforeTally, afterTally);
+  const losses = diffs.filter((d) => d.delta < 0);
+  return {
+    fixture: path,
+    ok: isPdf && hasPageHeading && hasTitleHeading && losses.length === 0,
+    losses,
+    gains: diffs.filter((d) => d.delta > 0),
+    diffs,
+    pdf: {
+      bytes: exported.byteLength,
+      isPdfMagic: isPdf,
+      hasPageHeading,
+      hasTitleHeading,
+      pages: before.getSnapshot().root.pages.length,
+      markdownBytes: md.length,
+    },
+  };
+}
+
 /** ── PPTX walker ─────────────────────────────────────────────── */
 function tallyPptx(snapshot) {
   const t = blankTally();
@@ -222,22 +303,26 @@ async function auditFormat(fmt) {
   for (const path of fixtures) {
     let row;
     try {
-      const buf = readFileSync(path);
-      const agentBefore = await Agent.fromBuffer(buf);
-      const before = fmt.tally(agentBefore.getSnapshot());
-      const exported = Buffer.from(await agentBefore.exportFile());
-      const agentAfter = await Agent.fromBuffer(exported);
-      const after = fmt.tally(agentAfter.getSnapshot());
-      const diffs = diffTallies(before, after);
-      const losses = diffs.filter((d) => d.delta < 0);
-      const gains = diffs.filter((d) => d.delta > 0);
-      row = {
-        fixture: path,
-        ok: losses.length === 0,
-        losses,
-        gains,
-        diffs,
-      };
+      if (typeof fmt.audit === "function") {
+        row = await fmt.audit(Agent, path);
+      } else {
+        const buf = readFileSync(path);
+        const agentBefore = await Agent.fromBuffer(buf);
+        const before = fmt.tally(agentBefore.getSnapshot());
+        const exported = Buffer.from(await agentBefore.exportFile());
+        const agentAfter = await Agent.fromBuffer(exported);
+        const after = fmt.tally(agentAfter.getSnapshot());
+        const diffs = diffTallies(before, after);
+        const losses = diffs.filter((d) => d.delta < 0);
+        const gains = diffs.filter((d) => d.delta > 0);
+        row = {
+          fixture: path,
+          ok: losses.length === 0,
+          losses,
+          gains,
+          diffs,
+        };
+      }
     } catch (err) {
       row = { fixture: path, ok: false, error: String(err?.message ?? err) };
     }
@@ -264,9 +349,64 @@ function fmtRow(r) {
   return `  ✗ ${name}: lost ${lossSummary}`;
 }
 
+function parseArgs(argv) {
+  const args = { product: null };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--product" && i + 1 < argv.length) {
+      args.product = argv[i + 1];
+      i++;
+    } else if (argv[i].startsWith("--product=")) {
+      args.product = argv[i].slice("--product=".length);
+    }
+  }
+  return args;
+}
+
+/**
+ * Per-fixture summary row in the JSON envelope. Pulls the PDF-specific
+ * fields out of the audit row when present so consumers don't have to
+ * reach into `losses`/`gains`.
+ */
+function summarizeRow(r) {
+  return {
+    fixture: r.fixture.replace(root + "/", ""),
+    ok: r.ok,
+    losses: r.losses ?? [],
+    ...(r.pdf ? { pdf: r.pdf } : {}),
+    ...(r.error ? { error: r.error } : {}),
+  };
+}
+
 async function main() {
-  const summary = { generatedAt: new Date().toISOString(), formats: [] };
-  for (const fmt of FORMATS) {
+  const args = parseArgs(process.argv.slice(2));
+  const filtered = args.product ? FORMATS.filter((f) => f.id === args.product) : FORMATS;
+  if (filtered.length === 0) {
+    console.error(
+      `--product "${args.product}" not recognised. Known products: ${FORMATS.map((f) => f.id).join(", ")}`,
+    );
+    process.exit(2);
+  }
+
+  // Merge mode: when invoked with --product, preserve previously
+  // recorded entries for the other formats so the JSON stays a
+  // complete snapshot. Without --product (the default 'audit
+  // everything' invocation) the file is rewritten from scratch.
+  const outDir = resolve(root, "docs/build-log");
+  mkdirSync(outDir, { recursive: true });
+  const jsonOut = resolve(outDir, "roundtrip-audit-night.json");
+  let summary = { generatedAt: new Date().toISOString(), formats: [] };
+  if (args.product && existsSync(jsonOut)) {
+    try {
+      const prev = JSON.parse(readFileSync(jsonOut, "utf8"));
+      if (prev && Array.isArray(prev.formats)) {
+        summary.formats = prev.formats.filter((f) => f.id !== args.product);
+      }
+    } catch {
+      // Falling through is safe — we'll just rebuild a fresh file.
+    }
+  }
+
+  for (const fmt of filtered) {
     process.stdout.write(`\n=== ${fmt.id.toUpperCase()} ===\n`);
     let res;
     try {
@@ -291,17 +431,9 @@ async function main() {
       id: fmt.id,
       total,
       ok,
-      fixtures: res.fixtures.map((r) => ({
-        fixture: r.fixture.replace(root + "/", ""),
-        ok: r.ok,
-        losses: r.losses ?? [],
-        error: r.error,
-      })),
+      fixtures: res.fixtures.map(summarizeRow),
     });
   }
-  const outDir = resolve(root, "docs/build-log");
-  mkdirSync(outDir, { recursive: true });
-  const jsonOut = resolve(outDir, "roundtrip-audit-night.json");
   writeFileSync(jsonOut, JSON.stringify(summary, null, 2));
   console.log(`\nJSON summary → ${jsonOut.replace(root + "/", "")}`);
 }
