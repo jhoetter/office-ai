@@ -393,7 +393,6 @@ export function PdfCanvas(props: PdfCanvasProps): ReactNode {
                 totalPages={totalPages}
                 engineDoc={engineDoc}
                 scale={scale}
-                active={p.pageNumber === currentPage}
                 visible={visibleRef.current.has(p.pageNumber)}
                 viewportRotation={viewportRotation}
                 darkMode={darkMode}
@@ -419,7 +418,6 @@ interface PdfPageRenderProps {
   readonly totalPages: number;
   readonly engineDoc: PdfEngineDocument;
   readonly scale: number;
-  readonly active: boolean;
   readonly visible: boolean;
   readonly viewportRotation: PdfRotation;
   readonly darkMode: PdfDarkModeStrategy;
@@ -447,7 +445,6 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
     totalPages,
     engineDoc,
     scale,
-    active,
     visible,
     viewportRotation,
     darkMode,
@@ -602,10 +599,8 @@ function PdfPageRender(props: PdfPageRenderProps): ReactNode {
       data-testid={`pdf-page-${page.pageNumber}`}
       onClick={onClick}
       className={
-        "relative rounded-md border bg-white shadow-sm " +
-        cursorClass +
-        " " +
-        (active ? "border-[var(--accent)]" : "border-divider")
+        "relative rounded-md border border-divider bg-white shadow-sm " +
+        cursorClass
       }
       style={{ width: cssWidth, height: cssHeight }}
     >
