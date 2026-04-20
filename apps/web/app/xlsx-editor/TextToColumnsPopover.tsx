@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Modal-style popover that mimics Excel's "Convert Text to Columns
@@ -37,8 +38,24 @@ function detectPreset(delim: string): Preset {
   return "custom";
 }
 
+function presetLabelKey(p: Preset): string {
+  switch (p) {
+    case "tab":
+      return "xlsx.textToColumns.tab";
+    case "comma":
+      return "xlsx.textToColumns.comma";
+    case "semicolon":
+      return "xlsx.textToColumns.semicolon";
+    case "space":
+      return "xlsx.textToColumns.space";
+    case "custom":
+      return "xlsx.textToColumns.custom";
+  }
+}
+
 function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode {
   const { open, defaultDelimiter = ",", onCancel, onConfirm } = props;
+  const { t } = useTranslator();
   const [preset, setPreset] = useState<Preset>(() => detectPreset(defaultDelimiter));
   const [custom, setCustom] = useState<string>(defaultDelimiter);
   const [collapse, setCollapse] = useState<boolean>(false);
@@ -85,14 +102,14 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
     >
       <div ref={dialogRef} className="w-[320px] rounded-lg border border-divider bg-surface p-4 shadow-lg">
         <h2 id="ttoc-title" className="mb-2 text-sm font-medium text-foreground">
-          Text to Columns
+          {t("xlsx.textToColumns.title")}
         </h2>
         <p className="mb-3 text-xs text-secondary">
-          Split each cell in the selection on the chosen delimiter.
+          {t("xlsx.textToColumns.hint")}
         </p>
 
         <fieldset className="mb-3 space-y-1">
-          <legend className="text-xs text-secondary mb-1">Delimiter</legend>
+          <legend className="text-xs text-secondary mb-1">{t("xlsx.textToColumns.delimiter")}</legend>
           {(["tab", "comma", "semicolon", "space", "custom"] as ReadonlyArray<Preset>).map((p) => (
             <label
               key={p}
@@ -113,7 +130,7 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
                 }}
                 data-testid={`ttoc-preset-${p}`}
               />
-              <span className="capitalize">{p}</span>
+              <span className="capitalize">{t(presetLabelKey(p))}</span>
               {p === "custom" ? (
                 <input
                   ref={customRef}
@@ -121,7 +138,7 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
                   value={custom}
                   onChange={(e) => setCustom(e.target.value)}
                   onFocus={() => setPreset("custom")}
-                  placeholder="e.g. ::"
+                  placeholder={t("xlsx.textToColumns.customPlaceholder")}
                   data-testid="ttoc-custom-input"
                   className="ml-auto h-6 w-24 rounded border border-divider bg-background px-1 font-mono text-xs"
                 />
@@ -141,7 +158,7 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
             onChange={(e) => setCollapse(e.target.checked)}
             data-testid="ttoc-collapse"
           />
-          Treat consecutive delimiters as one
+          {t("xlsx.textToColumns.treatConsecutive")}
         </label>
 
         <div className="flex justify-end gap-2">
@@ -151,7 +168,7 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
             data-testid="ttoc-cancel"
             className="h-8 rounded border border-divider bg-background px-3 text-xs text-foreground hover:bg-hover"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -160,7 +177,7 @@ function TextToColumnsPopoverInner(props: TextToColumnsPopoverProps): ReactNode 
             data-testid="ttoc-confirm"
             className="h-8 rounded bg-[var(--ai-violet)] px-3 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
-            Split
+            {t("xlsx.textToColumns.split")}
           </button>
         </div>
       </div>

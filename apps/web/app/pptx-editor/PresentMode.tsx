@@ -4,6 +4,7 @@ import * as React from "react";
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Monitor, X } from "lucide-react";
 import type { ChartPart, NotesSlide, PptxSnapshot, Slide, SlideSize, ThemeColorScheme } from "@officeai/pptx";
 import { slideAspectRatio, slideToSvgString } from "@officeai/pptx/renderer";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * D10 — Present mode + speaker view.
@@ -33,6 +34,7 @@ export interface PresentModeProps {
 }
 
 export function PresentMode(props: PresentModeProps): React.ReactElement {
+  const { t } = useTranslator();
   const slides = props.snapshot.root.slides;
   const slideSize = props.snapshot.root.slideSize;
   const theme = props.snapshot.root.themeDefault;
@@ -144,31 +146,31 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
       data-testid="pptx-present-mode"
       role="dialog"
       aria-modal="true"
-      aria-label="Presentation"
+      aria-label={t("pptx.present.ariaLabel")}
       className="fixed inset-0 z-[100] flex flex-col bg-black text-white"
     >
       <header className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
         <div className="flex items-center gap-2 opacity-70">
           <span data-testid="pptx-present-counter">
-            Slide {index + 1} / {total}
+            {t("pptx.present.slideCounter", { n: index + 1, total })}
           </span>
           <span className="hidden sm:inline">·</span>
-          <span className="hidden sm:inline">Elapsed {formatElapsed(now - startedAt)}</span>
+          <span className="hidden sm:inline">{t("pptx.present.elapsed", { time: formatElapsed(now - startedAt) })}</span>
         </div>
         <div className="flex items-center gap-1">
           <PresentBarButton
-            label="Speaker view (S)"
+            label={t("pptx.present.speakerView")}
             active={showSpeaker}
             onClick={() => setShowSpeaker((v) => !v)}
             icon={<Monitor size={14} />}
           />
           <PresentBarButton
-            label={isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"}
+            label={isFullscreen ? t("pptx.present.exitFullscreen") : t("pptx.present.fullscreen")}
             onClick={toggleFullscreen}
             icon={isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           />
           <PresentBarButton
-            label="Exit present mode (Esc)"
+            label={t("pptx.present.exitPresent")}
             onClick={close}
             icon={<X size={14} />}
             testId="pptx-present-close"
@@ -182,7 +184,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
           type="button"
           onClick={next}
           className="relative flex min-h-0 flex-1 cursor-pointer items-center justify-center bg-transparent"
-          aria-label="Advance slide"
+          aria-label={t("pptx.present.advanceSlide")}
           data-testid="pptx-present-stage"
         >
           {currentSlide ? (
@@ -195,7 +197,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
               aspectRatio={aspect}
             />
           ) : (
-            <span className="text-sm opacity-60">No slides</span>
+            <span className="text-sm opacity-60">{t("pptx.present.noSlides")}</span>
           )}
         </button>
 
@@ -206,7 +208,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
             className="flex w-[320px] shrink-0 flex-col gap-3 overflow-hidden rounded-md bg-zinc-900/80 p-3 text-xs"
           >
             <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-400">Speaker notes</div>
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-400">{t("pptx.present.speakerNotes")}</div>
               <div
                 data-testid="pptx-present-notes"
                 className="max-h-[42vh] min-h-[120px] overflow-auto whitespace-pre-wrap rounded border border-zinc-700 bg-zinc-950 p-2 text-sm leading-relaxed"
@@ -214,12 +216,12 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
                 {notesText.length > 0 ? (
                   notesText
                 ) : (
-                  <span className="text-zinc-500">No notes for this slide.</span>
+                  <span className="text-zinc-500">{t("pptx.present.noNotes")}</span>
                 )}
               </div>
             </div>
             <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-400">Up next</div>
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-400">{t("pptx.present.upNext")}</div>
               {nextSlide ? (
                 <NextSlidePreview
                   slide={nextSlide}
@@ -230,7 +232,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
                 />
               ) : (
                 <div className="rounded border border-dashed border-zinc-700 p-4 text-center text-zinc-500">
-                  Last slide
+                  {t("pptx.present.lastSlide")}
                 </div>
               )}
             </div>
@@ -241,7 +243,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
                 disabled={index === 0}
                 className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-zinc-800 disabled:opacity-30"
               >
-                <ChevronLeft size={14} /> Prev
+                <ChevronLeft size={14} /> {t("pptx.present.prev")}
               </button>
               <span>{formatClock(now)}</span>
               <button
@@ -250,7 +252,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
                 disabled={index === total - 1}
                 className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-zinc-800 disabled:opacity-30"
               >
-                Next <ChevronRight size={14} />
+                {t("pptx.present.next")} <ChevronRight size={14} />
               </button>
             </div>
           </aside>

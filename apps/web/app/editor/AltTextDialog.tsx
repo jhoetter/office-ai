@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useFocusTrap } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B6 — alt-text editor.
@@ -26,6 +27,7 @@ export interface AltTextDialogProps {
 
 export function AltTextDialog(props: AltTextDialogProps) {
   const { open, initial, imageId, onClose, onSubmit } = props;
+  const { t } = useTranslator();
   const [draft, setDraft] = useState<string>(initial);
   const [decorative, setDecorative] = useState<boolean>(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -69,15 +71,15 @@ export function AltTextDialog(props: AltTextDialogProps) {
         <header className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3">
           <div>
             <h2 id="alt-text-title" className="text-base font-semibold">
-              Edit alt text
+              {t("docx.altText.title")}
             </h2>
             <p className="text-xs text-secondary">
-              Describe the image so screen readers can convey its meaning.
+              {t("docx.altText.hint")}
             </p>
           </div>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("common.close")}
             onClick={onClose}
             className="rounded p-1 text-secondary transition-colors hover:bg-hover hover:text-default"
           >
@@ -87,7 +89,7 @@ export function AltTextDialog(props: AltTextDialogProps) {
 
         <div className="flex flex-col gap-3 px-5 py-4 text-sm">
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wide text-secondary">Description</span>
+            <span className="text-xs font-medium uppercase tracking-wide text-secondary">{t("common.description")}</span>
             <textarea
               ref={textareaRef}
               value={draft}
@@ -97,7 +99,7 @@ export function AltTextDialog(props: AltTextDialogProps) {
               }}
               rows={4}
               className="resize-y rounded border border-divider bg-background px-2 py-1.5"
-              placeholder="e.g. Bar chart comparing Q1–Q4 revenue."
+              placeholder={t("docx.altText.placeholder")}
               data-testid="alt-text-input"
               disabled={decorative}
             />
@@ -111,7 +113,7 @@ export function AltTextDialog(props: AltTextDialogProps) {
                 if (e.target.checked) setDraft("");
               }}
             />
-            <span>Mark as decorative (skipped by screen readers)</span>
+            <span>{t("docx.altText.decorative")}</span>
           </label>
         </div>
 
@@ -121,7 +123,7 @@ export function AltTextDialog(props: AltTextDialogProps) {
             onClick={onClose}
             className="rounded border border-divider bg-background px-3 py-1.5 text-sm hover:bg-hover"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -129,7 +131,7 @@ export function AltTextDialog(props: AltTextDialogProps) {
             className="rounded border border-transparent bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
             data-testid="alt-text-submit"
           >
-            Save
+            {t("common.save")}
           </button>
         </footer>
       </div>

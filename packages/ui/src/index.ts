@@ -31,6 +31,16 @@ export { PresenceStack, type PresenceStackProps, type PresencePeer } from "./pri
 /* Toolbar grouping (Word/Excel/PowerPoint cluster + caption) */
 export { ToolbarGroup, type ToolbarGroupProps } from "./primitives/toolbar-group";
 
+/* Drag-resize chrome (8 handles for image / chart / shape selection) */
+export {
+  ResizeHandles,
+  ALL_RESIZE_HANDLE_SIDES,
+  isCornerSide,
+  type ResizeHandlesProps,
+  type ResizeHandleSide,
+  type ResizeHandleGrabInfo,
+} from "./primitives/resize-handles";
+
 /* Hooks */
 export { useFocusTrap } from "./hooks/use-focus-trap";
 

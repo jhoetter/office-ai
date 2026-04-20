@@ -18,6 +18,10 @@ import { defineConfig, devices } from "@playwright/test";
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
 const isCI = !!process.env.CI;
+// The realtime websocket server (apps/realtime-server) listens on
+// 1234 by default and is required by the multi-tab `realtime.spec.ts`
+// scenario. Mirror the convention used by `make dev`.
+const RT_PORT = Number(process.env.OAI_RT_PORT ?? 1234);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -44,15 +48,31 @@ export default defineConfig({
   ],
   webServer: process.env.E2E_BASE_URL
     ? undefined
-    : {
-        // `next start` requires `next build` to have run; the Makefile
-        // target does that before invoking Playwright. We bind to a
-        // dedicated port so a dev-server on :3000 doesn't conflict.
-        command: `pnpm exec next start --port ${PORT}`,
-        port: PORT,
-        reuseExistingServer: !isCI,
-        timeout: 120_000,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
+    : [
+        {
+          // `next start` requires `next build` to have run; the Makefile
+          // target does that before invoking Playwright. We bind to a
+          // dedicated port so a dev-server on :3000 doesn't conflict.
+          command: `pnpm exec next start --port ${PORT}`,
+          port: PORT,
+          reuseExistingServer: !isCI,
+          timeout: 120_000,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+        {
+          // y-websocket peer required by `realtime.spec.ts`. The other
+          // specs ignore the port, so the only cost of always starting
+          // it is ~1 s of startup. Run from the repo root so the
+          // workspace filter resolves the package by name.
+          command: `pnpm --filter @officeai/realtime-server dev`,
+          cwd: "../..",
+          url: `http://localhost:${RT_PORT}/health`,
+          reuseExistingServer: !isCI,
+          timeout: 30_000,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { OAI_RT_PORT: String(RT_PORT) },
+        },
+      ],
 });

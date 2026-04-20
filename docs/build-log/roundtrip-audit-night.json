@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-19T23:46:46.311Z",
+  "generatedAt": "2026-04-20T06:07:47.645Z",
   "formats": [
     {
       "id": "docx",
@@ -9,57 +9,153 @@
         {
           "fixture": "fixtures/docx/real-world/01-styled-letter.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 7,
+            "run-bold": 1,
+            "run-italic": 2,
+            "text-leaves": 12
+          },
+          "spotCheckHashBefore": "d20d02cc2902891213a8077719b6b88d9cbfbe56",
+          "spotCheckHashAfter": "d20d02cc2902891213a8077719b6b88d9cbfbe56",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/02-report-headers-footers.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 46,
+            "text-leaves": 45
+          },
+          "spotCheckHashBefore": "5bd3b5d3f79205fe548a3375d7d1e84934223eb1",
+          "spotCheckHashAfter": "5bd3b5d3f79205fe548a3375d7d1e84934223eb1",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/03-numbered-list.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 6,
+            "text-leaves": 6
+          },
+          "spotCheckHashBefore": "9c86ba361f0d50d02b9c1c3d1026697bdee008c2",
+          "spotCheckHashAfter": "9c86ba361f0d50d02b9c1c3d1026697bdee008c2",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/04-table-grid.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 2,
+            "text-leaves": 2
+          },
+          "spotCheckHashBefore": "bb9b2fb6e137c07e9612b3cde29e3a83cfa9cb49",
+          "spotCheckHashAfter": "bb9b2fb6e137c07e9612b3cde29e3a83cfa9cb49",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/05-inline-image.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "drawings": 1,
+            "paragraphs": 3,
+            "text-leaves": 4
+          },
+          "spotCheckHashBefore": "b6e21d035694cc3cc999b4bac15f587b0fd98adf",
+          "spotCheckHashAfter": "b6e21d035694cc3cc999b4bac15f587b0fd98adf",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/06-comments-and-changes.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 3,
+            "text-leaves": 5
+          },
+          "spotCheckHashBefore": "a6687abe09154f0b7224b384eb8750353bf28a4e",
+          "spotCheckHashAfter": "a6687abe09154f0b7224b384eb8750353bf28a4e",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/07-toc-sdt.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraph-alignment": 12,
+            "paragraphs": 414,
+            "run-bold": 105,
+            "run-color": 13,
+            "run-font-size": 8,
+            "run-italic": 5,
+            "text-leaves": 370
+          },
+          "spotCheckHashBefore": "3b31636d38040faf31b9691dbaf06af0a957b602",
+          "spotCheckHashAfter": "3b31636d38040faf31b9691dbaf06af0a957b602",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/08-shaded-callout-table.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 2,
+            "text-leaves": 2
+          },
+          "spotCheckHashBefore": "9c015eac2b334af262d72440b3536a72acda24fb",
+          "spotCheckHashAfter": "9c015eac2b334af262d72440b3536a72acda24fb",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/09-multi-column-section.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 6,
+            "text-leaves": 6
+          },
+          "spotCheckHashBefore": "ad908c2ccc9904e92ed3c6f8d4f554278c5dcb51",
+          "spotCheckHashAfter": "ad908c2ccc9904e92ed3c6f8d4f554278c5dcb51",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/10-landscape-section.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 7,
+            "text-leaves": 6
+          },
+          "spotCheckHashBefore": "0a58bc69dcf3f581ab1905af16f09c5ac6d1ce44",
+          "spotCheckHashAfter": "0a58bc69dcf3f581ab1905af16f09c5ac6d1ce44",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/docx/real-world/11-textbox.docx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "paragraphs": 3,
+            "text-leaves": 3
+          },
+          "spotCheckHashBefore": "9fbdae27b2fb5c3893f56788820aeae7e932d3b9",
+          "spotCheckHashAfter": "9fbdae27b2fb5c3893f56788820aeae7e932d3b9",
+          "spotCheckMatches": true
         }
       ]
     },
@@ -71,32 +167,107 @@
         {
           "fixture": "fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "cells": 19,
+            "fills": 2,
+            "fonts": 1,
+            "merges": 0,
+            "num-fmts": 1,
+            "sheets": 1
+          },
+          "spotCheckHashBefore": "ffef598656126deea81f3d49842ba166193d9768",
+          "spotCheckHashAfter": "ffef598656126deea81f3d49842ba166193d9768",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/xlsx/synthetic/02-multi-sheet.xlsx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "cells": 62,
+            "fills": 2,
+            "fonts": 1,
+            "formulas": 6,
+            "merges": 0,
+            "num-fmts": 1,
+            "sheets": 3
+          },
+          "spotCheckHashBefore": "32619d32b167f321ffbe08355016f70fd48f8a92",
+          "spotCheckHashAfter": "32619d32b167f321ffbe08355016f70fd48f8a92",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/xlsx/synthetic/03-formulas-basic.xlsx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "cells": 39,
+            "fills": 2,
+            "fonts": 1,
+            "formulas": 12,
+            "merges": 0,
+            "num-fmts": 1,
+            "sheets": 2
+          },
+          "spotCheckHashBefore": "8a67c71edb7bac27ad49bb08fc9dc09331a31837",
+          "spotCheckHashAfter": "8a67c71edb7bac27ad49bb08fc9dc09331a31837",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/xlsx/synthetic/04-merged-and-formatted.xlsx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "cells": 21,
+            "fills": 2,
+            "fonts": 1,
+            "merges": 1,
+            "num-fmts": 3,
+            "sheets": 1,
+            "styled-cells": 12
+          },
+          "spotCheckHashBefore": "081afb407c49e1efc74a047b3a3ab150b1d61005",
+          "spotCheckHashAfter": "081afb407c49e1efc74a047b3a3ab150b1d61005",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/xlsx/synthetic/05-comments-hyperlinks.xlsx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "cells": 12,
+            "fills": 2,
+            "fonts": 1,
+            "merges": 0,
+            "num-fmts": 3,
+            "sheets": 1
+          },
+          "spotCheckHashBefore": "5ed4e668d0c48a978165644958b722e54c2fa845",
+          "spotCheckHashAfter": "5ed4e668d0c48a978165644958b722e54c2fa845",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/xlsx/synthetic/06-large-grid.xlsx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "cells": 7007,
+            "fills": 2,
+            "fonts": 1,
+            "merges": 0,
+            "num-fmts": 3,
+            "sheets": 1
+          },
+          "spotCheckHashBefore": "d4876d750aa9d2bceb27a4f6bab0d3835ab0452c",
+          "spotCheckHashAfter": "d4876d750aa9d2bceb27a4f6bab0d3835ab0452c",
+          "spotCheckMatches": true
         }
       ]
     },
@@ -108,67 +279,172 @@
         {
           "fixture": "fixtures/pptx/synthetic/01-blank.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "slides": 1
+          },
+          "spotCheckHashBefore": "855c43f77a22fd19f0c5c9a8c60a917ae121085d",
+          "spotCheckHashAfter": "855c43f77a22fd19f0c5c9a8c60a917ae121085d",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/02-title-only.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 1,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "07c05b577811d7f4cc0b5b8efeeecac664d09990",
+          "spotCheckHashAfter": "07c05b577811d7f4cc0b5b8efeeecac664d09990",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/03-title-and-content.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 2,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "12bd17013f92626d9b4496581461121f8df0c38b",
+          "spotCheckHashAfter": "12bd17013f92626d9b4496581461121f8df0c38b",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/04-multi-shape.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 6,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "344258954372e92af3383594ed1713040619ff61",
+          "spotCheckHashAfter": "344258954372e92af3383594ed1713040619ff61",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/05-with-image.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 3,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "424f659dc3d5f8fe0c65df3cc365d3e173dfd58a",
+          "spotCheckHashAfter": "424f659dc3d5f8fe0c65df3cc365d3e173dfd58a",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/06-with-table.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 2,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "b527bfc51fdd5452068d5e1d5595ad6a8f29be37",
+          "spotCheckHashAfter": "b527bfc51fdd5452068d5e1d5595ad6a8f29be37",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/07-multi-slide.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 8,
+            "slides": 8
+          },
+          "spotCheckHashBefore": "7c320af29e027fa5164ca1e707d6fd476bf35f83",
+          "spotCheckHashAfter": "7c320af29e027fa5164ca1e707d6fd476bf35f83",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/08-large-deck.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 100,
+            "slides": 50
+          },
+          "spotCheckHashBefore": "e91ccfc53ebd35c38c361c41b5cda4e8d12750ed",
+          "spotCheckHashAfter": "e91ccfc53ebd35c38c361c41b5cda4e8d12750ed",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/09-with-chart.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "charts": 1,
+            "shapes": 2,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "b1c0e31259b60dd9e19a26f915dd8440b989e5b4",
+          "spotCheckHashAfter": "b1c0e31259b60dd9e19a26f915dd8440b989e5b4",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/synthetic/10-with-anim.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "animation-step": 2,
+            "shapes": 2,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "e66c828c297d134ac42b98aa820ffe9f363c0393",
+          "spotCheckHashAfter": "e66c828c297d134ac42b98aa820ffe9f363c0393",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/real/01-styled-deck.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 7,
+            "slides": 3
+          },
+          "spotCheckHashBefore": "8e0b44d38f01e00b5f60fd9ffd8a26ab6ec741ac",
+          "spotCheckHashAfter": "8e0b44d38f01e00b5f60fd9ffd8a26ab6ec741ac",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/real/02-mixed-media.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 6,
+            "slides": 1
+          },
+          "spotCheckHashBefore": "031354b19b3622811f256cb48c5f07bec3dea131",
+          "spotCheckHashAfter": "031354b19b3622811f256cb48c5f07bec3dea131",
+          "spotCheckMatches": true
         },
         {
           "fixture": "fixtures/pptx/real/03-large-real-deck.pptx",
           "ok": true,
-          "losses": []
+          "losses": [],
+          "gains": [],
+          "counts": {
+            "shapes": 75,
+            "slides": 25
+          },
+          "spotCheckHashBefore": "a84fb477e80819fdad9c1699ff84966c0ebca670",
+          "spotCheckHashAfter": "a84fb477e80819fdad9c1699ff84966c0ebca670",
+          "spotCheckMatches": true
         }
       ]
     }

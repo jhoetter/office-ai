@@ -532,6 +532,29 @@ export interface Picture extends ShapeBase {
   readonly blipFillTail: ReadonlyArray<OpaqueXml>;
   readonly spPrTail: ReadonlyArray<OpaqueXml>;
   readonly styleRaw?: OpaqueXml;
+  /**
+   * D7 — image crop rect (`<a:srcRect>`). Each side is a percentage
+   * (0–100) of the original image to chop off; an absent field means
+   * "no crop" (PowerPoint's default). Round-trips verbatim through
+   * the OOXML `<a:srcRect l="…" t="…" r="…" b="…">` attribute set,
+   * which uses 1000ths-of-a-percent units (the serializer multiplies
+   * by 1000, the parser divides by 1000).
+   */
+  readonly srcRect?: PictureSrcRect;
+}
+
+/**
+ * D7 — `<a:srcRect>` payload as percentages of the original image.
+ * Each side defaults to 0 when omitted; the four-sides convention
+ * mirrors OOXML where any absent attribute is treated as zero. Use
+ * `0/0/0/0` (or simply omit `Picture.srcRect`) to clear an existing
+ * crop.
+ */
+export interface PictureSrcRect {
+  readonly leftPct: number;
+  readonly topPct: number;
+  readonly rightPct: number;
+  readonly bottomPct: number;
 }
 
 /**

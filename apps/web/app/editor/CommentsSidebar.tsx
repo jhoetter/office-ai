@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { CommentsSidebar as SharedCommentsSidebar } from "@officeai/ui";
 import type { CommentsProvider } from "@officeai/comments";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Thin DOCX-shell wrapper around the format-agnostic
@@ -28,11 +29,12 @@ export interface CommentsSidebarProps {
 }
 
 export function CommentsSidebar(props: CommentsSidebarProps): ReactNode {
+  const { t } = useTranslator();
   return (
     <SharedCommentsSidebar
       provider={props.provider}
       onScrollTo={props.onScrollTo}
-      emptyHint="No comments yet. Select text and click the comment button in the toolbar."
+      emptyHint={t("docx.comments.emptyHint")}
     />
   );
 }

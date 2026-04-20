@@ -35,6 +35,7 @@
  * line.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -104,6 +105,12 @@ function listFixtures(fmt) {
 function tallyDocx(snapshot) {
   const t = blankTally();
   const root = snapshot.root;
+  // Document-level rels keyed by owning part path (see DocxDocument.relationships).
+  // The hyperlink-rel counter cross-references its `relationshipId`
+  // against this set so internal anchors (which carry an `anchor`
+  // but no `relationshipId`) are excluded by construction.
+  const docRels = root.relationships?.get?.("word/document.xml") ?? [];
+  const docRelIds = new Set(docRels.map((r) => r.id));
   for (const block of root.body ?? []) {
     if (block.kind !== "paragraph") continue;
     bump(t, "paragraphs");
@@ -111,6 +118,12 @@ function tallyDocx(snapshot) {
     if (p.properties?.alignment) bump(t, "paragraph-alignment");
     if (p.properties?.numPr?.numId !== undefined) bump(t, "paragraph-list");
     for (const child of p.children ?? []) {
+      if (child.kind === "hyperlink") {
+        if (child.relationshipId && docRelIds.has(child.relationshipId)) {
+          bump(t, "hyperlink-rel");
+        }
+        continue;
+      }
       if (child.kind !== "run") continue;
       const r = child;
       if (r.properties?.bold) bump(t, "run-bold");
@@ -133,13 +146,20 @@ function tallyDocx(snapshot) {
     if (sect.pgSz.orient === "landscape") bump(t, "page-landscape");
   }
   if (sect?.pgMar) bump(t, "page-margins");
-  return t;
+  return { counts: t, spotCheckHash: spotCheckHashDocx(snapshot) };
 }
 
 /** ── XLSX walker ─────────────────────────────────────────────── */
 function tallyXlsx(snapshot) {
   const t = blankTally();
   const wb = snapshot.root;
+  const styles = wb.styles;
+  // Default font/fill records the StyleTable always reserves at slot
+  // 0. We compare the resolved per-cell font/fill against these to
+  // tell whether the cell carries an *authored* override vs. the
+  // implicit baseline. defaultStyleTable() guarantees they exist
+  // even on workbooks without an `xl/styles.xml` part.
+  const defaultFont = styles?.fonts?.[0];
   for (const sheet of wb.sheets ?? []) {
     bump(t, "sheets");
     if (sheet.charts && sheet.charts.length > 0) bump(t, "charts", sheet.charts.length);
@@ -154,16 +174,41 @@ function tallyXlsx(snapshot) {
       bump(t, "cells");
       if (cell.formula) bump(t, "formulas");
       if (cell.styleId !== undefined) bump(t, "styled-cells");
+      if (styles && cell.styleId !== undefined) {
+        const xf = styles.cellXfs?.[cell.styleId];
+        if (xf) {
+          const font = styles.fonts?.[xf.fontId ?? 0];
+          if (fontHasNonDefaultColor(font, defaultFont)) bump(t, "font-color");
+          const fill = styles.fills?.[xf.fillId ?? 0];
+          if (fillIsNonDefault(fill)) bump(t, "font-fill");
+        }
+      }
     }
   }
-  // Style table
-  const styles = wb.styles;
   if (styles) {
     if (styles.fonts) bump(t, "fonts", styles.fonts.length);
     if (styles.fills) bump(t, "fills", styles.fills.length);
-    if (styles.numFmts) bump(t, "num-fmts", styles.numFmts.length);
+    if (styles.numFmts) bump(t, "num-fmts", styles.numFmts.size ?? styles.numFmts.length ?? 0);
   }
-  return t;
+  return { counts: t, spotCheckHash: spotCheckHashXlsx(snapshot) };
+}
+
+function fontHasNonDefaultColor(font, defaultFont) {
+  if (!font?.color) return false;
+  const a = stableStringify(font.color);
+  const b = defaultFont?.color ? stableStringify(defaultFont.color) : "null";
+  return a !== b;
+}
+
+function fillIsNonDefault(fill) {
+  if (!fill) return false;
+  if (fill.kind === "gradient") return true;
+  // Slots 0 (`none`) and 1 (`gray125`) are the OOXML stock fills
+  // every workbook reserves; anything else is an authored fill.
+  if (fill.patternType && fill.patternType !== "none" && fill.patternType !== "gray125") {
+    return true;
+  }
+  return Boolean(fill.fgColor || fill.bgColor);
 }
 
 /** ── PPTX walker ─────────────────────────────────────────────── */
@@ -172,10 +217,12 @@ function tallyPptx(snapshot) {
   const pres = snapshot.root;
   bump(t, "slides", pres.slides?.length ?? 0);
   for (const slide of pres.slides ?? []) {
+    if (slide.animations?.length) bump(t, "animation-step", slide.animations.length);
     for (const shape of slide.shapes ?? []) {
       bump(t, "shapes");
       if (shape.kind === "picture") bump(t, "pictures");
       if (shape.kind === "chart") bump(t, "charts");
+      if (shape.kind === "connector") bump(t, "connector");
       if (shape.kind === "text" || shape.kind === "shape") {
         for (const para of shape.text?.paragraphs ?? []) {
           if (para.alignment) bump(t, "paragraph-alignment");
@@ -190,7 +237,7 @@ function tallyPptx(snapshot) {
       }
     }
   }
-  return t;
+  return { counts: t, spotCheckHash: spotCheckHashPptx(snapshot) };
 }
 
 function blankTally() {
@@ -212,6 +259,145 @@ function diffTallies(before, after) {
   return rows;
 }
 
+/**
+ * Deterministic JSON serialization. Sorts object keys, expands
+ * `Map` / `Set` to sorted-key forms, and skips `id` fields whose
+ * values are minted at parse time and would otherwise nondeterminize
+ * the spot-check hash on a parse → export → parse round-trip.
+ */
+function stableStringify(value, seen = new WeakSet()) {
+  if (value === null || value === undefined) return JSON.stringify(value ?? null);
+  if (typeof value !== "object") {
+    if (typeof value === "function") return JSON.stringify(null);
+    return JSON.stringify(value);
+  }
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+    return JSON.stringify(`<bytes:${value.byteLength}>`);
+  }
+  if (seen.has(value)) return JSON.stringify("<cycle>");
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return "[" + value.map((v) => stableStringify(v, seen)).join(",") + "]";
+  }
+  if (value instanceof Map) {
+    const entries = [...value.entries()].sort((a, b) =>
+      String(a[0]).localeCompare(String(b[0]))
+    );
+    return (
+      "{" +
+      entries
+        .map(([k, v]) => JSON.stringify(String(k)) + ":" + stableStringify(v, seen))
+        .join(",") +
+      "}"
+    );
+  }
+  if (value instanceof Set) {
+    const items = [...value].map((v) => stableStringify(v, seen)).sort();
+    return "[" + items.join(",") + "]";
+  }
+  const keys = Object.keys(value)
+    .filter((k) => k !== "id")
+    .sort();
+  return (
+    "{" +
+    keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k], seen)).join(",") +
+    "}"
+  );
+}
+
+function sha1Hex(s) {
+  return createHash("sha1").update(s).digest("hex");
+}
+
+/**
+ * XLSX spot-check: hash the first 5 cells in row-major order on the
+ * first sheet, including value/formula/styleId. Catches structural
+ * drift the per-attribute counters can't see — e.g. a swap that
+ * leaves the totals balanced but shuffles cell positions.
+ */
+function spotCheckHashXlsx(snapshot) {
+  const sheet = snapshot?.root?.sheets?.[0];
+  if (!sheet) return sha1Hex("xlsx:empty");
+  const cells = [...(sheet.cells?.values?.() ?? [])];
+  cells.sort((a, b) => a.row - b.row || a.col - b.col);
+  const sample = cells.slice(0, 5).map((c) => ({
+    row: c.row,
+    col: c.col,
+    value: c.value,
+    formula: c.formula?.text ?? null,
+    styleId: c.styleId ?? null,
+  }));
+  return sha1Hex("xlsx:" + stableStringify(sample));
+}
+
+/**
+ * DOCX spot-check: hash the first 5 runs in document order
+ * (descending into paragraphs and into hyperlink children).
+ */
+function spotCheckHashDocx(snapshot) {
+  const sample = [];
+  outer: for (const block of snapshot?.root?.body ?? []) {
+    if (block.kind !== "paragraph") continue;
+    for (const child of block.children ?? []) {
+      if (child.kind === "run") {
+        sample.push(projectDocxRun(child));
+        if (sample.length >= 5) break outer;
+      } else if (child.kind === "hyperlink") {
+        for (const r of child.children ?? []) {
+          sample.push({ ...projectDocxRun(r), inHyperlink: true });
+          if (sample.length >= 5) break outer;
+        }
+      }
+    }
+  }
+  return sha1Hex("docx:" + stableStringify(sample));
+}
+
+function projectDocxRun(run) {
+  return {
+    properties: run.properties ?? {},
+    children: (run.children ?? []).map((leaf) => ({
+      kind: leaf.kind,
+      text: leaf.kind === "text" ? leaf.text ?? null : undefined,
+    })),
+  };
+}
+
+/**
+ * PPTX spot-check: hash the first 5 shapes across all slides in
+ * slide-then-z-order. Top-level shapes only (group children are
+ * not flattened) to match the connector-counter scope.
+ */
+function spotCheckHashPptx(snapshot) {
+  const sample = [];
+  outer: for (const slide of snapshot?.root?.slides ?? []) {
+    for (const shape of slide.shapes ?? []) {
+      sample.push(projectPptxShape(shape));
+      if (sample.length >= 5) break outer;
+    }
+  }
+  return sha1Hex("pptx:" + stableStringify(sample));
+}
+
+function projectPptxShape(shape) {
+  return {
+    kind: shape.kind,
+    name: shape.name ?? null,
+    cNvPrId: shape.cNvPrId ?? null,
+    position: shape.position ?? null,
+    size: shape.size ?? null,
+    placeholder: shape.placeholder ?? null,
+    paragraphCount:
+      shape.txBody?.paragraphs?.length ??
+      shape.text?.paragraphs?.length ??
+      null,
+    // Connector-specific structural bits we care about for drift.
+    connectorType: shape.connectorType ?? null,
+    start: shape.start ?? null,
+    end: shape.end ?? null,
+  };
+}
+
 async function auditFormat(fmt) {
   const Agent = await loadAgent(fmt);
   const fixtures = listFixtures(fmt);
@@ -228,15 +414,19 @@ async function auditFormat(fmt) {
       const exported = Buffer.from(await agentBefore.exportFile());
       const agentAfter = await Agent.fromBuffer(exported);
       const after = fmt.tally(agentAfter.getSnapshot());
-      const diffs = diffTallies(before, after);
+      const diffs = diffTallies(before.counts, after.counts);
       const losses = diffs.filter((d) => d.delta < 0);
       const gains = diffs.filter((d) => d.delta > 0);
+      const spotCheckMatches = before.spotCheckHash === after.spotCheckHash;
       row = {
         fixture: path,
-        ok: losses.length === 0,
+        ok: losses.length === 0 && spotCheckMatches,
         losses,
         gains,
         diffs,
+        spotCheckHashBefore: before.spotCheckHash,
+        spotCheckHashAfter: after.spotCheckHash,
+        spotCheckMatches,
       };
     } catch (err) {
       row = { fixture: path, ok: false, error: String(err?.message ?? err) };
@@ -249,19 +439,21 @@ async function auditFormat(fmt) {
 function fmtRow(r) {
   if (r.error) return `  ✗ ${r.fixture.split("/").slice(-2).join("/")}: ERROR ${r.error}`;
   const name = r.fixture.split("/").slice(-2).join("/");
+  const spotTag = r.spotCheckMatches === false ? " [spot-check drift]" : "";
   if (r.ok && r.gains.length === 0) {
     const total = r.diffs.reduce((a, d) => a + d.before, 0);
-    return `  ✓ ${name} (${total} attrs, exact match)`;
+    return `  ✓ ${name} (${total} attrs, exact match, spot=${(r.spotCheckHashBefore ?? "").slice(0, 8)})`;
   }
   const lossSummary = r.losses.map((l) => `${l.attribute} ${l.before}→${l.after}`).join(", ");
   const gainSummary = r.gains.map((g) => `${g.attribute} ${g.before}→${g.after}`).join(", ");
   if (r.ok && r.gains.length > 0) {
-    return `  ⚠ ${name}: gained ${gainSummary}`;
+    return `  ⚠ ${name}: gained ${gainSummary}${spotTag}`;
   }
   if (lossSummary && gainSummary) {
-    return `  ✗ ${name}: lost ${lossSummary}; gained ${gainSummary}`;
+    return `  ✗ ${name}: lost ${lossSummary}; gained ${gainSummary}${spotTag}`;
   }
-  return `  ✗ ${name}: lost ${lossSummary}`;
+  if (lossSummary) return `  ✗ ${name}: lost ${lossSummary}${spotTag}`;
+  return `  ✗ ${name}:${spotTag || " spot-check mismatch"}`;
 }
 
 async function main() {
@@ -295,6 +487,16 @@ async function main() {
         fixture: r.fixture.replace(root + "/", ""),
         ok: r.ok,
         losses: r.losses ?? [],
+        gains: r.gains ?? [],
+        // Full per-counter table so any new counters (e.g.
+        // `font-color`, `hyperlink-rel`, `connector`) appear in
+        // the report even when the round-trip is clean.
+        counts: r.diffs
+          ? Object.fromEntries(r.diffs.map((d) => [d.attribute, d.before]))
+          : undefined,
+        spotCheckHashBefore: r.spotCheckHashBefore,
+        spotCheckHashAfter: r.spotCheckHashAfter,
+        spotCheckMatches: r.spotCheckMatches,
         error: r.error,
       })),
     });
@@ -306,7 +508,25 @@ async function main() {
   console.log(`\nJSON summary → ${jsonOut.replace(root + "/", "")}`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run automatically when invoked as a script (`node
+// scripts/audit-roundtrip.mjs`) so tests can import the tally /
+// spot-check helpers without triggering an audit pass.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export {
+  diffTallies,
+  fillIsNonDefault,
+  fontHasNonDefaultColor,
+  spotCheckHashDocx,
+  spotCheckHashPptx,
+  spotCheckHashXlsx,
+  stableStringify,
+  tallyDocx,
+  tallyPptx,
+  tallyXlsx,
+};

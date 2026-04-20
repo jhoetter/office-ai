@@ -1,4 +1,6 @@
 import { cellKey, formatRange, parseA1, parseRange } from "../model/refs.js";
+import { flattenCellXf, type EffectiveStyle } from "../model/style-mutate.js";
+import type { StyleTable } from "../model/style-table.js";
 import type { CellValue, Sheet } from "../model/types.js";
 
 /**
@@ -23,6 +25,19 @@ export interface XlsxClipboardCell {
    * style id can be reused as-is.)
    */
   readonly styleId?: number;
+  /**
+   * Fully resolved per-cell style snapshot. Populated only when
+   * {@link extractClipboardSnapshot} is invoked with a `styleTable`
+   * argument — i.e. by the in-app clipboard producer. Cross-format
+   * paste handlers (XLSX → DOCX, XLSX → PPTX) use this to project
+   * the source font / colour / weight onto the destination's run
+   * properties without depending on the source workbook's style
+   * table at paste time.
+   *
+   * Optional and additive: existing readers (paste-range,
+   * round-tripped TSV/HTML clipboard) ignore it.
+   */
+  readonly effectiveStyle?: EffectiveStyle;
 }
 
 /**
@@ -63,7 +78,11 @@ export interface ClipboardMerge {
  * - Merges are clipped to the requested range (Excel parity: copying
  *   half a merge copies the visible half as plain cells).
  */
-export function extractClipboardSnapshot(sheet: Sheet, range: string): XlsxClipboardSnapshot {
+export function extractClipboardSnapshot(
+  sheet: Sheet,
+  range: string,
+  styleTable?: StyleTable,
+): XlsxClipboardSnapshot {
   const r = range.includes(":") ? parseRange(range) : single(range);
   const r0 = Math.min(r.start.row, r.end.row);
   const r1 = Math.max(r.start.row, r.end.row);
@@ -86,6 +105,9 @@ export function extractClipboardSnapshot(sheet: Sheet, range: string): XlsxClipb
       };
       if (cell.formula) out.formula = cell.formula.text;
       if (cell.styleId !== undefined) out.styleId = cell.styleId;
+      if (styleTable && cell.styleId !== undefined) {
+        out.effectiveStyle = flattenCellXf(styleTable, cell.styleId);
+      }
       row.push(out);
     }
     cells.push(row);

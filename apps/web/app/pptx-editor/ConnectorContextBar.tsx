@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type { ConnectorDashStyle, ConnectorEndShape, ConnectorShape, ConnectorType } from "@officeai/pptx";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Floating "format" mini-bar shown when a single connector is
@@ -67,18 +68,18 @@ export interface ConnectorStylePatch {
   readonly tailEnd?: ConnectorEndShape;
 }
 
-const TYPE_OPTIONS: ReadonlyArray<{ type: ConnectorType; label: string; icon: React.ReactNode }> = [
-  { type: "straight", label: "Straight", icon: <Minus size={14} /> },
-  { type: "elbow", label: "Elbow", icon: <Spline size={14} /> },
-  { type: "curved", label: "Curved", icon: <Spline size={14} className="rotate-45" /> },
+const TYPE_OPTIONS: ReadonlyArray<{ type: ConnectorType; labelKey: string; icon: React.ReactNode }> = [
+  { type: "straight", labelKey: "pptx.connector.straight", icon: <Minus size={14} /> },
+  { type: "elbow", labelKey: "pptx.connector.elbow", icon: <Spline size={14} /> },
+  { type: "curved", labelKey: "pptx.connector.curved", icon: <Spline size={14} className="rotate-45" /> },
 ];
 
-const DASH_OPTIONS: ReadonlyArray<{ dash: ConnectorDashStyle; label: string }> = [
-  { dash: "solid", label: "Solid" },
-  { dash: "dashed", label: "Dashed" },
-  { dash: "dotted", label: "Dotted" },
-  { dash: "longDash", label: "Long dash" },
-  { dash: "dashDot", label: "Dash dot" },
+const DASH_OPTIONS: ReadonlyArray<{ dash: ConnectorDashStyle; labelKey: string }> = [
+  { dash: "solid", labelKey: "pptx.connector.solid" },
+  { dash: "dashed", labelKey: "pptx.connector.dashed" },
+  { dash: "dotted", labelKey: "pptx.connector.dotted" },
+  { dash: "longDash", labelKey: "pptx.connector.longDash" },
+  { dash: "dashDot", labelKey: "pptx.connector.dashDot" },
 ];
 
 function dashStrokeArray(dash: ConnectorDashStyle): string | undefined {
@@ -108,13 +109,13 @@ const WIDTH_OPTIONS: ReadonlyArray<{ widthEmu: number; label: string; previewPx:
 
 const END_OPTIONS: ReadonlyArray<{
   end: ConnectorEndShape;
-  label: string;
+  labelKey: string;
   icon: React.ReactNode;
 }> = [
-  { end: "none", label: "None", icon: <X size={12} /> },
-  { end: "arrow", label: "Arrow", icon: <ArrowRight size={12} /> },
-  { end: "triangle", label: "Triangle", icon: <Triangle size={12} /> },
-  { end: "oval", label: "Oval", icon: <Circle size={12} /> },
+  { end: "none", labelKey: "pptx.connector.endNone", icon: <X size={12} /> },
+  { end: "arrow", labelKey: "pptx.connector.endArrow", icon: <ArrowRight size={12} /> },
+  { end: "triangle", labelKey: "pptx.connector.endTriangle", icon: <Triangle size={12} /> },
+  { end: "oval", labelKey: "pptx.connector.endOval", icon: <Circle size={12} /> },
 ];
 
 const COLOR_PALETTE: ReadonlyArray<string> = [
@@ -134,6 +135,7 @@ export function ConnectorContextBar({
   onAction,
   style,
 }: ConnectorContextBarProps): React.ReactElement {
+  const { t } = useTranslator();
   const stroke = connector.stroke;
   const currentColor = stroke?.color ?? "374151";
   const currentWidth = stroke?.widthEmu ?? 9_525;
@@ -168,7 +170,7 @@ export function ConnectorContextBar({
           <Sep />
           <ActionButton
             testId="pptx-connector-bar-reroute"
-            label="Reset routing"
+            label={t("pptx.connector.resetRouting")}
             disabled={!canReroute}
             onClick={() => onAction("reroute")}
           >
@@ -176,14 +178,14 @@ export function ConnectorContextBar({
           </ActionButton>
           <ActionButton
             testId="pptx-connector-bar-swap"
-            label="Reverse direction"
+            label={t("pptx.connector.reverseDirection")}
             onClick={() => onAction("swap")}
           >
             <ArrowLeftRight size={13} />
           </ActionButton>
           <ActionButton
             testId="pptx-connector-bar-detach"
-            label="Detach from shapes"
+            label={t("pptx.connector.detach")}
             disabled={!hasAnchoredEndpoint}
             onClick={() => onAction("detach")}
           >
@@ -229,6 +231,7 @@ interface SegmentedTypePickerProps {
 }
 
 function SegmentedTypePicker({ value, onChange }: SegmentedTypePickerProps): React.ReactElement {
+  const { t } = useTranslator();
   return (
     <div className="flex items-center gap-0.5 rounded bg-background/40 p-0.5">
       {TYPE_OPTIONS.map((opt) => {
@@ -237,7 +240,7 @@ function SegmentedTypePicker({ value, onChange }: SegmentedTypePickerProps): Rea
           <button
             key={opt.type}
             type="button"
-            title={opt.label}
+            title={t(opt.labelKey)}
             data-testid={`pptx-connector-bar-type-${opt.type}`}
             aria-pressed={active}
             onClick={() => onChange(opt.type)}
@@ -257,6 +260,7 @@ interface WidthPickerProps {
 }
 
 function WidthPicker({ valueEmu, onChange }: WidthPickerProps): React.ReactElement {
+  const { t } = useTranslator();
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -277,7 +281,7 @@ function WidthPicker({ valueEmu, onChange }: WidthPickerProps): React.ReactEleme
         data-testid="pptx-connector-bar-weight"
         onClick={() => setOpen((v) => !v)}
         className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-foreground hover:bg-hover"
-        title="Stroke weight"
+        title={t("pptx.connector.strokeWeight")}
       >
         <span
           aria-hidden
@@ -323,6 +327,7 @@ interface DashPickerProps {
 }
 
 function DashPicker({ value, onChange }: DashPickerProps): React.ReactElement {
+  const { t } = useTranslator();
   return (
     <div className="flex items-center gap-0.5 rounded bg-background/40 p-0.5">
       {DASH_OPTIONS.map((opt) => {
@@ -332,7 +337,7 @@ function DashPicker({ value, onChange }: DashPickerProps): React.ReactElement {
           <button
             key={opt.dash}
             type="button"
-            title={opt.label}
+            title={t(opt.labelKey)}
             data-testid={`pptx-connector-bar-dash-${opt.dash}`}
             aria-pressed={active}
             onClick={() => onChange(opt.dash)}
@@ -363,6 +368,7 @@ interface EndPickerProps {
 }
 
 function EndPicker({ kind, value, onChange }: EndPickerProps): React.ReactElement {
+  const { t } = useTranslator();
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -379,7 +385,7 @@ function EndPicker({ kind, value, onChange }: EndPickerProps): React.ReactElemen
       <button
         type="button"
         data-testid={`pptx-connector-bar-${kind}`}
-        title={`${kind === "head" ? "Head (end)" : "Tail (start)"} marker`}
+        title={kind === "head" ? t("pptx.connector.headEndMarker") : t("pptx.connector.tailEndMarker")}
         onClick={() => setOpen((v) => !v)}
         className="flex h-6 w-8 items-center justify-center rounded text-foreground hover:bg-hover"
       >
@@ -402,7 +408,7 @@ function EndPicker({ kind, value, onChange }: EndPickerProps): React.ReactElemen
               className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover ${opt.end === current.end ? "bg-hover" : ""}`}
             >
               {opt.icon}
-              <span>{opt.label}</span>
+              <span>{t(opt.labelKey)}</span>
             </button>
           ))}
         </div>
@@ -417,6 +423,7 @@ interface ColorPickerProps {
 }
 
 function ColorPicker({ value, onChange }: ColorPickerProps): React.ReactElement {
+  const { t } = useTranslator();
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -432,7 +439,7 @@ function ColorPicker({ value, onChange }: ColorPickerProps): React.ReactElement 
       <button
         type="button"
         data-testid="pptx-connector-bar-color"
-        title="Stroke color"
+        title={t("pptx.connector.strokeColor")}
         onClick={() => setOpen((v) => !v)}
         className="flex h-6 w-8 items-center justify-center rounded hover:bg-hover"
       >
@@ -466,7 +473,7 @@ function ColorPicker({ value, onChange }: ColorPickerProps): React.ReactElement 
             ))}
           </div>
           <label className="mt-2 flex items-center gap-1 text-[10px] text-secondary">
-            Custom
+            {t("pptx.connector.customColor")}
             <input
               type="color"
               value={`#${value}`}

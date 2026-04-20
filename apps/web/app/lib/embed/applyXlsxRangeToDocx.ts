@@ -1,5 +1,5 @@
-import type { DocxAgent } from "@officeai/docx";
-import type { XlsxClipboardSnapshot } from "@officeai/xlsx";
+import type { DocxAgent, RunProperties } from "@officeai/docx";
+import type { EffectiveStyle, StyleColor, XlsxClipboardCell, XlsxClipboardSnapshot } from "@officeai/xlsx";
 
 /**
  * Drop an XLSX range — captured at copy time as a
@@ -79,6 +79,7 @@ export async function applyXlsxRangeToDocx(args: {
       if (!cell) continue;
       const text = displayValue(cell);
       if (!text) continue;
+      const runProps = buildRunProperties(cell, r === 0);
       const result = await agent.applyCommand({
         type: "docx:set-cell-content",
         payload: {
@@ -94,7 +95,7 @@ export async function applyXlsxRangeToDocx(args: {
                 {
                   kind: "run",
                   id: `embed-r-${r}-${c}`,
-                  properties: {},
+                  properties: runProps,
                   children: [
                     {
                       kind: "text",
@@ -118,6 +119,79 @@ export async function applyXlsxRangeToDocx(args: {
       }
     }
   }
+}
+
+/**
+ * Project a source XLSX cell's effective style onto a DOCX
+ * {@link RunProperties} payload.
+ *
+ * The XLSX clipboard snapshot carries a fully-flattened
+ * `EffectiveStyle` per cell (font name / size pt / bold / italic /
+ * underline / colour) when the producer is the in-app clipboard
+ * (`agent.getClipboardSnapshot`). External pastes (HTML / TSV) won't
+ * carry it and we leave `properties` empty so the DOCX defaults
+ * apply.
+ *
+ * Header convention: row 0 of the snapshot gets `bold: true` by
+ * default to mirror how Word/Pages render an Excel paste — but ONLY
+ * when the source cell didn't pin `bold` explicitly. A header cell
+ * with `bold: false` in the source style is honoured as-is.
+ *
+ * Mapping notes:
+ *   - `font.size` is in points; DOCX `fontSize` is in HALF-POINTS,
+ *     so we multiply by 2 (matches the existing parser convention,
+ *     see `packages/docx/src/parser/styles.ts`).
+ *   - `font.color` resolves an ARGB / RGB hex into the 6-char
+ *     uppercase hex DOCX expects (no leading `#`). Themed / indexed
+ *     colours fall through to `undefined` rather than guessing.
+ *   - We never write `undefined` keys into the payload — the DOCX
+ *     handler treats absent keys as "inherit from style" while
+ *     present-but-undefined would still serialise as a no-op.
+ */
+function buildRunProperties(cell: XlsxClipboardCell, isHeaderRow: boolean): RunProperties {
+  const eff = cell.effectiveStyle;
+  const out: { -readonly [K in keyof RunProperties]: RunProperties[K] } = {};
+  if (eff) {
+    mapFontIntoRunProps(eff, out);
+  }
+  if (isHeaderRow && out.bold === undefined) {
+    out.bold = true;
+  }
+  return out;
+}
+
+function mapFontIntoRunProps(
+  eff: EffectiveStyle,
+  out: { -readonly [K in keyof RunProperties]: RunProperties[K] },
+): void {
+  const f = eff.font;
+  if (f.name !== undefined) out.fontFamily = f.name;
+  if (typeof f.size === "number") out.fontSize = Math.round(f.size * 2);
+  if (f.bold !== undefined) out.bold = f.bold;
+  if (f.italic !== undefined) out.italic = f.italic;
+  if (f.underline !== undefined) {
+    out.underline = f.underline === true ? true : String(f.underline);
+  }
+  if (f.color) {
+    const hex = colorToDocxHex(f.color);
+    if (hex !== undefined) out.color = hex;
+  }
+}
+
+/**
+ * Convert an XLSX `StyleColor` to the 6-char uppercase RGB hex the
+ * DOCX layer expects (no leading `#`). XLSX stores ARGB (8 chars)
+ * but DOCX uses RGB only — drop the alpha. Themed and indexed
+ * colours stay unresolved and return `undefined`; the DOCX run
+ * inherits the style default rather than picking a wrong colour.
+ */
+function colorToDocxHex(c: StyleColor): string | undefined {
+  if (c.rgb) {
+    const hex = c.rgb.toUpperCase();
+    if (hex.length === 8) return hex.slice(2);
+    if (hex.length === 6) return hex;
+  }
+  return undefined;
 }
 
 function displayValue(cell: { value: unknown; formula?: string }): string {

@@ -5,6 +5,7 @@ import { Check, X } from "lucide-react";
 import { cn } from "@officeai/ui";
 import { collectRevisionsWithPreview, snippet } from "@/lib/format-helpers";
 import type { DocxSnapshot } from "@officeai/docx";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Word-style "All Markup" surface for tracked changes.
@@ -45,6 +46,7 @@ function InlineHoverWidget(props: {
   onAccept: (id: string) => Promise<void> | void;
   onReject: (id: string) => Promise<void> | void;
 }): ReactNode {
+  const { t } = useTranslator();
   const [hovered, setHovered] = useState<{
     revisionId: string;
     rect: DOMRect;
@@ -110,17 +112,17 @@ function InlineHoverWidget(props: {
     <div
       ref={widgetRef}
       role="group"
-      aria-label="Tracked change actions"
+      aria-label={t("docx.tracked.actions")}
       className="tracked-change-widget pointer-events-auto fixed z-50 flex items-center gap-1 rounded-md border border-divider bg-surface px-1 py-0.5 text-xs shadow-md"
       style={{ top, left, position: "absolute" }}
     >
       <span aria-hidden className="px-1 text-[10px] font-medium uppercase text-[var(--accent)]">
-        Insertion
+        {t("docx.tracked.insertion")}
       </span>
       <button
         type="button"
-        title="Accept change"
-        aria-label="Accept change"
+        title={t("docx.tracked.acceptChange")}
+        aria-label={t("docx.tracked.acceptChange")}
         onClick={() => void props.onAccept(hovered.revisionId)}
         className="rounded p-1 text-[var(--success)] hover:bg-[var(--success)]/10"
       >
@@ -128,8 +130,8 @@ function InlineHoverWidget(props: {
       </button>
       <button
         type="button"
-        title="Reject change"
-        aria-label="Reject change"
+        title={t("docx.tracked.rejectChange")}
+        aria-label={t("docx.tracked.rejectChange")}
         onClick={() => void props.onReject(hovered.revisionId)}
         className="rounded p-1 text-[var(--error)] hover:bg-[var(--error)]/10"
       >
@@ -203,6 +205,7 @@ const ESTIMATED_BALLOON_HEIGHT_PX = 64;
  */
 export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNode {
   const { snapshot, editorHost, scrollContainer, onAccept, onReject } = props;
+  const { t } = useTranslator();
   const [layouts, setLayouts] = useState<ReadonlyArray<BalloonLayout>>([]);
   const [columnLeft, setColumnLeft] = useState<number | null>(null);
   const [barLeft, setBarLeft] = useState<number | null>(null);
@@ -327,7 +330,7 @@ export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNod
     <div
       data-testid="tracked-changes-margin"
       className="pointer-events-none absolute inset-0"
-      aria-label="Tracked changes margin"
+      aria-label={t("docx.tracked.margin")}
     >
       {layouts.map((l) => (
         <span
@@ -358,16 +361,16 @@ export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNod
             width: BALLOON_WIDTH,
           }}
         >
-          <div className="text-foreground font-medium">{l.author || "Unknown"}</div>
+          <div className="text-foreground font-medium">{l.author || t("docx.tracked.unknown")}</div>
           <div className="text-secondary">
-            {l.revisionType === "del" ? "Deleted: " : "Inserted: "}
-            <span className="text-foreground font-medium">{snippet(l.previewText, 80) || "(empty)"}</span>
+            {l.revisionType === "del" ? t("docx.tracked.deleted") : t("docx.tracked.inserted")}
+            <span className="text-foreground font-medium">{snippet(l.previewText, 80) || t("docx.tracked.empty")}</span>
           </div>
           <div className="flex items-center gap-1 pt-0.5">
             <button
               type="button"
-              title="Accept change"
-              aria-label={`Accept change ${l.revisionId}`}
+              title={t("docx.tracked.acceptChange")}
+              aria-label={t("docx.tracked.acceptChangeId", { id: l.revisionId })}
               onClick={() => void onAccept(l.revisionId)}
               className={cn(
                 "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
@@ -375,12 +378,12 @@ export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNod
               )}
             >
               <Check size={11} />
-              Accept
+              {t("docx.tracked.accept")}
             </button>
             <button
               type="button"
-              title="Reject change"
-              aria-label={`Reject change ${l.revisionId}`}
+              title={t("docx.tracked.rejectChange")}
+              aria-label={t("docx.tracked.rejectChangeId", { id: l.revisionId })}
               onClick={() => void onReject(l.revisionId)}
               className={cn(
                 "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
@@ -388,7 +391,7 @@ export function TrackedChangesMargin(props: TrackedChangesMarginProps): ReactNod
               )}
             >
               <X size={11} />
-              Reject
+              {t("docx.tracked.reject")}
             </button>
           </div>
         </div>

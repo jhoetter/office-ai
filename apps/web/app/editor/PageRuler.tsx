@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DocxSnapshot, SectionProperties } from "@officeai/docx";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * P3.5 / W20 + B3 — page ruler with draggable margin handles.
@@ -46,6 +47,7 @@ const MIN_PRINTABLE_TWIPS = 360; // ¼"
 
 export function PageRuler(props: PageRulerProps): ReactNode {
   const { snapshot, zoom = 1, onMarginsChange, onOpenPageSetup } = props;
+  const { t } = useTranslator();
 
   const baseGeometry = useMemo(() => resolveSectionGeometry(snapshot), [snapshot]);
   const useMetric = useMemo(() => isMetricLocale(), []);
@@ -155,7 +157,7 @@ export function PageRuler(props: PageRulerProps): ReactNode {
         e.preventDefault();
         onOpenPageSetup();
       }}
-      title={onOpenPageSetup ? "Double-click to open Page Setup" : undefined}
+      title={onOpenPageSetup ? t("docx.pageRuler.openPageSetup") : undefined}
     >
       <div
         className="absolute inset-y-0 left-0 bg-divider/40"
@@ -190,6 +192,9 @@ export function PageRuler(props: PageRulerProps): ReactNode {
             useMetric={useMetric}
             onPointerDown={(e) => beginDrag("left", e)}
             active={dragRef.current === "left"}
+            label={t("docx.pageRuler.leftMargin")}
+            tooltipKey="docx.pageRuler.leftMarginValue"
+            t={t}
           />
           <MarginHandle
             side="right"
@@ -198,6 +203,9 @@ export function PageRuler(props: PageRulerProps): ReactNode {
             useMetric={useMetric}
             onPointerDown={(e) => beginDrag("right", e)}
             active={dragRef.current === "right"}
+            label={t("docx.pageRuler.rightMargin")}
+            tooltipKey="docx.pageRuler.rightMarginValue"
+            t={t}
           />
         </>
       ) : null}
@@ -212,17 +220,20 @@ interface MarginHandleProps {
   useMetric: boolean;
   active: boolean;
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  label: string;
+  tooltipKey: string;
+  t: (key: string, vars?: Readonly<Record<string, string | number>>) => string;
 }
 
 function MarginHandle(props: MarginHandleProps) {
-  const { side, positionPct, twips, useMetric, active, onPointerDown } = props;
+  const { side, positionPct, twips, useMetric, active, onPointerDown, label, tooltipKey, t } = props;
   const factor = useMetric ? TWIPS_PER_CM : TWIPS_PER_INCH;
   const labelValue = (twips / factor).toFixed(2);
   const unit = useMetric ? "cm" : "in";
   return (
     <div
       role="slider"
-      aria-label={`${side === "left" ? "Left" : "Right"} margin`}
+      aria-label={label}
       aria-valuenow={Number(labelValue)}
       aria-valuemin={0}
       data-testid={`page-ruler-handle-${side}`}
@@ -231,7 +242,7 @@ function MarginHandle(props: MarginHandleProps) {
         active ? "bg-accent" : "bg-secondary/50 hover:bg-accent/70"
       }`}
       style={{ left: `${positionPct}%` }}
-      title={`${side === "left" ? "Left" : "Right"} margin: ${labelValue} ${unit}`}
+      title={t(tooltipKey, { value: labelValue, unit })}
     />
   );
 }

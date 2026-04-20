@@ -21,6 +21,7 @@ import type {
   OpaqueShape,
   OpaqueXml,
   Picture,
+  PictureSrcRect,
   NotesSlide,
   PlaceholderSpec,
   PptxComment,
@@ -1007,6 +1008,7 @@ function parsePic(
 
   // r:embed
   let mediaRelId = "";
+  let srcRect: PictureSrcRect | undefined;
   const blipFillTail: OpaqueXml[] = [];
   if (blipFill) {
     for (const c of elementEntries((blipFill["p:blipFill"] as unknown[] | undefined) ?? [])) {
@@ -1014,6 +1016,17 @@ function parsePic(
       if (tag === "a:blip") {
         const e = attrOf(c, "r:embed");
         if (e) mediaRelId = e;
+        blipFillTail.push(captureOpaque(c));
+        continue;
+      }
+      // D7 — promote `<a:srcRect>` to a typed field so the crop
+      // command can patch it without reaching into opaque XML.
+      // Emitted from the typed field on serialise; we deliberately
+      // drop it from `blipFillTail` here so the two paths can't
+      // disagree.
+      if (tag === "a:srcRect") {
+        srcRect = readSrcRect(c);
+        continue;
       }
       blipFillTail.push(captureOpaque(c));
     }
@@ -1036,7 +1049,32 @@ function parsePic(
     nvPicPrTail,
     blipFillTail,
     spPrTail,
+    ...(srcRect ? { srcRect } : {}),
     ...(styleEntry ? { styleRaw: captureOpaque(styleEntry) } : {}),
+  };
+}
+
+/**
+ * Decode `<a:srcRect>` attributes (1000ths-of-a-percent in OOXML)
+ * back into the typed model's percent representation. Missing
+ * attributes default to zero per the schema. Negative values
+ * clamp to zero — the schema in theory allows them ("extend
+ * beyond the image") but PowerPoint never writes them and the
+ * editor wouldn't know how to render them.
+ */
+function readSrcRect(entry: Record<string, unknown>): PictureSrcRect {
+  const read = (k: string): number => {
+    const v = attrOf(entry, k);
+    if (!v) return 0;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n / 1000;
+  };
+  return {
+    leftPct: read("l"),
+    topPct: read("t"),
+    rightPct: read("r"),
+    bottomPct: read("b"),
   };
 }
 

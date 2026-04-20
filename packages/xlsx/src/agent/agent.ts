@@ -169,7 +169,7 @@ export class XlsxAgent {
     if (!sheet) {
       throw new Error(`unknown sheet "${req.sheet}"`);
     }
-    return extractClipboardSnapshot(sheet, req.range);
+    return extractClipboardSnapshot(sheet, req.range, snap.root.styles);
   }
 
   /** Sparse projection of a range or whole sheet. */

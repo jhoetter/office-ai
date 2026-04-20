@@ -59,7 +59,7 @@ import {
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import type { EditorView } from "prosemirror-view";
-import { TextSelection } from "prosemirror-state";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 import { NotImplementedError } from "@officeai/core";
 import { buildBlankDocx, buildSampleDocx } from "@/lib/sample-docx";
 import {
@@ -89,15 +89,18 @@ import { CommentComposer } from "./CommentComposer";
 import { collectRevisions } from "@/lib/format-helpers";
 import { createDocxCommentsProvider } from "./docxCommentsProvider";
 import { insertImageIntoDocx, SUPPORTED_IMAGE_MIME } from "@/lib/image-insert";
-import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import { EMBED_MIME, makeEnvelope, parseEnvelope, serializeEnvelope } from "@/lib/embed/envelope";
 import { applyXlsxRangeToDocx } from "@/lib/embed/applyXlsxRangeToDocx";
 import {
   PresenceSlot,
+  RemotePresenceList,
   roomIdForSource,
   useCommandBroadcast,
+  usePublishPresence,
   useRealtimeRoom,
   useStableTabId,
 } from "@/lib/realtime";
+import { useTranslator } from "@/lib/i18n";
 
 const DOCX_EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
   {
@@ -1181,10 +1184,11 @@ export function DocxEditor({
       void handleImageFile(file);
     };
     const onPaste = (e: ClipboardEvent) => {
-      // 1) Cross-format embed (XLSX → DOCX table). Gated on the
-      //    NEXT_PUBLIC_OAI_EMBED flag so existing PM HTML-table
-      //    paste behaviour stays the default in production.
-      if (isEmbedEnabled()) {
+      // 1) Cross-format embed (XLSX → DOCX table). Always on — the
+      //    XLSX copy path paints `application/x-officeai-embed+json`
+      //    next to the existing `text/html` fallback, so external
+      //    Word/Pages pastes are unaffected.
+      {
         const raw = e.clipboardData?.getData(EMBED_MIME);
         const env = parseEnvelope(raw);
         if (env && env.payload.kind === "xlsx-range") {
@@ -1194,17 +1198,32 @@ export function DocxEditor({
           e.preventDefault();
           e.stopPropagation();
           const paragraphIndex = mount ? currentParagraphIndex(mount.view.state) : 0;
+          const snapshot = env.payload.snapshot;
           void (async () => {
             try {
               await applyXlsxRangeToDocx({
                 agent,
-                snapshot: env.payload.kind === "xlsx-range" ? env.payload.snapshot : (() => { throw new Error("unreachable"); })(),
+                snapshot,
                 paragraphIndex: Math.max(0, paragraphIndex),
               });
             } catch (err) {
               pushToast("error", err instanceof Error ? err.message : String(err));
             }
           })();
+          return;
+        }
+        // D4 — chart copied from XLSX. Decode the base64 PNG into a
+        // File and route through the existing image-insert path so
+        // the chart lands as a typed inline picture (size +
+        // alt-text inferred just like a manual file paste).
+        if (env && env.payload.kind === "xlsx-chart-image") {
+          const payload = env.payload;
+          e.preventDefault();
+          e.stopPropagation();
+          const bytes = decodeBase64(payload.png);
+          const baseName = payload.title?.trim() || `Chart`;
+          const file = new File([bytes as BlobPart], `${baseName}.png`, { type: "image/png" });
+          void handleImageFile(file);
           return;
         }
       }
@@ -1214,13 +1233,41 @@ export function DocxEditor({
       e.preventDefault();
       void handleImageFile(file);
     };
+    // D5 — when the PM selection is a NodeSelection on a `table`
+    // atom, paint a structured `docx-table` envelope so a paste
+    // into XLSX lands as a real range rather than the default PM
+    // serialiser's HTML/text fallback. We do NOT preventDefault for
+    // the underlying browser copy (PM still writes its own
+    // `text/plain` / `text/html`) — we just append the embed MIME.
+    // External Word / Pages pastes are unaffected.
+    const onCopy = (e: ClipboardEvent) => {
+      const mount = mountRef.current;
+      if (!mount || !e.clipboardData) return;
+      const sel = mount.view.state.selection;
+      if (!(sel instanceof NodeSelection) || sel.node.type.name !== "table") return;
+      const matrix = tableNodeToMatrix(sel.node.attrs.tableJson);
+      if (!matrix || matrix.length === 0) return;
+      const env = makeEnvelope("docx", {
+        kind: "docx-table",
+        cells: matrix,
+        originLabel: "Document table",
+      });
+      e.clipboardData.setData(EMBED_MIME, serializeEnvelope(env));
+      // Append a tab/newline-delimited text fallback so external apps
+      // (Excel, Sheets, plain-text editors) get the table contents
+      // even though we're not preventing PM's default copy.
+      const tsv = matrix.map((row) => row.map(escapeTsv).join("\t")).join("\n");
+      e.clipboardData.setData("text/plain", tsv);
+    };
     hostEl.addEventListener("dragover", onDragOver);
     hostEl.addEventListener("drop", onDrop);
     hostEl.addEventListener("paste", onPaste);
+    hostEl.addEventListener("copy", onCopy);
     return () => {
       hostEl.removeEventListener("dragover", onDragOver);
       hostEl.removeEventListener("drop", onDrop);
       hostEl.removeEventListener("paste", onPaste);
+      hostEl.removeEventListener("copy", onCopy);
     };
   }, [hostEl, handleImageFile, pushToast]);
 
@@ -1611,9 +1658,22 @@ export function DocxEditor({
     product: "docx",
   });
   useCommandBroadcast({
-    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    agent,
     room: realtimeRoom.room,
   });
+
+  // A2: publish the PM caret position so peers see "is at position N"
+  // (and a future overlay can resolve `coordsAtPos(head)` to draw a
+  // colored caret line). uiTick ticks on every selection change, so
+  // memoising on it is the cheapest way to recompute without
+  // subscribing the realtime hook to PM internals.
+  const presenceCursor = useMemo(() => {
+    void uiTick;
+    if (!view) return null;
+    const sel = view.state.selection;
+    return { product: "docx" as const, head: sel.head, anchor: sel.anchor };
+  }, [view, uiTick]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(
     () => ({
@@ -1670,7 +1730,12 @@ export function DocxEditor({
     <>
       <EditorShell
         adapter={adapter}
-        topBarExtras={<PresenceSlot state={realtimeRoom} />}
+        topBarExtras={
+          <>
+            <RemotePresenceList peers={realtimeRoom.remotePeers} />
+            <PresenceSlot state={realtimeRoom} />
+          </>
+        }
         toolbar={
           <Toolbar
             agentReady={agentReady}
@@ -1907,6 +1972,92 @@ function normaliseUrl(raw: string): string {
   return `https://${v}`;
 }
 
+/**
+ * D5 — serialise a `table` PM atom's `tableJson` attribute (a
+ * stringified `RenderableTable`) into a row-major `string[][]`
+ * matrix. Each cell's text content is the concatenation of its
+ * paragraph descendants' run text, with an explicit "\n" between
+ * paragraphs. `gridSpan > 1` cells pad the row with empty strings
+ * so the matrix stays rectangular against the table's column count.
+ *
+ * Returns `null` for non-string / unparseable JSON so the copy
+ * handler can fall through to PM's default behaviour.
+ */
+function tableNodeToMatrix(rawJson: unknown): string[][] | null {
+  if (typeof rawJson !== "string" || rawJson.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const rows = (parsed as { rows?: unknown }).rows;
+  if (!Array.isArray(rows)) return null;
+  const out: string[][] = [];
+  let maxCols = 0;
+  for (const row of rows as Array<{ cells?: unknown }>) {
+    const cells = Array.isArray(row?.cells) ? (row.cells as Array<unknown>) : [];
+    const flat: string[] = [];
+    for (const cell of cells) {
+      const text = readCellText(cell);
+      const span = readGridSpan(cell);
+      flat.push(text);
+      for (let s = 1; s < span; s++) flat.push("");
+    }
+    out.push(flat);
+    maxCols = Math.max(maxCols, flat.length);
+  }
+  for (const row of out) {
+    while (row.length < maxCols) row.push("");
+  }
+  return out;
+}
+
+function readCellText(cell: unknown): string {
+  if (!cell || typeof cell !== "object") return "";
+  const blocks = (cell as { blocks?: unknown }).blocks;
+  if (!Array.isArray(blocks)) return "";
+  const paragraphs: string[] = [];
+  for (const b of blocks as Array<{ runs?: unknown }>) {
+    const runs = Array.isArray(b?.runs) ? (b.runs as Array<{ text?: unknown }>) : [];
+    paragraphs.push(runs.map((r) => (typeof r?.text === "string" ? r.text : "")).join(""));
+  }
+  return paragraphs.join("\n");
+}
+
+function readGridSpan(cell: unknown): number {
+  if (!cell || typeof cell !== "object") return 1;
+  const span = (cell as { gridSpan?: unknown }).gridSpan;
+  if (typeof span === "number" && Number.isFinite(span) && span > 1) return Math.floor(span);
+  return 1;
+}
+
+/**
+ * Escape a cell value for the TSV / `text/plain` fallback we paint
+ * alongside the structured envelope. Tabs and CR/LF would otherwise
+ * desynchronise the row/column boundaries when the receiver re-parses
+ * with a tab delimiter (matches Excel's TSV escaping rules).
+ */
+function escapeTsv(value: string): string {
+  if (!/[\t\r\n"]/.test(value)) return value;
+  const inner = value.replace(/"/g, '""');
+  return `"${inner}"`;
+}
+
+/**
+ * Decode a base64 string into raw bytes. Used by the D4 chart-paste
+ * branch which receives the PNG payload as base64 inside an
+ * `xlsx-chart-image` envelope. Falls back to `Buffer` so the helper
+ * also works in vitest (Node) when DOM globals are missing.
+ */
+function decodeBase64(b64: string): Uint8Array {
+  const bin = typeof atob === "function" ? atob(b64) : Buffer.from(b64, "base64").toString("binary");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 function pickImageFile(files: FileList | null | undefined): File | null {
   if (!files || files.length === 0) return null;
   for (let i = 0; i < files.length; i++) {
@@ -1999,6 +2150,7 @@ function PageStatusBar(props: {
   onZoomChange: (z: number) => void;
 }) {
   const { view, totalPages, zoom, onZoomChange } = props;
+  const { t } = useTranslator();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
 
@@ -2025,7 +2177,7 @@ function PageStatusBar(props: {
     <div className="mt-2 flex items-center justify-between gap-3 px-1 text-xs text-secondary">
       {editing ? (
         <span className="inline-flex items-center gap-1 tabular-nums">
-          <span>Page</span>
+          <span>{t("docx.statusBar.page")}</span>
           <input
             type="number"
             min={1}
@@ -2041,7 +2193,7 @@ function PageStatusBar(props: {
             className="w-12 rounded border border-divider bg-background px-1 py-0.5 text-xs"
             data-testid="page-goto-input"
           />
-          <span>of {totalPages}</span>
+          <span>{t("docx.statusBar.of", { n: totalPages })}</span>
         </span>
       ) : (
         <button
@@ -2051,10 +2203,10 @@ function PageStatusBar(props: {
             setEditing(true);
           }}
           className="rounded px-1 py-0.5 tabular-nums hover:bg-hover"
-          title="Go to page"
+          title={t("docx.statusBar.goToPage")}
           data-testid="page-status"
         >
-          Page {currentPage} of {totalPages}
+          {t("docx.statusBar.pageOf", { n: currentPage, total: totalPages })}
         </button>
       )}
       <ZoomControl value={zoom} onChange={onZoomChange} />

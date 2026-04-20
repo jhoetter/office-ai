@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useFocusTrap } from "@officeai/ui";
 import type { DefinedName } from "@officeai/xlsx";
+import { useTranslator } from "@/lib/i18n";
 
 export interface NameManagerDialogProps {
   readonly open: boolean;
@@ -43,6 +44,7 @@ interface Draft {
 
 export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
   const { open, onClose, definedNames, sheetNames, defaultRefersTo, onAdd, onUpdate, onRemove } = props;
+  const { t } = useTranslator();
 
   const [draft, setDraft] = useState<Draft>({
     name: "",
@@ -97,11 +99,11 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
     const name = draft.name.trim();
     const refersTo = draft.refersTo.trim();
     if (!name) {
-      setError("Name is required.");
+      setError(t("xlsx.nameManager.nameRequired"));
       return;
     }
     if (!refersTo) {
-      setError("Refers to is required.");
+      setError(t("xlsx.nameManager.refersToRequired"));
       return;
     }
     try {
@@ -139,7 +141,7 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       role="dialog"
       aria-modal="true"
-      aria-label="Name Manager"
+      aria-label={t("xlsx.nameManager.title")}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -150,10 +152,10 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
         className="relative w-[640px] rounded-md border border-divider bg-background p-4 text-sm text-foreground shadow-xl outline-none"
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-semibold">Name Manager</h2>
+          <h2 className="text-base font-semibold">{t("xlsx.nameManager.title")}</h2>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("common.close")}
             className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover"
             onClick={onClose}
           >
@@ -165,9 +167,9 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
           <table className="w-full text-xs">
             <thead className="bg-surface text-secondary">
               <tr>
-                <th className="px-2 py-1 text-left font-medium">Name</th>
-                <th className="px-2 py-1 text-left font-medium">Scope</th>
-                <th className="px-2 py-1 text-left font-medium">Refers to</th>
+                <th className="px-2 py-1 text-left font-medium">{t("xlsx.nameManager.name")}</th>
+                <th className="px-2 py-1 text-left font-medium">{t("xlsx.nameManager.scope")}</th>
+                <th className="px-2 py-1 text-left font-medium">{t("xlsx.nameManager.refersTo")}</th>
                 <th className="px-2 py-1" />
               </tr>
             </thead>
@@ -175,7 +177,7 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
               {sortedNames.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-2 py-3 text-center text-secondary">
-                    No defined names yet.
+                    {t("xlsx.nameManager.noNames")}
                   </td>
                 </tr>
               ) : (
@@ -202,7 +204,7 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
                             className="h-6 w-full rounded border border-divider bg-background px-1 text-xs font-mono"
                           />
                         </td>
-                        <td className="px-2 py-1 text-secondary">{d.scope ?? "Workbook"}</td>
+                        <td className="px-2 py-1 text-secondary">{d.scope ?? t("xlsx.nameManager.workbook")}</td>
                         <td className="px-2 py-1">
                           <input
                             data-testid={`nm-edit-refersTo-${d.name}`}
@@ -227,14 +229,14 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
                             className="rounded bg-accent px-2 py-0.5 text-xs text-white hover:bg-accent/90"
                             onClick={submitEdit}
                           >
-                            Save
+                            {t("common.save")}
                           </button>
                           <button
                             type="button"
                             className="ml-1 rounded border border-divider px-2 py-0.5 text-xs hover:bg-hover"
                             onClick={() => setEditing(null)}
                           >
-                            Cancel
+                            {t("common.cancel")}
                           </button>
                         </td>
                       </tr>
@@ -247,13 +249,13 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
                       data-testid={`nm-row-${d.name}`}
                     >
                       <td className="px-2 py-1 font-mono">{d.name}</td>
-                      <td className="px-2 py-1 text-secondary">{d.scope ?? "Workbook"}</td>
+                      <td className="px-2 py-1 text-secondary">{d.scope ?? t("xlsx.nameManager.workbook")}</td>
                       <td className="px-2 py-1 font-mono text-secondary">{d.refersTo}</td>
                       <td className="px-2 py-1 text-right">
                         <button
                           type="button"
-                          aria-label="Edit"
-                          title="Edit"
+                          aria-label={t("common.edit")}
+                          title={t("common.edit")}
                           data-testid={`nm-edit-${d.name}`}
                           className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover"
                           onClick={() =>
@@ -273,8 +275,8 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
                         </button>
                         <button
                           type="button"
-                          aria-label="Delete"
-                          title="Delete"
+                          aria-label={t("common.delete")}
+                          title={t("common.delete")}
                           data-testid={`nm-delete-${d.name}`}
                           className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover"
                           onClick={() => onRemove({ name: d.name, scope: d.scope })}
@@ -292,24 +294,24 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
 
         <div className="mb-3 grid grid-cols-[1fr,140px,1fr] gap-2">
           <label className="flex flex-col gap-0.5 text-xs">
-            <span className="text-secondary">Name</span>
+            <span className="text-secondary">{t("xlsx.nameManager.name")}</span>
             <input
               data-testid="nm-new-name"
               value={draft.name}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-              placeholder="e.g. Revenue"
+              placeholder={t("xlsx.nameManager.namePlaceholder")}
               className="h-7 rounded border border-divider bg-background px-2 text-xs font-mono"
             />
           </label>
           <label className="flex flex-col gap-0.5 text-xs">
-            <span className="text-secondary">Scope</span>
+            <span className="text-secondary">{t("xlsx.nameManager.scope")}</span>
             <select
               data-testid="nm-new-scope"
               value={draft.scope}
               onChange={(e) => setDraft((d) => ({ ...d, scope: e.target.value }))}
               className="h-7 rounded border border-divider bg-background px-1 text-xs"
             >
-              <option value="">Workbook</option>
+              <option value="">{t("xlsx.nameManager.workbook")}</option>
               {sheetNames.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -318,12 +320,12 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
             </select>
           </label>
           <label className="flex flex-col gap-0.5 text-xs">
-            <span className="text-secondary">Refers to</span>
+            <span className="text-secondary">{t("xlsx.nameManager.refersTo")}</span>
             <input
               data-testid="nm-new-refersTo"
               value={draft.refersTo}
               onChange={(e) => setDraft((d) => ({ ...d, refersTo: e.target.value }))}
-              placeholder="Sheet1!$A$1:$A$10"
+              placeholder={t("xlsx.nameManager.refersToPlaceholder")}
               className="h-7 rounded border border-divider bg-background px-2 text-xs font-mono"
             />
           </label>
@@ -341,7 +343,7 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
             onClick={onClose}
             className="h-7 rounded border border-divider bg-background px-3 text-xs hover:bg-hover"
           >
-            Close
+            {t("common.close")}
           </button>
           <button
             type="button"
@@ -350,7 +352,7 @@ export function NameManagerDialog(props: NameManagerDialogProps): ReactNode {
             className="inline-flex h-7 items-center gap-1 rounded bg-accent px-3 text-xs font-medium text-white hover:bg-accent/90"
           >
             <Plus size={12} />
-            Add name
+            {t("xlsx.nameManager.addName")}
           </button>
         </div>
       </div>

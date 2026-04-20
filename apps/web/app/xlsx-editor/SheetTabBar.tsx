@@ -5,6 +5,9 @@ import type { ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { cn } from "@officeai/ui";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { useTranslator, type TranslateVars } from "@/lib/i18n";
+
+type TFn = (key: string, vars?: TranslateVars) => string;
 
 /**
  * C9 — Sheet management UI.
@@ -44,6 +47,7 @@ export interface SheetTabBarProps {
 
 export function SheetTabBar(props: SheetTabBarProps): ReactNode {
   const { sheets, activeName, onActivate, onRename, onDelete, onMove, onAdd, onSetState } = props;
+  const { t } = useTranslator();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>("");
   const [ctx, setCtx] = useState<{ name: string; x: number; y: number } | null>(null);
@@ -87,8 +91,8 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
     >
       <button
         type="button"
-        title="New sheet"
-        aria-label="New sheet"
+        title={t("xlsx.sheetTab.newSheet")}
+        aria-label={t("xlsx.sheetTab.newSheet")}
         data-testid="sheet-tab-add"
         onMouseDown={(e) => e.preventDefault()}
         onClick={onAdd}
@@ -98,7 +102,7 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
       </button>
 
       {visible.length === 0 ? (
-        <span className="text-xs text-secondary">No sheets</span>
+        <span className="text-xs text-secondary">{t("xlsx.sheetTab.noSheets")}</span>
       ) : (
         visible.map((s, idx) => {
           const isActive = s.name === activeName;
@@ -187,16 +191,16 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
       {hidden.length > 0 ? (
         <div
           className="ml-2 inline-flex items-center gap-1 border-l border-divider pl-2 text-[10px] uppercase tracking-wide text-secondary"
-          title="Hidden sheets"
+          title={t("xlsx.sheetTab.hidden")}
         >
-          <span>Hidden:</span>
+          <span>{t("xlsx.sheetTab.hiddenLabel")}</span>
           {hidden.map((s) => (
             <button
               key={s.id}
               type="button"
               onClick={() => onSetState(s.name, "visible")}
               className="rounded border border-dashed border-divider px-2 py-0.5 hover:border-accent hover:text-foreground"
-              title={`Show ${s.name}`}
+              title={t("xlsx.sheetTab.showSheet", { name: s.name })}
               data-testid={`sheet-tab-hidden-${s.name}`}
             >
               {s.name}
@@ -209,7 +213,7 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
         open={ctx !== null}
         x={ctx?.x ?? 0}
         y={ctx?.y ?? 0}
-        items={ctx ? buildItems(ctx.name, sheets, onActivate, startRename, onMove, onDelete, onSetState) : []}
+        items={ctx ? buildItems(ctx.name, sheets, onActivate, startRename, onMove, onDelete, onSetState, t) : []}
         onClose={() => setCtx(null)}
         testId="sheet-tab-context-menu"
       />
@@ -224,7 +228,8 @@ function buildItems(
   startRename: (name: string) => void,
   onMove: (name: string, to: number) => void,
   onDelete: (name: string) => void,
-  onSetState: (name: string, state: "visible" | "hidden") => void
+  onSetState: (name: string, state: "visible" | "hidden") => void,
+  t: TFn
 ): ContextMenuItem[] {
   const idx = sheets.findIndex((s) => s.name === name);
   const isVisible = sheets[idx]?.state === "visible";
@@ -233,27 +238,27 @@ function buildItems(
     {
       kind: "action",
       id: "activate",
-      label: "Activate",
+      label: t("xlsx.sheetTab.activate"),
       onSelect: () => onActivate(name),
     },
     { kind: "divider", id: "d1" },
     {
       kind: "action",
       id: "rename",
-      label: "Rename",
+      label: t("xlsx.sheetTab.rename"),
       onSelect: () => startRename(name),
     },
     {
       kind: "action",
       id: "move-left",
-      label: "Move left",
+      label: t("xlsx.sheetTab.moveLeft"),
       disabled: idx <= 0,
       onSelect: () => onMove(name, Math.max(0, idx - 1)),
     },
     {
       kind: "action",
       id: "move-right",
-      label: "Move right",
+      label: t("xlsx.sheetTab.moveRight"),
       disabled: idx === -1 || idx >= sheets.length - 1,
       onSelect: () => onMove(name, Math.min(sheets.length - 1, idx + 1)),
     },
@@ -262,7 +267,7 @@ function buildItems(
       ? {
           kind: "action" as const,
           id: "hide",
-          label: "Hide",
+          label: t("xlsx.sheetTab.hide"),
           // Excel forbids hiding the only visible sheet.
           disabled: visibleCount <= 1,
           onSelect: () => onSetState(name, "hidden"),
@@ -270,14 +275,14 @@ function buildItems(
       : {
           kind: "action" as const,
           id: "unhide",
-          label: "Unhide",
+          label: t("xlsx.sheetTab.unhide"),
           onSelect: () => onSetState(name, "visible"),
         },
     { kind: "divider", id: "d3" },
     {
       kind: "action",
       id: "delete",
-      label: "Delete",
+      label: t("xlsx.sheetTab.delete"),
       // Excel forbids deleting the only worksheet in a workbook.
       disabled: sheets.length <= 1,
       onSelect: () => onDelete(name),

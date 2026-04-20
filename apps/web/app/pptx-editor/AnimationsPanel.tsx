@@ -12,6 +12,7 @@ import type {
   TransitionKind,
   TransitionSpeed,
 } from "@officeai/pptx";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * D11 — Animations panel mounted in the right rail when the active
@@ -39,32 +40,33 @@ export interface AnimationsPanelProps {
   readonly onReorderAnimations: (orderIds: ReadonlyArray<string>) => void;
 }
 
-const TRANSITION_KINDS: ReadonlyArray<{ readonly value: TransitionKind; readonly label: string }> = [
-  { value: "none", label: "None" },
-  { value: "fade", label: "Fade" },
-  { value: "push", label: "Push" },
-  { value: "wipe", label: "Wipe" },
-  { value: "split", label: "Split" },
-  { value: "cut", label: "Cut" },
+const TRANSITION_KINDS: ReadonlyArray<{ readonly value: TransitionKind; readonly labelKey: string }> = [
+  { value: "none", labelKey: "pptx.animations.transitionNone" },
+  { value: "fade", labelKey: "pptx.animations.transitionFade" },
+  { value: "push", labelKey: "pptx.animations.transitionPush" },
+  { value: "wipe", labelKey: "pptx.animations.transitionWipe" },
+  { value: "split", labelKey: "pptx.animations.transitionSplit" },
+  { value: "cut", labelKey: "pptx.animations.transitionCut" },
 ];
 
-const TRANSITION_SPEEDS: ReadonlyArray<{ readonly value: TransitionSpeed; readonly label: string }> = [
-  { value: "slow", label: "Slow" },
-  { value: "med", label: "Medium" },
-  { value: "fast", label: "Fast" },
+const TRANSITION_SPEEDS: ReadonlyArray<{ readonly value: TransitionSpeed; readonly labelKey: string }> = [
+  { value: "slow", labelKey: "pptx.animations.speedSlow" },
+  { value: "med", labelKey: "pptx.animations.speedMedium" },
+  { value: "fast", labelKey: "pptx.animations.speedFast" },
 ];
 
-const ENTRANCE_EFFECTS: ReadonlyArray<{ readonly value: EntranceEffect; readonly label: string }> = [
-  { value: "appear", label: "Appear" },
-  { value: "fade", label: "Fade" },
-  { value: "fly-in", label: "Fly in" },
-  { value: "wipe", label: "Wipe" },
+const ENTRANCE_EFFECTS: ReadonlyArray<{ readonly value: EntranceEffect; readonly labelKey: string }> = [
+  { value: "appear", labelKey: "pptx.animations.effectAppear" },
+  { value: "fade", labelKey: "pptx.animations.effectFade" },
+  { value: "fly-in", labelKey: "pptx.animations.effectFlyIn" },
+  { value: "wipe", labelKey: "pptx.animations.effectWipe" },
 ];
 
 export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement {
+  const { t } = useTranslator();
   const slide: Slide | undefined = props.snapshot.root.slides[props.activeIndex];
   if (!slide) {
-    return <EmptyState message="No slide selected." />;
+    return <EmptyState message={t("pptx.animations.noSlide")} />;
   }
   const animations = slide.animations;
   const transition = slide.transition;
@@ -73,7 +75,11 @@ export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 text-xs">
-      <Section title="Slide transition" subtitle="Plays as this slide enters." icon={<Sparkles size={14} />}>
+      <Section
+        title={t("pptx.animations.slideTransition")}
+        subtitle={t("pptx.animations.transitionSubtitle")}
+        icon={<Sparkles size={14} />}
+      >
         <TransitionEditor
           transition={transition}
           disabled={props.disabled}
@@ -82,11 +88,11 @@ export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement
       </Section>
 
       <Section
-        title="Entrance animations"
+        title={t("pptx.animations.entranceAnimations")}
         subtitle={
           selectedShapeName
-            ? `Selected shape: ${selectedShapeName}`
-            : "Select a shape on the slide to add an entrance animation."
+            ? t("pptx.animations.selectedShape", { name: selectedShapeName })
+            : t("pptx.animations.selectShapeHint")
         }
         icon={<Zap size={14} />}
       >
@@ -135,6 +141,7 @@ interface TransitionEditorProps {
 }
 
 function TransitionEditor(props: TransitionEditorProps): React.ReactElement {
+  const { t } = useTranslator();
   // We intentionally hide the "unsupported" kind from the user — it
   // exists only as a parser landing pad and is round-tripped via the
   // verbatim raw blob.
@@ -145,7 +152,7 @@ function TransitionEditor(props: TransitionEditorProps): React.ReactElement {
   return (
     <div className="space-y-2">
       <label className="block">
-        <span className="mb-1 block text-[11px] text-secondary">Effect</span>
+        <span className="mb-1 block text-[11px] text-secondary">{t("pptx.animations.effect")}</span>
         <select
           value={kind}
           disabled={props.disabled}
@@ -158,13 +165,13 @@ function TransitionEditor(props: TransitionEditorProps): React.ReactElement {
         >
           {TRANSITION_KINDS.map((k) => (
             <option key={k.value} value={k.value}>
-              {k.label}
+              {t(k.labelKey)}
             </option>
           ))}
         </select>
       </label>
       <label className="block">
-        <span className="mb-1 block text-[11px] text-secondary">Speed</span>
+        <span className="mb-1 block text-[11px] text-secondary">{t("pptx.animations.speed")}</span>
         <select
           value={speed}
           disabled={props.disabled || kind === "none"}
@@ -177,7 +184,7 @@ function TransitionEditor(props: TransitionEditorProps): React.ReactElement {
         >
           {TRANSITION_SPEEDS.map((s) => (
             <option key={s.value} value={s.value}>
-              {s.label}
+              {t(s.labelKey)}
             </option>
           ))}
         </select>
@@ -192,8 +199,9 @@ interface AddAnimationButtonsProps {
 }
 
 function AddAnimationButtons(props: AddAnimationButtonsProps): React.ReactElement {
+  const { t } = useTranslator();
   return (
-    <div className="mb-3 grid grid-cols-2 gap-1" role="group" aria-label="Add entrance animation">
+    <div className="mb-3 grid grid-cols-2 gap-1" role="group" aria-label={t("pptx.animations.addEntranceAnimation")}>
       {ENTRANCE_EFFECTS.map((e) => (
         <button
           key={e.value}
@@ -203,7 +211,7 @@ function AddAnimationButtons(props: AddAnimationButtonsProps): React.ReactElemen
           className="inline-flex items-center justify-center gap-1 rounded border border-divider bg-surface px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
           data-testid={`pptx-anim-add-${e.value}`}
         >
-          <Plus size={12} /> {e.label}
+          <Plus size={12} /> {t(e.labelKey)}
         </button>
       ))}
     </div>
@@ -219,15 +227,16 @@ interface AnimationListProps {
 }
 
 function AnimationList(props: AnimationListProps): React.ReactElement {
+  const { t } = useTranslator();
   if (props.animations.length === 0) {
     return (
       <div className="rounded border border-dashed border-divider p-3 text-center text-xs text-secondary">
-        No entrance animations on this slide yet.
+        {t("pptx.animations.noAnimations")}
       </div>
     );
   }
   return (
-    <ol className="flex flex-col gap-1" data-testid="pptx-anim-list" aria-label="Entrance animations">
+    <ol className="flex flex-col gap-1" data-testid="pptx-anim-list" aria-label={t("pptx.animations.listAriaLabel")}>
       {props.animations.map((a, idx) => (
         <li
           key={a.id}
@@ -242,7 +251,7 @@ function AnimationList(props: AnimationListProps): React.ReactElement {
               {a.effect.replace("-", " ")}
             </div>
             <div className="truncate text-[10px] text-secondary">
-              {props.shapeNamesByCNvPrId.get(a.targetCNvPrId) ?? `Shape #${a.targetCNvPrId}`}
+              {props.shapeNamesByCNvPrId.get(a.targetCNvPrId) ?? t("pptx.animations.shapeFallback", { id: a.targetCNvPrId })}
             </div>
           </div>
           <div className="flex items-center gap-0.5">
@@ -251,8 +260,8 @@ function AnimationList(props: AnimationListProps): React.ReactElement {
               disabled={props.disabled || idx === 0}
               onClick={() => props.onMove(a.id, -1)}
               className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
-              title="Move earlier"
-              aria-label="Move earlier"
+              title={t("pptx.animations.moveEarlier")}
+              aria-label={t("pptx.animations.moveEarlier")}
             >
               <ChevronUp size={12} />
             </button>
@@ -261,8 +270,8 @@ function AnimationList(props: AnimationListProps): React.ReactElement {
               disabled={props.disabled || idx === props.animations.length - 1}
               onClick={() => props.onMove(a.id, 1)}
               className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
-              title="Move later"
-              aria-label="Move later"
+              title={t("pptx.animations.moveLater")}
+              aria-label={t("pptx.animations.moveLater")}
             >
               <ChevronDown size={12} />
             </button>
@@ -271,8 +280,8 @@ function AnimationList(props: AnimationListProps): React.ReactElement {
               disabled={props.disabled}
               onClick={() => props.onRemove(a.id)}
               className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30"
-              title="Remove animation"
-              aria-label="Remove animation"
+              title={t("pptx.animations.removeAnimation")}
+              aria-label={t("pptx.animations.removeAnimation")}
               data-testid={`pptx-anim-remove-${a.id}`}
             >
               <Trash2 size={12} />

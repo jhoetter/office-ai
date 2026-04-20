@@ -5,7 +5,8 @@ import { X } from "lucide-react";
 import { cn, useFocusTrap } from "@officeai/ui";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
 import { flattenCellXf } from "@officeai/xlsx";
-import { NUMBER_FORMAT_PRESETS, type NumberFormatPresetId } from "./styles";
+import { NUMBER_FORMAT_PRESETS, numberFormatPresetKey, type NumberFormatPresetId } from "./styles";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * C5 — Excel-parity Format Cells dialog.
@@ -33,13 +34,13 @@ export interface FormatCellsDialogProps {
 
 export type TabId = "number" | "alignment" | "font" | "border" | "fill" | "protection";
 
-const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
-  { id: "number", label: "Number" },
-  { id: "alignment", label: "Alignment" },
-  { id: "font", label: "Font" },
-  { id: "border", label: "Border" },
-  { id: "fill", label: "Fill" },
-  { id: "protection", label: "Protection" },
+const TABS: ReadonlyArray<{ id: TabId; labelKey: string }> = [
+  { id: "number", labelKey: "xlsx.formatCells.tabNumber" },
+  { id: "alignment", labelKey: "xlsx.formatCells.tabAlignment" },
+  { id: "font", labelKey: "xlsx.formatCells.tabFont" },
+  { id: "border", labelKey: "xlsx.formatCells.tabBorder" },
+  { id: "fill", labelKey: "xlsx.formatCells.tabFill" },
+  { id: "protection", labelKey: "xlsx.formatCells.tabProtection" },
 ];
 
 const FONT_FAMILIES = [
@@ -56,15 +57,15 @@ const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48];
 
 const BORDER_STYLES: ReadonlyArray<{
   id: NonNullable<NonNullable<CellFormatPatch["border"]>["top"]>["style"];
-  label: string;
+  labelKey: string;
 }> = [
-  { id: "none", label: "None" },
-  { id: "thin", label: "Thin" },
-  { id: "medium", label: "Medium" },
-  { id: "thick", label: "Thick" },
-  { id: "double", label: "Double" },
-  { id: "dashed", label: "Dashed" },
-  { id: "dotted", label: "Dotted" },
+  { id: "none", labelKey: "xlsx.formatCells.borderStyleNone" },
+  { id: "thin", labelKey: "xlsx.formatCells.borderStyleThin" },
+  { id: "medium", labelKey: "xlsx.formatCells.borderStyleMedium" },
+  { id: "thick", labelKey: "xlsx.formatCells.borderStyleThick" },
+  { id: "double", labelKey: "xlsx.formatCells.borderStyleDouble" },
+  { id: "dashed", labelKey: "xlsx.formatCells.borderStyleDashed" },
+  { id: "dotted", labelKey: "xlsx.formatCells.borderStyleDotted" },
 ];
 
 const FILL_SWATCHES = [
@@ -112,6 +113,7 @@ interface NumberPresetState {
 
 export function FormatCellsDialog(props: FormatCellsDialogProps): ReactNode {
   const { open, styles, anchorStyleId, onClose, onApply, initialTab } = props;
+  const { t } = useTranslator();
   const effective: EffectiveStyle = useMemo(
     () => flattenCellXf(styles, anchorStyleId),
     [styles, anchorStyleId]
@@ -325,15 +327,15 @@ export function FormatCellsDialog(props: FormatCellsDialogProps): ReactNode {
         <header className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3">
           <div>
             <h2 id="format-cells-title" className="text-base font-semibold text-foreground">
-              Format cells
+              {t("xlsx.formatCells.title")}
             </h2>
             <p className="text-xs text-secondary">
-              Applies to the current selection. Empty fields stay unchanged.
+              {t("xlsx.formatCells.hint")}
             </p>
           </div>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("common.close")}
             onClick={onClose}
             className="rounded p-1 text-secondary transition-colors hover:bg-hover hover:text-foreground"
           >
@@ -344,23 +346,23 @@ export function FormatCellsDialog(props: FormatCellsDialogProps): ReactNode {
         <nav
           className="flex gap-1 border-b border-divider px-3 py-2"
           role="tablist"
-          aria-label="Format cells categories"
+          aria-label={t("xlsx.formatCells.tabsAriaLabel")}
         >
-          {TABS.map((t) => (
+          {TABS.map((tabDef) => (
             <button
-              key={t.id}
+              key={tabDef.id}
               role="tab"
-              aria-selected={tab === t.id}
-              data-testid={`format-tab-${t.id}`}
-              onClick={() => setTab(t.id)}
+              aria-selected={tab === tabDef.id}
+              data-testid={`format-tab-${tabDef.id}`}
+              onClick={() => setTab(tabDef.id)}
               className={cn(
                 "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-                tab === t.id
+                tab === tabDef.id
                   ? "bg-[var(--ai-violet-light)] text-[var(--ai-violet)]"
                   : "text-secondary hover:bg-hover hover:text-foreground"
               )}
             >
-              {t.label}
+              {t(tabDef.labelKey)}
             </button>
           ))}
         </nav>
@@ -423,7 +425,7 @@ export function FormatCellsDialog(props: FormatCellsDialogProps): ReactNode {
             className="rounded-md border border-divider bg-surface px-3 py-1.5 text-xs font-medium text-foreground hover:bg-hover"
             data-testid="format-cells-cancel"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -431,7 +433,7 @@ export function FormatCellsDialog(props: FormatCellsDialogProps): ReactNode {
             className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
             data-testid="format-cells-apply"
           >
-            Apply
+            {t("common.apply")}
           </button>
         </footer>
       </div>
@@ -446,10 +448,11 @@ function NumberTab({
   readonly state: NumberPresetState;
   readonly setState: (s: NumberPresetState) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-secondary">Category</label>
+        <label className="text-xs font-medium text-secondary">{t("xlsx.formatCells.numberCategory")}</label>
         <div className="grid grid-cols-2 gap-1">
           {NUMBER_FORMAT_PRESETS.map((p) => (
             <button
@@ -462,7 +465,7 @@ function NumberTab({
                 state.id === p.id && "border-[var(--accent)] bg-[var(--ai-violet-light)]"
               )}
             >
-              {p.label}
+              {t(numberFormatPresetKey(p.id))}
             </button>
           ))}
           <button
@@ -474,22 +477,22 @@ function NumberTab({
               state.id === "custom" && "border-[var(--accent)] bg-[var(--ai-violet-light)]"
             )}
           >
-            Custom format code…
+            {t("xlsx.formatCells.numberCustomFormat")}
           </button>
         </div>
       </div>
       {state.id === "custom" ? (
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-secondary">Custom format code</label>
+          <label className="text-xs font-medium text-secondary">{t("xlsx.formatCells.numberCustomFormatCode")}</label>
           <input
             value={state.customCode}
             onChange={(e) => setState({ id: "custom", customCode: e.target.value })}
             className="rounded border border-divider bg-background px-2 py-1 font-mono text-xs text-foreground focus:border-[var(--accent)] focus:outline-none"
-            placeholder="e.g. #,##0.00 ;[Red](#,##0.00)"
+            placeholder={t("xlsx.formatCells.numberCustomFormatPlaceholder")}
             data-testid="format-number-custom-input"
           />
           <p className="text-[11px] text-tertiary">
-            Standard Excel format codes (see Microsoft documentation).
+            {t("xlsx.formatCells.numberCustomFormatHint")}
           </p>
         </div>
       ) : null}
@@ -516,37 +519,38 @@ function AlignmentTab({
   readonly setWrapText: (b: boolean) => void;
   readonly setIndent: (n: number) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div className="grid grid-cols-2 gap-4">
-      <Field label="Horizontal">
+      <Field label={t("xlsx.formatCells.alignmentHorizontal")}>
         <select
           value={horizontal ?? ""}
           onChange={(e) => setHorizontal((e.target.value || "") as typeof horizontal)}
           className="rounded border border-divider bg-background px-2 py-1 text-xs text-foreground"
           data-testid="format-alignment-horizontal"
         >
-          <option value="">(unchanged)</option>
-          <option value="left">Left</option>
-          <option value="center">Center</option>
-          <option value="right">Right</option>
-          <option value="fill">Fill</option>
-          <option value="justify">Justify</option>
+          <option value="">{t("xlsx.formatCells.alignmentUnchanged")}</option>
+          <option value="left">{t("xlsx.formatCells.alignmentLeft")}</option>
+          <option value="center">{t("xlsx.formatCells.alignmentCenter")}</option>
+          <option value="right">{t("xlsx.formatCells.alignmentRight")}</option>
+          <option value="fill">{t("xlsx.formatCells.alignmentFill")}</option>
+          <option value="justify">{t("xlsx.formatCells.alignmentJustify")}</option>
         </select>
       </Field>
-      <Field label="Vertical">
+      <Field label={t("xlsx.formatCells.alignmentVertical")}>
         <select
           value={vertical ?? ""}
           onChange={(e) => setVertical((e.target.value || "") as typeof vertical)}
           className="rounded border border-divider bg-background px-2 py-1 text-xs text-foreground"
           data-testid="format-alignment-vertical"
         >
-          <option value="">(unchanged)</option>
-          <option value="top">Top</option>
-          <option value="middle">Middle</option>
-          <option value="bottom">Bottom</option>
+          <option value="">{t("xlsx.formatCells.alignmentUnchanged")}</option>
+          <option value="top">{t("xlsx.formatCells.alignmentTop")}</option>
+          <option value="middle">{t("xlsx.formatCells.alignmentMiddle")}</option>
+          <option value="bottom">{t("xlsx.formatCells.alignmentBottom")}</option>
         </select>
       </Field>
-      <Field label="Indent">
+      <Field label={t("xlsx.formatCells.alignmentIndent")}>
         <input
           type="number"
           min={0}
@@ -565,7 +569,7 @@ function AlignmentTab({
             onChange={(e) => setWrapText(e.target.checked)}
             data-testid="format-alignment-wrap"
           />
-          Wrap text
+          {t("xlsx.formatCells.alignmentWrapText")}
         </label>
       </Field>
     </div>
@@ -588,17 +592,18 @@ function FontTab(p: {
   readonly setStrike: (b: boolean) => void;
   readonly setColor: (c: string) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Family">
+        <Field label={t("xlsx.formatCells.fontFamily")}>
           <select
             value={p.family}
             onChange={(e) => p.setFamily(e.target.value)}
             className="rounded border border-divider bg-background px-2 py-1 text-xs text-foreground"
             data-testid="format-font-family"
           >
-            <option value="">(unchanged)</option>
+            <option value="">{t("xlsx.formatCells.alignmentUnchanged")}</option>
             {FONT_FAMILIES.map((f) => (
               <option key={f} value={f}>
                 {f}
@@ -606,7 +611,7 @@ function FontTab(p: {
             ))}
           </select>
         </Field>
-        <Field label="Size">
+        <Field label={t("xlsx.formatCells.fontSize")}>
           <select
             value={p.size}
             onChange={(e) => p.setSize(Number.parseInt(e.target.value, 10) || 11)}
@@ -622,17 +627,17 @@ function FontTab(p: {
         </Field>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Toggle label="Bold" testId="format-font-bold" checked={p.bold} onChange={p.setBold} />
-        <Toggle label="Italic" testId="format-font-italic" checked={p.italic} onChange={p.setItalic} />
+        <Toggle label={t("xlsx.formatCells.fontBold")} testId="format-font-bold" checked={p.bold} onChange={p.setBold} />
+        <Toggle label={t("xlsx.formatCells.fontItalic")} testId="format-font-italic" checked={p.italic} onChange={p.setItalic} />
         <Toggle
-          label="Underline"
+          label={t("xlsx.formatCells.fontUnderline")}
           testId="format-font-underline"
           checked={p.underline}
           onChange={p.setUnderline}
         />
-        <Toggle label="Strikethrough" testId="format-font-strike" checked={p.strike} onChange={p.setStrike} />
+        <Toggle label={t("xlsx.formatCells.fontStrikethrough")} testId="format-font-strike" checked={p.strike} onChange={p.setStrike} />
       </div>
-      <Field label="Color">
+      <Field label={t("xlsx.formatCells.fontColor")}>
         <SwatchPicker
           color={p.color}
           onChange={p.setColor}
@@ -657,6 +662,7 @@ function BorderTab(p: {
   readonly setLeft: (s: typeof p.top) => void;
   readonly setColor: (c: string) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   const setAll = (style: typeof p.top) => {
     p.setTop(style);
     p.setRight(style);
@@ -666,14 +672,14 @@ function BorderTab(p: {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-secondary">Apply to all sides:</span>
+        <span className="text-xs font-medium text-secondary">{t("xlsx.formatCells.borderApplyAllSides")}</span>
         <button
           type="button"
           onClick={() => setAll("thin")}
           className="rounded border border-divider bg-background px-2 py-1 text-xs text-foreground hover:bg-hover"
           data-testid="format-border-all"
         >
-          Box
+          {t("xlsx.formatCells.borderBox")}
         </button>
         <button
           type="button"
@@ -681,16 +687,16 @@ function BorderTab(p: {
           className="rounded border border-divider bg-background px-2 py-1 text-xs text-foreground hover:bg-hover"
           data-testid="format-border-none"
         >
-          None
+          {t("xlsx.formatCells.borderStyleNone")}
         </button>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <BorderSide label="Top" value={p.top} onChange={p.setTop} />
-        <BorderSide label="Right" value={p.right} onChange={p.setRight} />
-        <BorderSide label="Bottom" value={p.bottom} onChange={p.setBottom} />
-        <BorderSide label="Left" value={p.left} onChange={p.setLeft} />
+        <BorderSide label={t("xlsx.formatCells.borderTop")} testId="top" value={p.top} onChange={p.setTop} />
+        <BorderSide label={t("xlsx.formatCells.borderRight")} testId="right" value={p.right} onChange={p.setRight} />
+        <BorderSide label={t("xlsx.formatCells.borderBottom")} testId="bottom" value={p.bottom} onChange={p.setBottom} />
+        <BorderSide label={t("xlsx.formatCells.borderLeft")} testId="left" value={p.left} onChange={p.setLeft} />
       </div>
-      <Field label="Color">
+      <Field label={t("xlsx.formatCells.borderColor")}>
         <SwatchPicker
           color={p.color}
           onChange={p.setColor}
@@ -704,27 +710,30 @@ function BorderTab(p: {
 
 function BorderSide({
   label,
+  testId,
   value,
   onChange,
 }: {
   readonly label: string;
+  readonly testId: string;
   readonly value: NonNullable<NonNullable<CellFormatPatch["border"]>["top"]>["style"] | undefined;
   readonly onChange: (
     s: NonNullable<NonNullable<CellFormatPatch["border"]>["top"]>["style"] | undefined
   ) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <Field label={label}>
       <select
         value={value ?? ""}
         onChange={(e) => onChange((e.target.value || undefined) as typeof value)}
         className="rounded border border-divider bg-background px-2 py-1 text-xs text-foreground"
-        data-testid={`format-border-${label.toLowerCase()}`}
+        data-testid={`format-border-${testId}`}
       >
-        <option value="">(unchanged)</option>
+        <option value="">{t("xlsx.formatCells.alignmentUnchanged")}</option>
         {BORDER_STYLES.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.label}
+            {t(s.labelKey)}
           </option>
         ))}
       </select>
@@ -739,9 +748,10 @@ function FillTab({
   readonly color: string;
   readonly setColor: (c: string) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div className="flex flex-col gap-3">
-      <Field label="Background color">
+      <Field label={t("xlsx.formatCells.fillBackgroundColor")}>
         <SwatchPicker
           color={color}
           onChange={setColor}
@@ -750,10 +760,7 @@ function FillTab({
           testIdPrefix="format-fill-color"
         />
       </Field>
-      <p className="text-[11px] text-tertiary">
-        Solid fill only. Patterns and gradients round-trip from the source workbook but can&apos;t be authored
-        here yet.
-      </p>
+      <p className="text-[11px] text-tertiary">{t("xlsx.formatCells.fillHint")}</p>
     </div>
   );
 }
@@ -769,14 +776,12 @@ function ProtectionTab({
   readonly setLocked: (b: boolean) => void;
   readonly setHidden: (b: boolean) => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div className="flex flex-col gap-3">
-      <Toggle label="Locked" testId="format-protection-locked" checked={locked} onChange={setLocked} />
-      <Toggle label="Hidden" testId="format-protection-hidden" checked={hidden} onChange={setHidden} />
-      <p className="text-[11px] text-tertiary">
-        These flags only take effect when the worksheet itself is protected. Unlocking a cell while the sheet
-        is unprotected has no immediate effect.
-      </p>
+      <Toggle label={t("xlsx.formatCells.protectionLockedLabel")} testId="format-protection-locked" checked={locked} onChange={setLocked} />
+      <Toggle label={t("xlsx.formatCells.protectionHiddenLabel")} testId="format-protection-hidden" checked={hidden} onChange={setHidden} />
+      <p className="text-[11px] text-tertiary">{t("xlsx.formatCells.protectionHint")}</p>
     </div>
   );
 }
@@ -827,6 +832,7 @@ function SwatchPicker({
   readonly allowClear?: boolean;
   readonly testIdPrefix: string;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {allowClear ? (
@@ -838,7 +844,7 @@ function SwatchPicker({
             color === "" ? "border-[var(--accent)]" : "border-divider"
           )}
           data-testid={`${testIdPrefix}-clear`}
-          title="Clear"
+          title={t("xlsx.formatCells.clear")}
         >
           ✕
         </button>
@@ -864,7 +870,7 @@ function SwatchPicker({
         type="text"
         value={color}
         onChange={(e) => onChange(normalizeRgb(e.target.value))}
-        placeholder="RRGGBB"
+        placeholder={t("xlsx.formatCells.rgbPlaceholder")}
         className="ml-1 w-20 rounded border border-divider bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground"
         data-testid={`${testIdPrefix}-input`}
       />

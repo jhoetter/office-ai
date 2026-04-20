@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Image as ImageIcon, Type, Trash2 } from "lucide-react";
 import { cn } from "@officeai/ui";
 import type { EditorView } from "prosemirror-view";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B6 — contextual image toolbar.
@@ -40,6 +41,7 @@ interface SelectedImage {
 
 export function ImageContextToolbar(props: ImageContextToolbarProps): ReactNode {
   const { view, host, onEditAlt, onDelete } = props;
+  const { t } = useTranslator();
   const [selected, setSelected] = useState<SelectedImage | null>(null);
 
   useEffect(() => {
@@ -94,24 +96,24 @@ export function ImageContextToolbar(props: ImageContextToolbarProps): ReactNode 
   return (
     <div
       role="toolbar"
-      aria-label="Image actions"
+      aria-label={t("docx.imageContext.actions")}
       className={cn(
         "fixed z-40 flex items-center gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-md"
       )}
       style={{ top, left, transform: "translateX(-50%)" }}
       data-testid="image-context-toolbar"
     >
-      <Btn label="Edit alt text" onClick={() => onEditAlt(selected.info)}>
+      <Btn label={t("docx.imageContext.editAltText")} onClick={() => onEditAlt(selected.info)}>
         <Type size={14} />
-        <span className="ml-1 text-xs">Alt text</span>
+        <span className="ml-1 text-xs">{t("docx.imageContext.altText")}</span>
       </Btn>
       <span className="mx-1 h-4 w-px bg-divider" aria-hidden />
       <span className="px-1 text-xs text-secondary" aria-hidden>
         <ImageIcon size={12} className="mr-1 inline-block align-[-2px]" />
-        {selected.info.widthPx} × {selected.info.heightPx} px
+        {t("docx.imageContext.dimensions", { w: selected.info.widthPx, h: selected.info.heightPx })}
       </span>
       <span className="mx-1 h-4 w-px bg-divider" aria-hidden />
-      <Btn label="Delete image" onClick={() => onDelete(selected.info.imageId)}>
+      <Btn label={t("docx.imageContext.deleteImage")} onClick={() => onDelete(selected.info.imageId)}>
         <Trash2 size={14} />
       </Btn>
     </div>

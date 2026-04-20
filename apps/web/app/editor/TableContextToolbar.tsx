@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ArrowDownToLine, ArrowUpToLine, ArrowLeftToLine, ArrowRightToLine } from "lucide-react";
 import { cn } from "@officeai/ui";
 import type { EditorView } from "prosemirror-view";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B4 — contextual table toolbar.
@@ -35,6 +36,7 @@ interface SelectedTable {
 
 export function TableContextToolbar(props: TableContextToolbarProps): ReactNode {
   const { view, host, onInsertRow, onInsertColumn } = props;
+  const { t } = useTranslator();
   const [selected, setSelected] = useState<SelectedTable | null>(null);
 
   useEffect(() => {
@@ -94,24 +96,24 @@ export function TableContextToolbar(props: TableContextToolbarProps): ReactNode 
   return (
     <div
       role="toolbar"
-      aria-label="Table actions"
+      aria-label={t("docx.tableContext.actions")}
       className={cn(
         "fixed z-40 flex items-center gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-md"
       )}
       style={{ top, left, transform: "translateX(-50%)" }}
       data-testid="table-context-toolbar"
     >
-      <Btn label="Insert row above" onClick={() => onInsertRow(selected.tableId, "top")}>
+      <Btn label={t("docx.tableContext.insertRowAbove")} onClick={() => onInsertRow(selected.tableId, "top")}>
         <ArrowUpToLine size={14} />
       </Btn>
-      <Btn label="Insert row below" onClick={() => onInsertRow(selected.tableId, "bottom")}>
+      <Btn label={t("docx.tableContext.insertRowBelow")} onClick={() => onInsertRow(selected.tableId, "bottom")}>
         <ArrowDownToLine size={14} />
       </Btn>
       <span className="mx-1 h-4 w-px bg-divider" aria-hidden />
-      <Btn label="Insert column at start" onClick={() => onInsertColumn(selected.tableId, "start")}>
+      <Btn label={t("docx.tableContext.insertColumnStart")} onClick={() => onInsertColumn(selected.tableId, "start")}>
         <ArrowLeftToLine size={14} />
       </Btn>
-      <Btn label="Insert column at end" onClick={() => onInsertColumn(selected.tableId, "end")}>
+      <Btn label={t("docx.tableContext.insertColumnEnd")} onClick={() => onInsertColumn(selected.tableId, "end")}>
         <ArrowRightToLine size={14} />
       </Btn>
     </div>

@@ -26,6 +26,7 @@ import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import { ToolbarMenu, ToolbarRow } from "../lib/shell";
+import { useTranslator } from "@/lib/i18n";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -145,17 +146,26 @@ export type EditModeValue = "edit" | "suggest" | "view";
  * "no mark on this run" and renders blank.
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
+  const { t } = useTranslator();
   return (
     <ToolbarRow
-      ariaLabel="Document toolbar"
+      ariaLabel={t("docx.toolbar.ariaLabel")}
       testId="docx-toolbar"
       leadingClassName="editor-toolbar"
       trailing={
         <div className="flex items-center gap-3 text-xs text-secondary">
           {props.docInfo && (
             <span className="hidden whitespace-nowrap md:inline">
-              {props.docInfo.paragraphs} paragraphs · rev {props.docInfo.revision} ·{" "}
-              {props.docInfo.commentThreads} comment{props.docInfo.commentThreads === 1 ? "" : "s"}
+              {t(
+                props.docInfo.commentThreads === 1
+                  ? "docx.toolbar.paragraphCountOne"
+                  : "docx.toolbar.paragraphCount",
+                {
+                  n: props.docInfo.paragraphs,
+                  revision: props.docInfo.revision,
+                  comments: props.docInfo.commentThreads,
+                }
+              )}
             </span>
           )}
           <ReviewMenu
@@ -185,28 +195,28 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       {/* Alignment */}
       <ToolbarBtn
-        label="Align left"
+        label={t("docx.toolbar.alignLeft")}
         active={props.activeAlignment === "left"}
         onClick={() => props.onSetAlignment("left")}
       >
         <AlignLeft size={14} />
       </ToolbarBtn>
       <ToolbarBtn
-        label="Align center"
+        label={t("docx.toolbar.alignCenter")}
         active={props.activeAlignment === "center"}
         onClick={() => props.onSetAlignment("center")}
       >
         <AlignCenter size={14} />
       </ToolbarBtn>
       <ToolbarBtn
-        label="Align right"
+        label={t("docx.toolbar.alignRight")}
         active={props.activeAlignment === "right"}
         onClick={() => props.onSetAlignment("right")}
       >
         <AlignRight size={14} />
       </ToolbarBtn>
       <ToolbarBtn
-        label="Align justify"
+        label={t("docx.toolbar.alignJustify")}
         active={props.activeAlignment === "justify"}
         onClick={() => props.onSetAlignment("justify")}
       >
@@ -216,10 +226,10 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <Divider />
 
       {/* Indentation — ±360 twips per click (¼ inch, matches Word). */}
-      <ToolbarBtn label="Decrease indent" onClick={() => props.onAdjustIndent(-360)}>
+      <ToolbarBtn label={t("docx.toolbar.decreaseIndent")} onClick={() => props.onAdjustIndent(-360)}>
         <Outdent size={14} />
       </ToolbarBtn>
-      <ToolbarBtn label="Increase indent" onClick={() => props.onAdjustIndent(360)}>
+      <ToolbarBtn label={t("docx.toolbar.increaseIndent")} onClick={() => props.onAdjustIndent(360)}>
         <Indent size={14} />
       </ToolbarBtn>
       {/*
@@ -230,7 +240,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       */}
       <span
         className="inline-block min-w-[3.25rem] px-1 text-[11px] tabular-nums text-secondary"
-        title="Left indent"
+        title={t("docx.toolbar.leftIndent")}
         aria-hidden={props.activeIndentLeft === null || props.activeIndentLeft <= 0}
       >
         {props.activeIndentLeft !== null && props.activeIndentLeft > 0
@@ -249,16 +259,16 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <Divider />
 
       {/* Lists */}
-      <ToolbarBtn label="Bullet list" onClick={() => props.onToggleList("bullet")}>
+      <ToolbarBtn label={t("docx.toolbar.bulletList")} onClick={() => props.onToggleList("bullet")}>
         <List size={14} />
       </ToolbarBtn>
-      <ToolbarBtn label="Numbered list" onClick={() => props.onToggleList("ordered")}>
+      <ToolbarBtn label={t("docx.toolbar.numberedList")} onClick={() => props.onToggleList("ordered")}>
         <ListOrdered size={14} />
       </ToolbarBtn>
 
       {/* Show formatting marks (Word's pilcrow toggle) */}
       <ToolbarBtn
-        label="Show formatting marks"
+        label={t("docx.toolbar.showFormattingMarks")}
         active={props.formattingMarksOn}
         onClick={props.onToggleFormattingMarks}
       >
@@ -268,7 +278,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <Divider />
 
       {/* Image insert */}
-      <ToolbarBtn label="Insert image" onClick={props.onInsertImage}>
+      <ToolbarBtn label={t("docx.toolbar.insertImage")} onClick={props.onInsertImage}>
         <ImageIcon size={14} />
       </ToolbarBtn>
 
@@ -279,7 +289,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <SectionBreakMenu disabled={!props.agentReady} onInsert={props.onInsertSectionBreak} />
 
       {/* Comment */}
-      <ToolbarBtn label="Add comment" onClick={props.onAddComment}>
+      <ToolbarBtn label={t("docx.toolbar.addComment")} onClick={props.onAddComment}>
         <MessageSquarePlus size={14} />
       </ToolbarBtn>
     </ToolbarRow>
@@ -299,6 +309,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
  * picker.
  */
 function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeValue) => void }): ReactNode {
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -313,12 +324,13 @@ function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeVal
   }, [open]);
 
   const meta = EDIT_MODE_META[props.value];
+  const modeLabel = t(`docx.toolbar.${props.value === "edit" ? "editing" : props.value === "suggest" ? "suggesting" : "viewing"}`);
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        title={`Edit mode: ${meta.label}`}
-        aria-label={`Edit mode: ${meta.label}`}
+        title={t("docx.toolbar.editModeLabel", { mode: modeLabel })}
+        aria-label={t("docx.toolbar.editModeLabel", { mode: modeLabel })}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -330,7 +342,7 @@ function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeVal
         data-edit-mode={props.value}
       >
         <meta.Icon size={12} />
-        {meta.label}
+        {modeLabel}
         <ChevronDown size={10} />
       </button>
       {open && (
@@ -341,6 +353,13 @@ function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeVal
           {(Object.keys(EDIT_MODE_META) as EditModeValue[]).map((key) => {
             const m = EDIT_MODE_META[key];
             const active = key === props.value;
+            const labelKey = key === "edit" ? "editing" : key === "suggest" ? "suggesting" : "viewing";
+            const descKey =
+              key === "edit"
+                ? "editingDescription"
+                : key === "suggest"
+                  ? "suggestingDescription"
+                  : "viewingDescription";
             return (
               <button
                 key={key}
@@ -359,8 +378,8 @@ function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeVal
               >
                 <m.Icon size={12} className={cn("mt-0.5 shrink-0", m.iconColorClass)} />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-medium text-foreground">{m.label}</span>
-                  <span className="block text-[11px] text-secondary">{m.description}</span>
+                  <span className="block font-medium text-foreground">{t(`docx.toolbar.${labelKey}`)}</span>
+                  <span className="block text-[11px] text-secondary">{t(`docx.toolbar.${descKey}`)}</span>
                 </span>
               </button>
             );
@@ -381,6 +400,7 @@ function SectionBreakMenu(props: {
   disabled: boolean;
   onInsert: (type: "nextPage" | "continuous" | "evenPage" | "oddPage") => void;
 }): ReactNode {
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -394,8 +414,8 @@ function SectionBreakMenu(props: {
       <button
         ref={triggerRef}
         type="button"
-        title="Insert section break"
-        aria-label="Insert section break"
+        title={t("docx.toolbar.insertSectionBreak")}
+        aria-label={t("docx.toolbar.insertSectionBreak")}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={props.disabled}
@@ -417,27 +437,27 @@ function SectionBreakMenu(props: {
         className="w-64 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
       >
         <SectionBreakMenuItem
-          label="Next page"
-          description="Start the next section on a new page."
+          label={t("docx.section.nextPage")}
+          description={t("docx.section.nextPageDescription")}
           shortcut="Mod+Shift+Enter"
           onClick={() => choose("nextPage")}
           testId="section-break-next-page"
         />
         <SectionBreakMenuItem
-          label="Continuous"
-          description="Begin a new section without a page break."
+          label={t("docx.section.continuous")}
+          description={t("docx.section.continuousDescription")}
           onClick={() => choose("continuous")}
           testId="section-break-continuous"
         />
         <SectionBreakMenuItem
-          label="Even page"
-          description="Start the next section on the next even-numbered page."
+          label={t("docx.section.evenPage")}
+          description={t("docx.section.evenPageDescription")}
           onClick={() => choose("evenPage")}
           testId="section-break-even"
         />
         <SectionBreakMenuItem
-          label="Odd page"
-          description="Start the next section on the next odd-numbered page."
+          label={t("docx.section.oddPage")}
+          description={t("docx.section.oddPageDescription")}
           onClick={() => choose("oddPage")}
           testId="section-break-odd"
         />
@@ -485,6 +505,7 @@ function SectionBreakMenuItem(props: {
  * in and out of the layout.
  */
 function ReviewMenu(props: { count: number; onAcceptAll: () => void; onRejectAll: () => void }): ReactNode {
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -503,8 +524,8 @@ function ReviewMenu(props: { count: number; onAcceptAll: () => void; onRejectAll
     <div ref={ref} className="relative">
       <button
         type="button"
-        title="Review tracked changes"
-        aria-label="Review tracked changes"
+        title={t("docx.toolbar.reviewTracked")}
+        aria-label={t("docx.toolbar.reviewTracked")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -514,11 +535,14 @@ function ReviewMenu(props: { count: number; onAcceptAll: () => void; onRejectAll
         data-testid="review-menu-button"
       >
         <ScrollText size={12} />
-        Review
+        {t("docx.toolbar.review")}
         {!empty && (
           <span
             className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-            aria-label={`${props.count} unresolved tracked change${props.count === 1 ? "" : "s"}`}
+            aria-label={t(
+              props.count === 1 ? "docx.toolbar.unresolvedChange" : "docx.toolbar.unresolvedChanges",
+              { n: props.count }
+            )}
           >
             {props.count}
           </span>
@@ -533,8 +557,8 @@ function ReviewMenu(props: { count: number; onAcceptAll: () => void; onRejectAll
           <ReviewMenuItem
             disabled={empty}
             icon={<Check size={12} className="text-[var(--success)]" />}
-            label="Accept all changes"
-            description="Fold every insertion into the document and remove every deletion."
+            label={t("docx.toolbar.acceptAll")}
+            description={t("docx.toolbar.acceptAllDescription")}
             onClick={() => {
               if (empty) return;
               props.onAcceptAll();
@@ -545,8 +569,8 @@ function ReviewMenu(props: { count: number; onAcceptAll: () => void; onRejectAll
           <ReviewMenuItem
             disabled={empty}
             icon={<X size={12} className="text-[var(--error)]" />}
-            label="Reject all changes"
-            description="Drop every insertion and restore every deletion to the original text."
+            label={t("docx.toolbar.rejectAll")}
+            description={t("docx.toolbar.rejectAllDescription")}
             onClick={() => {
               if (empty) return;
               props.onRejectAll();
@@ -592,31 +616,23 @@ function ReviewMenuItem(props: {
 const EDIT_MODE_META: Record<
   EditModeValue,
   {
-    label: string;
-    description: string;
     Icon: typeof Pencil;
     pillClass: string;
     iconColorClass: string;
   }
 > = {
   edit: {
-    label: "Editing",
-    description: "Type and delete directly. Changes apply immediately.",
     Icon: Pencil,
     pillClass: "border-divider bg-surface text-foreground hover:bg-hover",
     iconColorClass: "text-foreground",
   },
   suggest: {
-    label: "Suggesting",
-    description: "Every insert and delete is recorded as a tracked change you can accept or reject later.",
     Icon: PenLine,
     pillClass:
       "border-[var(--ai-violet)] bg-[var(--ai-violet-light)] text-[var(--ai-violet)] hover:brightness-95",
     iconColorClass: "text-[var(--ai-violet)]",
   },
   view: {
-    label: "Viewing",
-    description: "Read-only. Typing and edits are blocked.",
     Icon: Eye,
     pillClass: "border-divider bg-hover text-secondary hover:bg-divider",
     iconColorClass: "text-secondary",
@@ -656,6 +672,7 @@ function ParagraphStylePicker(props: {
   onChange: (v: string) => void;
   disabled?: boolean;
 }): ReactNode {
+  const { t } = useTranslator();
   // Ensure the active value is in the option list so the <select> doesn't
   // silently drop the displayed value to "Normal" when the doc carries a
   // style id we haven't surfaced yet.
@@ -665,10 +682,10 @@ function ParagraphStylePicker(props: {
     : [{ value: props.value, label: props.value || "—" }, ...props.options];
   return (
     <label className="inline-flex items-center gap-1 text-xs text-secondary">
-      <span className="sr-only">Paragraph style</span>
+      <span className="sr-only">{t("docx.toolbar.style")}</span>
       <select
-        title="Paragraph style"
-        aria-label="Paragraph style"
+        title={t("docx.toolbar.style")}
+        aria-label={t("docx.toolbar.style")}
         value={props.value}
         disabled={props.disabled}
         onChange={(e) => props.onChange(e.target.value)}
@@ -709,20 +726,28 @@ function SpacingMenu(props: {
   }) => void;
   disabled?: boolean;
 }): ReactNode {
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
-  const lineDisplay = formatLineSpacing(props.spacing);
+  const lineDisplay = formatLineSpacing(props.spacing, t);
   const beforePts = toPoints(props.spacing?.before);
   const afterPts = toPoints(props.spacing?.after);
+
+  const presets: ReadonlyArray<{ key: string; line: number }> = [
+    { key: "lineSingle", line: 240 },
+    { key: "line115", line: 276 },
+    { key: "line150", line: 360 },
+    { key: "lineDouble", line: 480 },
+  ];
 
   return (
     <span className="inline-flex">
       <button
         ref={triggerRef}
         type="button"
-        title="Line and paragraph spacing"
-        aria-label="Line and paragraph spacing"
+        title={t("docx.toolbar.lineParagraphSpacing")}
+        aria-label={t("docx.toolbar.lineParagraphSpacing")}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={props.disabled}
@@ -740,10 +765,10 @@ function SpacingMenu(props: {
         role="menu"
         className="w-56 rounded-md border border-divider bg-surface p-2 text-xs shadow-md"
       >
-        <div className="mb-2 font-medium text-foreground">Line spacing</div>
-        {LINE_SPACING_PRESETS.map((preset) => (
+        <div className="mb-2 font-medium text-foreground">{t("docx.toolbar.lineSpacing")}</div>
+        {presets.map((preset) => (
           <button
-            key={preset.label}
+            key={preset.key}
             type="button"
             role="menuitem"
             onClick={() => {
@@ -755,14 +780,14 @@ function SpacingMenu(props: {
               isActiveLine(props.spacing, preset.line) && "bg-accent-light text-foreground"
             )}
           >
-            <span>{preset.label}</span>
+            <span>{t(`docx.toolbar.${preset.key}`)}</span>
             <span className="text-secondary tabular-nums">{(preset.line / 240).toFixed(2)}×</span>
           </button>
         ))}
         <div className="mt-3 border-t border-divider pt-2">
-          <div className="mb-1 font-medium text-foreground">Paragraph spacing (pt)</div>
+          <div className="mb-1 font-medium text-foreground">{t("docx.toolbar.paragraphSpacingPt")}</div>
           <label className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-secondary">Before</span>
+            <span className="text-secondary">{t("docx.toolbar.before")}</span>
             <input
               type="number"
               min={0}
@@ -777,7 +802,7 @@ function SpacingMenu(props: {
             />
           </label>
           <label className="flex items-center justify-between gap-2">
-            <span className="text-secondary">After</span>
+            <span className="text-secondary">{t("docx.toolbar.after")}</span>
             <input
               type="number"
               min={0}
@@ -797,15 +822,11 @@ function SpacingMenu(props: {
   );
 }
 
-const LINE_SPACING_PRESETS: ReadonlyArray<{ label: string; line: number }> = [
-  { label: "Single", line: 240 },
-  { label: "1.15", line: 276 },
-  { label: "1.5", line: 360 },
-  { label: "Double", line: 480 },
-];
-
-function formatLineSpacing(s: ResolvedSpacingDisplay | null): string {
-  if (!s || s.line === undefined) return "Spacing";
+function formatLineSpacing(
+  s: ResolvedSpacingDisplay | null,
+  t: (key: string) => string
+): string {
+  if (!s || s.line === undefined) return t("docx.toolbar.spacingButton");
   if (s.lineRule && s.lineRule !== "auto") return `${(s.line / 20).toFixed(1)}pt`;
   return `${(s.line / 240).toFixed(2)}×`;
 }

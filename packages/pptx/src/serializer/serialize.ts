@@ -409,15 +409,27 @@ function pictureToEntry(shape: Picture): Record<string, unknown> {
 
   const blipFillChildren: unknown[] = [];
   let emittedBlip = false;
+  // Defensive: the parser strips `<a:srcRect>` out of blipFillTail
+  // and promotes it to the typed `srcRect` field, but a hand-crafted
+  // shape (or future round-trip) might still have one in the tail —
+  // we skip those so the typed field stays the single source of truth.
   for (const o of shape.blipFillTail) {
+    if (o.tag === "a:srcRect") continue;
     if (o.tag === "a:blip" && !emittedBlip) {
       blipFillChildren.push(rebuildBlip(shape.mediaRelId, o));
       emittedBlip = true;
+      // OOXML schema requires `<a:srcRect>` to sit directly after
+      // `<a:blip>` (and before any tile/stretch fill mode), so we
+      // splice it in right here.
+      const sr = buildSrcRect(shape.srcRect);
+      if (sr) blipFillChildren.push(sr);
     } else {
       blipFillChildren.push(opaqueToEntry(o));
     }
   }
   if (!emittedBlip) {
+    const sr = buildSrcRect(shape.srcRect);
+    if (sr) blipFillChildren.unshift(sr);
     blipFillChildren.unshift(makeEntry("a:blip", [], { "r:embed": shape.mediaRelId }));
   }
   const blipFill = makeEntry("p:blipFill", blipFillChildren);
@@ -1053,6 +1065,36 @@ function rebuildBlip(relId: string, captured: OpaqueXml): Record<string, unknown
   const entry: Record<string, unknown> = { "a:blip": captured.subtree };
   if (Object.keys(rawAttrs).length > 0) entry[ATTR_KEY] = rawAttrs;
   return entry;
+}
+
+/**
+ * D7 — emit `<a:srcRect>` for the typed `Picture.srcRect` field.
+ * Returns `null` when the field is absent OR all four sides are
+ * zero (an `srcRect` with every attribute = 0 is the OOXML default
+ * and most apps omit it altogether — emitting an empty element
+ * would be schema-valid but noisy on diff). Each side is converted
+ * from percent (0–100) to OOXML's 1000ths-of-a-percent units.
+ */
+function buildSrcRect(
+  srcRect: { leftPct: number; topPct: number; rightPct: number; bottomPct: number } | undefined
+): Record<string, unknown> | null {
+  if (!srcRect) return null;
+  const l = pctToThousandths(srcRect.leftPct);
+  const t = pctToThousandths(srcRect.topPct);
+  const r = pctToThousandths(srcRect.rightPct);
+  const b = pctToThousandths(srcRect.bottomPct);
+  if (l === 0 && t === 0 && r === 0 && b === 0) return null;
+  const attrs: Record<string, string> = {};
+  if (l !== 0) attrs.l = String(l);
+  if (t !== 0) attrs.t = String(t);
+  if (r !== 0) attrs.r = String(r);
+  if (b !== 0) attrs.b = String(b);
+  return makeEntry("a:srcRect", [], attrs);
+}
+
+function pctToThousandths(pct: number): number {
+  if (!Number.isFinite(pct) || pct <= 0) return 0;
+  return Math.round(pct * 1000);
 }
 
 function buildXfrm(

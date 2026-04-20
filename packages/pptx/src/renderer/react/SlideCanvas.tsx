@@ -3269,8 +3269,27 @@ function animationBadgesSvg(slide: Slide, hiddenIds: ReadonlySet<string>): strin
   return parts.join("");
 }
 
-/** EMU → SVG user units (matches `shapes.ts#u`); see `slideViewBox` rationale. */
+/**
+ * EMU → SVG user units (matches `shapes.ts#u`; see `slideViewBox` rationale).
+ *
+ * Defensive: collapses non-finite inputs (NaN, ±Infinity) to 0 so a single
+ * upstream bug — say, a freshly inserted shape whose geometry hasn't
+ * been resolved yet, or a degenerate connector with `size: undefined`
+ * — can never emit `NaN` / `Infinity` into an SVG attribute. React
+ * loudly warns ("Received NaN for the `x` attribute") and the browser
+ * silently drops the element, so the failure mode is "an entire
+ * overlay disappears". Returning 0 keeps the rest of the canvas
+ * painting sanely while we surface the upstream issue via the dev-mode
+ * warning below.
+ */
 function px(emu: number): number {
+  if (!Number.isFinite(emu)) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.warn("[pptx] px() received non-finite EMU value", emu, new Error().stack);
+    }
+    return 0;
+  }
   return Math.round((emu / EMU_PER_PX_AT_96DPI) * 100) / 100;
 }
 

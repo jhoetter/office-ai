@@ -198,6 +198,8 @@ export interface GridProps {
   readonly selectedChartId?: string | null;
   readonly onSelectChart?: (id: string | null) => void;
   readonly onRemoveChart?: (id: string) => void;
+  readonly onMoveChart?: (id: string, anchor: AnchorFromPx) => void;
+  readonly onResizeChart?: (id: string, size: { widthPx: number; heightPx: number }) => void;
 }
 
 export interface CommentMarker {
@@ -272,6 +274,8 @@ export function Grid(props: GridProps): ReactNode {
     selectedChartId,
     onSelectChart,
     onRemoveChart,
+    onMoveChart,
+    onResizeChart,
   } = props;
   const extras: ReadonlyArray<Selection> = extraAreas ?? [];
 
@@ -1734,31 +1738,21 @@ export function Grid(props: GridProps): ReactNode {
             }}
           />
         </div>
-        {sheet.charts.map((chart) => {
-          const a = chart.anchor;
-          const top = HEADER_ROW_HEIGHT + (rowYs[a.fromRow] ?? 0) + a.fromOffsetYPx;
-          const left = HEADER_COL_WIDTH + (colXs[a.fromCol] ?? 0) + a.fromOffsetXPx;
-          return (
-            <div
-              key={`chart-wrap-${chart.id}`}
-              style={{ position: "absolute", top, left, zIndex: 5 }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                onSelectChart?.(chart.id);
-              }}
-            >
-              <ChartOverlay
-                chart={chart}
-                sheet={sheet}
-                width={a.widthPx}
-                height={a.heightPx}
-                selected={selectedChartId === chart.id}
-                onSelect={() => onSelectChart?.(chart.id)}
-                onRequestRemove={onRemoveChart ? () => onRemoveChart(chart.id) : undefined}
-              />
-            </div>
-          );
-        })}
+        {sheet.charts.map((chart) => (
+          <ChartOverlay
+            key={`chart-wrap-${chart.id}`}
+            chart={chart}
+            sheet={sheet}
+            colXs={colXs}
+            rowYs={rowYs}
+            headerOffset={{ x: HEADER_COL_WIDTH, y: HEADER_ROW_HEIGHT }}
+            selected={selectedChartId === chart.id}
+            onSelect={() => onSelectChart?.(chart.id)}
+            onMoveCommit={(anchor) => onMoveChart?.(chart.id, anchor)}
+            onResizeCommit={(size) => onResizeChart?.(chart.id, size)}
+            onRequestRemove={onRemoveChart ? () => onRemoveChart(chart.id) : undefined}
+          />
+        ))}
         {sheet.images.map((image) => (
           <div
             key={`image-wrap-${image.id}`}

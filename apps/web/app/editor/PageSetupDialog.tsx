@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useFocusTrap } from "@officeai/ui";
 import type { DocxSnapshot } from "@officeai/docx";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B3 — Page Setup dialog.
@@ -63,21 +64,22 @@ interface MarginPreset {
 }
 
 const MARGIN_PRESETS: ReadonlyArray<MarginPreset> = [
-  { id: "normal", label: 'Normal (1" all sides)', top: 1440, right: 1440, bottom: 1440, left: 1440 },
-  { id: "narrow", label: 'Narrow (0.5" all sides)', top: 720, right: 720, bottom: 720, left: 720 },
+  { id: "normal", label: "marginNormal", top: 1440, right: 1440, bottom: 1440, left: 1440 },
+  { id: "narrow", label: "marginNarrow", top: 720, right: 720, bottom: 720, left: 720 },
   {
     id: "moderate",
-    label: 'Moderate (1" / 0.75")',
+    label: "marginModerate",
     top: 1440,
     right: 1080,
     bottom: 1440,
     left: 1080,
   },
-  { id: "wide", label: 'Wide (1" / 2")', top: 1440, right: 2880, bottom: 1440, left: 2880 },
+  { id: "wide", label: "marginWide", top: 1440, right: 2880, bottom: 1440, left: 2880 },
 ];
 
 export function PageSetupDialog(props: PageSetupDialogProps) {
   const { open, snapshot, paragraphIndex, onClose, onSubmit } = props;
+  const { t } = useTranslator();
   const initial = useMemo(() => resolveSectionValues(snapshot, paragraphIndex), [snapshot, paragraphIndex]);
   const useMetric = useMemo(() => isMetricLocale(), []);
   const unit: "in" | "cm" = useMetric ? "cm" : "in";
@@ -141,15 +143,15 @@ export function PageSetupDialog(props: PageSetupDialogProps) {
         <header className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3">
           <div>
             <h2 id="page-setup-title" className="text-base font-semibold">
-              Page setup
+              {t("docx.pageSetup.title")}
             </h2>
             <p className="text-xs text-secondary">
-              Edit paper size, orientation and margins for the active section.
+              {t("docx.pageSetup.hint")}
             </p>
           </div>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("common.close")}
             onClick={onClose}
             className="rounded p-1 text-secondary transition-colors hover:bg-hover hover:text-default"
           >
@@ -160,24 +162,24 @@ export function PageSetupDialog(props: PageSetupDialogProps) {
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 text-sm">
           <fieldset className="flex flex-col gap-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-secondary">
-              Orientation
+              {t("docx.pageSetup.orientation")}
             </legend>
             <div className="flex gap-2">
               <OrientButton
                 active={orient === "portrait"}
-                label="Portrait"
+                label={t("docx.pageSetup.portrait")}
                 onClick={() => setOrient("portrait")}
               />
               <OrientButton
                 active={orient === "landscape"}
-                label="Landscape"
+                label={t("docx.pageSetup.landscape")}
                 onClick={() => setOrient("landscape")}
               />
             </div>
           </fieldset>
 
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-xs font-medium uppercase tracking-wide text-secondary">Paper size</legend>
+            <legend className="text-xs font-medium uppercase tracking-wide text-secondary">{t("docx.pageSetup.paperSize")}</legend>
             <select
               value={matchedPaper?.id ?? "custom"}
               onChange={(e) => {
@@ -194,32 +196,32 @@ export function PageSetupDialog(props: PageSetupDialogProps) {
                   {p.label}
                 </option>
               ))}
-              <option value="custom">Custom…</option>
+              <option value="custom">{t("docx.pageSetup.custom")}</option>
             </select>
             <div className="grid grid-cols-2 gap-2">
               <UnitField
-                label={`Width (${unit})`}
+                label={t("docx.pageSetup.width", { unit })}
                 twips={orient === "landscape" ? Math.max(paperW, paperH) : Math.min(paperW, paperH)}
-                onChange={(t) => {
+                onChange={(twips) => {
                   if (orient === "landscape") {
                     setPaperW(Math.max(paperW, paperH));
                     setPaperH(Math.min(paperW, paperH));
                   }
-                  setPaperW(t);
+                  setPaperW(twips);
                 }}
                 unit={unit}
               />
               <UnitField
-                label={`Height (${unit})`}
+                label={t("docx.pageSetup.height", { unit })}
                 twips={orient === "landscape" ? Math.min(paperW, paperH) : Math.max(paperW, paperH)}
-                onChange={(t) => setPaperH(t)}
+                onChange={(twips) => setPaperH(twips)}
                 unit={unit}
               />
             </div>
           </fieldset>
 
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-xs font-medium uppercase tracking-wide text-secondary">Margins</legend>
+            <legend className="text-xs font-medium uppercase tracking-wide text-secondary">{t("docx.pageSetup.margins")}</legend>
             <div className="flex flex-wrap gap-1.5">
               {MARGIN_PRESETS.map((m) => (
                 <button
@@ -233,17 +235,17 @@ export function PageSetupDialog(props: PageSetupDialogProps) {
                   }}
                   className="rounded border border-divider bg-background px-2 py-1 text-xs hover:bg-hover"
                 >
-                  {m.label}
+                  {t(`docx.pageSetup.${m.label}`)}
                 </button>
               ))}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <UnitField label={`Top (${unit})`} twips={top} onChange={setTop} unit={unit} />
-              <UnitField label={`Bottom (${unit})`} twips={bottom} onChange={setBottom} unit={unit} />
-              <UnitField label={`Left (${unit})`} twips={left} onChange={setLeft} unit={unit} />
-              <UnitField label={`Right (${unit})`} twips={right} onChange={setRight} unit={unit} />
-              <UnitField label={`Header (${unit})`} twips={header} onChange={setHeader} unit={unit} />
-              <UnitField label={`Footer (${unit})`} twips={footer} onChange={setFooter} unit={unit} />
+              <UnitField label={t("docx.pageSetup.top", { unit })} twips={top} onChange={setTop} unit={unit} />
+              <UnitField label={t("docx.pageSetup.bottom", { unit })} twips={bottom} onChange={setBottom} unit={unit} />
+              <UnitField label={t("docx.pageSetup.left", { unit })} twips={left} onChange={setLeft} unit={unit} />
+              <UnitField label={t("docx.pageSetup.right", { unit })} twips={right} onChange={setRight} unit={unit} />
+              <UnitField label={t("docx.pageSetup.header", { unit })} twips={header} onChange={setHeader} unit={unit} />
+              <UnitField label={t("docx.pageSetup.footer", { unit })} twips={footer} onChange={setFooter} unit={unit} />
             </div>
           </fieldset>
         </div>
@@ -254,7 +256,7 @@ export function PageSetupDialog(props: PageSetupDialogProps) {
             onClick={onClose}
             className="rounded border border-divider bg-background px-3 py-1.5 text-sm hover:bg-hover"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -262,7 +264,7 @@ export function PageSetupDialog(props: PageSetupDialogProps) {
             className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
             data-testid="page-setup-apply"
           >
-            Apply
+            {t("common.apply")}
           </button>
         </footer>
       </div>

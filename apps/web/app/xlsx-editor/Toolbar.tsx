@@ -14,6 +14,7 @@ import {
   MessageSquarePlus,
   Filter,
   Image as ImageIcon,
+  BarChart3,
   Snowflake,
   ChevronDown,
   Square,
@@ -26,9 +27,10 @@ import { TextFormatBar, cn } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
 import { flattenCellXf } from "@officeai/xlsx";
-import { NUMBER_FORMAT_PRESETS, type NumberFormatPresetId } from "./styles";
+import { NUMBER_FORMAT_PRESETS, numberFormatPresetKey, type NumberFormatPresetId } from "./styles";
 import type { Selection } from "./selection";
 import { ToolbarMenu, ToolbarRow } from "../lib/shell";
+import { useTranslator } from "@/lib/i18n";
 
 export interface ToolbarProps {
   readonly disabled: boolean;
@@ -94,6 +96,13 @@ export interface ToolbarProps {
    * active sheet via `xlsx:add-image`.
    */
   readonly onInsertImage: () => void;
+  /**
+   * Open the chart-insert dialog (kind picker + range preview). The
+   * actual `xlsx:add-chart` dispatch lives in the parent so the
+   * toolbar stays a pure presentational shell. Optional so older
+   * call-sites (tests, storybook) keep working without it.
+   */
+  readonly onInsertChart?: () => void;
   /**
    * Apply a freeze configuration to the active sheet. `rows` ≥ 0,
    * `cols` ≥ 0, and `(0, 0)` clears any existing freeze. The toolbar
@@ -164,6 +173,7 @@ export type BorderPreset =
  * counterpart in DOCX or PPTX.
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
+  const { t } = useTranslator();
   const {
     disabled,
     anchorStyleId,
@@ -186,6 +196,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     onToggleFilter,
     filterActive,
     onInsertImage,
+    onInsertChart,
     onFreeze,
     freeze,
     freezeAnchor,
@@ -230,17 +241,17 @@ export function Toolbar(props: ToolbarProps): ReactNode {
   );
 
   return (
-    <ToolbarRow ariaLabel="Spreadsheet toolbar" testId="xlsx-toolbar">
+    <ToolbarRow ariaLabel={t("xlsx.toolbar.ariaLabel")} testId="xlsx-toolbar">
       <ActionBtn
         icon={<Undo2 size={14} />}
-        label="Undo (⌘Z)"
+        label={t("xlsx.toolbar.undoShortcut")}
         testId="action-undo"
         disabled={!canUndo}
         onClick={onUndo}
       />
       <ActionBtn
         icon={<Redo2 size={14} />}
-        label="Redo (⇧⌘Z)"
+        label={t("xlsx.toolbar.redoShortcut")}
         testId="action-redo"
         disabled={!canRedo}
         onClick={onRedo}
@@ -249,8 +260,8 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       <button
         type="button"
         data-testid="action-format-painter"
-        title="Format Painter (double-click for sticky)"
-        aria-label="Format Painter"
+        title={t("xlsx.toolbar.formatPainterTooltip")}
+        aria-label={t("xlsx.toolbar.formatPainter")}
         aria-pressed={formatPainterActive}
         disabled={disabled}
         onMouseDown={(e) => e.preventDefault()}
@@ -277,7 +288,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <ToggleBtn
         icon={<AlignLeft size={14} />}
-        label="Align left"
+        label={t("xlsx.toolbar.alignLeft")}
         testId="format-align-left"
         active={effective.alignment?.horizontal === "left"}
         disabled={disabled}
@@ -285,7 +296,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       />
       <ToggleBtn
         icon={<AlignCenter size={14} />}
-        label="Align center"
+        label={t("xlsx.toolbar.alignCenter")}
         testId="format-align-center"
         active={effective.alignment?.horizontal === "center"}
         disabled={disabled}
@@ -293,7 +304,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
       />
       <ToggleBtn
         icon={<AlignRight size={14} />}
-        label="Align right"
+        label={t("xlsx.toolbar.alignRight")}
         testId="format-align-right"
         active={effective.alignment?.horizontal === "right"}
         disabled={disabled}
@@ -316,14 +327,14 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <ActionBtn
         icon={<Merge size={14} />}
-        label="Merge cells"
+        label={t("xlsx.toolbar.mergeCells")}
         testId="format-merge"
         disabled={disabled || !canMerge}
         onClick={onMerge}
       />
       <ActionBtn
         icon={<Split size={14} />}
-        label="Unmerge cells"
+        label={t("xlsx.toolbar.unmergeCells")}
         testId="format-unmerge"
         disabled={disabled || !canUnmerge}
         onClick={onUnmerge}
@@ -333,7 +344,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <ActionBtn
         icon={<TableProperties size={14} />}
-        label="Text to Columns"
+        label={t("xlsx.toolbar.textToColumns")}
         testId="data-text-to-columns"
         disabled={disabled || !canTextToColumns}
         onClick={onTextToColumns}
@@ -341,7 +352,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <ToggleBtn
         icon={<Filter size={14} />}
-        label={filterActive ? "Remove AutoFilter" : "Apply AutoFilter"}
+        label={filterActive ? t("xlsx.toolbar.removeAutoFilter") : t("xlsx.toolbar.applyAutoFilter")}
         testId="data-filter-toggle"
         active={filterActive}
         disabled={disabled}
@@ -352,7 +363,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <ActionBtn
         icon={<MessageSquarePlus size={14} />}
-        label="Add comment"
+        label={t("xlsx.toolbar.addComment")}
         testId="action-add-comment"
         disabled={disabled || !selection}
         onClick={onAddComment}
@@ -360,11 +371,21 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <ActionBtn
         icon={<ImageIcon size={14} />}
-        label="Insert image"
+        label={t("xlsx.toolbar.insertImage")}
         testId="action-insert-image"
         disabled={disabled}
         onClick={onInsertImage}
       />
+
+      {onInsertChart ? (
+        <ActionBtn
+          icon={<BarChart3 size={14} />}
+          label={t("xlsx.toolbar.insertChart")}
+          testId="action-insert-chart"
+          disabled={disabled}
+          onClick={onInsertChart}
+        />
+      ) : null}
 
       <FreezeMenu disabled={disabled} freeze={freeze} anchor={freezeAnchor} onFreeze={onFreeze} />
 
@@ -372,7 +393,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       <select
         data-testid="format-number"
-        aria-label="Number format"
+        aria-label={t("xlsx.toolbar.numberFormat")}
         disabled={disabled}
         defaultValue=""
         onChange={(e) => {
@@ -383,11 +404,11 @@ export function Toolbar(props: ToolbarProps): ReactNode {
         className="h-7 rounded border border-divider bg-background px-1 text-xs text-foreground disabled:opacity-50"
       >
         <option value="" disabled>
-          Format…
+          {t("xlsx.toolbar.formatPlaceholder")}
         </option>
         {NUMBER_FORMAT_PRESETS.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.label}
+            {t(numberFormatPresetKey(p.id))}
           </option>
         ))}
       </select>
@@ -398,6 +419,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 function Divider(): ReactNode {
   return <div className="mx-1 h-5 w-px bg-divider" aria-hidden />;
 }
+
 
 interface ToggleBtnProps {
   readonly icon: ReactNode;
@@ -484,6 +506,7 @@ interface FreezeMenuProps {
  */
 function FreezeMenu(props: FreezeMenuProps): ReactNode {
   const { disabled, freeze, anchor, onFreeze } = props;
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -499,8 +522,8 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
         ref={triggerRef}
         type="button"
         data-testid="action-freeze-toggle"
-        title="Freeze panes"
-        aria-label="Freeze panes"
+        title={t("xlsx.toolbar.freezePanes")}
+        aria-label={t("xlsx.toolbar.freezePanes")}
         aria-expanded={open}
         aria-haspopup="menu"
         disabled={disabled}
@@ -523,7 +546,7 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
         className="min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
       >
         <FreezeMenuItem
-          label="Freeze top row"
+          label={t("xlsx.freeze.freezeTopRow")}
           shortcut=""
           checked={isFrozen && freeze!.rows === 1 && freeze!.cols === 0}
           onClick={() => {
@@ -532,7 +555,7 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
           }}
         />
         <FreezeMenuItem
-          label="Freeze first column"
+          label={t("xlsx.freeze.freezeFirstColumn")}
           shortcut=""
           checked={isFrozen && freeze!.rows === 0 && freeze!.cols === 1}
           onClick={() => {
@@ -541,7 +564,7 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
           }}
         />
         <FreezeMenuItem
-          label="Freeze panes at selection"
+          label={t("xlsx.freeze.freezeAtSelection")}
           shortcut={canFreezeAtSelection ? `${anchor!.row}r×${anchor!.col}c` : ""}
           disabled={!canFreezeAtSelection}
           checked={!!anchor && isFrozen && freeze!.rows === anchor.row && freeze!.cols === anchor.col}
@@ -553,7 +576,7 @@ function FreezeMenu(props: FreezeMenuProps): ReactNode {
         />
         <div className="my-1 h-px bg-divider" />
         <FreezeMenuItem
-          label="Unfreeze panes"
+          label={t("xlsx.freeze.unfreeze")}
           shortcut=""
           disabled={!isFrozen}
           onClick={() => {
@@ -624,18 +647,20 @@ interface BordersMenuProps {
  */
 function BordersMenu(props: BordersMenuProps): ReactNode {
   const { disabled, last, onApply, onOpenMore } = props;
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const Icon = last === "none" ? SquareDashed : last === "all" ? Grid3x3 : Square;
+  const lastLabel = t(borderPresetKey(last));
 
   return (
     <span className="inline-flex items-center">
       <button
         type="button"
         data-testid="format-borders-apply"
-        title={`Apply ${BORDER_PRESET_LABEL[last]}`}
-        aria-label={`Apply ${BORDER_PRESET_LABEL[last]}`}
+        title={t("xlsx.toolbar.applyBorder", { preset: lastLabel })}
+        aria-label={t("xlsx.toolbar.applyBorder", { preset: lastLabel })}
         disabled={disabled}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onApply(last)}
@@ -647,8 +672,8 @@ function BordersMenu(props: BordersMenuProps): ReactNode {
         ref={triggerRef}
         type="button"
         data-testid="format-borders-toggle"
-        title="More borders"
-        aria-label="More borders"
+        title={t("xlsx.toolbar.moreBorders")}
+        aria-label={t("xlsx.toolbar.moreBorders")}
         aria-expanded={open}
         aria-haspopup="menu"
         disabled={disabled}
@@ -751,25 +776,37 @@ function BordersMenu(props: BordersMenuProps): ReactNode {
           }}
           className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover"
         >
-          <span>More borders…</span>
+          <span>{t("xlsx.toolbar.moreBordersEllipsis")}</span>
         </button>
       </ToolbarMenu>
     </span>
   );
 }
 
-const BORDER_PRESET_LABEL: Readonly<Record<BorderPreset, string>> = {
-  all: "All borders",
-  outside: "Outside borders",
-  "thick-outside": "Thick outside borders",
-  top: "Top border",
-  bottom: "Bottom border",
-  left: "Left border",
-  right: "Right border",
-  "top-bottom": "Top and bottom border",
-  "top-thick-bottom": "Top and thick bottom border",
-  none: "No border",
-};
+function borderPresetKey(preset: BorderPreset): string {
+  switch (preset) {
+    case "all":
+      return "xlsx.borders.all";
+    case "outside":
+      return "xlsx.borders.outside";
+    case "thick-outside":
+      return "xlsx.borders.thickOutside";
+    case "top":
+      return "xlsx.borders.top";
+    case "bottom":
+      return "xlsx.borders.bottom";
+    case "left":
+      return "xlsx.borders.left";
+    case "right":
+      return "xlsx.borders.right";
+    case "top-bottom":
+      return "xlsx.borders.topBottom";
+    case "top-thick-bottom":
+      return "xlsx.borders.topThickBottom";
+    case "none":
+      return "xlsx.borders.none";
+  }
+}
 
 interface BordersMenuItemProps {
   readonly preset: BorderPreset;
@@ -778,6 +815,7 @@ interface BordersMenuItemProps {
 
 function BordersMenuItem(props: BordersMenuItemProps): ReactNode {
   const { preset, onPick } = props;
+  const { t } = useTranslator();
   return (
     <button
       type="button"
@@ -787,7 +825,7 @@ function BordersMenuItem(props: BordersMenuItemProps): ReactNode {
       onClick={() => onPick(preset)}
       className="flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover"
     >
-      <span>{BORDER_PRESET_LABEL[preset]}</span>
+      <span>{t(borderPresetKey(preset))}</span>
     </button>
   );
 }

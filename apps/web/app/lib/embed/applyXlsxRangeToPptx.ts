@@ -1,24 +1,21 @@
 import type { PptxAgent } from "@officeai/pptx";
-import { snapshotToTsv, type XlsxClipboardSnapshot } from "@officeai/xlsx";
+import type { CellValue, XlsxClipboardCell, XlsxClipboardSnapshot } from "@officeai/xlsx";
 
 /**
- * Drop an XLSX range into PPTX as a freshly-added text box on the
+ * Drop an XLSX range into PPTX as a freshly-added table on the
  * current slide.
  *
- * PPTX has no `insert-table` command yet (only edits to existing
- * `<p:graphicFrame>` tables), so we fall back to a text-box rendering
- * for now. This is the same compromise PowerPoint itself makes when
- * pasting an Excel range with "Keep Text Only" — and it round-trips
- * cleanly through OOXML because text boxes are first-class shapes.
+ * We dispatch a single `pptx:insert-table` so the paste materialises
+ * as a real `<p:graphicFrame>/<a:tbl>` graphic frame — that means
+ * PowerPoint and LibreOffice both render it as a table (cells stay
+ * editable, formatting can be tweaked without losing row/column
+ * structure) instead of the previous TSV-text-box compromise.
  *
- * Sizing: the box is 80% of slide width × 60% of slide height,
- * positioned at 10%, 20% — leaves room for an existing title and
- * gives the user something obviously "newly inserted" to drag.
- *
- * Future work (see UX backlog): add a `pptx:insert-table` command
- * that materialises a real `<a:tbl>` so the cells survive a font /
- * fill change in PowerPoint without losing their row/column
- * structure.
+ * The handler picks a sensibly centred default frame when we omit
+ * `xEmu/yEmu/widthEmu/heightEmu`, so we don't have to query the deck
+ * for slide dimensions here. Per-cell styles are intentionally NOT
+ * forwarded yet: the PPTX command only accepts cell text strings,
+ * and expanding its surface area is a separate piece of work.
  */
 export async function applyXlsxRangeToPptx(args: {
   readonly agent: PptxAgent;
@@ -28,36 +25,74 @@ export async function applyXlsxRangeToPptx(args: {
   const { agent, snapshot, slideIndex } = args;
   if (snapshot.width <= 0 || snapshot.height <= 0) return;
 
-  const tsv = snapshotToTsv(snapshot);
-  const text = tsv.replace(/\t/g, "    ");
-
-  // Slide dimensions live on the snapshot's `presentation.slideSize`.
-  // We pull them from the agent so a 16:9 vs 4:3 deck both lay out
-  // cleanly. Defaults match PowerPoint's 16:9 (9144000 × 6858000 EMU).
-  const snap = agent.getSnapshot();
-  const slideW = snap.root.slideSize?.cxEmu ?? 9_144_000;
-  const slideH = snap.root.slideSize?.cyEmu ?? 6_858_000;
-  const x = Math.round(slideW * 0.1);
-  const y = Math.round(slideH * 0.2);
-  const width = Math.round(slideW * 0.8);
-  const height = Math.round(slideH * 0.6);
+  const cells = buildCellMatrix(snapshot);
 
   const result = await agent.applyCommand({
-    type: "pptx:add-text-box",
+    type: "pptx:insert-table",
     payload: {
       slideIndex,
-      text,
-      x,
-      y,
-      width,
-      height,
+      rows: snapshot.height,
+      cols: snapshot.width,
+      cells,
       name: `XLSX paste ${snapshot.origin.sheet}!${snapshot.origin.range}`,
     },
     source: "human",
   });
   if (result.rejection) {
     throw new Error(
-      `pptx:add-text-box rejected: ${result.rejection.code} ${result.rejection.message ?? ""}`
+      `pptx:insert-table rejected: ${result.rejection.code} ${result.rejection.message ?? ""}`
     );
   }
+}
+
+/**
+ * Project the snapshot's row-major cells into a `string[][]` matrix
+ * sized exactly `height × width`. Empty / null positions become
+ * `""` (NOT the literal `"undefined"` — the table command would
+ * happily render the latter as a paragraph).
+ */
+function buildCellMatrix(snap: XlsxClipboardSnapshot): string[][] {
+  const out: string[][] = [];
+  for (let r = 0; r < snap.height; r++) {
+    const row = snap.cells[r] ?? [];
+    const cols: string[] = new Array(snap.width);
+    for (let c = 0; c < snap.width; c++) {
+      const cell = row[c];
+      cols[c] = cell ? displayCell(cell) : "";
+    }
+    out.push(cols);
+  }
+  return out;
+}
+
+/**
+ * Render one cell to display text.
+ *
+ * - Formula cells prefer the cached result (`cell.value`) when one is
+ *   available, falling back to the raw formula text (with a leading
+ *   `=`) so an unevaluated formula still leaves a visible breadcrumb
+ *   instead of a blank cell.
+ * - Non-formula cells use the same value-formatting rules the TSV
+ *   path uses (`snapshotToTsv`): numbers via `String(n)`, booleans as
+ *   `TRUE`/`FALSE`, errors as their `#code`.
+ */
+function displayCell(cell: XlsxClipboardCell): string {
+  if (cell.formula) {
+    if (cell.value !== null && cell.value !== undefined) {
+      return formatValue(cell.value);
+    }
+    return `=${cell.formula}`;
+  }
+  return formatValue(cell.value);
+}
+
+function formatValue(value: CellValue): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "object" && "kind" in value && value.kind === "error") {
+    return value.code;
+  }
+  return String(value);
 }

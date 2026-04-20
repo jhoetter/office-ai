@@ -234,6 +234,30 @@ export interface ReplacePictureMediaPayload {
   readonly altText?: string;
 }
 
+/**
+ * D7 — write (or clear) the `<a:srcRect>` crop box on a `Picture`
+ * shape. Each of the four sides is a percentage (0–100) of the
+ * original image to chop off; the OOXML serializer multiplies by
+ * 1000 to land in the schema's 1000ths-of-a-percent units. Pass
+ * `0/0/0/0` to clear an existing crop (the serializer omits an
+ * all-zero `<a:srcRect>` so PowerPoint sees the picture as
+ * un-cropped again).
+ *
+ * Validation:
+ *   • Each value must be a finite number in `[0, 100]`.
+ *   • `leftPct + rightPct` must be `< 100` (otherwise the crop
+ *     leaves zero horizontal pixels — meaningless).
+ *   • `topPct + bottomPct` must be `< 100`.
+ */
+export interface CropPicturePayload {
+  readonly slideIndex: number;
+  readonly shapeId: NodeId;
+  readonly leftPct: number;
+  readonly topPct: number;
+  readonly rightPct: number;
+  readonly bottomPct: number;
+}
+
 export interface AddTextBoxPayload {
   readonly slideIndex: number;
   readonly text: string;
@@ -423,6 +447,33 @@ export interface DuplicateShapePayload {
 }
 
 // ─── F2 (Tables) payloads ─────────────────────────────────────────────────
+
+/**
+ * Insert a brand-new typed `TableShape` on a slide. Emits a real
+ * `<p:graphicFrame>/<a:graphic>/<a:graphicData uri="…/table">/<a:tbl>`
+ * with `<a:tblGrid>` columns and `<a:tr>` rows, so PowerPoint and
+ * LibreOffice both render it as a table (not a SmartArt or generic
+ * graphic frame).
+ *
+ * Position/size default to a sensibly centred 8" × 4" frame on the
+ * current slide. `cells`, when provided in row-major order, is used
+ * to seed cell text — paragraphs are line-broken at `\n`. Any cells
+ * not covered by `cells` start out empty so users can type into them.
+ */
+export interface InsertTablePayload {
+  readonly slideIndex: number;
+  readonly rows: number;
+  readonly cols: number;
+  /** EMU position of the table's top-left. Defaults to centred. */
+  readonly xEmu?: number;
+  readonly yEmu?: number;
+  /** EMU width / height of the entire table frame. Defaults to 8" × 4". */
+  readonly widthEmu?: number;
+  readonly heightEmu?: number;
+  /** Optional initial cell text in row-major order. Out-of-range entries are ignored. */
+  readonly cells?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly name?: string;
+}
 
 export interface TableSetCellTextPayload {
   readonly slideIndex: number;
@@ -625,6 +676,7 @@ export const PPTX_COMMAND_TYPES = {
   setTextAnchor: "pptx:set-text-anchor",
   insertImage: "pptx:insert-image",
   replacePictureMedia: "pptx:replace-picture-media",
+  cropPicture: "pptx:crop-picture",
   addTextBox: "pptx:add-text-box",
   addShape: "pptx:add-shape",
   deleteShape: "pptx:delete-shape",
@@ -635,6 +687,7 @@ export const PPTX_COMMAND_TYPES = {
   ungroupShape: "pptx:ungroup-shape",
   alignShapes: "pptx:align-shapes",
   distributeShapes: "pptx:distribute-shapes",
+  insertTable: "pptx:insert-table",
   tableSetCellText: "pptx:table-set-cell-text",
   tableAddRow: "pptx:table-add-row",
   tableDeleteRow: "pptx:table-delete-row",

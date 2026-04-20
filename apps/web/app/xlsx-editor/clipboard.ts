@@ -8,7 +8,7 @@ import {
   snapshotToTsv,
   type XlsxClipboardSnapshot,
 } from "@officeai/xlsx";
-import { EMBED_MIME, isEmbedEnabled, makeEnvelope, serializeEnvelope } from "@/lib/embed/envelope";
+import { EMBED_MIME, makeEnvelope, serializeEnvelope } from "@/lib/embed/envelope";
 
 /**
  * Web-side system-clipboard bridge for the XLSX editor.
@@ -37,11 +37,11 @@ export interface MarshalResult {
   readonly html: string;
   /**
    * Structured embed envelope for cross-format pastes (XLSX → DOCX
-   * table, XLSX → PPTX table). Only present when the
-   * `NEXT_PUBLIC_OAI_EMBED` flag is on; readers tolerate its
-   * absence and fall back to the HTML/TSV channels.
+   * table, XLSX → PPTX table). Always emitted; readers in DOCX/PPTX
+   * still tolerate its absence and fall back to the HTML/TSV channels
+   * when an external app pasted in.
    */
-  readonly embed?: string;
+  readonly embed: string;
 }
 
 /**
@@ -54,9 +54,6 @@ export interface MarshalResult {
 export function marshalClipboard(snapshot: XlsxClipboardSnapshot): MarshalResult {
   const tsv = snapshotToTsv(snapshot);
   const html = buildHtmlTable(snapshot);
-  if (!isEmbedEnabled()) {
-    return { tsv, html };
-  }
   const env = makeEnvelope("xlsx", {
     kind: "xlsx-range",
     snapshot,
@@ -120,16 +117,11 @@ export async function writeToSystemClipboard(payload: MarshalResult): Promise<vo
   if (!clip) return;
   try {
     if (typeof window !== "undefined" && "ClipboardItem" in window) {
-      // Browsers reject `ClipboardItem` if any value is not a Blob,
-      // so we conditionally include the embed MIME only when the
-      // marshal layer produced one (i.e. the flag is on).
       const parts: Record<string, Blob> = {
         "text/plain": new Blob([payload.tsv], { type: "text/plain" }),
         "text/html": new Blob([payload.html], { type: "text/html" }),
+        [EMBED_MIME]: new Blob([payload.embed], { type: EMBED_MIME }),
       };
-      if (payload.embed) {
-        parts[EMBED_MIME] = new Blob([payload.embed], { type: EMBED_MIME });
-      }
       const item = new (window as unknown as { ClipboardItem: typeof ClipboardItem }).ClipboardItem(parts);
       await clip.write([item]);
       return;

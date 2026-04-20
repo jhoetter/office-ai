@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useFocusTrap } from "@officeai/ui";
 import type { ChartKind } from "@officeai/xlsx";
+import { useTranslator } from "@/lib/i18n";
 
 interface InsertChartDialogProps {
   readonly open: boolean;
@@ -18,11 +19,11 @@ interface InsertChartDialogProps {
   }) => void;
 }
 
-const CHART_KINDS: ReadonlyArray<{ readonly kind: ChartKind; readonly label: string }> = [
-  { kind: "column", label: "Column" },
-  { kind: "bar", label: "Bar" },
-  { kind: "line", label: "Line" },
-  { kind: "pie", label: "Pie" },
+const CHART_KINDS: ReadonlyArray<{ readonly kind: ChartKind; readonly labelKey: string }> = [
+  { kind: "column", labelKey: "xlsx.insertChart.column" },
+  { kind: "bar", labelKey: "xlsx.insertChart.bar" },
+  { kind: "line", labelKey: "xlsx.insertChart.line" },
+  { kind: "pie", labelKey: "xlsx.insertChart.pie" },
 ];
 
 /**
@@ -37,6 +38,7 @@ const CHART_KINDS: ReadonlyArray<{ readonly kind: ChartKind; readonly label: str
  */
 export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
   const { open, defaultRange, defaultKind, onCancel, onSubmit } = props;
+  const { t } = useTranslator();
   const [kind, setKind] = useState<ChartKind>(defaultKind ?? "column");
   const [range, setRange] = useState(defaultRange);
   const [title, setTitle] = useState("");
@@ -72,7 +74,7 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Insert chart"
+      aria-label={t("xlsx.insertChart.title")}
       data-testid="insert-chart-dialog"
       style={{
         position: "fixed",
@@ -104,10 +106,10 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
           outline: "none",
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Insert chart</div>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>{t("xlsx.insertChart.title")}</div>
 
         <div>
-          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Chart type</div>
+          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>{t("xlsx.insertChart.chartType")}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
             {CHART_KINDS.map((entry) => (
               <button
@@ -124,19 +126,19 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
                   cursor: "pointer",
                 }}
               >
-                {entry.label}
+                {t(entry.labelKey)}
               </button>
             ))}
           </div>
         </div>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, fontWeight: 500 }}>Data range</span>
+          <span style={{ fontSize: 12, fontWeight: 500 }}>{t("xlsx.insertChart.dataRange")}</span>
           <input
             type="text"
             value={range}
             onChange={(e) => setRange(e.target.value)}
-            placeholder="A1:B7"
+            placeholder={t("xlsx.insertChart.rangePlaceholder")}
             style={{
               padding: "6px 8px",
               border: "1px solid var(--border)",
@@ -151,12 +153,12 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
         </label>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, fontWeight: 500 }}>Title (optional)</span>
+          <span style={{ fontSize: 12, fontWeight: 500 }}>{t("xlsx.insertChart.titleOptional")}</span>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Q4 sales"
+            placeholder={t("xlsx.insertChart.titlePlaceholder")}
             style={{
               padding: "6px 8px",
               border: "1px solid var(--border)",
@@ -175,7 +177,7 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
               checked={hasHeaderRow}
               onChange={(e) => setHasHeaderRow(e.target.checked)}
             />
-            First row contains series labels
+            {t("xlsx.insertChart.hasHeaderRow")}
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input
@@ -183,7 +185,7 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
               checked={hasCategoryColumn}
               onChange={(e) => setHasCategoryColumn(e.target.checked)}
             />
-            First column contains category labels
+            {t("xlsx.insertChart.hasCategoryColumn")}
           </label>
         </div>
 
@@ -201,7 +203,7 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
               cursor: "pointer",
             }}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -216,7 +218,7 @@ export function InsertChartDialog(props: InsertChartDialogProps): ReactNode {
               cursor: "pointer",
             }}
           >
-            Insert
+            {t("xlsx.insertChart.insert")}
           </button>
         </div>
       </div>

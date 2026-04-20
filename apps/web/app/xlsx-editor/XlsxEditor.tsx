@@ -91,8 +91,10 @@ import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
 import {
   PresenceSlot,
+  RemotePresenceList,
   roomIdForSource,
   useCommandBroadcast,
+  usePublishPresence,
   useRealtimeRoom,
   useStableTabId,
 } from "@/lib/realtime";
@@ -106,7 +108,9 @@ import {
   writeToSystemClipboard,
   readFromSystemClipboard,
 } from "./clipboard";
-import { EMBED_MIME } from "@/lib/embed/envelope";
+import { EMBED_MIME, makeEnvelope, parseEnvelope, serializeEnvelope } from "@/lib/embed/envelope";
+import { applyDocxTableToXlsx } from "@/lib/embed/applyDocxTableToXlsx";
+import { captureChartAsPng } from "@/lib/embed/captureChartAsPng";
 
 const SAMPLE_NAME = "sample.xlsx";
 const BLANK_NAME = "Untitled.xlsx";
@@ -272,6 +276,70 @@ function isFormControlTarget(t: EventTarget | null): boolean {
   const tag = t.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return true;
   return t.isContentEditable;
+}
+
+/**
+ * Locate the rendered `<svg>` inside the chart overlay so D4's PNG
+ * capture can rasterise it. The overlay's wrapper carries
+ * `data-testid="chart-overlay-${id}"`; the SVG visual sits inside.
+ * Returns `null` when no DOM is available (SSR, tests) or the chart
+ * isn't currently rendered.
+ */
+function findChartSvgNode(chartId: string): SVGSVGElement | null {
+  if (typeof document === "undefined") return null;
+  const wrapper = document.querySelector(`[data-testid="chart-overlay-${cssEscape(chartId)}"]`);
+  if (!wrapper) return null;
+  return wrapper.querySelector("svg");
+}
+
+function cssEscape(value: string): string {
+  // Lightweight CSS.escape polyfill — `chartId`s are stable
+  // alphanumerics from the deterministic id minter so a strict pass
+  // is enough; we still defer to the native one when present.
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+  return value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * Async clipboard write for D4. Captures the chart as PNG, builds
+ * the cross-format envelope, and paints three MIMEs (`image/png` for
+ * external pasters, `application/x-officeai-embed+json` for the
+ * in-app DOCX/PPTX paste handlers, `text/plain` as a textual
+ * fallback) in a single `ClipboardItem`.
+ */
+async function writeChartToClipboard(args: {
+  readonly node: SVGSVGElement;
+  readonly chartKind: "column" | "bar" | "line" | "pie";
+  readonly title: string | undefined;
+}): Promise<void> {
+  if (typeof navigator === "undefined" || !navigator.clipboard) return;
+  const { node, chartKind, title } = args;
+  const captured = await captureChartAsPng({ source: node });
+  const env = makeEnvelope("xlsx", {
+    kind: "xlsx-chart-image",
+    png: captured.png,
+    width: captured.width,
+    height: captured.height,
+    chartKind,
+    title,
+  });
+  const pngBytes = base64ToUint8Array(captured.png);
+  const parts: Record<string, Blob> = {
+    [EMBED_MIME]: new Blob([serializeEnvelope(env)], { type: EMBED_MIME }),
+    "image/png": new Blob([pngBytes as BlobPart], { type: "image/png" }),
+    "text/plain": new Blob([title ?? "Chart"], { type: "text/plain" }),
+  };
+  if (typeof window !== "undefined" && "ClipboardItem" in window) {
+    const Item = (window as unknown as { ClipboardItem: typeof ClipboardItem }).ClipboardItem;
+    await navigator.clipboard.write([new Item(parts)]);
+  }
+}
+
+function base64ToUint8Array(b64: string): Uint8Array {
+  const bin = typeof atob === "function" ? atob(b64) : Buffer.from(b64, "base64").toString("binary");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 /**
@@ -1134,7 +1202,35 @@ export function XlsxEditor({
     (e: React.ClipboardEvent<HTMLDivElement>) => {
       if (isFormControlTarget(e.target)) return;
       const a = agentRef.current;
-      if (!a || !activeSheet || !selection) return;
+      if (!a || !activeSheet) return;
+
+      // Chart-aware branch — when a chart is selected (and the user
+      // hasn't started a range copy as well) we paint a PNG raster
+      // of the chart onto the clipboard so external apps see an
+      // image, plus an `xlsx-chart-image` envelope so an in-app
+      // paste into DOCX / PPTX inserts a typed picture. The PNG
+      // capture is async (SVG → Image → canvas), so we defer the
+      // clipboard write to `navigator.clipboard.write` after
+      // `preventDefault()` rather than `event.clipboardData`.
+      if (selectedChartId && !selection) {
+        const chart = activeSheet.charts.find((c) => c.id === selectedChartId);
+        if (chart) {
+          const node = findChartSvgNode(selectedChartId);
+          if (node) {
+            e.preventDefault();
+            void writeChartToClipboard({
+              node,
+              chartKind: chart.kind,
+              title: chart.title,
+            }).catch((err: unknown) => {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            });
+            return;
+          }
+        }
+      }
+
+      if (!selection) return;
       e.preventDefault();
       try {
         const range = selectionToRange(selection);
@@ -1145,7 +1241,7 @@ export function XlsxEditor({
         const payload = marshalClipboard(snap);
         e.clipboardData.setData("text/plain", payload.tsv);
         e.clipboardData.setData("text/html", payload.html);
-        if (payload.embed) e.clipboardData.setData(EMBED_MIME, payload.embed);
+        e.clipboardData.setData(EMBED_MIME, payload.embed);
         setMarchingAnts({
           sheet: activeSheet.name,
           r1: range.start.row,
@@ -1158,7 +1254,7 @@ export function XlsxEditor({
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [activeSheet, selection, pushToast]
+    [activeSheet, selection, selectedChartId, pushToast]
   );
 
   const onSurfaceCut = useCallback(
@@ -1176,7 +1272,7 @@ export function XlsxEditor({
         const payload = marshalClipboard(snap);
         e.clipboardData.setData("text/plain", payload.tsv);
         e.clipboardData.setData("text/html", payload.html);
-        if (payload.embed) e.clipboardData.setData(EMBED_MIME, payload.embed);
+        e.clipboardData.setData(EMBED_MIME, payload.embed);
         setMarchingAnts({
           sheet: activeSheet.name,
           r1: range.start.row,
@@ -1210,12 +1306,41 @@ export function XlsxEditor({
           return;
         }
       }
+      // D5 — structured `docx-table` envelope branch. The DOCX
+      // editor paints `application/x-officeai-embed+json` alongside
+      // its default text/html copy when the user copies a whole
+      // table; we route that through `applyDocxTableToXlsx` so the
+      // paste lands as a real range (with numeric / boolean
+      // coercion) instead of going through the HTML / TSV fallback
+      // path which loses cell typing.
+      const embedRaw = e.clipboardData.getData(EMBED_MIME);
+      if (embedRaw) {
+        const env = parseEnvelope(embedRaw);
+        if (env && env.payload.kind === "docx-table") {
+          e.preventDefault();
+          const agent = agentRef.current;
+          if (!agent) return;
+          const sheetName = activeSheet.name;
+          const target = `${colToLetter(selection.anchor.col)}${selection.anchor.row + 1}`;
+          const cells = env.payload.cells.map((row) => row.slice());
+          void applyDocxTableToXlsx({
+            agent,
+            sheet: sheetName,
+            target,
+            cells,
+            originLabel: env.payload.originLabel,
+          }).catch((err: unknown) => {
+            pushToast("error", err instanceof Error ? err.message : String(err));
+          });
+          return;
+        }
+      }
       e.preventDefault();
       const html = e.clipboardData.getData("text/html");
       const text = e.clipboardData.getData("text/plain");
       void pasteAtSelection({ html, text });
     },
-    [activeSheet, selection, pasteAtSelection, dispatchAddImage]
+    [activeSheet, selection, pasteAtSelection, dispatchAddImage, pushToast]
   );
 
   const onSurfaceKeyDown = useCallback(
@@ -3856,9 +3981,21 @@ export function XlsxEditor({
     product: "xlsx",
   });
   useCommandBroadcast({
-    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    agent,
     room: realtimeRoom.room,
   });
+
+  // A2: publish our active sheet + selected range so peers see it as
+  // a presence pill (and a future overlay can read it from awareness
+  // without needing a second channel).
+  const presenceCursor = useMemo(() => {
+    if (!activeSheet || !selection) return null;
+    const sheetName = activeSheet.name;
+    const anchor = formatA1({ row: selection.anchor.row, col: selection.anchor.col });
+    const range = formatSelection(selection);
+    return { product: "xlsx" as const, sheetName, anchor, range };
+  }, [activeSheet, selection]);
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(
     () => ({
@@ -3915,7 +4052,12 @@ export function XlsxEditor({
     <>
       <EditorShell
         adapter={adapter}
-        topBarExtras={<PresenceSlot state={realtimeRoom} />}
+        topBarExtras={
+          <>
+            <RemotePresenceList peers={realtimeRoom.remotePeers} />
+            <PresenceSlot state={realtimeRoom} />
+          </>
+        }
         toolbar={
           snapshot ? (
             <Toolbar
@@ -3946,6 +4088,7 @@ export function XlsxEditor({
               onToggleFilter={onToggleFilter}
               filterActive={!!activeSheet?.autoFilter}
               onInsertImage={onInsertImageClick}
+              onInsertChart={() => setInsertChartOpen(true)}
               onFreeze={onFreeze}
               freeze={activeSheet?.freeze}
               freezeAnchor={selection ? { row: selection.anchor.row, col: selection.anchor.col } : null}
@@ -4281,6 +4424,26 @@ export function XlsxEditor({
                             chartId: id,
                           });
                           setSelectedChartId(null);
+                        }}
+                        onMoveChart={(id, anchor) => {
+                          if (!activeSheet) return;
+                          dispatchOrToast("xlsx:move-chart", {
+                            sheet: activeSheet.name,
+                            chartId: id,
+                            fromRow: anchor.fromRow,
+                            fromCol: anchor.fromCol,
+                            fromOffsetXPx: anchor.fromOffsetXPx,
+                            fromOffsetYPx: anchor.fromOffsetYPx,
+                          });
+                        }}
+                        onResizeChart={(id, size) => {
+                          if (!activeSheet) return;
+                          dispatchOrToast("xlsx:resize-chart", {
+                            sheet: activeSheet.name,
+                            chartId: id,
+                            widthPx: size.widthPx,
+                            heightPx: size.heightPx,
+                          });
                         }}
                       />
                     ) : null}

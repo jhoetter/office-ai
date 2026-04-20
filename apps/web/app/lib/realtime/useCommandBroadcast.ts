@@ -9,9 +9,16 @@ import type { RoomClient } from "./RoomClient";
  *
  * Intentionally loose so this hook stays product-agnostic — it
  * inspects only the bits it needs (`subscribe` to learn about local
- * mutations, `dispatch` to apply remote ones). The `Mutation` shape
- * coming back from `subscribe` is also kept opaque for the same
- * reason; we only ever read `command.{type,payload,source,agentId}`.
+ * mutations, `applyCommand` to apply remote ones). The `Mutation`
+ * shape coming back from `subscribe` is also kept opaque for the
+ * same reason; we only ever read `command.{type,payload,source,agentId}`.
+ *
+ * IMPORTANT: the method MUST be `applyCommand`, not `dispatch`. The
+ * three product agents (`DocxAgent` / `XlsxAgent` / `PptxAgent`) all
+ * expose `applyCommand`; an earlier version of this hook used
+ * `dispatch` and silently broke every cross-tab apply at runtime
+ * because the cast at the call-site hid the type mismatch.
+ * Regression test: `useCommandBroadcast.test.ts`.
  */
 export interface BroadcastableAgent {
   subscribe(
@@ -28,7 +35,9 @@ export interface BroadcastableAgent {
       }
     ) => void
   ): () => void;
-  dispatch(command: CommandLite): Promise<unknown> | unknown;
+  applyCommand(
+    command: CommandLite
+  ): Promise<{ readonly rejection?: { readonly code: string; readonly message?: string } } | unknown>;
 }
 
 export interface UseCommandBroadcastOptions {
@@ -65,42 +74,75 @@ export function useCommandBroadcast(opts: UseCommandBroadcastOptions): void {
 
   useEffect(() => {
     if (!agent || !room) return;
-
-    const unsubLocal = agent.subscribe((_snap, mutation) => {
-      if (applyingRemoteRef.current > 0) return;
-      // Only mirror approved mutations — agent suggestions / rejections
-      // stay client-local until the human accepts them.
-      if (mutation.status !== "approved") return;
-      const t = mutation.command.type;
-      if (shouldBroadcast && !shouldBroadcast(t)) return;
-      const cmd: CommandLite = {
-        type: t,
-        payload: mutation.command.payload,
-        ...(mutation.command.source ? { source: mutation.command.source as CommandLite["source"] } : {}),
-        ...(mutation.command.agentId ? { agentId: mutation.command.agentId } : {}),
-      };
-      try {
-        room.broadcastCommand(cmd);
-      } catch (err) {
-        console.warn("[realtime] broadcast failed for", t, err);
-      }
+    return wireBroadcast({
+      agent,
+      room,
+      shouldBroadcast,
+      applyingRemote: applyingRemoteRef,
     });
-
-    const unsubRemote = room.onRemoteCommand((command) => {
-      applyingRemoteRef.current += 1;
-      const result = agent.dispatch({ ...command, source: "system" });
-      Promise.resolve(result)
-        .catch((err) => {
-          console.warn("[realtime] remote command rejected:", command.type, err);
-        })
-        .finally(() => {
-          applyingRemoteRef.current -= 1;
-        });
-    });
-
-    return () => {
-      unsubLocal();
-      unsubRemote();
-    };
   }, [agent, room, shouldBroadcast]);
+}
+
+/**
+ * Pure (React-free) wiring: subscribes the local agent to the room
+ * and the room to the local agent. Returns an unsubscribe function.
+ *
+ * Extracted from `useCommandBroadcast` so the contract — including
+ * the apply-not-dispatch invariant — is testable without a React
+ * testing harness.
+ */
+export function wireBroadcast(args: {
+  readonly agent: BroadcastableAgent;
+  readonly room: RoomClient;
+  readonly shouldBroadcast?: (commandType: string) => boolean;
+  readonly applyingRemote: { current: number };
+}): () => void {
+  const { agent, room, shouldBroadcast, applyingRemote } = args;
+
+  const unsubLocal = agent.subscribe((_snap, mutation) => {
+    if (applyingRemote.current > 0) return;
+    // Only mirror approved mutations — agent suggestions / rejections
+    // stay client-local until the human accepts them.
+    if (mutation.status !== "approved") return;
+    const t = mutation.command.type;
+    if (shouldBroadcast && !shouldBroadcast(t)) return;
+    const cmd: CommandLite = {
+      type: t,
+      payload: mutation.command.payload,
+      ...(mutation.command.source ? { source: mutation.command.source as CommandLite["source"] } : {}),
+      ...(mutation.command.agentId ? { agentId: mutation.command.agentId } : {}),
+    };
+    try {
+      room.broadcastCommand(cmd);
+    } catch (err) {
+      console.warn("[realtime] broadcast failed for", t, err);
+    }
+  });
+
+  const unsubRemote = room.onRemoteCommand((command) => {
+    applyingRemote.current += 1;
+    const result = agent.applyCommand({ ...command, source: "system" });
+    Promise.resolve(result)
+      .then((mutation) => {
+        // The command bus does NOT throw on rejection — it returns
+        // `{ rejection: { code, message } }`. Surface those at warn
+        // level so a peer's bad command doesn't fail silently while
+        // every subsequent one applies cleanly.
+        const r = (mutation as { rejection?: { code: string; message?: string } } | undefined)?.rejection;
+        if (r) {
+          console.warn("[realtime] remote command rejected:", command.type, r.code, r.message ?? "");
+        }
+      })
+      .catch((err) => {
+        console.warn("[realtime] remote command threw:", command.type, err);
+      })
+      .finally(() => {
+        applyingRemote.current -= 1;
+      });
+  });
+
+  return () => {
+    unsubLocal();
+    unsubRemote();
+  };
 }

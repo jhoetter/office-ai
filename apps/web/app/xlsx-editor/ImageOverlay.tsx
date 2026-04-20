@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { SheetImage } from "@officeai/xlsx";
+import { ResizeHandles, type ResizeHandleSide } from "@officeai/ui";
 import type { AxisLookup } from "./gridDimensions";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Axis source consumed by the overlay. Either a real
@@ -24,20 +26,25 @@ export interface AnchorFromPx {
 }
 
 /**
- * Convert an image's `(fromRow, fromCol, fromOffsetX, fromOffsetY)`
- * anchor into absolute body-coordinate pixels (i.e. relative to the
+ * Convert a `(fromRow, fromCol, fromOffsetX, fromOffsetY)` anchor
+ * into absolute body-coordinate pixels (i.e. relative to the
  * top-left of the cell area, EXCLUDING the row/column header bands).
+ *
+ * Accepts either a {@link SheetImage} (legacy callers) or a bare
+ * `{ anchor }` object so that {@link SheetChart} — which has the
+ * same shape but doesn't carry a `mediaRef` — can reuse the helper
+ * without a fake image cast.
  */
 export function anchorToBodyPx(
-  image: SheetImage,
+  source: { readonly anchor: { readonly fromRow: number; readonly fromCol: number; readonly fromOffsetXPx: number; readonly fromOffsetYPx: number } },
   colXs: AxisLike,
   rowYs: AxisLike
 ): { x: number; y: number } {
-  const c = clamp(image.anchor.fromCol, 0, colXs.length - 2);
-  const r = clamp(image.anchor.fromRow, 0, rowYs.length - 2);
+  const c = clamp(source.anchor.fromCol, 0, colXs.length - 2);
+  const r = clamp(source.anchor.fromRow, 0, rowYs.length - 2);
   return {
-    x: (colXs[c] ?? 0) + image.anchor.fromOffsetXPx,
-    y: (rowYs[r] ?? 0) + image.anchor.fromOffsetYPx,
+    x: (colXs[c] ?? 0) + source.anchor.fromOffsetXPx,
+    y: (rowYs[r] ?? 0) + source.anchor.fromOffsetYPx,
   };
 }
 
@@ -78,13 +85,19 @@ function floorIndex(arr: AxisLike, target: number): number {
   return lo;
 }
 
-const HANDLE_SIZE = 9;
-
 type DragMode =
-  | { kind: "move"; startMouseX: number; startMouseY: number; startBodyX: number; startBodyY: number }
+  | {
+      kind: "move";
+      startMouseX: number;
+      startMouseY: number;
+      startBodyX: number;
+      startBodyY: number;
+    }
   | {
       kind: "resize";
       handle: ResizeHandle;
+      shiftKey: boolean;
+      aspect: number;
       startMouseX: number;
       startMouseY: number;
       startBodyX: number;
@@ -93,18 +106,7 @@ type DragMode =
       startHeight: number;
     };
 
-export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
-
-const RESIZE_CURSORS: Record<ResizeHandle, string> = {
-  nw: "nwse-resize",
-  n: "ns-resize",
-  ne: "nesw-resize",
-  e: "ew-resize",
-  se: "nwse-resize",
-  s: "ns-resize",
-  sw: "nesw-resize",
-  w: "ew-resize",
-};
+export type ResizeHandle = ResizeHandleSide;
 
 export interface ImageOverlayProps {
   readonly image: SheetImage;
@@ -144,6 +146,7 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
     onResizeCommit,
     imageId,
   } = props;
+  const { t } = useTranslator();
 
   const baseBodyPx = anchorToBodyPx(image, colXs, rowYs);
   const [dragMode, setDragMode] = useState<DragMode | null>(null);
@@ -181,7 +184,16 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
       }
       const dx = e.clientX - dragMode.startMouseX;
       const dy = e.clientY - dragMode.startMouseY;
-      const next = applyResize(dragMode, dx, dy);
+      // Shift-while-dragging-a-corner toggles aspect lock live —
+      // releasing Shift mid-drag must let the rect freely deform
+      // again, so we re-read the modifier on every move rather
+      // than freezing it at grab time.
+      const next = applyResize(
+        dragMode,
+        dx,
+        dy,
+        e.shiftKey && isCorner(dragMode.handle),
+      );
       setTransient(next);
     };
     const onUp = () => {
@@ -250,14 +262,15 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
           pointerEvents: "none",
         }}
       />
-      {(["nw", "n", "ne", "e", "se", "s", "sw", "w"] as ResizeHandle[]).map((h) => (
-        <div
-          key={`handle-${h}`}
-          data-testid={`image-handle-${imageId}-${h}`}
-          aria-label={`Resize ${h}`}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
+      {/* Wrapper colour-channel: ResizeHandles uses `currentColor`
+          for its border so any consumer styles the chrome by setting
+          `color` on a parent. */}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", color: "var(--ai-violet, #7c3aed)" }}>
+        <ResizeHandles
+          handleSizePx={9}
+          dataTestIdPrefix={`image-handle-${imageId}`}
+          handleLabel={(side) => t("common.resizeHandle", { handle: side })}
+          onHandleGrab={(info) => {
             onSelect();
             setTransient({
               bodyX: baseBodyPx.x,
@@ -267,27 +280,22 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
             });
             setDragMode({
               kind: "resize",
-              handle: h,
-              startMouseX: e.clientX,
-              startMouseY: e.clientY,
+              handle: info.side,
+              shiftKey: info.shiftKey,
+              aspect:
+                image.anchor.heightPx > 0
+                  ? image.anchor.widthPx / image.anchor.heightPx
+                  : 1,
+              startMouseX: info.clientX,
+              startMouseY: info.clientY,
               startBodyX: baseBodyPx.x,
               startBodyY: baseBodyPx.y,
               startWidth: image.anchor.widthPx,
               startHeight: image.anchor.heightPx,
             });
           }}
-          style={{
-            position: "absolute",
-            ...handleStyle(h),
-            width: HANDLE_SIZE,
-            height: HANDLE_SIZE,
-            background: "white",
-            border: "1.5px solid var(--ai-violet, #7c3aed)",
-            borderRadius: 2,
-            cursor: RESIZE_CURSORS[h],
-          }}
         />
-      ))}
+      </div>
     </>
   ) : null;
 
@@ -296,7 +304,7 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
       data-testid={`image-${imageId}`}
       data-image-id={imageId}
       role="img"
-      aria-label={image.altText ?? image.name ?? "Image"}
+      aria-label={image.altText ?? image.name ?? t("xlsx.image.imageFallback")}
       style={containerStyle}
       onMouseDown={(e) => {
         e.preventDefault();
@@ -353,10 +361,15 @@ export function ImageOverlay(props: ImageOverlayProps): ReactNode {
   );
 }
 
+function isCorner(h: ResizeHandle): boolean {
+  return h === "nw" || h === "ne" || h === "se" || h === "sw";
+}
+
 function applyResize(
   drag: Extract<DragMode, { kind: "resize" }>,
   dx: number,
-  dy: number
+  dy: number,
+  proportional: boolean
 ): { bodyX: number; bodyY: number; widthPx: number; heightPx: number } {
   let { startBodyX: x, startBodyY: y, startWidth: w, startHeight: h } = drag;
   const minSize = 8;
@@ -372,27 +385,22 @@ function applyResize(
     y = drag.startBodyY + (drag.startHeight - newH);
     h = newH;
   }
-  return { bodyX: Math.max(0, x), bodyY: Math.max(0, y), widthPx: w, heightPx: h };
-}
-
-function handleStyle(h: ResizeHandle): CSSProperties {
-  const half = -Math.floor(HANDLE_SIZE / 2);
-  switch (h) {
-    case "nw":
-      return { top: half, left: half };
-    case "n":
-      return { top: half, left: `calc(50% - ${HANDLE_SIZE / 2}px)` };
-    case "ne":
-      return { top: half, right: half };
-    case "e":
-      return { top: `calc(50% - ${HANDLE_SIZE / 2}px)`, right: half };
-    case "se":
-      return { bottom: half, right: half };
-    case "s":
-      return { bottom: half, left: `calc(50% - ${HANDLE_SIZE / 2}px)` };
-    case "sw":
-      return { bottom: half, left: half };
-    case "w":
-      return { top: `calc(50% - ${HANDLE_SIZE / 2}px)`, left: half };
+  if (proportional && isCorner(drag.handle) && drag.aspect > 0) {
+    // Whichever axis "moved more" relative to the start size wins;
+    // the other axis snaps to the locked aspect ratio. We re-derive
+    // x / y from the locked dimensions when an n/w handle is in play
+    // so the opposite corner stays pinned (matches PowerPoint /
+    // Figma corner-resize behaviour).
+    const rW = w / drag.startWidth;
+    const rH = h / drag.startHeight;
+    const widthDriven = Math.abs(rW - 1) >= Math.abs(rH - 1);
+    if (widthDriven) {
+      h = Math.max(minSize, w / drag.aspect);
+    } else {
+      w = Math.max(minSize, h * drag.aspect);
+    }
+    if (drag.handle.includes("w")) x = drag.startBodyX + (drag.startWidth - w);
+    if (drag.handle.includes("n")) y = drag.startBodyY + (drag.startHeight - h);
   }
+  return { bodyX: Math.max(0, x), bodyY: Math.max(0, y), widthPx: w, heightPx: h };
 }

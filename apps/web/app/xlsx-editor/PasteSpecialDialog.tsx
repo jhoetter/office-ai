@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * C7 — Paste Special dialog.
@@ -37,35 +38,36 @@ export interface PasteSpecialDialogProps {
 
 interface ModeOption {
   readonly id: PasteSpecialMode;
-  readonly label: string;
-  readonly hint: string;
+  readonly labelKey: string;
+  readonly hintKey: string;
 }
 
 const MODE_OPTIONS: ReadonlyArray<ModeOption> = [
   {
     id: "all",
-    label: "All",
-    hint: "Values, formulas, formats, and merged ranges.",
+    labelKey: "xlsx.pasteSpecial.all",
+    hintKey: "xlsx.pasteSpecial.allHint",
   },
   {
     id: "values",
-    label: "Values",
-    hint: "Numbers and text only — formulas collapse to their result.",
+    labelKey: "xlsx.pasteSpecial.values",
+    hintKey: "xlsx.pasteSpecial.valuesHint",
   },
   {
     id: "formulas",
-    label: "Formulas",
-    hint: "Formulas (with relative refs adjusted) without copying styles.",
+    labelKey: "xlsx.pasteSpecial.formulas",
+    hintKey: "xlsx.pasteSpecial.formulasHint",
   },
   {
     id: "formats",
-    label: "Formats",
-    hint: "Cell formatting only — does not overwrite the destination values.",
+    labelKey: "xlsx.pasteSpecial.formats",
+    hintKey: "xlsx.pasteSpecial.formatsHint",
   },
 ];
 
 export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
   const { open, onClose, onConfirm } = props;
+  const { t } = useTranslator();
   const [mode, setMode] = useState<PasteSpecialMode>("all");
   const [transpose, setTranspose] = useState<boolean>(false);
 
@@ -104,7 +106,7 @@ export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Paste Special"
+      aria-label={t("xlsx.pasteSpecial.title")}
       data-testid="paste-special-dialog"
       className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4"
       onMouseDown={(e) => {
@@ -118,10 +120,10 @@ export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-divider px-4 py-2.5">
-          <h2 className="text-sm font-semibold text-foreground">Paste Special</h2>
+          <h2 className="text-sm font-semibold text-foreground">{t("xlsx.pasteSpecial.title")}</h2>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("common.close")}
             data-testid="paste-special-close"
             onClick={onClose}
             className="inline-flex h-7 w-7 items-center justify-center rounded text-secondary hover:bg-hover"
@@ -148,8 +150,8 @@ export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
                 className="mt-0.5 accent-[var(--ai-violet)]"
               />
               <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium text-foreground">{opt.label}</span>
-                <span className="text-[11px] text-tertiary">{opt.hint}</span>
+                <span className="text-xs font-medium text-foreground">{t(opt.labelKey)}</span>
+                <span className="text-[11px] text-tertiary">{t(opt.hintKey)}</span>
               </div>
             </label>
           ))}
@@ -165,7 +167,7 @@ export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
               onChange={(e) => setTranspose(e.target.checked)}
               className="accent-[var(--ai-violet)]"
             />
-            <span className="text-xs text-foreground">Transpose (rows ↔ columns)</span>
+            <span className="text-xs text-foreground">{t("xlsx.pasteSpecial.transpose")}</span>
           </label>
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-divider px-3 py-2.5">
@@ -175,7 +177,7 @@ export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
             data-testid="paste-special-cancel"
             className="inline-flex h-7 items-center rounded px-3 text-xs text-foreground hover:bg-hover"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -183,7 +185,7 @@ export function PasteSpecialDialog(props: PasteSpecialDialogProps): ReactNode {
             onClick={() => onConfirm({ mode, transpose })}
             className="inline-flex h-7 items-center rounded bg-[var(--ai-violet)] px-3 text-xs font-medium text-white hover:opacity-90"
           >
-            Paste
+            {t("xlsx.pasteSpecial.paste")}
           </button>
         </div>
       </div>

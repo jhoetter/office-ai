@@ -110,6 +110,24 @@ export const NUMBER_FORMAT_PRESETS = [
 
 export type NumberFormatPresetId = (typeof NUMBER_FORMAT_PRESETS)[number]["id"];
 
+/** i18n key for a number-format preset's display label. */
+export function numberFormatPresetKey(id: NumberFormatPresetId): string {
+  switch (id) {
+    case "general":
+      return "xlsx.numberFormat.general";
+    case "number":
+      return "xlsx.numberFormat.number";
+    case "currency-eur":
+      return "xlsx.numberFormat.currencyEur";
+    case "currency-usd":
+      return "xlsx.numberFormat.currencyUsd";
+    case "percent":
+      return "xlsx.numberFormat.percent";
+    case "date":
+      return "xlsx.numberFormat.date";
+  }
+}
+
 /** Lookup the numFmtId for the built-in presets we ship in the toolbar. */
 const BUILTIN_NUM_FMT_IDS: Record<string, number> = {
   General: 0,

@@ -2,15 +2,38 @@
 
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 import type { ChartKind, Sheet, SheetChart } from "@officeai/xlsx";
+import { ResizeHandles } from "@officeai/ui";
+import { anchorToBodyPx, type AnchorFromPx } from "./ImageOverlay";
+import type { AxisLookup } from "./gridDimensions";
+import { useDragResize } from "./useDragResize";
+import { useTranslator, type TranslateVars } from "@/lib/i18n";
+
+type TranslateFn = (key: string, vars?: TranslateVars) => string;
+
+type AxisLike = ReadonlyArray<number> | AxisLookup;
 
 interface ChartOverlayProps {
   readonly chart: SheetChart;
   readonly sheet: Sheet;
-  readonly width: number;
-  readonly height: number;
   readonly selected?: boolean;
   readonly onSelect?: () => void;
   readonly onRequestRemove?: () => void;
+  /**
+   * Geometry plumbing — when present, the overlay handles its own
+   * drag + 8-handle resize and dispatches `xlsx:move-chart` /
+   * `xlsx:resize-chart` via the supplied callbacks. Older call-sites
+   * that only render the chart visual without geometry interaction
+   * (e.g. the read-only preview in tests) can pass `width`/`height`
+   * directly and omit the handlers.
+   */
+  readonly headerOffset?: { x: number; y: number };
+  readonly colXs?: AxisLike;
+  readonly rowYs?: AxisLike;
+  readonly onMoveCommit?: (anchor: AnchorFromPx) => void;
+  readonly onResizeCommit?: (size: { widthPx: number; heightPx: number }) => void;
+  /** Override width/height. Required when `colXs`/`rowYs` are not supplied. */
+  readonly width?: number;
+  readonly height?: number;
 }
 
 const PALETTE = ["#5b8def", "#f6c34a", "#7bc274", "#ec6f6f", "#9b6dd6", "#3eb6c4", "#f4a261", "#7d8eb1"];
@@ -25,38 +48,217 @@ const PALETTE = ["#5b8def", "#f6c34a", "#7bc274", "#ec6f6f", "#9b6dd6", "#3eb6c4
  * shape before copying or sharing the workbook.
  */
 export function ChartOverlay(props: ChartOverlayProps): ReactNode {
-  const { chart, sheet, width, height, selected, onSelect, onRequestRemove } = props;
-  const data = useMemo(() => extractSeries(chart, sheet), [chart, sheet]);
+  const {
+    chart,
+    sheet,
+    selected,
+    onSelect,
+    onRequestRemove,
+    headerOffset,
+    colXs,
+    rowYs,
+    onMoveCommit,
+    onResizeCommit,
+    width: widthOverride,
+    height: heightOverride,
+  } = props;
+  const { t } = useTranslator();
+  const data = useMemo(() => extractSeries(chart, sheet, t), [chart, sheet, t]);
 
+  // Two render modes:
+  //   * Interactive (geometry plumbing supplied): the overlay owns
+  //     its absolute-position wrapper, drag + 8 resize handles, and
+  //     dispatches commit callbacks.
+  //   * Static (geometry omitted): the legacy positioning is owned
+  //     by the caller (Grid wraps it in an absolutely-positioned
+  //     div) and the overlay renders just the visual.
+  const interactive = !!colXs && !!rowYs && !!headerOffset && !!onMoveCommit && !!onResizeCommit;
+
+  if (interactive) {
+    return (
+      <InteractiveChart
+        chart={chart}
+        data={data}
+        colXs={colXs!}
+        rowYs={rowYs!}
+        headerOffset={headerOffset!}
+        onMoveCommit={onMoveCommit!}
+        onResizeCommit={onResizeCommit!}
+        selected={!!selected}
+        onSelect={onSelect}
+        onRequestRemove={onRequestRemove}
+      />
+    );
+  }
+
+  return (
+    <StaticChart
+      chart={chart}
+      data={data}
+      width={widthOverride ?? chart.anchor.widthPx}
+      height={heightOverride ?? chart.anchor.heightPx}
+      selected={!!selected}
+      onSelect={onSelect}
+      onRequestRemove={onRequestRemove}
+    />
+  );
+}
+
+interface InteractiveChartProps {
+  readonly chart: SheetChart;
+  readonly data: ChartData;
+  readonly headerOffset: { x: number; y: number };
+  readonly colXs: AxisLike;
+  readonly rowYs: AxisLike;
+  readonly onMoveCommit: (anchor: AnchorFromPx) => void;
+  readonly onResizeCommit: (size: { widthPx: number; heightPx: number }) => void;
+  readonly selected: boolean;
+  readonly onSelect?: () => void;
+  readonly onRequestRemove?: () => void;
+}
+
+function InteractiveChart(props: InteractiveChartProps): ReactNode {
+  const { chart, data, headerOffset, colXs, rowYs, onMoveCommit, onResizeCommit, selected, onSelect, onRequestRemove } =
+    props;
+  const { t } = useTranslator();
+  const baseBodyPx = anchorToBodyPx(chart, colXs, rowYs);
+  const drag = useDragResize({
+    anchor: chart.anchor,
+    baseBodyX: baseBodyPx.x,
+    baseBodyY: baseBodyPx.y,
+    colXs,
+    rowYs,
+    minWidth: 80,
+    minHeight: 60,
+    onMoveCommit,
+    onResizeCommit,
+  });
+
+  const wrapperStyle: CSSProperties = {
+    position: "absolute",
+    top: headerOffset.y + drag.displayBodyY,
+    left: headerOffset.x + drag.displayBodyX,
+    width: drag.displayWidth,
+    height: drag.displayHeight,
+    boxSizing: "border-box",
+    cursor: drag.dragKind === "move" ? "grabbing" : "grab",
+    zIndex: selected ? 12 : 10,
+    userSelect: "none",
+  };
+
+  return (
+    <div
+      data-testid={`chart-overlay-${chart.id}`}
+      data-chart-id={chart.id}
+      role="figure"
+      aria-label={chart.title ?? t("xlsx.chart.chartFallback", { kind: chart.kind })}
+      style={wrapperStyle}
+      onMouseDown={(e) => {
+        onSelect?.();
+        drag.startMove(e);
+      }}
+    >
+      <ChartVisual
+        chart={chart}
+        data={data}
+        width={drag.displayWidth}
+        height={drag.displayHeight}
+        selected={selected}
+        onRequestRemove={onRequestRemove}
+      />
+      {selected ? (
+        <>
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              border: "1.5px solid var(--ai-violet, #7c3aed)",
+              pointerEvents: "none",
+            }}
+          />
+          <div style={{ position: "absolute", inset: 0, pointerEvents: "none", color: "var(--ai-violet, #7c3aed)" }}>
+            <ResizeHandles
+              handleSizePx={9}
+              dataTestIdPrefix={`chart-handle-${chart.id}`}
+              handleLabel={(side) => t("common.resizeHandle", { handle: side })}
+              onHandleGrab={(info) => {
+                onSelect?.();
+                drag.startResize(info);
+              }}
+            />
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+interface StaticChartProps {
+  readonly chart: SheetChart;
+  readonly data: ChartData;
+  readonly width: number;
+  readonly height: number;
+  readonly selected: boolean;
+  readonly onSelect?: () => void;
+  readonly onRequestRemove?: () => void;
+}
+
+function StaticChart(props: StaticChartProps): ReactNode {
+  const { chart, data, width, height, selected, onSelect, onRequestRemove } = props;
+  const { t } = useTranslator();
+  return (
+    <div
+      data-testid={`chart-overlay-${chart.id}`}
+      role="figure"
+      aria-label={chart.title ?? t("xlsx.chart.chartFallback", { kind: chart.kind })}
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        onSelect?.();
+      }}
+      style={{ width, height }}
+    >
+      <ChartVisual
+        chart={chart}
+        data={data}
+        width={width}
+        height={height}
+        selected={selected}
+        onRequestRemove={onRequestRemove}
+      />
+    </div>
+  );
+}
+
+interface ChartVisualProps {
+  readonly chart: SheetChart;
+  readonly data: ChartData;
+  readonly width: number;
+  readonly height: number;
+  readonly selected: boolean;
+  readonly onRequestRemove?: () => void;
+}
+
+function ChartVisual(props: ChartVisualProps): ReactNode {
+  const { chart, data, width, height, selected, onRequestRemove } = props;
+  const { t } = useTranslator();
+  const titleHeight = chart.title ? 22 : 0;
+  const innerHeight = Math.max(40, height - titleHeight - 8);
+  const innerWidth = Math.max(40, width - 8);
   const containerStyle: CSSProperties = {
-    width,
-    height,
+    width: "100%",
+    height: "100%",
     background: "var(--background)",
     border: selected ? "2px solid var(--ai-violet)" : "1px solid var(--border)",
     borderRadius: 6,
     boxShadow: selected ? "0 4px 12px rgba(0,0,0,0.08)" : "0 1px 3px rgba(0,0,0,0.05)",
     boxSizing: "border-box",
     overflow: "hidden",
-    cursor: "default",
     display: "flex",
     flexDirection: "column",
   };
-
-  const titleHeight = chart.title ? 22 : 0;
-  const innerHeight = Math.max(40, height - titleHeight - 8);
-  const innerWidth = Math.max(40, width - 8);
-
   return (
-    <div
-      data-testid={`chart-overlay-${chart.id}`}
-      role="figure"
-      aria-label={chart.title ?? `${chart.kind} chart`}
-      style={containerStyle}
-      onMouseDown={(e) => {
-        e.stopPropagation();
-        onSelect?.();
-      }}
-    >
+    <div style={containerStyle}>
       {chart.title ? (
         <div
           style={{
@@ -80,6 +282,7 @@ export function ChartOverlay(props: ChartOverlayProps): ReactNode {
                 e.stopPropagation();
                 onRequestRemove();
               }}
+              onMouseDown={(e) => e.stopPropagation()}
               style={{
                 fontSize: 11,
                 background: "transparent",
@@ -89,7 +292,7 @@ export function ChartOverlay(props: ChartOverlayProps): ReactNode {
                 cursor: "pointer",
                 color: "var(--muted-foreground)",
               }}
-              aria-label="Remove chart"
+              aria-label={t("xlsx.chart.removeChart")}
             >
               ×
             </button>
@@ -120,7 +323,7 @@ interface ChartData {
   readonly series: ReadonlyArray<ChartSeries>;
 }
 
-function extractSeries(chart: SheetChart, sheet: Sheet): ChartData {
+function extractSeries(chart: SheetChart, sheet: Sheet, t: TranslateFn): ChartData {
   const range = parseA1Range(chart.dataRange);
   if (!range) return { categories: [], series: [] };
   const { r1, r2, c1, c2 } = range;
@@ -142,7 +345,9 @@ function extractSeries(chart: SheetChart, sheet: Sheet): ChartData {
   const series: ChartSeries[] = [];
   for (let c = valStart; c <= c2; c++) {
     const headerCell = headerRow === -1 ? undefined : sheet.cells.get(`${headerRow}:${c}`);
-    const name = headerCell ? formatCategory(headerCell.value) : `Series ${c - valStart + 1}`;
+    const name = headerCell
+      ? formatCategory(headerCell.value)
+      : t("xlsx.chart.seriesFallback", { n: c - valStart + 1 });
     const values: number[] = [];
     for (let r = bodyStart; r <= r2; r++) {
       const cell = sheet.cells.get(`${r}:${c}`);
@@ -205,6 +410,7 @@ interface ChartCanvasProps {
 }
 
 function ChartCanvas(props: ChartCanvasProps): ReactNode {
+  const { t } = useTranslator();
   const { kind, width, height, categories, series } = props;
   if (series.length === 0 || categories.length === 0) {
     return (
@@ -219,7 +425,7 @@ function ChartCanvas(props: ChartCanvasProps): ReactNode {
           color: "var(--muted-foreground)",
         }}
       >
-        No data in selected range
+        {t("xlsx.chart.noData")}
       </div>
     );
   }
@@ -461,6 +667,7 @@ function PieChart(props: {
   readonly categories: ReadonlyArray<string>;
 }): ReactNode {
   const { width, height, series, categories } = props;
+  const { t } = useTranslator();
   const cx = width / 2;
   const cy = height / 2 + 4;
   const radius = Math.max(10, Math.min(width, height) / 2 - 16);
@@ -478,7 +685,7 @@ function PieChart(props: {
           color: "var(--muted-foreground)",
         }}
       >
-        Pie needs positive values
+        {t("xlsx.chart.pieNeedsPositive")}
       </div>
     );
   }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
-import { cn } from "@officeai/ui";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { ResizeHandles, cn, type ResizeHandleSide } from "@officeai/ui";
 import type { EditorView } from "prosemirror-view";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B6 — image resize overlay.
@@ -18,7 +19,7 @@ import type { EditorView } from "prosemirror-view";
  * directly. Sizing is committed via the `onResize` callback.
  */
 
-type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+type Handle = ResizeHandleSide;
 
 const CORNER_HANDLES: ReadonlySet<Handle> = new Set(["nw", "ne", "se", "sw"]);
 const MIN_PX = 16;
@@ -40,6 +41,7 @@ interface SelectedImage {
 
 export function ImageResizeOverlay(props: ImageResizeOverlayProps): ReactNode {
   const { view, host, onResize } = props;
+  const { t } = useTranslator();
   const [selected, setSelected] = useState<SelectedImage | null>(null);
   const [draft, setDraft] = useState<{ width: number; height: number } | null>(null);
   const draggingRef = useRef(false);
@@ -99,12 +101,8 @@ export function ImageResizeOverlay(props: ImageResizeOverlayProps): ReactNode {
   }, [view, host]);
 
   const startDrag = useCallback(
-    (handle: Handle, event: React.MouseEvent) => {
+    (handle: Handle, startX: number, startY: number) => {
       if (!selected) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const startX = event.clientX;
-      const startY = event.clientY;
       const startW = selected.widthPx;
       const startH = selected.heightPx;
       const aspect = startW > 0 && startH > 0 ? startW / startH : 1;
@@ -142,37 +140,24 @@ export function ImageResizeOverlay(props: ImageResizeOverlayProps): ReactNode {
   const width = draft?.width ?? selected.rect.width;
   const height = draft?.height ?? selected.rect.height;
 
-  const handles: ReadonlyArray<{ id: Handle; cursor: string; style: CSSProperties }> = [
-    { id: "nw", cursor: "nwse-resize", style: { left: -4, top: -4 } },
-    { id: "n", cursor: "ns-resize", style: { left: "50%", top: -4, transform: "translateX(-50%)" } },
-    { id: "ne", cursor: "nesw-resize", style: { right: -4, top: -4 } },
-    { id: "e", cursor: "ew-resize", style: { right: -4, top: "50%", transform: "translateY(-50%)" } },
-    { id: "se", cursor: "nwse-resize", style: { right: -4, bottom: -4 } },
-    { id: "s", cursor: "ns-resize", style: { left: "50%", bottom: -4, transform: "translateX(-50%)" } },
-    { id: "sw", cursor: "nesw-resize", style: { left: -4, bottom: -4 } },
-    { id: "w", cursor: "ew-resize", style: { left: -4, top: "50%", transform: "translateY(-50%)" } },
-  ];
-
   return (
     <div
-      className={cn("pointer-events-none fixed z-30")}
+      className={cn("pointer-events-none fixed z-30 text-accent")}
       style={{ left: selected.rect.left, top: selected.rect.top, width, height }}
       data-testid="image-resize-overlay"
     >
       <div className="pointer-events-none absolute inset-0 ring-1 ring-accent" />
-      {handles.map((h) => (
-        <button
-          key={h.id}
-          type="button"
-          aria-label={`Resize ${h.id}`}
-          className={cn(
-            "pointer-events-auto absolute h-2 w-2 rounded-sm border border-accent bg-surface",
-            CORNER_HANDLES.has(h.id) ? "" : "opacity-90"
-          )}
-          style={{ ...h.style, cursor: h.cursor }}
-          onMouseDown={(e) => startDrag(h.id, e)}
-        />
-      ))}
+      {/* This consumer ignores `info.shiftKey` — DOCX images
+          ALWAYS preserve aspect on a corner drag (matches Word /
+          Pages behaviour). Edge handles stretch one axis as usual.
+          See `computeNextSize` for the corner-aspect logic. */}
+      <ResizeHandles
+        handleSizePx={8}
+        handleLabel={(side) => t("common.resizeHandle", { handle: side })}
+        onHandleGrab={(info) => {
+          startDrag(info.side, info.clientX, info.clientY);
+        }}
+      />
     </div>
   );
 }

@@ -25,6 +25,7 @@ import {
 } from "@officeai/pptx";
 import { buildBlankPptx, buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
+import { CropOverlay, type CropCommitPayload } from "./CropOverlay";
 import { ConnectorContextBar, type ConnectorAction, type ConnectorStylePatch } from "./ConnectorContextBar";
 import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
@@ -35,8 +36,10 @@ import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog
 import { usePptxShortcuts } from "@/lib/pptx-shortcuts";
 import {
   PresenceSlot,
+  RemotePresenceList,
   roomIdForSource,
   useCommandBroadcast,
+  usePublishPresence,
   useRealtimeRoom,
   useStableTabId,
 } from "@/lib/realtime";
@@ -62,7 +65,7 @@ import {
   snapshotToSlideSvg,
   snapshotToSvgZip,
 } from "./lib/export-images";
-import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import { EMBED_MIME, parseEnvelope } from "@/lib/embed/envelope";
 import { applyXlsxRangeToPptx } from "@/lib/embed/applyXlsxRangeToPptx";
 
 const SCALE_OPTIONS = {
@@ -235,6 +238,19 @@ function stripPptxExtension(name: string): string {
   return name.replace(/\.pptx$/i, "");
 }
 
+/**
+ * Decode a base64 PNG (no `data:` prefix) into raw bytes for
+ * `pptx:insert-image`. Used by the D4 cross-format chart-paste
+ * branch. Falls back to `Buffer` so the helper still works in
+ * vitest's Node environment.
+ */
+function decodePngBase64(b64: string): Uint8Array {
+  const bin = typeof atob === "function" ? atob(b64) : Buffer.from(b64, "base64").toString("binary");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 /** Coerce a dialog "scale" option (`"1" | "2" | "3"`) into the
  * narrowed numeric type the renderer accepts. Defaults to 2× to
  * match the export-zip default. */
@@ -322,6 +338,10 @@ export function PptxEditor({
   const [notesOpen, setNotesOpen] = useState(false);
   const [selectedShapeIds, setSelectedShapeIds] = useState<ReadonlyArray<string>>([]);
   const selectedShapeId = selectedShapeIds[0] ?? null;
+  // D7 — id of the picture shape currently in crop mode. `null`
+  // means "not cropping". Cleared on commit / cancel / shape change
+  // so the overlay can never out-live its target.
+  const [cropTargetShapeId, setCropTargetShapeId] = useState<string | null>(null);
   const [textSelection, setTextSelection] = useState<PptxTextSelection | null>(null);
   // Connector tool mode: when set, the canvas surfaces ports on every
   // hovered shape and a press-drag gesture commits a brand-new
@@ -343,6 +363,11 @@ export function PptxEditor({
   const selectedShapeIdRef = useRef<string | null>(null);
   const pushToastRef = useRef<((kind: ToastItem["kind"], text: string) => void) | null>(null);
   const slideSurfaceRef = useRef<HTMLElement | null>(null);
+  // D7 — wraps `SlideCanvas` and serves as the positioning context
+  // for the crop overlay. The overlay measures the slide-card div
+  // (rendered inside `SlideCanvas`) relative to this ref to convert
+  // EMU coordinates into client pixels.
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   // Bumped each time the comments sidebar requests "scroll / focus on
   // this comment". The canvas keys its flash overlay off `nonce` so
   // re-clicking the same comment re-plays the animation.
@@ -526,13 +551,14 @@ export function PptxEditor({
     return () => window.removeEventListener("keydown", onKey);
   }, [activeIndex, selectedShapeIds]);
 
-  // Cross-format embed paste (XLSX → PPTX text box). Gated on the
-  // NEXT_PUBLIC_OAI_EMBED flag. Lives on `window` rather than a
-  // canvas-scoped element because the slide canvas itself doesn't
-  // own a tab-focusable host (selection is mouse-driven), and the
+  // Cross-format embed paste (XLSX → PPTX text box). Always on —
+  // we only react to the `application/x-officeai-embed+json` MIME
+  // type painted by our own XLSX copy path, so external Keynote /
+  // PowerPoint pastes are unaffected. Lives on `window` rather than
+  // a canvas-scoped element because the slide canvas itself doesn't
+  // own a tab-focusable host (selection is mouse-driven) and the
   // paste shortcut should land on whichever slide is active.
   useEffect(() => {
-    if (!isEmbedEnabled()) return;
     const isFormField = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLElement)) return false;
       const tag = target.tagName;
@@ -544,24 +570,79 @@ export function PptxEditor({
       if (isFormField(e.target)) return;
       const raw = e.clipboardData?.getData(EMBED_MIME);
       const env = parseEnvelope(raw);
-      if (!env || env.payload.kind !== "xlsx-range") return;
+      if (!env) return;
       const agent = agentRef.current;
       if (!agent) return;
-      e.preventDefault();
-      e.stopPropagation();
       const slideIndex = slideIndexRef.current;
-      const payload = env.payload;
-      void (async () => {
-        try {
-          await applyXlsxRangeToPptx({
-            agent,
-            snapshot: payload.snapshot,
-            slideIndex,
-          });
-        } catch (err) {
-          pushToast("error", err instanceof Error ? err.message : String(err));
+      if (env.payload.kind === "xlsx-range") {
+        e.preventDefault();
+        e.stopPropagation();
+        const payload = env.payload;
+        void (async () => {
+          try {
+            await applyXlsxRangeToPptx({
+              agent,
+              snapshot: payload.snapshot,
+              slideIndex,
+            });
+          } catch (err) {
+            pushToast("error", err instanceof Error ? err.message : String(err));
+          }
+        })();
+        return;
+      }
+      // D4 — chart copied from XLSX. Decode the base64 PNG and
+      // dispatch `pptx:insert-image` so it lands as a typed picture
+      // sized from the captured CSS px dimensions (1px ≈ 9525 EMU
+      // @ 96 DPI). Width is capped at half the slide so a wide
+      // chart still fits. We resolve `insertOffset` and `slideSize`
+      // from the agent's live snapshot rather than the (later-
+      // declared) `insertOffset` callback so this effect stays
+      // mountable from the early-init paste binding.
+      if (env.payload.kind === "xlsx-chart-image") {
+        e.preventDefault();
+        e.stopPropagation();
+        const payload = env.payload;
+        const bytes = decodePngBase64(payload.png);
+        const liveSnap = agent.getSnapshot();
+        const liveSlide = liveSnap.root.slides[slideIndex];
+        const shapeCount = liveSlide?.shapes.length ?? 0;
+        const step = 200_000;
+        const offX = 1_000_000 + (shapeCount % 8) * step;
+        const offY = 1_000_000 + (shapeCount % 8) * step;
+        const cxEmu = liveSnap.root.slideSize?.cxEmu ?? 9_144_000;
+        let widthEmu = Math.max(1, payload.width) * 9525;
+        let heightEmu = Math.max(1, payload.height) * 9525;
+        const maxWidthEmu = Math.floor(cxEmu / 2);
+        if (widthEmu > maxWidthEmu) {
+          const r = maxWidthEmu / widthEmu;
+          widthEmu = Math.round(widthEmu * r);
+          heightEmu = Math.round(heightEmu * r);
         }
-      })();
+        const altText = payload.title?.trim() || `${payload.chartKind} chart`;
+        void (async () => {
+          try {
+            await agent.applyCommand({
+              type: "pptx:insert-image",
+              payload: {
+                slideIndex,
+                data: bytes,
+                mimeType: "image/png",
+                x: offX,
+                y: offY,
+                width: widthEmu,
+                height: heightEmu,
+                altText,
+                name: altText,
+              },
+              source: "human",
+            });
+          } catch (err) {
+            pushToast("error", err instanceof Error ? err.message : String(err));
+          }
+        })();
+        return;
+      }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
@@ -1274,6 +1355,76 @@ export function PptxEditor({
     },
     [activeIndex, onError, pushToast, selectedShapeId, slide]
   );
+
+  /**
+   * D7 — enter image crop mode for the currently selected picture.
+   * The overlay (rendered below) takes over from here; this
+   * function only validates that the selection is actually a
+   * picture and stashes its id.
+   */
+  const enterCropMode = useCallback(() => {
+    const sh = slide && selectedShapeId ? findShape(slide.shapes, selectedShapeId) : null;
+    if (!sh || sh.kind !== "pic") {
+      pushToast("error", "Select a picture to crop.");
+      return;
+    }
+    setCropTargetShapeId(sh.id);
+  }, [pushToast, selectedShapeId, slide]);
+
+  const commitCrop = useCallback(
+    async (payload: CropCommitPayload) => {
+      const a = agentRef.current;
+      const targetId = cropTargetShapeId;
+      // Always exit crop mode first so an Enter / outside-click
+      // can't fire the overlay twice while the command is in
+      // flight.
+      setCropTargetShapeId(null);
+      if (!a || !targetId) return;
+      // Skip the dispatch when nothing changed (the user opened the
+      // overlay and immediately Enter-ed without dragging) — the
+      // command would still validate, but we don't want an empty
+      // mutation in the undo history.
+      if (
+        payload.leftPct === 0 &&
+        payload.topPct === 0 &&
+        payload.rightPct === 0 &&
+        payload.bottomPct === 0
+      ) {
+        const current = a.getSnapshot().root.slides[activeIndex];
+        const existing = current ? findShape(current.shapes, targetId) : null;
+        if (!existing || existing.kind !== "pic" || !existing.srcRect) return;
+      }
+      try {
+        await a.applyCommand({
+          type: "pptx:crop-picture",
+          payload: {
+            slideIndex: activeIndex,
+            shapeId: targetId,
+            leftPct: payload.leftPct,
+            topPct: payload.topPct,
+            rightPct: payload.rightPct,
+            bottomPct: payload.bottomPct,
+          },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, cropTargetShapeId, onError]
+  );
+
+  const cancelCrop = useCallback(() => {
+    setCropTargetShapeId(null);
+  }, []);
+
+  // Belt-and-braces: any time the selected shape changes (or the
+  // active slide changes), exit crop mode so the overlay can never
+  // anchor to a stale shape.
+  useEffect(() => {
+    if (!cropTargetShapeId) return;
+    if (selectedShapeId !== cropTargetShapeId) setCropTargetShapeId(null);
+  }, [activeIndex, cropTargetShapeId, selectedShapeId]);
 
   /**
    * Fired by the canvas when the user activates an empty placeholder
@@ -2037,9 +2188,27 @@ export function PptxEditor({
     product: "pptx",
   });
   useCommandBroadcast({
-    agent: agent as unknown as Parameters<typeof useCommandBroadcast>[0]["agent"],
+    agent,
     room: realtimeRoom.room,
   });
+
+  // A2: publish our active slide + selected shape ids so peers in the
+  // same deck see the same per-presence pill in their bottom-left.
+  // Recompute the cursor only when slide / selection actually
+  // changes; the throttle inside `usePublishPresence` collapses any
+  // fast redundant emits before they hit the websocket.
+  const presenceCursor = useMemo(
+    () =>
+      slide
+        ? ({
+            product: "pptx",
+            slideId: slide.id,
+            shapeIds: selectedShapeIds,
+          } as const)
+        : null,
+    [slide, selectedShapeIds]
+  );
+  usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
   const adapter = useMemo<ProductAdapter>(
     () => ({
@@ -2112,6 +2281,7 @@ export function PptxEditor({
 
   return (
     <>
+      <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}
@@ -2136,6 +2306,7 @@ export function PptxEditor({
             onInsertImage={(f) => void insertImage(f)}
             onReplacePicture={(f) => void replaceSelectedPicture(f)}
             selectedIsPicture={selectedShape?.kind === "pic"}
+            onEnterCropMode={enterCropMode}
             onDeleteShape={() => void deleteSelectedShape()}
             onAlign={(mode, relativeTo) => void alignSelected(mode, relativeTo)}
             onDistribute={(axis) => void distributeSelected(axis)}
@@ -2237,7 +2408,7 @@ export function PptxEditor({
                       slideSurfaceRef.current?.focus({ preventScroll: true });
                     }}
                   >
-                    <div className="relative min-h-0 w-full flex-1">
+                    <div ref={canvasContainerRef} className="relative min-h-0 w-full flex-1">
                       <SlideCanvas
                         agent={agent}
                         slideIndex={activeIndex}
@@ -2263,6 +2434,18 @@ export function PptxEditor({
                             onAction={(action) => void applyConnectorAction(selectedShape.id, action)}
                           />
                         </div>
+                      ) : null}
+                      {cropTargetShapeId &&
+                      selectedShape &&
+                      selectedShape.id === cropTargetShapeId &&
+                      selectedShape.kind === "pic" ? (
+                        <CropOverlay
+                          picture={selectedShape}
+                          slideSize={slideSize}
+                          containerRef={canvasContainerRef}
+                          onCommit={(p) => void commitCrop(p)}
+                          onCancel={cancelCrop}
+                        />
                       ) : null}
                     </div>
                   </section>

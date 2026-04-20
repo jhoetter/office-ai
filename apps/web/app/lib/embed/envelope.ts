@@ -22,10 +22,12 @@ import type { XlsxClipboardSnapshot } from "@officeai/xlsx";
  * `application/x-officeai-embed+json` clipboard MIME type, alongside
  * (not instead of) `text/html` and `text/plain` for external apps.
  *
- * The whole feature is gated on `NEXT_PUBLIC_OAI_EMBED` — see
- * `isEmbedEnabled()`. When disabled, copy paths skip the extra MIME
- * and paste paths ignore it; the shipping `text/html` fallback
- * keeps working unchanged.
+ * Always on: an earlier iteration gated this behind
+ * `NEXT_PUBLIC_OAI_EMBED`, but the user explicitly asked for the
+ * cross-format embed to ship default-on (no env-var configs).
+ * Receivers tolerate a missing envelope (they fall back to the
+ * existing `text/html` / `text/plain` paths) so there's no harm in
+ * always painting it onto the clipboard.
  */
 export const EMBED_MIME = "application/x-officeai-embed+json";
 
@@ -39,7 +41,8 @@ export const EMBED_VERSION = 1;
  */
 export type OfficeAIEmbedPayload =
   | XlsxRangeEmbed
-  | XlsxChartImageEmbed;
+  | XlsxChartImageEmbed
+  | DocxTableEmbed;
 
 /**
  * A copied XLSX range. The raw `XlsxClipboardSnapshot` is preserved
@@ -75,23 +78,34 @@ export interface XlsxChartImageEmbed {
   readonly title?: string;
 }
 
+/**
+ * D5 — a copied DOCX table, projected onto a 2D string matrix so a
+ * paste into XLSX lands as a real range (cells with values) rather
+ * than a pasted-as-text block of TSV. Each row's length matches the
+ * widest row; sparse cells are empty strings.
+ *
+ * Only emitted when the entire ProseMirror selection sits inside a
+ * single `<w:tbl>` — partial selections fall through to the default
+ * PM serialiser (text / HTML) so cross-app pastes keep working.
+ */
+export interface DocxTableEmbed {
+  readonly kind: "docx-table";
+  readonly cells: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Human-readable origin (e.g. `"Document table"` or, when the
+   * caller has a better label, the surrounding heading text). Only
+   * used for toast messages and undo labels — never re-applied to
+   * the pasted range.
+   */
+  readonly originLabel?: string;
+}
+
 export interface OfficeAIEmbedEnvelope {
   readonly type: "officeai/embed";
   readonly version: number;
   readonly source: "xlsx" | "docx" | "pptx";
   readonly createdAt: string;
   readonly payload: OfficeAIEmbedPayload;
-}
-
-/**
- * Truthy when the cross-format embed feature flag is on. The flag
- * is a string `"1"` to avoid the classic `"false"` truthiness foot-
- * gun. We deliberately default to OFF in production builds so the
- * extra clipboard MIME never ships before we've finished QA.
- */
-export function isEmbedEnabled(): boolean {
-  const flag = (process.env.NEXT_PUBLIC_OAI_EMBED ?? "").trim();
-  return flag === "1" || flag === "true";
 }
 
 export function makeEnvelope(
@@ -139,6 +153,6 @@ function isEnvelope(v: unknown): v is OfficeAIEmbedEnvelope {
   const p = o.payload;
   if (!p || typeof p !== "object") return false;
   const pk = (p as { kind?: unknown }).kind;
-  if (pk !== "xlsx-range" && pk !== "xlsx-chart-image") return false;
+  if (pk !== "xlsx-range" && pk !== "xlsx-chart-image" && pk !== "docx-table") return false;
   return true;
 }

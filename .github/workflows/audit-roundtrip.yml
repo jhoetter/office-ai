@@ -1,0 +1,60 @@
+name: audit-roundtrip
+
+# Attribute-fidelity round-trip audit: parses → exports → re-parses every
+# bundled fixture and counts a curated set of formatting attributes on
+# both sides, writing a JSON summary that ops can diff between runs.
+#
+# Day-1 advisory: the walker (D10) is still in early stages, so this job
+# is marked `continue-on-error: true` and DOES NOT block PR merge. The
+# uploaded artifact (`roundtrip-audit-summary`) is the source of truth
+# for triage. Flip `continue-on-error` to `false` once the walker is
+# stable and the JSON summary stays clean across a few release cycles.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: audit-roundtrip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-roundtrip:
+    name: attribute-fidelity round-trip audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Advisory: see header comment. Do NOT block PR merge while the
+    # audit walker is still in early stages — the artifact captures the
+    # signal for follow-up.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run attribute-fidelity round-trip audit
+        run: make audit-roundtrip
+
+      - name: Upload round-trip audit summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roundtrip-audit-summary
+          path: docs/build-log/roundtrip-audit-night.json
+          retention-days: 14
+          if-no-files-found: error

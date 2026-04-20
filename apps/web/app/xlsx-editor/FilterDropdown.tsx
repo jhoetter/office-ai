@@ -12,6 +12,7 @@ import {
   type StyleTable,
 } from "@officeai/xlsx";
 import { formatCellValue } from "./styles";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Excel-style header dropdown.
@@ -49,37 +50,37 @@ type Mode = "values" | "text" | "number" | "date" | "color";
 
 const DATE_NUM_FMT_IDS = new Set([14, 15, 16, 17, 22]);
 
-const DYNAMIC_LABELS: ReadonlyArray<{ readonly id: DynamicFilterType; readonly label: string }> = [
-  { id: "today", label: "Today" },
-  { id: "yesterday", label: "Yesterday" },
-  { id: "tomorrow", label: "Tomorrow" },
-  { id: "thisWeek", label: "This Week" },
-  { id: "lastWeek", label: "Last Week" },
-  { id: "nextWeek", label: "Next Week" },
-  { id: "thisMonth", label: "This Month" },
-  { id: "lastMonth", label: "Last Month" },
-  { id: "nextMonth", label: "Next Month" },
-  { id: "thisQuarter", label: "This Quarter" },
-  { id: "lastQuarter", label: "Last Quarter" },
-  { id: "nextQuarter", label: "Next Quarter" },
-  { id: "thisYear", label: "This Year" },
-  { id: "lastYear", label: "Last Year" },
-  { id: "nextYear", label: "Next Year" },
-  { id: "yearToDate", label: "Year to Date" },
+const DYNAMIC_LABELS: ReadonlyArray<{ readonly id: DynamicFilterType; readonly labelKey: string }> = [
+  { id: "today", labelKey: "xlsx.filter.dynToday" },
+  { id: "yesterday", labelKey: "xlsx.filter.dynYesterday" },
+  { id: "tomorrow", labelKey: "xlsx.filter.dynTomorrow" },
+  { id: "thisWeek", labelKey: "xlsx.filter.dynThisWeek" },
+  { id: "lastWeek", labelKey: "xlsx.filter.dynLastWeek" },
+  { id: "nextWeek", labelKey: "xlsx.filter.dynNextWeek" },
+  { id: "thisMonth", labelKey: "xlsx.filter.dynThisMonth" },
+  { id: "lastMonth", labelKey: "xlsx.filter.dynLastMonth" },
+  { id: "nextMonth", labelKey: "xlsx.filter.dynNextMonth" },
+  { id: "thisQuarter", labelKey: "xlsx.filter.dynThisQuarter" },
+  { id: "lastQuarter", labelKey: "xlsx.filter.dynLastQuarter" },
+  { id: "nextQuarter", labelKey: "xlsx.filter.dynNextQuarter" },
+  { id: "thisYear", labelKey: "xlsx.filter.dynThisYear" },
+  { id: "lastYear", labelKey: "xlsx.filter.dynLastYear" },
+  { id: "nextYear", labelKey: "xlsx.filter.dynNextYear" },
+  { id: "yearToDate", labelKey: "xlsx.filter.dynYearToDate" },
 ];
 
-const TEXT_OPS: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly label: string }> = [
-  { id: "equal", label: "Equals" },
-  { id: "notEqual", label: "Does not equal" },
+const TEXT_OPS: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly labelKey: string }> = [
+  { id: "equal", labelKey: "xlsx.filter.opEquals" },
+  { id: "notEqual", labelKey: "xlsx.filter.opDoesNotEqual" },
 ];
 
-const NUMBER_OPS: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly label: string }> = [
-  { id: "equal", label: "Equals" },
-  { id: "notEqual", label: "Does not equal" },
-  { id: "greaterThan", label: "Greater than" },
-  { id: "greaterThanOrEqual", label: "Greater than or equal to" },
-  { id: "lessThan", label: "Less than" },
-  { id: "lessThanOrEqual", label: "Less than or equal to" },
+const NUMBER_OPS: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly labelKey: string }> = [
+  { id: "equal", labelKey: "xlsx.filter.opEquals" },
+  { id: "notEqual", labelKey: "xlsx.filter.opDoesNotEqual" },
+  { id: "greaterThan", labelKey: "xlsx.filter.opGreaterThan" },
+  { id: "greaterThanOrEqual", labelKey: "xlsx.filter.opGreaterThanOrEqual" },
+  { id: "lessThan", labelKey: "xlsx.filter.opLessThan" },
+  { id: "lessThanOrEqual", labelKey: "xlsx.filter.opLessThanOrEqual" },
 ];
 
 interface ColumnSummary {
@@ -144,6 +145,7 @@ function detectMode(summary: ColumnSummary): Exclude<Mode, "values" | "color"> {
 
 export function FilterDropdown(props: FilterDropdownProps): ReactNode {
   const { open, sheet, styles, autoFilter, colId, anchor, onClose, onSort, onClear, onApply } = props;
+  const { t } = useTranslator();
   const ref = useRef<HTMLDivElement | null>(null);
 
   const summary = useMemo(
@@ -273,28 +275,28 @@ export function FilterDropdown(props: FilterDropdownProps): ReactNode {
     >
       <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid var(--divider)" }}>
         <DropdownButton onClick={() => onSort("asc")} testId="filter-sort-asc">
-          Sort A → Z
+          {t("xlsx.filter.sortAZ")}
         </DropdownButton>
         <DropdownButton onClick={() => onSort("desc")} testId="filter-sort-desc">
-          Sort Z → A
+          {t("xlsx.filter.sortZA")}
         </DropdownButton>
         {existing ? (
           <DropdownButton onClick={onClear} testId="filter-clear">
-            Clear filter from this column
+            {t("xlsx.filter.clearFilter")}
           </DropdownButton>
         ) : null}
       </div>
 
       <div style={{ display: "flex", borderBottom: "1px solid var(--divider)" }}>
-        <ModeTab id="values" current={mode} onClick={setMode} label="Values" />
+        <ModeTab id="values" current={mode} onClick={setMode} label={t("xlsx.filter.tabValues")} />
         <ModeTab
           id={detectedConditionMode}
           current={mode}
           onClick={setMode}
-          label={modeLabel(detectedConditionMode)}
+          label={t(modeLabelKey(detectedConditionMode))}
         />
         {summary.fillColors.length > 0 ? (
-          <ModeTab id="color" current={mode} onClick={setMode} label="Color" />
+          <ModeTab id="color" current={mode} onClick={setMode} label={t("xlsx.filter.tabColor")} />
         ) : null}
       </div>
 
@@ -371,7 +373,7 @@ export function FilterDropdown(props: FilterDropdownProps): ReactNode {
         }}
       >
         <button type="button" onClick={onClose} data-testid="filter-cancel" style={btnStyle("secondary")}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           type="button"
@@ -383,21 +385,21 @@ export function FilterDropdown(props: FilterDropdownProps): ReactNode {
           }}
           disabled={(mode === "text" || mode === "number") && val1.length === 0}
         >
-          Apply
+          {t("common.apply")}
         </button>
       </div>
     </div>
   );
 }
 
-function modeLabel(mode: Exclude<Mode, "values" | "color">): string {
+function modeLabelKey(mode: Exclude<Mode, "values" | "color">): string {
   switch (mode) {
     case "text":
-      return "Text";
+      return "xlsx.filter.tabText";
     case "number":
-      return "Number";
+      return "xlsx.filter.tabNumber";
     case "date":
-      return "Date";
+      return "xlsx.filter.tabDate";
   }
 }
 
@@ -462,11 +464,12 @@ interface ValuesPanelProps {
 }
 
 function ValuesPanel(props: ValuesPanelProps): ReactNode {
+  const { t } = useTranslator();
   return (
     <div>
       <input
         type="text"
-        placeholder="Search…"
+        placeholder={t("xlsx.filter.searchPlaceholder")}
         value={props.search}
         onChange={(e) => props.onSearch(e.target.value)}
         data-testid="filter-search"
@@ -492,7 +495,7 @@ function ValuesPanel(props: ValuesPanelProps): ReactNode {
           onChange={props.onToggleAll}
           data-testid="filter-select-all"
         />
-        <span style={{ fontWeight: 500 }}>(Select All)</span>
+        <span style={{ fontWeight: 500 }}>{t("xlsx.filter.selectAll")}</span>
       </label>
       {props.hasBlanks ? (
         <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px" }}>
@@ -502,7 +505,7 @@ function ValuesPanel(props: ValuesPanelProps): ReactNode {
             onChange={props.onToggleBlanks}
             data-testid="filter-blanks"
           />
-          <span style={{ fontStyle: "italic" }}>(Blanks)</span>
+          <span style={{ fontStyle: "italic" }}>{t("xlsx.filter.blanks")}</span>
         </label>
       ) : null}
       <div style={{ maxHeight: 200, overflowY: "auto", marginTop: 4 }}>
@@ -535,7 +538,7 @@ function ValuesPanel(props: ValuesPanelProps): ReactNode {
 }
 
 interface CustomPanelProps {
-  readonly ops: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly label: string }>;
+  readonly ops: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly labelKey: string }>;
   readonly op1: CustomFilterOp["operator"];
   readonly val1: string;
   readonly op2: CustomFilterOp["operator"] | "";
@@ -552,6 +555,7 @@ interface CustomPanelProps {
 }
 
 function CustomPanel(props: CustomPanelProps): ReactNode {
+  const { t } = useTranslator();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <OpRow
@@ -569,7 +573,7 @@ function CustomPanel(props: CustomPanelProps): ReactNode {
             checked={props.combine === "and"}
             onChange={() => props.onChange({ combine: "and" })}
           />
-          And
+          {t("xlsx.filter.and")}
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <input
@@ -577,7 +581,7 @@ function CustomPanel(props: CustomPanelProps): ReactNode {
             checked={props.combine === "or"}
             onChange={() => props.onChange({ combine: "or" })}
           />
-          Or
+          {t("xlsx.filter.or")}
         </label>
       </div>
       <OpRow
@@ -595,7 +599,7 @@ function CustomPanel(props: CustomPanelProps): ReactNode {
 }
 
 function OpRow(props: {
-  ops: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly label: string }>;
+  ops: ReadonlyArray<{ readonly id: CustomFilterOp["operator"]; readonly labelKey: string }>;
   op: CustomFilterOp["operator"] | "";
   val: string;
   onOpChange: (o: CustomFilterOp["operator"]) => void;
@@ -603,6 +607,7 @@ function OpRow(props: {
   allowEmpty?: boolean;
   testIdPrefix: string;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div style={{ display: "flex", gap: 4 }}>
       <select
@@ -621,7 +626,7 @@ function OpRow(props: {
         {props.allowEmpty ? <option value="">—</option> : null}
         {props.ops.map((o) => (
           <option key={o.id} value={o.id}>
-            {o.label}
+            {t(o.labelKey)}
           </option>
         ))}
       </select>
@@ -654,6 +659,7 @@ function Top10Panel(props: {
   setTopPercent: (p: boolean) => void;
   onApply: () => void;
 }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div
       style={{
@@ -665,7 +671,7 @@ function Top10Panel(props: {
         borderTop: "1px solid var(--divider)",
       }}
     >
-      <div style={{ fontWeight: 500, padding: "0 4px" }}>Top 10</div>
+      <div style={{ fontWeight: 500, padding: "0 4px" }}>{t("xlsx.filter.top10")}</div>
       <div style={{ display: "flex", gap: 4, alignItems: "center", padding: "0 4px" }}>
         <select
           value={props.topMode}
@@ -678,8 +684,8 @@ function Top10Panel(props: {
           }}
           data-testid="filter-top-mode"
         >
-          <option value="top">Top</option>
-          <option value="bottom">Bottom</option>
+          <option value="top">{t("xlsx.filter.top")}</option>
+          <option value="bottom">{t("xlsx.filter.bottom")}</option>
         </select>
         <input
           type="number"
@@ -708,8 +714,8 @@ function Top10Panel(props: {
           }}
           data-testid="filter-top-unit"
         >
-          <option value="items">Items</option>
-          <option value="percent">Percent</option>
+          <option value="items">{t("xlsx.filter.items")}</option>
+          <option value="percent">{t("xlsx.filter.percent")}</option>
         </select>
         <button
           type="button"
@@ -717,7 +723,7 @@ function Top10Panel(props: {
           data-testid="filter-top-apply"
           style={btnStyle("primary")}
         >
-          Apply
+          {t("common.apply")}
         </button>
       </div>
     </div>
@@ -725,11 +731,12 @@ function Top10Panel(props: {
 }
 
 function DatePanel(props: { onApply: (t: DynamicFilterType) => void }): ReactNode {
+  const { t } = useTranslator();
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       {DYNAMIC_LABELS.map((d) => (
         <DropdownButton key={d.id} testId={`filter-dynamic-${d.id}`} onClick={() => props.onApply(d.id)}>
-          {d.label}
+          {t(d.labelKey)}
         </DropdownButton>
       ))}
     </div>
@@ -737,8 +744,9 @@ function DatePanel(props: { onApply: (t: DynamicFilterType) => void }): ReactNod
 }
 
 function ColorPanel(props: { colors: ReadonlyArray<string>; onApply: (argb: string) => void }): ReactNode {
+  const { t } = useTranslator();
   if (props.colors.length === 0) {
-    return <div style={{ color: "var(--secondary)", padding: 6 }}>No fill colours in this column.</div>;
+    return <div style={{ color: "var(--secondary)", padding: 6 }}>{t("xlsx.filter.noColors")}</div>;
   }
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: 4 }}>
@@ -748,7 +756,7 @@ function ColorPanel(props: { colors: ReadonlyArray<string>; onApply: (argb: stri
           type="button"
           data-testid={`filter-color-${c}`}
           onClick={() => props.onApply(c)}
-          aria-label={`Filter by colour #${c}`}
+          aria-label={t("xlsx.filter.byColor", { argb: c })}
           style={{
             width: 24,
             height: 24,

@@ -23,6 +23,7 @@ import {
   Circle,
   Copy,
   CornerDownRight,
+  Crop,
   Diamond,
   Group,
   Image as ImageIcon,
@@ -85,6 +86,13 @@ export interface PptxToolbarProps {
    */
   readonly onReplacePicture: (file: File) => void;
   readonly selectedIsPicture: boolean;
+  /**
+   * D7 — enter image crop mode for the selected `Picture` shape.
+   * The editor manages the overlay; the toolbar just dispatches
+   * the "enter crop mode" intent. Enabled only when exactly one
+   * picture is selected.
+   */
+  readonly onEnterCropMode: () => void;
   readonly onDeleteShape: () => void;
   readonly onAlign: (mode: AlignMode, relativeTo: "selection" | "slide") => void;
   readonly onDistribute: (axis: "horizontal" | "vertical") => void;
@@ -248,6 +256,14 @@ export function PptxToolbar(props: PptxToolbarProps) {
       />
       <PictureReplaceButton
         onReplace={props.onReplacePicture}
+        disabled={disabled || !props.selectedIsPicture}
+      />
+      <ToolbarButton
+        onClick={props.onEnterCropMode}
+        icon={<Crop size={14} />}
+        label="Crop"
+        title="Crop"
+        testId="pptx-crop"
         disabled={disabled || !props.selectedIsPicture}
       />
       <ToolbarButton

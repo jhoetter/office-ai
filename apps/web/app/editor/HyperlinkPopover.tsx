@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link as LinkIcon, Trash2, X } from "lucide-react";
 import { Button } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B5 — Hyperlink popover.
@@ -31,6 +32,7 @@ export interface HyperlinkPopoverProps {
 }
 
 export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
+  const { t } = useTranslator();
   const [url, setUrl] = useState(props.initialUrl);
   const [text, setText] = useState(props.initialText);
   const urlRef = useRef<HTMLInputElement | null>(null);
@@ -78,7 +80,7 @@ export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
     <div
       data-testid="hyperlink-popover"
       role="dialog"
-      aria-label="Insert hyperlink"
+      aria-label={t("docx.hyperlink.ariaLabel")}
       className="z-50 flex w-[340px] flex-col gap-2 rounded-md border border-divider bg-surface p-3 shadow-lg"
       style={style}
       onClick={(e) => e.stopPropagation()}
@@ -86,11 +88,11 @@ export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-secondary">
           <LinkIcon size={12} />
-          {props.existingHyperlinkId ? "Edit link" : "Insert link"}
+          {props.existingHyperlinkId ? t("docx.hyperlink.editLink") : t("docx.hyperlink.insertLink")}
         </div>
         <button
           type="button"
-          aria-label="Cancel"
+          aria-label={t("common.cancel")}
           onClick={props.onCancel}
           className="rounded p-1 text-secondary hover:bg-divider/50"
         >
@@ -99,7 +101,7 @@ export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
       </div>
 
       <label className="flex flex-col gap-1 text-xs">
-        <span className="text-secondary">Address</span>
+        <span className="text-secondary">{t("common.address")}</span>
         <input
           ref={urlRef}
           type="url"
@@ -114,14 +116,14 @@ export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
               submit();
             }
           }}
-          placeholder="https://example.com"
+          placeholder={t("docx.hyperlink.addressPlaceholder")}
           className="w-full rounded border border-divider bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-tertiary focus:border-accent focus:outline-none"
           data-testid="hyperlink-url-input"
         />
       </label>
 
       <label className="flex flex-col gap-1 text-xs">
-        <span className="text-secondary">Display text</span>
+        <span className="text-secondary">{t("docx.hyperlink.displayText")}</span>
         <input
           type="text"
           value={text}
@@ -132,7 +134,7 @@ export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
               submit();
             }
           }}
-          placeholder="Optional — uses selection if blank"
+          placeholder={t("docx.hyperlink.displayPlaceholder")}
           className="w-full rounded border border-divider bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-tertiary focus:border-accent focus:outline-none"
           data-testid="hyperlink-text-input"
         />
@@ -146,23 +148,23 @@ export function HyperlinkPopover(props: HyperlinkPopoverProps): ReactNode {
             className="inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-error hover:bg-hover"
             data-testid="hyperlink-remove"
           >
-            <Trash2 size={12} /> Remove
+            <Trash2 size={12} /> {t("common.remove")}
           </button>
         ) : (
           <span />
         )}
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={props.onCancel}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button variant="accent" size="sm" onClick={submit} disabled={!valid} data-testid="hyperlink-apply">
-            {props.existingHyperlinkId ? "Update" : "Insert"}
+            {props.existingHyperlinkId ? t("common.update") : t("common.insert")}
           </Button>
         </div>
       </div>
       {!valid && url.length > 0 && (
         <p className="text-[11px] text-error" role="status">
-          Enter a URL like https://… or mailto:…
+          {t("docx.hyperlink.urlHint")}
         </p>
       )}
     </div>

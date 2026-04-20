@@ -204,6 +204,7 @@ fixtures-pptx-real:
 # before a release or a major refactor when you want to catch
 # everything CI runs in heavy jobs in a single command.
 heavy: roundtrip-libre-all schema-validate-all perf-all
+	$(MAKE) audit-roundtrip
 	@echo ""
 	@echo "✅ heavy: all heavy gates passed (roundtrip + schema + perf for docx/xlsx/pptx)."
 

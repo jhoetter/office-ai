@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageSquarePlus, X } from "lucide-react";
 import { Button } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * Comment composer popover.
@@ -33,6 +34,7 @@ export interface CommentComposerProps {
 }
 
 export function CommentComposer(props: CommentComposerProps): ReactNode {
+  const { t } = useTranslator();
   const [text, setText] = useState(props.initialText ?? "");
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -76,17 +78,17 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
     <div
       data-testid="comment-composer"
       role="dialog"
-      aria-label="Add comment"
+      aria-label={t("docx.comment.addCommentAria")}
       className="z-50 flex w-[320px] flex-col gap-2 rounded-md border border-divider bg-surface p-3 shadow-lg"
       style={style}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-secondary">
-          <MessageSquarePlus size={12} /> Comment
+          <MessageSquarePlus size={12} /> {t("docx.comment.title")}
         </div>
         <button
           type="button"
-          aria-label="Cancel"
+          aria-label={t("common.cancel")}
           onClick={props.onCancel}
           className="rounded p-1 text-secondary hover:bg-divider/50"
         >
@@ -109,7 +111,7 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={3}
-        placeholder="Type your comment…"
+        placeholder={t("docx.comment.placeholder")}
         className="w-full resize-none rounded-md border border-divider bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-tertiary focus:border-[var(--ai-violet)] focus:outline-none"
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -121,7 +123,7 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
 
       <div className="flex items-center justify-end gap-1.5">
         <Button variant="ghost" size="sm" onClick={props.onCancel}>
-          Cancel
+          {t("common.cancel")}
         </Button>
         <Button
           variant="accent"
@@ -130,7 +132,7 @@ export function CommentComposer(props: CommentComposerProps): ReactNode {
           disabled={text.trim().length === 0}
           data-testid="comment-composer-submit"
         >
-          Add comment
+          {t("docx.comment.addComment")}
         </Button>
       </div>
     </div>

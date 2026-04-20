@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn, useFocusTrap } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 
 export interface GotoDialogProps {
   readonly open: boolean;
@@ -23,6 +24,7 @@ export interface GotoDialogProps {
  * a harmless no-op.
  */
 export function GotoDialog({ open, currentPage, totalPages, onSubmit, onClose }: GotoDialogProps): ReactNode {
+  const { t } = useTranslator();
   const [draft, setDraft] = useState(String(currentPage));
   const inputRef = useRef<HTMLInputElement | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -30,10 +32,10 @@ export function GotoDialog({ open, currentPage, totalPages, onSubmit, onClose }:
   useEffect(() => {
     if (!open) return;
     setDraft(String(currentPage));
-    const t = window.setTimeout(() => {
+    const handle = window.setTimeout(() => {
       inputRef.current?.select();
     }, 0);
-    return () => window.clearTimeout(t);
+    return () => window.clearTimeout(handle);
   }, [open, currentPage]);
 
   useFocusTrap(panelRef, {
@@ -67,13 +69,13 @@ export function GotoDialog({ open, currentPage, totalPages, onSubmit, onClose }:
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="Go to page"
+        aria-label={t("docx.goto.title")}
         className={cn(
           "w-full max-w-sm rounded-lg border border-divider bg-surface p-4 shadow-lg outline-none"
         )}
       >
-        <h2 className="text-sm font-semibold text-foreground">Go to page</h2>
-        <p className="mt-1 text-xs text-secondary">Enter a page number between 1 and {totalPages || 1}.</p>
+        <h2 className="text-sm font-semibold text-foreground">{t("docx.goto.title")}</h2>
+        <p className="mt-1 text-xs text-secondary">{t("docx.goto.hint", { total: totalPages || 1 })}</p>
         <div className="mt-3 flex items-center gap-2">
           <input
             ref={inputRef}
@@ -90,9 +92,9 @@ export function GotoDialog({ open, currentPage, totalPages, onSubmit, onClose }:
             }}
             className="w-24 rounded-md border border-divider bg-background px-2 py-1 text-sm text-foreground focus:border-[var(--accent)] focus:outline-none"
             data-testid="goto-dialog-input"
-            aria-label="Page number"
+            aria-label={t("docx.goto.pageNumber")}
           />
-          <span className="text-xs text-secondary">of {totalPages || 1}</span>
+          <span className="text-xs text-secondary">{t("docx.goto.of", { total: totalPages || 1 })}</span>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button
@@ -101,7 +103,7 @@ export function GotoDialog({ open, currentPage, totalPages, onSubmit, onClose }:
             className="rounded-md border border-divider bg-surface px-3 py-1 text-xs font-medium text-foreground hover:bg-hover"
             data-testid="goto-dialog-cancel"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -109,7 +111,7 @@ export function GotoDialog({ open, currentPage, totalPages, onSubmit, onClose }:
             className="rounded-md bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white hover:opacity-90"
             data-testid="goto-dialog-submit"
           >
-            Go
+            {t("docx.goto.go")}
           </button>
         </div>
       </div>

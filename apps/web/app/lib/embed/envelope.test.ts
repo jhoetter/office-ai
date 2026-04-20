@@ -67,6 +67,27 @@ describe("OfficeAI embed envelope", () => {
     }
   });
 
+  it("round-trips a docx-table payload", () => {
+    const env = makeEnvelope("docx", {
+      kind: "docx-table",
+      cells: [
+        ["Name", "Score"],
+        ["Ada", "99"],
+        ["Linus", "42"],
+      ],
+      originLabel: "Document table",
+    });
+    const wire = serializeEnvelope(env);
+    const back = parseEnvelope(wire);
+    expect(back?.source).toBe("docx");
+    expect(back?.payload.kind).toBe("docx-table");
+    if (back?.payload.kind === "docx-table") {
+      expect(back.payload.cells).toHaveLength(3);
+      expect(back.payload.cells[1]?.[1]).toBe("99");
+      expect(back.payload.originLabel).toBe("Document table");
+    }
+  });
+
   it("returns null for non-JSON, wrong-shape, and falsy inputs", () => {
     expect(parseEnvelope(null)).toBeNull();
     expect(parseEnvelope(undefined)).toBeNull();

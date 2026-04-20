@@ -12,7 +12,9 @@ import { duplicateShapeHandler } from "./duplicate-shape.js";
 import { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 import { duplicateSlideHandler } from "./duplicate-slide.js";
 import { formatTextHandler } from "./format-text.js";
+import { cropPictureHandler } from "./crop-picture.js";
 import { insertImageHandler } from "./insert-image.js";
+import { insertTableHandler } from "./insert-table.js";
 import { replacePictureMediaHandler } from "./replace-picture-media.js";
 import { moveSlideHandler } from "./move-slide.js";
 import { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
@@ -65,7 +67,9 @@ export { duplicateShapeHandler } from "./duplicate-shape.js";
 export { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 export { duplicateSlideHandler } from "./duplicate-slide.js";
 export { formatTextHandler } from "./format-text.js";
+export { cropPictureHandler } from "./crop-picture.js";
 export { insertImageHandler } from "./insert-image.js";
+export { insertTableHandler } from "./insert-table.js";
 export { replacePictureMediaHandler } from "./replace-picture-media.js";
 export { moveSlideHandler } from "./move-slide.js";
 export { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
@@ -118,6 +122,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setTextAnchorHandler,
   insertImageHandler,
   replacePictureMediaHandler,
+  cropPictureHandler,
   addTextBoxHandler,
   addShapeHandler,
   deleteShapeHandler,
@@ -128,6 +133,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   ungroupShapeHandler,
   alignShapesHandler,
   distributeShapesHandler,
+  insertTableHandler,
   tableSetCellTextHandler,
   tableAddRowHandler,
   tableDeleteRowHandler,

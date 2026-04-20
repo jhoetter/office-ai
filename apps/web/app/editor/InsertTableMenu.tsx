@@ -4,6 +4,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Table as TableIcon } from "lucide-react";
 import { cn } from "@officeai/ui";
 import { ToolbarMenu } from "../lib/shell";
+import { useTranslator } from "@/lib/i18n";
 
 /**
  * B4 — Word-style "Insert Table" grid picker.
@@ -31,6 +32,7 @@ export interface InsertTableMenuProps {
 }
 
 export function InsertTableMenu(props: InsertTableMenuProps): ReactNode {
+  const { t } = useTranslator();
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<{ rows: number; cols: number } | null>(null);
   const [customRows, setCustomRows] = useState(3);
@@ -48,8 +50,8 @@ export function InsertTableMenu(props: InsertTableMenuProps): ReactNode {
       <button
         ref={triggerRef}
         type="button"
-        title="Insert table"
-        aria-label="Insert table"
+        title={t("docx.insertTable.title")}
+        aria-label={t("docx.insertTable.title")}
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={props.disabled}
@@ -102,20 +104,22 @@ export function InsertTableMenu(props: InsertTableMenuProps): ReactNode {
           })}
         </div>
         <div className="mt-2 text-center text-xs tabular-nums text-secondary">
-          {hover ? `${hover.rows} × ${hover.cols} table` : "Drag to size"}
+          {hover
+            ? t("docx.insertTable.gridSize", { rows: hover.rows, cols: hover.cols })
+            : t("docx.insertTable.dragToSize")}
         </div>
         <div className="mt-2 flex items-center justify-center gap-2 border-t border-divider pt-2 text-xs">
-          <span className="text-secondary">Custom</span>
-          <NumberField value={customRows} min={1} max={50} onChange={setCustomRows} label="rows" />
+          <span className="text-secondary">{t("docx.insertTable.custom")}</span>
+          <NumberField value={customRows} min={1} max={50} onChange={setCustomRows} label={t("docx.insertTable.rows")} />
           <span className="text-secondary">×</span>
-          <NumberField value={customCols} min={1} max={20} onChange={setCustomCols} label="columns" />
+          <NumberField value={customCols} min={1} max={20} onChange={setCustomCols} label={t("docx.insertTable.columns")} />
           <button
             type="button"
             onClick={() => commit(customRows, customCols)}
             className="ml-1 rounded border border-divider bg-background px-2 py-0.5 hover:bg-hover"
             data-testid="insert-table-custom-apply"
           >
-            Insert
+            {t("docx.insertTable.insert")}
           </button>
         </div>
       </ToolbarMenu>
