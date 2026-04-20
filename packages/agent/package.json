@@ -1,6 +1,6 @@
 {
   "name": "@officeai/agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "office-agent CLI + programmatic API. DOCX, XLSX and PPTX wired through the same headless agents.",
   "type": "module",
   "main": "./dist/index.js",
