@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pdf-ocr",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "OCR bridge for scanned PDFs (text-layer generation). Lazy-loads tesseract.js.",
   "type": "module",
   "main": "./dist/index.js",
