@@ -50,6 +50,14 @@ export interface EditorShellProps {
    * until the next nonce change.
    */
   readonly requestRailTab?: { readonly tab: RightRailTab; readonly nonce: number };
+  /**
+   * Optional override for the back button. When provided, the back
+   * button calls this callback (instead of the default `<Link href="/">`).
+   * Hosts that embed the editor (hof-os' `/edit-asset`, etc.) pass this
+   * to navigate back to the *embedding* app rather than the standalone
+   * office-ai home.
+   */
+  readonly onBack?: () => void;
 }
 
 /**
@@ -87,6 +95,7 @@ export function EditorShell({
   onRenameFilename,
   topBarExtras,
   requestRailTab,
+  onBack,
 }: EditorShellProps): ReactNode {
   const rail = useRightRailController(adapter);
 
@@ -106,12 +115,21 @@ export function EditorShell({
   const [dragHover, setDragHover] = useState(false);
   const dragCounterRef = useRef(0);
 
-  // Global shortcut bindings: Cmd+K, Cmd+F, Cmd+Alt+F, Cmd+Alt+M.
+  // Global shortcut bindings: Cmd+S, Cmd+K, Cmd+F, Cmd+Alt+F, Cmd+Alt+M.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
+      // Cmd+S — save (calls product adapter's onSave; in embedded hosts
+      // like hof-os this routes to the host's S3 PUT, not the browser's
+      // built-in "Save Page" dialog which would otherwise capture this).
+      if (key === "s" && !e.shiftKey && !e.altKey) {
+        if (!adapter.canSave) return;
+        e.preventDefault();
+        void adapter.onSave();
+        return;
+      }
       // Cmd+K — palette
       if (key === "k" && !e.shiftKey) {
         e.preventDefault();
@@ -145,7 +163,7 @@ export function EditorShell({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [adapter.findAdapter, adapter.renderAnimationsPanel, rail]);
+  }, [adapter, adapter.findAdapter, adapter.renderAnimationsPanel, rail]);
 
   const handleDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
     if (!onFileDrop) return;
@@ -200,6 +218,7 @@ export function EditorShell({
         railOpen={rail.open}
         onRenameFilename={onRenameFilename}
         extras={topBarExtras}
+        onBack={onBack}
       />
 
       {/*

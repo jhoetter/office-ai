@@ -1,21 +1,54 @@
 /**
  * Resolve the realtime websocket endpoint. Order of precedence:
  *
- *   1. `NEXT_PUBLIC_OAI_REALTIME_URL` (full ws:// or wss:// URL).
- *   2. Same-host `ws://<location.hostname>:1234`.
- *   3. `ws://localhost:1234` (SSR / tests).
+ *   1. `NEXT_PUBLIC_OAI_REALTIME_URL` (Next.js / standalone web app).
+ *   2. `import.meta.env.VITE_OAI_REALTIME_URL` (Vite-bundled hosts that
+ *      embed `@officeai/react-editors`, e.g. hof-os' data-app).
+ *   3. Same-host `ws://<location.hostname>:1234`.
+ *   4. `ws://localhost:1234` (SSR / tests).
  *
  * Kept tiny so it's safe to call from the room client without
  * pulling in a config layer.
  */
 export function resolveRealtimeUrl(): string {
-  const fromEnv = (process.env.NEXT_PUBLIC_OAI_REALTIME_URL ?? "").trim();
-  if (fromEnv) return fromEnv;
+  const fromNextEnv = readNextPublicRealtimeUrl();
+  if (fromNextEnv) return fromNextEnv;
+  const fromViteEnv = readViteRealtimeUrl();
+  if (fromViteEnv) return fromViteEnv;
   if (typeof window !== "undefined" && window.location && window.location.hostname) {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.hostname}:1234`;
   }
   return "ws://localhost:1234";
+}
+
+function readNextPublicRealtimeUrl(): string {
+  // `process.env` lookups are statically replaced at build time by
+  // Next.js; in non-Next bundlers `process` may be undefined entirely
+  // (Vite leaves it as `undefined` unless explicitly defined). Guard so
+  // we don't throw on `process is not defined` in those hosts.
+  try {
+    if (typeof process === "undefined") return "";
+    const v = process.env?.NEXT_PUBLIC_OAI_REALTIME_URL;
+    return typeof v === "string" ? v.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function readViteRealtimeUrl(): string {
+  // `import.meta.env` is the Vite/ESM equivalent. We read it through a
+  // try/catch + dynamic property access so this file remains parseable
+  // by tools (Jest's default transformer, etc.) that don't recognise
+  // `import.meta`. Vite statically replaces the access at build time
+  // when the env var is configured via `define` or `.env`.
+  try {
+    const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }) ?? {};
+    const v = meta.env?.VITE_OAI_REALTIME_URL;
+    return typeof v === "string" ? v.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 /**

@@ -14,4 +14,4 @@
 import "../styles.generated.css";
 
 export { PptxEditor } from "@/pptx-editor/PptxEditor";
-export type { EmbeddedEditorProps } from "../contract";
+export type { EmbeddedEditorProps, PresenceUser } from "../contract";

@@ -42,10 +42,9 @@ declare global {
 }
 
 if (typeof globalThis !== "undefined") {
-  globalThis.__OFFICEAI_PDFJS_WORKER_SRC__ ??=
-    `${CDN_BASE}/build/pdf.worker.min.mjs`;
+  globalThis.__OFFICEAI_PDFJS_WORKER_SRC__ ??= `${CDN_BASE}/build/pdf.worker.min.mjs`;
   globalThis.__OFFICEAI_PDFJS_ASSETS_BASE__ ??= `${CDN_BASE}/`;
 }
 
 export { PdfEditor } from "@/pdf-viewer/PdfEditor";
-export type { EmbeddedEditorProps } from "../contract";
+export type { EmbeddedEditorProps, PresenceUser } from "../contract";

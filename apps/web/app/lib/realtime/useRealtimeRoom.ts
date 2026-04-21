@@ -19,6 +19,14 @@ export interface UseRealtimeRoomOptions {
    * for explicitly-disabled environments.
    */
   readonly enabled?: boolean;
+  /**
+   * Optional host-supplied identity override. Forwarded straight to
+   * `createRoomClient`; see `RoomClientOptions.identity` for the
+   * field semantics. The hook re-creates the room when the `id`
+   * changes so a host that swaps the user mid-session (rare but
+   * possible — e.g. logout/login) re-publishes the new awareness.
+   */
+  readonly identity?: { readonly id: string; readonly name: string; readonly color?: string };
 }
 
 export interface RealtimeRoomState {
@@ -34,11 +42,19 @@ export interface RealtimeRoomState {
  * caller can render presence chips on every change.
  */
 export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState {
-  const { roomId, product, enabled = true } = opts;
+  const { roomId, product, enabled = true, identity } = opts;
   const [room, setRoom] = useState<RoomClient | null>(null);
   const [status, setStatus] = useState<RealtimeRoomState["status"]>("disabled");
   const [peers, setPeers] = useState<ReadonlyArray<{ clientId: number; state: AwarenessState }>>([]);
   const ref = useRef<RoomClient | null>(null);
+
+  // Pull primitives out of `identity` so the effect's dep array is
+  // stable: the host typically passes a fresh object each render
+  // (`{ id, name }`), which would otherwise tear the room down on
+  // every render.
+  const identityId = identity?.id ?? null;
+  const identityName = identity?.name ?? null;
+  const identityColor = identity?.color ?? null;
 
   useEffect(() => {
     if (!enabled || !roomId) {
@@ -48,7 +64,20 @@ export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState
       return;
     }
     const url = resolveRealtimeUrl();
-    const client = createRoomClient({ url, roomId, product });
+    const client = createRoomClient({
+      url,
+      roomId,
+      product,
+      ...(identityId && identityName
+        ? {
+            identity: {
+              id: identityId,
+              name: identityName,
+              ...(identityColor ? { color: identityColor } : {}),
+            },
+          }
+        : {}),
+    });
     ref.current = client;
     setRoom(client);
     setStatus("connecting");
@@ -72,7 +101,7 @@ export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState
       setStatus("disabled");
       setPeers([]);
     };
-  }, [enabled, roomId, product]);
+  }, [enabled, roomId, product, identityId, identityName, identityColor]);
 
   return { room, status, remotePeers: peers };
 }

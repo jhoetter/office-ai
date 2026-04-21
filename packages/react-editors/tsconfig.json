@@ -14,11 +14,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "exclude": [
-    "dist",
-    "node_modules",
-    "**/*.test.ts",
-    "src/components/**",
-    "src/shims/**"
-  ]
+  "exclude": ["dist", "node_modules", "**/*.test.ts", "src/components/**", "src/shims/**"]
 }

@@ -4,6 +4,7 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import {
   COMMAND_LOG_KEY,
+  colorForPeer,
   decodeCommand,
   encodeCommand,
   envelopeToCommandLite,
@@ -21,6 +22,23 @@ export interface RoomClientOptions {
   readonly url: string;
   readonly roomId: string;
   readonly product: ProductKind;
+  /**
+   * Optional host-supplied identity. When provided, replaces the
+   * default anonymous "Adjective Animal" identity for this peer. The
+   * embedding host (e.g. hof-os) populates this from its auth layer
+   * so multi-user presence shows real names instead of "Quick Quokka".
+   *
+   * Field semantics mirror `PresenceUser` from
+   * `@officeai/react-editors`:
+   *
+   *   - `id`    stable per human (NOT per tab). Used for the
+   *             multi-tab dedupe in `getRemoteStates` so opening the
+   *             same doc in two tabs reads as one peer.
+   *   - `name`  rendered in avatar tooltips and tracked-changes.
+   *   - `color` optional hex; when omitted we derive one from `id`
+   *             via the same FNV-1a palette used for anonymous peers.
+   */
+  readonly identity?: { readonly id: string; readonly name: string; readonly color?: string };
 }
 
 export interface RoomClient {
@@ -110,7 +128,20 @@ class RoomClientImpl implements RoomClient {
   constructor(opts: RoomClientOptions) {
     this.product = opts.product;
     this.peerId = loadOrMintPeerId();
-    this.identity = generateAnonymousIdentity(this.peerId);
+    if (opts.identity && opts.identity.id && opts.identity.name) {
+      // Host-supplied identity (hof-os authenticated user). We trust
+      // the host on stability of `id`; using it directly for both the
+      // awareness `user.id` and the per-user dedupe key in
+      // `getRemoteStates` means two tabs of the same human still
+      // collapse to one peer the same way the anonymous flow does.
+      this.identity = {
+        id: opts.identity.id,
+        name: opts.identity.name,
+        color: opts.identity.color ?? colorForPeer(opts.identity.id),
+      };
+    } else {
+      this.identity = generateAnonymousIdentity(this.peerId);
+    }
     this.doc = new Y.Doc();
     this.log = this.doc.getArray<unknown>(COMMAND_LOG_KEY);
 

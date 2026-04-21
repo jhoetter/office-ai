@@ -18,6 +18,32 @@ export type Locale = "en" | "de";
 export type Theme = "light" | "dark";
 
 /**
+ * Host-supplied presence identity. Overrides the editor's default
+ * "Anonymous Quokka" identity so multi-user cursors / avatars / comment
+ * authorship show the *real* logged-in user (e.g. "Johannes Hötter")
+ * instead of a generated handle.
+ *
+ * Embedding hosts that already have an authentication layer
+ * (hof-os, internal portals, etc.) should always pass this — the
+ * anonymous fallback is intended for the standalone office-ai web app
+ * where users may not be signed in.
+ *
+ *   - `id`     stable per human (NOT per tab). Used to dedupe
+ *              multi-tab presence and to attribute commands. We
+ *              recommend the host's user UUID.
+ *   - `name`   shown in the avatar tooltip and on tracked-changes
+ *              authorship.
+ *   - `color`  optional hex paint for the cursor / outline. When
+ *              omitted the editor derives a stable colour from `id`
+ *              via the same FNV-1a palette used for anonymous peers.
+ */
+export interface PresenceUser {
+  readonly id: string;
+  readonly name: string;
+  readonly color?: string;
+}
+
+/**
  * Host-supplied save handler. Receives the freshly-exported document
  * bytes, the canonical MIME (one of the constants in
  * `@officeai/react-editors/mime`), and the working filename.
@@ -77,4 +103,24 @@ export interface EmbeddedEditorProps {
    * `.dark` class on `<html>`).
    */
   readonly theme?: Theme;
+  /**
+   * Identity to publish in the realtime awareness payload. When set,
+   * remote cursors render the host-provided `name` (e.g. the
+   * authenticated user's first + last name) instead of a generated
+   * anonymous handle. Omit to keep the existing anonymous-peer
+   * behavior. See `PresenceUser` for the per-field contract.
+   */
+  readonly presenceUser?: PresenceUser;
+  /**
+   * Explicit realtime room id. When set, the editor joins this exact
+   * room instead of deriving one from the source URL or per-tab
+   * fallback. Use a stable host-side hash of the document identity
+   * (e.g. the S3 object key) so two browsers opening the same file
+   * land in the same room without coordinating URLs.
+   *
+   * Pass `null` (not undefined) to explicitly disable realtime in this
+   * mount — useful for previews and read-only embeds. Undefined keeps
+   * the editor's built-in default room resolution.
+   */
+  readonly room?: string | null;
 }

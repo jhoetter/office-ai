@@ -41,6 +41,15 @@ export interface EditorTopBarProps {
    * without each one re-implementing the placement.
    */
   readonly extras?: React.ReactNode;
+  /**
+   * Optional override for the back button. When provided, the back
+   * button becomes a `<button>` that calls this callback (instead of
+   * the default `<Link href="/">` which only makes sense in the
+   * standalone office-ai web app). Embedding hosts (e.g. hof-os'
+   * `/edit-asset`) pass this so back returns to the surrounding app's
+   * previous route rather than the office-ai standalone home.
+   */
+  readonly onBack?: () => void;
 }
 
 /**
@@ -65,18 +74,35 @@ export function EditorTopBar({
   railOpen,
   onRenameFilename,
   extras,
+  onBack,
 }: EditorTopBarProps): React.ReactNode {
   const { t } = useTranslator();
+  const backClassName =
+    "inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-sm text-secondary hover:bg-hover hover:text-foreground";
   return (
     <header className="flex h-11 items-center gap-2 border-b border-divider bg-background px-3" role="banner">
-      <Link
-        href="/"
-        className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-sm text-secondary hover:bg-hover hover:text-foreground"
-        aria-label={t("common.backToHome")}
-        title={t("common.backToHome")}
-      >
-        <ArrowLeft size={14} />
-      </Link>
+      {onBack ? (
+        <button
+          type="button"
+          onClick={onBack}
+          className={backClassName}
+          aria-label={t("common.backToHome")}
+          title={t("common.backToHome")}
+          data-testid="shell-back"
+        >
+          <ArrowLeft size={14} />
+        </button>
+      ) : (
+        <Link
+          href="/"
+          className={backClassName}
+          aria-label={t("common.backToHome")}
+          title={t("common.backToHome")}
+          data-testid="shell-back"
+        >
+          <ArrowLeft size={14} />
+        </Link>
+      )}
 
       <span className="text-tertiary" aria-hidden>
         ·

@@ -97,8 +97,7 @@ async function ensurePdfjsWorker(): Promise<void> {
   if (pdfjsWorkerSetup) return pdfjsWorkerSetup;
   pdfjsWorkerSetup = (async (): Promise<void> => {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const override =
-      (globalThis as unknown as PdfjsHostOverrides).__OFFICEAI_PDFJS_WORKER_SRC__;
+    const override = (globalThis as unknown as PdfjsHostOverrides).__OFFICEAI_PDFJS_WORKER_SRC__;
     if (override) {
       pdfjs.GlobalWorkerOptions.workerSrc = override;
       return;
@@ -125,8 +124,7 @@ async function ensurePdfjsWorker(): Promise<void> {
  */
 const DEFAULT_PDFJS_ASSETS_BASE = "/pdfjs/";
 function resolvePdfjsAssetsBase(): string {
-  const override =
-    (globalThis as unknown as PdfjsHostOverrides).__OFFICEAI_PDFJS_ASSETS_BASE__;
+  const override = (globalThis as unknown as PdfjsHostOverrides).__OFFICEAI_PDFJS_ASSETS_BASE__;
   return override ?? DEFAULT_PDFJS_ASSETS_BASE;
 }
 
@@ -156,6 +154,14 @@ export interface PdfEditorProps {
   readonly locale?: Locale;
   /** Theme override placeholder; wired in Phase 1. */
   readonly theme?: "light" | "dark";
+  /** Realtime presence identity (host-supplied). When set, replaces
+   * the default anonymous identity on the awareness payload so
+   * presence chips show the authenticated user's real name. */
+  readonly presenceUser?: { readonly id: string; readonly name: string; readonly color?: string };
+  /** Explicit realtime room id (host-supplied). Pin two browsers
+   * viewing the same PDF into the same room without coordinating
+   * URLs. Pass `null` to disable realtime. */
+  readonly room?: string | null;
 }
 
 export function PdfEditor(props: PdfEditorProps = {}): ReactNode {
@@ -178,8 +184,9 @@ function PdfEditorInner({
   initialFilename,
   onSave: onSaveProp,
   onClose: onCloseProp,
+  presenceUser,
+  room: roomOverride,
 }: PdfEditorProps = {}): ReactNode {
-  void onCloseProp;
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PdfAgent | null>(null);
   const agentRef = useRef<PdfAgent | null>(null);
@@ -845,6 +852,10 @@ function PdfEditorInner({
   const tabFallback = useStableTabId("pdf");
   const realtimeRoomId = useMemo<string | null>(() => {
     if (!ready) return null;
+    if (roomOverride === null) return null;
+    if (typeof roomOverride === "string" && roomOverride.length > 0) {
+      return `oai/pdf/host/${roomOverride}`;
+    }
     if (!tabFallback && !initialSource) return null;
     return roomIdForSource({
       product: "pdf",
@@ -852,10 +863,19 @@ function PdfEditorInner({
       tabFallback,
       explicitRoom: readExplicitRoomFromUrl(),
     });
-  }, [ready, initialSource, tabFallback]);
+  }, [ready, initialSource, tabFallback, roomOverride]);
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "pdf",
+    ...(presenceUser
+      ? {
+          identity: {
+            id: presenceUser.id,
+            name: presenceUser.name,
+            ...(presenceUser.color ? { color: presenceUser.color } : {}),
+          },
+        }
+      : {}),
   });
   useCommandBroadcast({
     agent,
@@ -927,6 +947,7 @@ function PdfEditorInner({
       <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        onBack={onCloseProp}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           <PdfToolbar

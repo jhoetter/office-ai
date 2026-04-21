@@ -336,6 +336,14 @@ export interface XlsxEditorProps {
   readonly locale?: Locale;
   /** Theme override placeholder; wired in Phase 1. */
   readonly theme?: "light" | "dark";
+  /** Realtime presence identity (host-supplied). When set, replaces
+   * the default anonymous identity on the awareness payload so cell
+   * cursors / avatars show the authenticated user's real name. */
+  readonly presenceUser?: { readonly id: string; readonly name: string; readonly color?: string };
+  /** Explicit realtime room id (host-supplied). Pin two browsers
+   * viewing the same workbook into the same room without
+   * coordinating URLs. Pass `null` to disable realtime. */
+  readonly room?: string | null;
 }
 
 export function XlsxEditor(props: XlsxEditorProps = {}): ReactNode {
@@ -358,8 +366,9 @@ function XlsxEditorInner({
   initialFilename,
   onSave: onSaveProp,
   onClose: onCloseProp,
+  presenceUser,
+  room: roomOverride,
 }: XlsxEditorProps = {}): ReactNode {
-  void onCloseProp;
   const { t } = useTranslator();
   const agentRef = useRef<XlsxAgent | null>(null);
   const [agent, setAgent] = useState<XlsxAgent | null>(null);
@@ -3899,6 +3908,10 @@ function XlsxEditorInner({
   const tabFallback = useStableTabId("xlsx");
   const realtimeRoomId = useMemo<string | null>(() => {
     if (!agent) return null;
+    if (roomOverride === null) return null;
+    if (typeof roomOverride === "string" && roomOverride.length > 0) {
+      return `oai/xlsx/host/${roomOverride}`;
+    }
     if (!tabFallback && !initialSource) return null;
     return roomIdForSource({
       product: "xlsx",
@@ -3906,10 +3919,19 @@ function XlsxEditorInner({
       tabFallback,
       explicitRoom: readExplicitRoomFromUrl(),
     });
-  }, [agent, initialSource, tabFallback]);
+  }, [agent, initialSource, tabFallback, roomOverride]);
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "xlsx",
+    ...(presenceUser
+      ? {
+          identity: {
+            id: presenceUser.id,
+            name: presenceUser.name,
+            ...(presenceUser.color ? { color: presenceUser.color } : {}),
+          },
+        }
+      : {}),
   });
   useCommandBroadcast({
     agent,
@@ -3988,6 +4010,7 @@ function XlsxEditorInner({
       <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        onBack={onCloseProp}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           snapshot ? (

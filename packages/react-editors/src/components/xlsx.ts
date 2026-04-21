@@ -13,4 +13,4 @@
 import "../styles.generated.css";
 
 export { XlsxEditor } from "@/xlsx-editor/XlsxEditor";
-export type { EmbeddedEditorProps } from "../contract";
+export type { EmbeddedEditorProps, PresenceUser } from "../contract";

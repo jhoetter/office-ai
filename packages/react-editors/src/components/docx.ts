@@ -31,4 +31,4 @@ import "../styles.generated.css";
 import "prosemirror-view/style/prosemirror.css";
 
 export { DocxEditor } from "@/editor/DocxEditor";
-export type { EmbeddedEditorProps } from "../contract";
+export type { EmbeddedEditorProps, PresenceUser } from "../contract";

@@ -321,6 +321,14 @@ export interface PptxEditorProps {
   readonly locale?: Locale;
   /** Theme override placeholder; wired in Phase 1. */
   readonly theme?: "light" | "dark";
+  /** Realtime presence identity (host-supplied). When set, replaces
+   * the default anonymous identity on the awareness payload so slide
+   * cursors / avatars show the authenticated user's real name. */
+  readonly presenceUser?: { readonly id: string; readonly name: string; readonly color?: string };
+  /** Explicit realtime room id (host-supplied). Pin two browsers
+   * viewing the same deck into the same room without coordinating
+   * URLs. Pass `null` to disable realtime. */
+  readonly room?: string | null;
 }
 
 export function PptxEditor(props: PptxEditorProps = {}): React.ReactNode {
@@ -343,8 +351,9 @@ function PptxEditorInner({
   initialFilename,
   onSave: onSaveProp,
   onClose: onCloseProp,
+  presenceUser,
+  room: roomOverride,
 }: PptxEditorProps = {}): React.ReactNode {
-  void onCloseProp;
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PptxAgent | null>(null);
   const agentRef = useRef<PptxAgent | null>(null);
@@ -2337,6 +2346,10 @@ function PptxEditorInner({
   const tabFallback = useStableTabId("pptx");
   const realtimeRoomId = useMemo<string | null>(() => {
     if (!ready) return null;
+    if (roomOverride === null) return null;
+    if (typeof roomOverride === "string" && roomOverride.length > 0) {
+      return `oai/pptx/host/${roomOverride}`;
+    }
     if (!tabFallback && !initialSource) return null;
     return roomIdForSource({
       product: "pptx",
@@ -2344,10 +2357,19 @@ function PptxEditorInner({
       tabFallback,
       explicitRoom: readExplicitRoomFromUrl(),
     });
-  }, [ready, initialSource, tabFallback]);
+  }, [ready, initialSource, tabFallback, roomOverride]);
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "pptx",
+    ...(presenceUser
+      ? {
+          identity: {
+            id: presenceUser.id,
+            name: presenceUser.name,
+            ...(presenceUser.color ? { color: presenceUser.color } : {}),
+          },
+        }
+      : {}),
   });
   useCommandBroadcast({
     agent,
@@ -2485,6 +2507,7 @@ function PptxEditorInner({
       <RemotePresenceList peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        onBack={onCloseProp}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}
         requestRailTab={railRequest ?? undefined}
         toolbar={

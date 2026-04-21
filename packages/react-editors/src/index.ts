@@ -23,4 +23,4 @@ export {
 
 export { makeBlankDocx, makeBlankXlsx, makeBlankPptx, makeBlankPdf, makeBlank } from "./blanks/index.js";
 
-export type { EmbeddedEditorProps, EmbeddedEditorOnSave, Locale, Theme } from "./contract.js";
+export type { EmbeddedEditorProps, EmbeddedEditorOnSave, Locale, Theme, PresenceUser } from "./contract.js";

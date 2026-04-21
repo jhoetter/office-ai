@@ -246,6 +246,17 @@ export interface DocxEditorProps {
    * extracted package. Today this is a passthrough placeholder so
    * the embedding contract is stable across phases. */
   readonly theme?: "light" | "dark";
+  /** Realtime presence identity (host-supplied). When set, replaces
+   * the default anonymous "Adjective Animal" identity on the
+   * awareness payload so cursors / avatars / tracked-changes show
+   * the authenticated user's real name. See `PresenceUser` in
+   * `@officeai/react-editors` for the per-field contract. */
+  readonly presenceUser?: { readonly id: string; readonly name: string; readonly color?: string };
+  /** Explicit realtime room id (host-supplied). When set, the editor
+   * joins this exact room instead of deriving one from `?src=` /
+   * `?room=` / a per-tab fallback. Pass `null` to disable realtime
+   * for this mount; omit / `undefined` keeps the built-in default. */
+  readonly room?: string | null;
 }
 
 /**
@@ -288,8 +299,9 @@ function DocxEditorInner({
   initialFilename,
   onSave: onSaveProp,
   onClose: onCloseProp,
+  presenceUser,
+  room: roomOverride,
 }: DocxEditorProps = {}): React.ReactNode {
-  void onCloseProp;
   const { t } = useTranslator();
   // The editor host DOM node is exposed via a callback ref so that
   // descendants (e.g. TrackedChangesUI's hover delegation) can read it
@@ -1839,6 +1851,15 @@ function DocxEditorInner({
   const tabFallback = useStableTabId("docx");
   const realtimeRoomId = useMemo<string | null>(() => {
     if (!agentReady) return null;
+    // Explicit `null` from the host disables realtime entirely (used
+    // for read-only previews). A non-empty string wins over both
+    // `?room=` and `?src=` so embedding hosts can pin two browsers
+    // viewing the same document (keyed e.g. by S3 object key) into
+    // the same room without coordinating URLs.
+    if (roomOverride === null) return null;
+    if (typeof roomOverride === "string" && roomOverride.length > 0) {
+      return `oai/docx/host/${roomOverride}`;
+    }
     if (!tabFallback && !initialSource) return null;
     return roomIdForSource({
       product: "docx",
@@ -1846,10 +1867,19 @@ function DocxEditorInner({
       tabFallback,
       explicitRoom: readExplicitRoomFromUrl(),
     });
-  }, [agentReady, initialSource, tabFallback]);
+  }, [agentReady, initialSource, tabFallback, roomOverride]);
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "docx",
+    ...(presenceUser
+      ? {
+          identity: {
+            id: presenceUser.id,
+            name: presenceUser.name,
+            ...(presenceUser.color ? { color: presenceUser.color } : {}),
+          },
+        }
+      : {}),
   });
   useCommandBroadcast({
     agent,
@@ -1964,6 +1994,7 @@ function DocxEditorInner({
       <DocxRemoteCursorLayer view={view} host={scrollEl} peers={realtimeRoom.remotePeers} />
       <EditorShell
         adapter={adapter}
+        onBack={onCloseProp}
         topBarExtras={<PresenceSlot state={realtimeRoom} />}
         toolbar={
           <Toolbar
