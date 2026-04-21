@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev dev-realtime build lint lint-root lint-web format format-check architecture actions \
+.PHONY: help install dev dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -25,13 +25,15 @@
 # the historical localhost:3000. The realtime ws server listens on
 # 1234 (override via OAI_RT_PORT) — never collides with hof-os.
 # ----------------------------------------------------------------------
-PORT ?= 3100
+PORT    ?= 3100
+RT_PORT ?= 1234
 
 help:
 	@echo "officeAI — available targets (see docs/ci-pipeline.md for the full map)"
 	@echo ""
 	@echo "  install        Install all dependencies"
 	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100; coexists with hof-os on 3000)"
+	@echo "  kill-ports     Free \$$PORT (default 3100) and \$$RT_PORT (default 1234) — auto-runs as a prereq of \`dev\`"
 	@echo "  build          Build all packages"
 	@echo ""
 	@echo "  Quality gates  (== what CI runs in the 'verify' job):"
@@ -103,15 +105,54 @@ install:
 # claims 3000 and `kill -9`s any other process holding it). Run with
 # `PORT=3000 make dev` if you want the historical localhost:3000 in
 # standalone office-ai workflows.
-dev:
+# Frees the ports we own before re-launching `make dev`. Mirrors
+# mail-ai/collaboration-ai's pattern: kill the PIDs holding the port,
+# AND `pkill` the supervisor processes in case Next/turbo respawn a
+# child between `lsof` and the next bind. Polls until the ports are
+# really free (max ~3s) so re-running `make dev` from any state Just
+# Works.
+#
+# A naive `lsof | kill` loses to next dev / turbo because:
+#   - `next dev` spawns a Turbopack worker that holds the port; killing
+#     the parent leaves the child orphaned and still listening.
+#   - Between kill and the next bind there's a tiny window in which the
+#     supervisor can respawn.
+#
+# Note: hof-os' Makefile also `kill -9`s :1234 (it auto-spawns its own
+# realtime server from OFFICEAI_LOCAL_PATH). If you `make dev` both
+# stacks, run hof-os FIRST so its kill+respawn doesn't whack our
+# in-flight ws server.
+kill-ports:
+	@PORTS="$(PORT) $(RT_PORT)"; \
+	WS_TAG="$(CURDIR)"; \
+	for _ in 1 2 3 4 5 6; do \
+	  for p in $$PORTS; do \
+	    pids=$$(lsof -ti :$$p 2>/dev/null); \
+	    [ -n "$$pids" ] && kill -9 $$pids 2>/dev/null || true; \
+	  done; \
+	  pkill -9 -f "next-server.*$$WS_TAG"  2>/dev/null || true; \
+	  pkill -9 -f "next dev.*$$WS_TAG"     2>/dev/null || true; \
+	  pkill -9 -f "tsx.*$$WS_TAG"          2>/dev/null || true; \
+	  pkill -9 -f "turbo run dev"          2>/dev/null || true; \
+	  busy=""; \
+	  for p in $$PORTS; do \
+	    lsof -ti :$$p >/dev/null 2>&1 && busy="$$busy $$p"; \
+	  done; \
+	  [ -z "$$busy" ] && exit 0; \
+	  sleep 0.5; \
+	done; \
+	echo "kill-ports: still in use after retries:$$busy" >&2; \
+	exit 1
+
+dev: kill-ports
 	pnpm build
 	@echo ""
 	@echo "→ next dev      http://localhost:$(PORT)"
-	@echo "→ realtime ws   ws://localhost:1234   (health: http://localhost:1234/health)"
+	@echo "→ realtime ws   ws://localhost:$(RT_PORT)   (health: http://localhost:$(RT_PORT)/health)"
 	@echo ""
 	PORT=$(PORT) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev
 
-dev-realtime:
+dev-realtime: kill-ports
 	pnpm --filter @officeai/realtime-server dev
 
 build:
