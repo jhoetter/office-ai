@@ -329,6 +329,11 @@ export interface PptxEditorProps {
    * viewing the same deck into the same room without coordinating
    * URLs. Pass `null` to disable realtime. */
   readonly room?: string | null;
+  /** Hide the 📁 Open toolbar affordance. Set by embedded hosts that
+   * own their document corpus — see
+   * `EmbeddedEditorProps.hideLocalFileOpen` in
+   * `@officeai/react-editors/contract`. */
+  readonly hideLocalFileOpen?: boolean;
 }
 
 export function PptxEditor(props: PptxEditorProps = {}): React.ReactNode {
@@ -353,6 +358,7 @@ function PptxEditorInner({
   onClose: onCloseProp,
   presenceUser,
   room: roomOverride,
+  hideLocalFileOpen,
 }: PptxEditorProps = {}): React.ReactNode {
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PptxAgent | null>(null);
@@ -2409,6 +2415,7 @@ function PptxEditorInner({
       comments: { openCount: openCommentCount, resolvedCount: 0 },
       selectionSummary: { text: selectionText },
       canOpen: true,
+      hideOpen: hideLocalFileOpen,
       canSave: ready,
       canExport: ready,
       exportFormats: PPTX_EXPORT_FORMATS,
@@ -2456,6 +2463,7 @@ function PptxEditorInner({
       handleExport,
       handleOpenFile,
       handleSave,
+      hideLocalFileOpen,
       openCommentCount,
       paletteCommands,
       previewAnimation,

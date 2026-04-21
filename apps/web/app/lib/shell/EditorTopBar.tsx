@@ -122,15 +122,17 @@ export function EditorTopBar({
       ) : null}
 
       {/* Primary file ops */}
-      <ToolbarIcon
-        label={t("shell.openTooltip")}
-        shortcut="Cmd+O"
-        onClick={adapter.onOpenFile}
-        disabled={!adapter.canOpen}
-        testId="shell-open"
-      >
-        <FolderOpen size={15} />
-      </ToolbarIcon>
+      {adapter.hideOpen ? null : (
+        <ToolbarIcon
+          label={t("shell.openTooltip")}
+          shortcut="Cmd+O"
+          onClick={adapter.onOpenFile}
+          disabled={!adapter.canOpen}
+          testId="shell-open"
+        >
+          <FolderOpen size={15} />
+        </ToolbarIcon>
+      )}
       <ToolbarIcon
         label={t("shell.saveTooltip")}
         shortcut="Cmd+S"

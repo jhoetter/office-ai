@@ -344,6 +344,11 @@ export interface XlsxEditorProps {
    * viewing the same workbook into the same room without
    * coordinating URLs. Pass `null` to disable realtime. */
   readonly room?: string | null;
+  /** Hide the 📁 Open toolbar affordance. Set by embedded hosts that
+   * own their document corpus — see
+   * `EmbeddedEditorProps.hideLocalFileOpen` in
+   * `@officeai/react-editors/contract`. */
+  readonly hideLocalFileOpen?: boolean;
 }
 
 export function XlsxEditor(props: XlsxEditorProps = {}): ReactNode {
@@ -368,6 +373,7 @@ function XlsxEditorInner({
   onClose: onCloseProp,
   presenceUser,
   room: roomOverride,
+  hideLocalFileOpen,
 }: XlsxEditorProps = {}): ReactNode {
   const { t } = useTranslator();
   const agentRef = useRef<XlsxAgent | null>(null);
@@ -3965,6 +3971,7 @@ function XlsxEditorInner({
           ? { aggregates: selectionAggregates }
           : { text: selectionText ?? "" },
       canOpen: true,
+      hideOpen: hideLocalFileOpen,
       canSave: Boolean(agent),
       canExport: Boolean(agent),
       exportFormats: XLSX_EXPORT_FORMATS,
@@ -3992,6 +3999,7 @@ function XlsxEditorInner({
       filename,
       findAdapter,
       focusCommentComposer,
+      hideLocalFileOpen,
       onExport,
       onPickFile,
       onSave,

@@ -257,6 +257,11 @@ export interface DocxEditorProps {
    * `?room=` / a per-tab fallback. Pass `null` to disable realtime
    * for this mount; omit / `undefined` keeps the built-in default. */
   readonly room?: string | null;
+  /** Hide the 📁 Open toolbar affordance. Set by embedded hosts that
+   * own their document corpus — see
+   * `EmbeddedEditorProps.hideLocalFileOpen` in
+   * `@officeai/react-editors/contract`. */
+  readonly hideLocalFileOpen?: boolean;
 }
 
 /**
@@ -301,6 +306,7 @@ function DocxEditorInner({
   onClose: onCloseProp,
   presenceUser,
   room: roomOverride,
+  hideLocalFileOpen,
 }: DocxEditorProps = {}): React.ReactNode {
   const { t } = useTranslator();
   // The editor host DOM node is exposed via a callback ref so that
@@ -1946,6 +1952,7 @@ function DocxEditorInner({
       outline,
       selectionSummary: { text: selectionText },
       canOpen: true,
+      hideOpen: hideLocalFileOpen,
       canSave: agentReady,
       canExport: agentReady,
       exportFormats: DOCX_EXPORT_FORMATS,
@@ -1978,6 +1985,7 @@ function DocxEditorInner({
       handleOpenFile,
       handleSave,
       hasComments,
+      hideLocalFileOpen,
       openCommentComposer,
       outline,
       paletteCommands,

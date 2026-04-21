@@ -123,4 +123,20 @@ export interface EmbeddedEditorProps {
    * the editor's built-in default room resolution.
    */
   readonly room?: string | null;
+  /**
+   * Hide affordances that load a *local* file into the editor (the
+   * 📁 Open toolbar button, the matching Cmd+O / drag-drop
+   * shortcuts). Embedded hosts manage their own document corpus
+   * (S3 / DB / etc.) so a local-file open is a foot-gun: the user
+   * loads bytes from their disk into the editor, edits, hits Save,
+   * and the host's `onSave` writes those bytes back to the wrong
+   * S3 key (or, before this flag, sometimes back to the local file
+   * via the File System Access fallback).
+   *
+   * Defaults to `false` so the standalone office-ai web app keeps
+   * its current behavior. Hosts with their own asset browser
+   * (hof-os' `/edit-asset`, customer portals, …) should set this to
+   * `true`.
+   */
+  readonly hideLocalFileOpen?: boolean;
 }

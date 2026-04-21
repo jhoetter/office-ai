@@ -162,6 +162,11 @@ export interface PdfEditorProps {
    * viewing the same PDF into the same room without coordinating
    * URLs. Pass `null` to disable realtime. */
   readonly room?: string | null;
+  /** Hide the 📁 Open toolbar affordance. Set by embedded hosts that
+   * own their document corpus — see
+   * `EmbeddedEditorProps.hideLocalFileOpen` in
+   * `@officeai/react-editors/contract`. */
+  readonly hideLocalFileOpen?: boolean;
 }
 
 export function PdfEditor(props: PdfEditorProps = {}): ReactNode {
@@ -186,6 +191,7 @@ function PdfEditorInner({
   onClose: onCloseProp,
   presenceUser,
   room: roomOverride,
+  hideLocalFileOpen,
 }: PdfEditorProps = {}): ReactNode {
   const { t } = useTranslator();
   const [agent, setAgent] = useState<PdfAgent | null>(null);
@@ -900,6 +906,7 @@ function PdfEditorInner({
       comments: { openCount: openCommentCount, resolvedCount: 0 },
       selectionSummary: { text: selectionText },
       canOpen: true,
+      hideOpen: hideLocalFileOpen,
       canSave: ready && agent !== null,
       canExport: ready && agent !== null,
       exportFormats,
@@ -931,6 +938,7 @@ function PdfEditorInner({
       handleExport,
       handleOpenFile,
       handleSave,
+      hideLocalFileOpen,
       openCommentCount,
       paletteCommands,
       ready,

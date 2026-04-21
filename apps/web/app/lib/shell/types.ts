@@ -199,6 +199,16 @@ export interface ProductAdapter {
 
   // ── File ops ──
   readonly canOpen: boolean;
+  /**
+   * Hide the 📁 Open toolbar affordance entirely (vs `canOpen: false`,
+   * which only greys it out). Set by embedded hosts that manage their
+   * own document corpus — see `EmbeddedEditorProps.hideLocalFileOpen`
+   * — so users can't accidentally load a *local* file into an editor
+   * whose Save handler writes back to S3 / a host-side store. Defaults
+   * to `false` (button visible) so the standalone office-ai web app
+   * keeps its current behavior.
+   */
+  readonly hideOpen?: boolean;
   readonly canSave: boolean;
   readonly canExport: boolean;
   readonly exportFormats: ReadonlyArray<ExportFormat>;
