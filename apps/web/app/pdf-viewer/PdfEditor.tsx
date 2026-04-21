@@ -77,12 +77,32 @@ function stripPdfExtension(name: string): string {
  * before the first parse; we point it at the bundled worker via Vite-
  * style `new URL(...)` resolution so Next can fingerprint and serve
  * it from `_next/static/`. The promise is cached so concurrent loads
- * never race the assignment. */
+ * never race the assignment.
+ *
+ * Embedding hosts (e.g. `@officeai/react-editors` consumers) can opt
+ * out of the bundler-resolved path by setting
+ * `globalThis.__OFFICEAI_PDFJS_WORKER_SRC__` BEFORE the editor
+ * loads — useful when `import.meta.url` resolves to a chunk URL the
+ * host's static server doesn't serve (Vite hosts can't reliably
+ * resolve a bare-specifier `new URL("pdfjs-dist/...", ...)` against
+ * a pre-bundled chunk). The react-editors bundle wires this to a
+ * versioned CDN URL automatically. */
+type PdfjsHostOverrides = {
+  __OFFICEAI_PDFJS_WORKER_SRC__?: string;
+  __OFFICEAI_PDFJS_ASSETS_BASE__?: string;
+};
+
 let pdfjsWorkerSetup: Promise<void> | null = null;
 async function ensurePdfjsWorker(): Promise<void> {
   if (pdfjsWorkerSetup) return pdfjsWorkerSetup;
   pdfjsWorkerSetup = (async (): Promise<void> => {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const override =
+      (globalThis as unknown as PdfjsHostOverrides).__OFFICEAI_PDFJS_WORKER_SRC__;
+    if (override) {
+      pdfjs.GlobalWorkerOptions.workerSrc = override;
+      return;
+    }
     const url = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url);
     pdfjs.GlobalWorkerOptions.workerSrc = url.toString();
   })();
@@ -97,8 +117,18 @@ async function ensurePdfjsWorker(): Promise<void> {
  * any PDF that references one of the 14 base fonts without
  * embedding it falls back to a hard-coded sans-serif (visible drift
  * in the text layer at every zoom).
+ *
+ * Embedding hosts override the default via
+ * `globalThis.__OFFICEAI_PDFJS_ASSETS_BASE__` so they can point at a
+ * CDN (or skip the assets entirely if they only ever open
+ * Latin-script PDFs with embedded fonts).
  */
-const PDFJS_ASSETS_BASE = "/pdfjs/";
+const DEFAULT_PDFJS_ASSETS_BASE = "/pdfjs/";
+function resolvePdfjsAssetsBase(): string {
+  const override =
+    (globalThis as unknown as PdfjsHostOverrides).__OFFICEAI_PDFJS_ASSETS_BASE__;
+  return override ?? DEFAULT_PDFJS_ASSETS_BASE;
+}
 
 export interface PdfEditorProps {
   /** Page-level splash listens on this — see `pdf-viewer/page.tsx`.
@@ -232,9 +262,10 @@ function PdfEditorInner({
       agentBuf.set(buf);
       const engineBuf = new Uint8Array(buf.byteLength);
       engineBuf.set(buf);
+      const assetsBase = resolvePdfjsAssetsBase();
       const [nextAgent, nextEngine] = await Promise.all([
-        PdfAgent.fromBuffer(agentBuf, { assetsBase: PDFJS_ASSETS_BASE }),
-        loadDocument(engineBuf, { assetsBase: PDFJS_ASSETS_BASE }),
+        PdfAgent.fromBuffer(agentBuf, { assetsBase }),
+        loadDocument(engineBuf, { assetsBase }),
       ]);
       await teardownEngineDoc();
       agentRef.current = nextAgent;
