@@ -28,12 +28,39 @@
 PORT    ?= 3100
 RT_PORT ?= 1234
 
+# ----------------------------------------------------------------------
+# Realtime-server reuse
+#
+# When hof-os is also running on this machine its `make dev` auto-spawns
+# a copy of *our* realtime server on :$(RT_PORT) (it points at this
+# checkout via OFFICEAI_LOCAL_PATH). If we then `kill-ports` and
+# `pnpm --filter @officeai/realtime-server dev` blindly we:
+#
+#   1. tear down the healthy server hof-os is depending on, and
+#   2. race hof-os's respawn loop for the bind, surfacing a scary
+#      `apps/realtime-server dev: Failed` line for what is actually a
+#      benign duplicate-spawn collision.
+#
+# So `kill-ports` and `dev` both probe `/health` first (IPv4 *and* IPv6
+# — the server binds `[::1]` and not every macOS dev box maps
+# `localhost` → `::1`). If a healthy server already answers we leave it
+# alone and let `next dev` share it. Standalone behaviour is unchanged
+# (probe misses → kill + spawn as before).
+#
+# Override with `OAI_RT_REUSE=0 make dev` to force the historical
+# kill+respawn behaviour (useful when iterating on realtime-server itself
+# and you want a clean restart on every `make dev`).
+# ----------------------------------------------------------------------
+OAI_RT_REUSE ?= 1
+
 help:
 	@echo "officeAI — available targets (see docs/ci-pipeline.md for the full map)"
 	@echo ""
 	@echo "  install        Install all dependencies"
 	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100; coexists with hof-os on 3000)"
-	@echo "  kill-ports     Free \$$PORT (default 3100) and \$$RT_PORT (default 1234) — auto-runs as a prereq of \`dev\`"
+	@echo "                   Reuses an existing healthy realtime server on \$$RT_PORT (e.g. one spawned by hof-os);"
+	@echo "                   set OAI_RT_REUSE=0 to force a clean restart of the realtime server."
+	@echo "  kill-ports     Free \$$PORT (default 3100) and \$$RT_PORT (default 1234, skipped when healthy) — auto-runs as a prereq of \`dev\`"
 	@echo "  build          Build all packages"
 	@echo ""
 	@echo "  Quality gates  (== what CI runs in the 'verify' job):"
@@ -118,13 +145,25 @@ install:
 #   - Between kill and the next bind there's a tiny window in which the
 #     supervisor can respawn.
 #
-# Note: hof-os' Makefile also `kill -9`s :1234 (it auto-spawns its own
-# realtime server from OFFICEAI_LOCAL_PATH). If you `make dev` both
-# stacks, run hof-os FIRST so its kill+respawn doesn't whack our
-# in-flight ws server.
+# hof-os coexistence:
+#   hof-os' `make dev` auto-spawns a copy of *our* realtime server on
+#   :$(RT_PORT) from OFFICEAI_LOCAL_PATH. To avoid two stacks fighting
+#   over the bind, both `kill-ports` and `dev` first probe
+#   `http://localhost:$(RT_PORT)/health`. If a healthy server already
+#   answers, we leave it alone and `next dev` shares it; if not we kill
+#   the port and start our own. Set `OAI_RT_REUSE=0` to force the
+#   historical kill+respawn behaviour. See the `OAI_RT_REUSE` block at
+#   the top of this file for the full rationale.
 kill-ports:
-	@PORTS="$(PORT) $(RT_PORT)"; \
-	WS_TAG="$(CURDIR)"; \
+	@WS_TAG="$(CURDIR)"; \
+	PORTS="$(PORT)"; \
+	if [ "$(OAI_RT_REUSE)" = "1" ] \
+	   && ( curl -sf -m 1 http://localhost:$(RT_PORT)/health >/dev/null 2>&1 \
+	     || curl -sf -m 1 http://[::1]:$(RT_PORT)/health      >/dev/null 2>&1 ); then \
+	  echo "kill-ports: realtime server on :$(RT_PORT) is healthy — reusing (set OAI_RT_REUSE=0 to force restart)."; \
+	else \
+	  PORTS="$$PORTS $(RT_PORT)"; \
+	fi; \
 	for _ in 1 2 3 4 5 6; do \
 	  for p in $$PORTS; do \
 	    pids=$$(lsof -ti :$$p 2>/dev/null); \
@@ -146,11 +185,21 @@ kill-ports:
 
 dev: kill-ports
 	pnpm build
-	@echo ""
-	@echo "→ next dev      http://localhost:$(PORT)"
-	@echo "→ realtime ws   ws://localhost:$(RT_PORT)   (health: http://localhost:$(RT_PORT)/health)"
-	@echo ""
-	PORT=$(PORT) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev
+	@if [ "$(OAI_RT_REUSE)" = "1" ] \
+	   && ( curl -sf -m 1 http://localhost:$(RT_PORT)/health >/dev/null 2>&1 \
+	     || curl -sf -m 1 http://[::1]:$(RT_PORT)/health      >/dev/null 2>&1 ); then \
+	  echo ""; \
+	  echo "→ next dev      http://localhost:$(PORT)"; \
+	  echo "→ realtime ws   ws://localhost:$(RT_PORT)   (reusing existing healthy server — likely hof-os)"; \
+	  echo ""; \
+	  PORT=$(PORT) pnpm --filter @officeai/web dev; \
+	else \
+	  echo ""; \
+	  echo "→ next dev      http://localhost:$(PORT)"; \
+	  echo "→ realtime ws   ws://localhost:$(RT_PORT)   (health: http://localhost:$(RT_PORT)/health)"; \
+	  echo ""; \
+	  PORT=$(PORT) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev; \
+	fi
 
 dev-realtime: kill-ports
 	pnpm --filter @officeai/realtime-server dev
