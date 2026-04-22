@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pdf-edit",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Page-level PDF operations (rotate, reorder, delete, split, merge, extract, crop, watermark, page numbers, set-metadata) backed by pdf-lib. Pure functions that take + return Uint8Array.",
   "type": "module",
   "main": "./dist/index.js",

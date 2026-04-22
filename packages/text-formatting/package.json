@@ -1,6 +1,6 @@
 {
   "name": "@officeai/text-formatting",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Format-agnostic text-formatting contract: TextFormat, units, MIXED-state, and provider interface shared by DOCX, XLSX, and PPTX.",
   "type": "module",
   "main": "./src/index.ts",

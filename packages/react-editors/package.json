@@ -1,6 +1,6 @@
 {
   "name": "@officeai/react-editors",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Embeddable React editor surfaces and blank-file builders for hosts (e.g. hof-os) that want office-ai's DOCX / XLSX / PPTX / PDF editing UX without standing up the apps/web Next.js shell. Phase 1 ships the headless `*Agent.empty()` re-exports under ./blanks; Phase 1.5 adds the bundled editor components under ./components/* (see docs/embedding.md in the office-ai repo).",
   "type": "module",
   "main": "./dist/index.js",

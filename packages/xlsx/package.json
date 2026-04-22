@@ -1,6 +1,6 @@
 {
   "name": "@officeai/xlsx",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "XLSX editor: parser, model, serializer, formula engine, command handlers, agent API, virtualized renderer.",
   "type": "module",
   "main": "./dist/index.js",
