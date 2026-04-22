@@ -12,6 +12,9 @@ export const DOCX_COMMAND_TYPES = [
   "docx:set-cell-content",
   "docx:insert-row",
   "docx:insert-column",
+  "docx:delete-row",
+  "docx:delete-column",
+  "docx:delete-table",
   "docx:insert-image",
   "docx:resolve-comment",
   "docx:reply-comment",
@@ -20,6 +23,9 @@ export const DOCX_COMMAND_TYPES = [
   "docx:reject-change",
   "docx:set-header-text",
   "docx:set-footer-text",
+  "docx:set-header-footer-blocks",
+  "docx:create-header-footer-part",
+  "docx:insert-header-footer-image",
   "docx:set-paragraph-list",
   "docx:remove-paragraph-list",
   "docx:insert-hyperlink",
@@ -48,6 +54,12 @@ export const DOCX_COMMAND_TYPES = [
   "docx:insert-footnote",
   "docx:set-footnote-body",
   "docx:delete-footnote",
+  "docx:set-protection",
+  "docx:set-cell-shading",
+  "docx:set-cell-alignment",
+  "docx:set-row-height",
+  "docx:set-column-width",
+  "docx:merge-cells-horizontal",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -301,6 +313,93 @@ export interface SetFooterTextPayload {
 }
 
 /**
+ * Replace the entire `body` of a header or footer part. Used by
+ * the Word-style in-place authoring path so a multi-paragraph
+ * header (with page-number fields, inline images, etc.) commits
+ * back to the model without flattening to a single text run the
+ * way `set-header-text` / `set-footer-text` do.
+ *
+ * `partPath` doubles as the part id (e.g. `"word/header1.xml"`).
+ * `body` must be non-empty — pass a single empty paragraph to
+ * clear the part's content.
+ */
+export interface SetHeaderFooterBlocksPayload {
+  partPath: string;
+  body: ReadonlyArray<BlockNode>;
+}
+
+/**
+ * Mint a fresh, empty header or footer part on the document and
+ * attach it to the trailing implicit section as a `default` slot.
+ *
+ * Used by the in-place "double-click an empty header/footer zone"
+ * affordance: the zone has no part backing it (the `body` zone is
+ * Word-faithfully blank when no header/footer is referenced from
+ * the section), so the editor first dispatches this command to
+ * materialise a part, then focuses the freshly-rendered zone so
+ * the caret lands and the user can start typing.
+ *
+ * Steps performed:
+ * 1. Mint a fresh `word/header${N}.xml` (or `footer${N}.xml`) path
+ *    that doesn't collide with any existing H/F part.
+ * 2. Mint a fresh `rId${M}` for `word/document.xml.rels` and add
+ *    the relationship pointing at the new part.
+ * 3. Append a `headerReference` / `footerReference` of type `default`
+ *    to the trailing section's `headerRefs` / `footerRefs` and drop
+ *    that section's `raw` so the serializer rebuilds `<w:sectPr>`.
+ * 4. Append a typed `HeaderFooterPart` with one empty paragraph to
+ *    `headersAndFooters` (so the renderer immediately picks it up
+ *    on the next snapshot tick).
+ * 5. Set dirty flags: `body` (sectPr changed), `relationships`
+ *    (`word/document.xml`), `headersAndFooters` (the new part), and
+ *    `contentTypes` (the package needs an `Override` for the new
+ *    part's content type).
+ *
+ * The `target` field exists primarily so a future "Different first
+ * page" / "Different odd & even" UI can mint `first` / `even`
+ * parts; this round only ever mints `default`.
+ *
+ * No-op (returns the same snapshot with a synthetic same-revision
+ * diff) when the trailing section already has a default part of
+ * the requested slot — the caller can safely fire this on every
+ * focus and still get idempotent behavior.
+ */
+export interface CreateHeaderFooterPartPayload {
+  slot: "header" | "footer";
+  target?: "default" | "first" | "even";
+}
+
+/**
+ * Insert an inline image into a header or footer part. Mirrors
+ * `docx:insert-image` but the relationship lands inside the H/F
+ * part's own rels file (`word/_rels/headerN.xml.rels`) instead of
+ * the body's rels file. When `paragraphIndex` is omitted the image
+ * is appended in a fresh paragraph at the end of the part.
+ */
+export interface InsertHeaderFooterImagePayload {
+  /** Part path of the target H/F part, e.g. `"word/header1.xml"`. */
+  partPath: string;
+  /**
+   * Optional 0-based paragraph index inside the part's body. When
+   * present, the image is appended as a fresh run on that
+   * paragraph (preserving its existing inlines). When absent, a
+   * new paragraph holding only the image is appended.
+   */
+  paragraphIndex?: number;
+  /** Raw bytes of the image. */
+  data: Uint8Array | ArrayBuffer;
+  mimeType: string;
+  /** Display width in CSS pixels (96 DPI). */
+  width: number;
+  /** Display height in CSS pixels. */
+  height: number;
+  /** Optional alt text — populates `<wp:docPr descr>`. */
+  altText?: string;
+  /** Optional `<wp:docPr name>`. Defaults to `"Picture {docPrId}"`. */
+  name?: string;
+}
+
+/**
  * B7 — high-level "Bullet list" / "Numbered list" toolbar command.
  *
  * Unlike {@link SetParagraphListPayload} (which requires the caller
@@ -504,4 +603,37 @@ export interface SetPageSetupPayload {
     footer?: number;
     gutter?: number;
   };
+}
+
+/**
+ * `docx:set-protection` — toggle Word's "Restrict Editing" pane (the
+ * `<w:documentProtection>` element on `word/settings.xml`). Mirrors
+ * Word's Review tab → Restrict Editing → Yes, Start Enforcing
+ * Protection workflow.
+ *
+ * No password hashing is performed by the handler. Pass a precomputed
+ * `passwordHash` plus the matching `algorithmName` / `saltValue` /
+ * `spinCount` to populate the OOXML hash attributes; otherwise the
+ * element is written without a password (matching Word's "no password
+ * required" option). Use `enabled: false` to drop the element
+ * entirely.
+ *
+ * `edit` controls what the protection allows when enabled:
+ *   • `readOnly`         — entire document is read-only
+ *   • `comments`         — only comments may be authored
+ *   • `trackedChanges`   — every edit is force-tracked
+ *   • `forms`            — only form fields may be edited
+ *
+ * Spec: ECMA-376 Part 1, §17.15.1.29 (documentProtection).
+ */
+export interface SetProtectionPayload {
+  readonly enabled: boolean;
+  readonly edit?: "readOnly" | "comments" | "trackedChanges" | "forms";
+  readonly enforce?: boolean;
+  readonly formatting?: boolean;
+  readonly algorithmName?: string;
+  readonly passwordHash?: string;
+  readonly saltValue?: string;
+  readonly hashValue?: string;
+  readonly spinCount?: number;
 }

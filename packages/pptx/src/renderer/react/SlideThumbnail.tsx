@@ -36,6 +36,15 @@ export function SlideThumbnail(props: SlideThumbnailProps): React.ReactElement {
     <button
       type="button"
       onClick={onClick}
+      // Safari and Firefox on macOS don't focus <button> on mouse
+      // click by default — only Tab focus works. We force focus on
+      // pointer-down so downstream consumers (e.g. the PPTX sidebar's
+      // Delete-to-remove-slide handler) can rely on
+      // `document.activeElement` / `event.target` actually pointing
+      // at the clicked thumbnail.
+      onMouseDown={(e) => {
+        e.currentTarget.focus({ preventScroll: true });
+      }}
       className={["officeai-pptx-thumb", active ? "officeai-pptx-thumb--active" : ""]
         .filter(Boolean)
         .join(" ")}

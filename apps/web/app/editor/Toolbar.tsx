@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Image as ImageIcon,
   MessageSquarePlus,
@@ -23,12 +23,22 @@ import {
   SeparatorHorizontal,
   StickyNote,
   Table2,
+  Hash,
+  ListOrdered as ListOrderedIcon,
+  Type,
+  Trash2,
+  ArrowUpToLine,
+  ArrowDownToLine,
+  ArrowLeftToLine,
+  ArrowRightToLine,
 } from "lucide-react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import { ToolbarMenu, ToolbarRow, useAction } from "../lib/shell";
+import { Ribbon, ToolbarMenu, useAction, type RibbonCatalogue } from "../lib/shell";
 import { docxActions } from "@officeai/docx";
+import type { SelectedImageInfo } from "./ImageContextToolbar";
+import type { PageZoneFocusDetail } from "@/lib/page-decorations";
 
 export interface ToolbarStyleOption {
   value: string;
@@ -145,6 +155,31 @@ export interface ToolbarProps {
   trackedChangesCount: number;
   onAcceptAllChanges: () => void;
   onRejectAllChanges: () => void;
+  /**
+   * Header/footer focus state. When set, the contextual "Kopf- und
+   * Fußzeile" tab auto-activates and exposes its actions (insert
+   * page number / page count / image, toggle different-first-page,
+   * close H/F).
+   */
+  hfFocus: PageZoneFocusDetail | null;
+  onCloseHeaderFooter: () => void;
+  onToggleSectionDifferentFirst: (checked: boolean) => void;
+  onInsertHFField: (kind: "PAGE" | "NUMPAGES") => void;
+  onInsertHFImage: () => void;
+  /**
+   * The currently NodeSelection-selected inline image, or `null`. Drives the
+   * contextual "Bildtools" tab.
+   */
+  selectedImage: SelectedImageInfo | null;
+  onEditImageAlt: (info: SelectedImageInfo) => void;
+  onDeleteImage: (id: string) => void;
+  /**
+   * Tabledn id of the currently NodeSelection-selected table, or `null`.
+   * Drives the contextual "Tabellentools" tab (row/column insertion).
+   */
+  selectedTableId: string | null;
+  onInsertTableRow: (tableId: string, where: "top" | "bottom") => void;
+  onInsertTableColumn: (tableId: string, where: "start" | "end") => void;
 }
 
 export type EditModeValue = "edit" | "suggest" | "view";
@@ -171,11 +206,30 @@ export function Toolbar(props: ToolbarProps): ReactNode {
   const insertFootnoteAction = useAction(docxActions, "docx.insert-footnote");
   const addCommentAction = useAction(docxActions, "docx.add-comment");
 
+  // Catalogue is rebuilt every render — that's cheap (it's plain
+  // descriptor objects with closures over current `props`), and it
+  // ensures every render fn captures the latest callbacks. The
+  // Ribbon does its own visibility/auto-activate work over this
+  // structure.
+  const catalogue = useMemo<RibbonCatalogue<DocxRibbonCtx>>(
+    () =>
+      buildDocxRibbonCatalogue({
+        agentReady: props.agentReady,
+        insertImageLabel: insertImageAction.label,
+        insertFootnoteLabel: insertFootnoteAction.label,
+        addCommentLabel: addCommentAction.label,
+      }),
+    [props.agentReady, insertImageAction.label, insertFootnoteAction.label, addCommentAction.label]
+  );
+
+  const ctx: DocxRibbonCtx = props;
+
   return (
-    <ToolbarRow
+    <Ribbon
       ariaLabel="Document toolbar"
       testId="docx-toolbar"
-      leadingClassName="editor-toolbar"
+      catalogue={catalogue}
+      ctx={ctx}
       trailing={
         <div className="flex items-center gap-3 text-xs text-secondary">
           {props.docInfo && (
@@ -192,139 +246,481 @@ export function Toolbar(props: ToolbarProps): ReactNode {
           <EditModePicker value={props.editMode} onChange={props.onSetEditMode} />
         </div>
       }
-    >
-      {/* Paragraph style — derived from snapshot.root.body. */}
-      <ParagraphStylePicker
-        value={props.activeStyle}
-        options={props.styleOptions}
-        onChange={props.onSetParagraphStyle}
-        disabled={!props.agentReady}
-      />
-
-      <TextFormatBar
-        provider={props.textFormatProvider}
-        active={props.textFormatActive}
-        disabled={!props.agentReady}
-      />
-
-      <Divider />
-
-      {/* Alignment */}
-      <ToolbarBtn
-        label="Align left"
-        active={props.activeAlignment === "left"}
-        onClick={() => props.onSetAlignment("left")}
-      >
-        <AlignLeft size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn
-        label="Align center"
-        active={props.activeAlignment === "center"}
-        onClick={() => props.onSetAlignment("center")}
-      >
-        <AlignCenter size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn
-        label="Align right"
-        active={props.activeAlignment === "right"}
-        onClick={() => props.onSetAlignment("right")}
-      >
-        <AlignRight size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn
-        label="Align justify"
-        active={props.activeAlignment === "justify"}
-        onClick={() => props.onSetAlignment("justify")}
-      >
-        <AlignJustify size={14} />
-      </ToolbarBtn>
-
-      <Divider />
-
-      {/* Indentation — ±360 twips per click (¼ inch, matches Word). */}
-      <ToolbarBtn label="Decrease indent" onClick={() => props.onAdjustIndent(-360)}>
-        <Outdent size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn label="Increase indent" onClick={() => props.onAdjustIndent(360)}>
-        <Indent size={14} />
-      </ToolbarBtn>
-      {/*
-        Left-indent readout. Reserves a fixed-width slot regardless of
-        whether the active paragraph has any indent, so toggling
-        between indented and non-indented selections never reflows
-        the toolbar.
-      */}
-      <span
-        className="inline-block min-w-[3.25rem] px-1 text-[11px] tabular-nums text-secondary"
-        title="Left indent"
-        aria-hidden={props.activeIndentLeft === null || props.activeIndentLeft <= 0}
-      >
-        {props.activeIndentLeft !== null && props.activeIndentLeft > 0
-          ? `${twipsToInches(props.activeIndentLeft)}"`
-          : ""}
-      </span>
-
-      <Divider />
-
-      <SpacingMenu
-        spacing={props.activeSpacing}
-        onApply={props.onSetParagraphSpacing}
-        disabled={!props.agentReady || props.activeSpacing === null}
-      />
-
-      <Divider />
-
-      {/* Lists */}
-      <ToolbarBtn label="Bullet list" onClick={() => props.onToggleList("bullet")}>
-        <List size={14} />
-      </ToolbarBtn>
-      <ToolbarBtn label="Numbered list" onClick={() => props.onToggleList("ordered")}>
-        <ListOrdered size={14} />
-      </ToolbarBtn>
-
-      {/* Show formatting marks (Word's pilcrow toggle) */}
-      <ToolbarBtn
-        label="Show formatting marks"
-        active={props.formattingMarksOn}
-        onClick={props.onToggleFormattingMarks}
-      >
-        <Pilcrow size={14} />
-      </ToolbarBtn>
-
-      <Divider />
-
-      {/* Image insert */}
-      <ToolbarBtn label={insertImageAction.label} onClick={props.onInsertImage}>
-        <ImageIcon size={14} />
-      </ToolbarBtn>
-
-      {/* Insert table — Word-style grid picker. */}
-      <InsertTableMenu disabled={!props.agentReady} onInsert={props.onInsertTable} />
-
-      {/* Insert from xlsx — opens the XlsxRangePicker dialog so users
-          can pick a range from a workbook and decide whether to embed
-          it as a native table, a live OLE object, or a chart. */}
-      <ToolbarBtn label="Insert from xlsx" onClick={props.onInsertFromXlsx}>
-        <Table2 size={14} />
-      </ToolbarBtn>
-
-      {/* Section break — Word-style submenu (B11). */}
-      <SectionBreakMenu disabled={!props.agentReady} onInsert={props.onInsertSectionBreak} />
-
-      {/* Footnote — inserts a reference at the caret + appends an
-          empty footnote body. Phase 1 ships the insert affordance;
-          editing the body in place is deferred. */}
-      <ToolbarBtn label={insertFootnoteAction.label} onClick={props.onInsertFootnote}>
-        <StickyNote size={14} />
-      </ToolbarBtn>
-
-      {/* Comment */}
-      <ToolbarBtn label={addCommentAction.label} onClick={props.onAddComment}>
-        <MessageSquarePlus size={14} />
-      </ToolbarBtn>
-    </ToolbarRow>
+    />
   );
 }
+
+/**
+ * Ribbon ctx for DOCX. We just pass `ToolbarProps` through; the
+ * group `render` fns destructure what they need. Keeping the ctx
+ * shape identical to the props avoids having to thread two parallel
+ * shapes through `DocxEditor.tsx`.
+ */
+type DocxRibbonCtx = ToolbarProps;
+
+interface DocxRibbonOptions {
+  readonly agentReady: boolean;
+  readonly insertImageLabel: string;
+  readonly insertFootnoteLabel: string;
+  readonly addCommentLabel: string;
+}
+
+/**
+ * Office subset-pragmatic catalogue. Tab names mirror Word DE
+ * (Start / Einfügen / Layout / Überprüfen / Ansicht). Contextual
+ * tabs follow the same naming (Bildtools, Tabellentools, Kopf- und
+ * Fußzeile). Groups inside a tab are bottom-labelled by the Ribbon
+ * primitive so the surface reads like a real Word ribbon.
+ */
+function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<DocxRibbonCtx> {
+  const { agentReady, insertImageLabel, insertFootnoteLabel, addCommentLabel } = opts;
+  return {
+    defaultTabId: "start",
+    tabs: [
+      {
+        id: "start",
+        label: "Start",
+        groups: [
+          {
+            id: "styles",
+            label: "Formatvorlagen",
+            render: (ctx) => (
+              <ParagraphStylePicker
+                value={ctx.activeStyle}
+                options={ctx.styleOptions}
+                onChange={ctx.onSetParagraphStyle}
+                disabled={!agentReady}
+              />
+            ),
+          },
+          {
+            id: "font",
+            label: "Schriftart",
+            render: (ctx) => (
+              <TextFormatBar
+                provider={ctx.textFormatProvider}
+                active={ctx.textFormatActive}
+                disabled={!agentReady}
+              />
+            ),
+          },
+          {
+            id: "paragraph",
+            label: "Absatz",
+            render: (ctx) => (
+              <>
+                <ToolbarBtn label="Bullet list" onClick={() => ctx.onToggleList("bullet")}>
+                  <List size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn label="Numbered list" onClick={() => ctx.onToggleList("ordered")}>
+                  <ListOrdered size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn label="Decrease indent" onClick={() => ctx.onAdjustIndent(-360)}>
+                  <Outdent size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn label="Increase indent" onClick={() => ctx.onAdjustIndent(360)}>
+                  <Indent size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Align left"
+                  active={ctx.activeAlignment === "left"}
+                  onClick={() => ctx.onSetAlignment("left")}
+                >
+                  <AlignLeft size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Align center"
+                  active={ctx.activeAlignment === "center"}
+                  onClick={() => ctx.onSetAlignment("center")}
+                >
+                  <AlignCenter size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Align right"
+                  active={ctx.activeAlignment === "right"}
+                  onClick={() => ctx.onSetAlignment("right")}
+                >
+                  <AlignRight size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Align justify"
+                  active={ctx.activeAlignment === "justify"}
+                  onClick={() => ctx.onSetAlignment("justify")}
+                >
+                  <AlignJustify size={14} />
+                </ToolbarBtn>
+                <SpacingMenu
+                  spacing={ctx.activeSpacing}
+                  onApply={ctx.onSetParagraphSpacing}
+                  disabled={!agentReady || ctx.activeSpacing === null}
+                />
+                <ToolbarBtn
+                  label="Show formatting marks"
+                  active={ctx.formattingMarksOn}
+                  onClick={ctx.onToggleFormattingMarks}
+                >
+                  <Pilcrow size={14} />
+                </ToolbarBtn>
+              </>
+            ),
+          },
+        ],
+      },
+      {
+        id: "insert",
+        label: "Einfügen",
+        groups: [
+          {
+            id: "tables",
+            label: "Tabellen",
+            render: (ctx) => (
+              <>
+                <InsertTableMenu disabled={!agentReady} onInsert={ctx.onInsertTable} />
+                <ToolbarBtn label="Insert from xlsx" onClick={ctx.onInsertFromXlsx}>
+                  <Table2 size={14} />
+                </ToolbarBtn>
+              </>
+            ),
+          },
+          {
+            id: "illustrations",
+            label: "Illustrationen",
+            render: (ctx) => (
+              <ToolbarBtn label={insertImageLabel} onClick={ctx.onInsertImage}>
+                <ImageIcon size={14} />
+              </ToolbarBtn>
+            ),
+          },
+          {
+            id: "comments",
+            label: "Kommentare",
+            render: (ctx) => (
+              <ToolbarBtn label={addCommentLabel} onClick={ctx.onAddComment}>
+                <MessageSquarePlus size={14} />
+              </ToolbarBtn>
+            ),
+          },
+          {
+            id: "footnotes",
+            label: "Fußnoten",
+            render: (ctx) => (
+              <ToolbarBtn label={insertFootnoteLabel} onClick={ctx.onInsertFootnote}>
+                <StickyNote size={14} />
+              </ToolbarBtn>
+            ),
+          },
+        ],
+      },
+      {
+        id: "layout",
+        label: "Layout",
+        groups: [
+          {
+            id: "page-setup",
+            label: "Seite einrichten",
+            render: (ctx) => <SectionBreakMenu disabled={!agentReady} onInsert={ctx.onInsertSectionBreak} />,
+          },
+          {
+            id: "paragraph-spacing",
+            label: "Absatz",
+            render: (ctx) => (
+              <SpacingMenu
+                spacing={ctx.activeSpacing}
+                onApply={ctx.onSetParagraphSpacing}
+                disabled={!agentReady || ctx.activeSpacing === null}
+              />
+            ),
+          },
+          {
+            id: "indent",
+            label: "Einzug",
+            render: (ctx) => (
+              <>
+                <ToolbarBtn label="Decrease indent" onClick={() => ctx.onAdjustIndent(-360)}>
+                  <Outdent size={14} />
+                </ToolbarBtn>
+                <ToolbarBtn label="Increase indent" onClick={() => ctx.onAdjustIndent(360)}>
+                  <Indent size={14} />
+                </ToolbarBtn>
+                <span
+                  className="inline-block min-w-[3.25rem] px-1 text-[11px] tabular-nums text-secondary"
+                  title="Left indent"
+                  aria-hidden={ctx.activeIndentLeft === null || ctx.activeIndentLeft <= 0}
+                >
+                  {ctx.activeIndentLeft !== null && ctx.activeIndentLeft > 0
+                    ? `${twipsToInches(ctx.activeIndentLeft)}"`
+                    : ""}
+                </span>
+              </>
+            ),
+          },
+        ],
+      },
+      {
+        id: "review",
+        label: "Überprüfen",
+        groups: [
+          {
+            id: "comments",
+            label: "Kommentare",
+            render: (ctx) => (
+              <ToolbarBtn label={addCommentLabel} onClick={ctx.onAddComment}>
+                <MessageSquarePlus size={14} />
+              </ToolbarBtn>
+            ),
+          },
+          {
+            id: "tracked",
+            label: "Nachverfolgung",
+            render: (ctx) => (
+              <ReviewMenu
+                count={ctx.trackedChangesCount}
+                onAcceptAll={ctx.onAcceptAllChanges}
+                onRejectAll={ctx.onRejectAllChanges}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "view",
+        label: "Ansicht",
+        groups: [
+          {
+            id: "show",
+            label: "Anzeigen",
+            render: (ctx) => (
+              <ToolbarBtn
+                label="Show formatting marks"
+                active={ctx.formattingMarksOn}
+                onClick={ctx.onToggleFormattingMarks}
+              >
+                <Pilcrow size={14} />
+              </ToolbarBtn>
+            ),
+          },
+        ],
+      },
+      {
+        id: "image-tools",
+        label: "Bildtools",
+        contextual: { accent: "image" },
+        visible: (ctx) => ctx.selectedImage !== null,
+        autoActivateWhen: (ctx) => ctx.selectedImage !== null,
+        groups: [
+          {
+            id: "alt",
+            label: "Bildbeschreibung",
+            render: (ctx) =>
+              ctx.selectedImage ? (
+                <ToolbarBtn
+                  label="Edit alt text"
+                  onClick={() => {
+                    const sel = ctx.selectedImage;
+                    if (sel) ctx.onEditImageAlt(sel);
+                  }}
+                >
+                  <Type size={14} />
+                  <span className="ml-1 text-xs">Alt-Text</span>
+                </ToolbarBtn>
+              ) : null,
+          },
+          {
+            id: "size",
+            label: "Größe",
+            render: (ctx) =>
+              ctx.selectedImage ? (
+                <span className="px-2 text-xs text-secondary tabular-nums">
+                  {ctx.selectedImage.widthPx} × {ctx.selectedImage.heightPx} px
+                </span>
+              ) : null,
+          },
+          {
+            id: "delete",
+            label: "Aktionen",
+            render: (ctx) =>
+              ctx.selectedImage ? (
+                <ToolbarBtn
+                  label="Delete image"
+                  onClick={() => {
+                    const sel = ctx.selectedImage;
+                    if (sel) ctx.onDeleteImage(sel.imageId);
+                  }}
+                >
+                  <Trash2 size={14} />
+                </ToolbarBtn>
+              ) : null,
+          },
+        ],
+      },
+      {
+        id: "table-tools",
+        label: "Tabellentools",
+        contextual: { accent: "table" },
+        visible: (ctx) => ctx.selectedTableId !== null,
+        autoActivateWhen: (ctx) => ctx.selectedTableId !== null,
+        groups: [
+          {
+            id: "rows",
+            label: "Zeilen",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <>
+                  <ToolbarBtn
+                    label="Insert row above"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onInsertTableRow(id, "top");
+                    }}
+                  >
+                    <ArrowUpToLine size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    label="Insert row below"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onInsertTableRow(id, "bottom");
+                    }}
+                  >
+                    <ArrowDownToLine size={14} />
+                  </ToolbarBtn>
+                </>
+              ) : null,
+          },
+          {
+            id: "columns",
+            label: "Spalten",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <>
+                  <ToolbarBtn
+                    label="Insert column at start"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onInsertTableColumn(id, "start");
+                    }}
+                  >
+                    <ArrowLeftToLine size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    label="Insert column at end"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onInsertTableColumn(id, "end");
+                    }}
+                  >
+                    <ArrowRightToLine size={14} />
+                  </ToolbarBtn>
+                </>
+              ) : null,
+          },
+        ],
+      },
+      {
+        id: "hf-tools",
+        label: "Kopf- und Fußzeile",
+        contextual: { accent: "hf" },
+        visible: (ctx) => ctx.hfFocus !== null,
+        autoActivateWhen: (ctx) => ctx.hfFocus !== null,
+        groups: [
+          {
+            id: "hf-status",
+            label: "Position",
+            render: (ctx) =>
+              ctx.hfFocus ? (
+                <span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
+                  {ctx.hfFocus.slot === "header" ? "Kopfzeile" : "Fußzeile"}
+                  {ctx.hfFocus.target && ctx.hfFocus.target !== "default" ? (
+                    <span className="rounded bg-divider/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-secondary">
+                      {ctx.hfFocus.target}
+                    </span>
+                  ) : null}
+                  {ctx.hfFocus.pageNumber ? (
+                    <span className="font-normal text-secondary">· Seite {ctx.hfFocus.pageNumber}</span>
+                  ) : null}
+                </span>
+              ) : null,
+          },
+          {
+            id: "hf-options",
+            label: "Optionen",
+            render: (ctx) => (
+              <label className="inline-flex items-center gap-1.5 px-2 text-xs text-foreground hover:text-foreground">
+                <input
+                  type="checkbox"
+                  onMouseDown={(e) => e.preventDefault()}
+                  checked={false}
+                  onChange={(e) => ctx.onToggleSectionDifferentFirst(e.target.checked)}
+                  data-testid="docx-hf-toggle-different-first"
+                  className="h-3 w-3 accent-[var(--accent)]"
+                />
+                Erste Seite anders
+              </label>
+            ),
+          },
+          {
+            id: "hf-insert",
+            label: "Einfügen",
+            render: (ctx) => (
+              <>
+                <ToolbarBtn
+                  label="Insert page #"
+                  testId="docx-hf-insert-page-number"
+                  onClick={() => ctx.onInsertHFField("PAGE")}
+                >
+                  <Hash size={14} />
+                  <span className="ml-1 text-xs">Seitenzahl</span>
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Insert page count"
+                  testId="docx-hf-insert-page-count"
+                  onClick={() => ctx.onInsertHFField("NUMPAGES")}
+                >
+                  <ListOrderedIcon size={14} />
+                  <span className="ml-1 text-xs">Seitenanzahl</span>
+                </ToolbarBtn>
+                <ToolbarBtn label="Insert image" testId="docx-hf-insert-image" onClick={ctx.onInsertHFImage}>
+                  <ImageIcon size={14} />
+                  <span className="ml-1 text-xs">Bild</span>
+                </ToolbarBtn>
+              </>
+            ),
+          },
+          {
+            id: "hf-close",
+            label: "Schließen",
+            render: (ctx) => (
+              <ToolbarBtn
+                label="Close header & footer"
+                testId="docx-hf-close"
+                onClick={ctx.onCloseHeaderFooter}
+              >
+                <X size={14} />
+                <span className="ml-1 text-xs">Schließen</span>
+              </ToolbarBtn>
+            ),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+// Re-export for E2E tests that key off the H/F insert buttons by their
+// stable testIds (docx-hf-insert-page-number / -count / -image / close /
+// toggle-different-first). The Ribbon catalogue render fns above carry
+// these testIds inline via the underlying ToolbarBtn `data-testid`
+// attribute; we keep the constants here so future renames are caught
+// statically by the type system.
+const HF_TESTIDS = {
+  pageNumber: "docx-hf-insert-page-number",
+  pageCount: "docx-hf-insert-page-count",
+  image: "docx-hf-insert-image",
+  close: "docx-hf-close",
+  toggleDifferentFirst: "docx-hf-toggle-different-first",
+} as const;
+void HF_TESTIDS;
 
 /**
  * Edit-mode picker (Editing / Suggesting / Viewing — the Word and
@@ -663,14 +1059,11 @@ const EDIT_MODE_META: Record<
   },
 };
 
-function Divider(): ReactNode {
-  return <div className="mx-1 h-4 w-px bg-divider" aria-hidden />;
-}
-
 function ToolbarBtn(props: {
   label: string;
   onClick: () => void;
   active?: boolean;
+  testId?: string;
   children: ReactNode;
 }): ReactNode {
   return (
@@ -679,9 +1072,11 @@ function ToolbarBtn(props: {
       title={props.label}
       aria-label={props.label}
       aria-pressed={props.active ?? undefined}
+      data-testid={props.testId}
+      onMouseDown={(e) => e.preventDefault()}
       onClick={props.onClick}
       className={cn(
-        "rounded-md p-1.5 text-secondary hover:bg-hover hover:text-foreground",
+        "inline-flex items-center rounded-md p-1.5 text-secondary hover:bg-hover hover:text-foreground",
         props.active && "bg-accent-light text-foreground"
       )}
     >

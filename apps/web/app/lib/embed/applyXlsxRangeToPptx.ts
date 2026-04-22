@@ -35,9 +35,10 @@ export async function applyXlsxRangeToPptx(args: {
   if (snapshot.width <= 0 || snapshot.height <= 0) return;
 
   // Slide dimensions live on the snapshot's `presentation.slideSize`.
-  // Defaults match PowerPoint's 16:9 (9144000 × 6858000 EMU).
+  // Defaults match PowerPoint's 16:9 widescreen (12192000 × 6858000 EMU
+  // = 13.333 in × 7.5 in), the 2013+ default for new decks.
   const snap = agent.getSnapshot();
-  const slideW = snap.root.slideSize?.cxEmu ?? 9_144_000;
+  const slideW = snap.root.slideSize?.cxEmu ?? 12_192_000;
   const slideH = snap.root.slideSize?.cyEmu ?? 6_858_000;
   const x = Math.round(slideW * 0.1);
   const y = Math.round(slideH * 0.2);

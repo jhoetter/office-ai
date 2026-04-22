@@ -52,6 +52,7 @@ import {
   updateDefinedNameHandler,
 } from "./defined-names.js";
 import { setAutoFilterHandler } from "./set-auto-filter.js";
+import { setCalcModeHandler } from "./set-calc-mode.js";
 import { setCellFormatHandler } from "./set-cell-format.js";
 import { setCellFormulaHandler } from "./set-cell-formula.js";
 import { setCellValueHandler } from "./set-cell-value.js";
@@ -59,6 +60,14 @@ import { setColumnWidthHandler } from "./set-column-width.js";
 import { setFilterColumnHandler } from "./set-filter-column.js";
 import { setRangeValuesHandler } from "./set-range-values.js";
 import { setRowHeightHandler } from "./set-row-height.js";
+import { setSheetProtectionHandler } from "./set-sheet-protection.js";
+import { setShowFormulasHandler } from "./set-show-formulas.js";
+import { setWorkbookProtectionHandler } from "./set-workbook-protection.js";
+import { setPageSetupHandler } from "./set-page-setup.js";
+import { setPageMarginsHandler } from "./set-page-margins.js";
+import { setPrintOptionsHandler } from "./set-print-options.js";
+import { setPrintAreaHandler, setPrintTitlesHandler } from "./set-print-area.js";
+import { setSheetViewHandler } from "./set-sheet-view.js";
 import { sortRangeHandler } from "./sort-range.js";
 import { textToColumnsHandler } from "./text-to-columns.js";
 import { unmergeCellsHandler } from "./unmerge-cells.js";
@@ -134,6 +143,16 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   moveChartHandler as CommandHandler<unknown, XlsxSnapshot>,
   resizeChartHandler as CommandHandler<unknown, XlsxSnapshot>,
   updateChartHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setSheetProtectionHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setWorkbookProtectionHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setCalcModeHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setShowFormulasHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setPageSetupHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setPageMarginsHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setPrintOptionsHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setPrintAreaHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setPrintTitlesHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setSheetViewHandler as CommandHandler<unknown, XlsxSnapshot>,
 ];
 
 export const xlsxHandlersById: ReadonlyMap<string, CommandHandler<unknown, XlsxSnapshot>> = new Map(

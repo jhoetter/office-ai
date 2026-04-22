@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DocxSnapshot, SectionProperties } from "@officeai/docx";
+import { useTranslator } from "@/lib/i18n";
+import {
+  TWIPS_PER_CM,
+  TWIPS_PER_INCH,
+  buildTicks,
+  isMajorTick,
+  isMetricLocale,
+  twipsToUnit,
+} from "@/lib/ruler/units";
 
 /**
  * P3.5 / W20 + B3 — page ruler with draggable margin handles.
@@ -37,15 +46,13 @@ export interface PageRulerProps {
   onOpenPageSetup?: () => void;
 }
 
-const TWIPS_PER_INCH = 1440;
-const TWIPS_PER_CM = 567; // 1440 / 2.54
-
 const DEFAULT_PAGE_WIDTH_TWIPS = 12240; // US-letter
 const DEFAULT_MARGIN_TWIPS = 1440;
 const MIN_PRINTABLE_TWIPS = 360; // ¼"
 
 export function PageRuler(props: PageRulerProps): ReactNode {
   const { snapshot, zoom = 1, onMarginsChange, onOpenPageSetup } = props;
+  const { t } = useTranslator();
 
   const baseGeometry = useMemo(() => resolveSectionGeometry(snapshot), [snapshot]);
   const useMetric = useMemo(() => isMetricLocale(), []);
@@ -64,17 +71,15 @@ export function PageRuler(props: PageRulerProps): ReactNode {
   const rightMarginTwips = draftRight ?? baseGeometry.rightMarginTwips;
   const pageWidthTwips = baseGeometry.pageWidthTwips;
 
-  const totalUnits = useMetric ? pageWidthTwips / TWIPS_PER_CM : pageWidthTwips / TWIPS_PER_INCH;
-  const leftMarginUnits = useMetric ? leftMarginTwips / TWIPS_PER_CM : leftMarginTwips / TWIPS_PER_INCH;
-  const rightMarginUnits = useMetric ? rightMarginTwips / TWIPS_PER_CM : rightMarginTwips / TWIPS_PER_INCH;
+  const unit = useMetric ? "cm" : "in";
+  const totalUnits = twipsToUnit(pageWidthTwips, unit);
+  const leftMarginUnits = twipsToUnit(leftMarginTwips, unit);
+  const rightMarginUnits = twipsToUnit(rightMarginTwips, unit);
 
-  const ticks: number[] = [];
   const tickStep = useMetric ? 1 : 0.5;
-  for (let v = 0; v <= totalUnits + 0.001; v += tickStep) {
-    ticks.push(v);
-  }
+  const ticks = buildTicks(0, totalUnits, tickStep);
 
-  const unitLabel = useMetric ? "cm" : "in";
+  const unitLabel = unit;
 
   const draggable = typeof onMarginsChange === "function";
 
@@ -155,7 +160,7 @@ export function PageRuler(props: PageRulerProps): ReactNode {
         e.preventDefault();
         onOpenPageSetup();
       }}
-      title={onOpenPageSetup ? "Double-click to open Page Setup" : undefined}
+      title={onOpenPageSetup ? t("docx.pageRuler.openPageSetup") : undefined}
     >
       <div
         className="absolute inset-y-0 left-0 bg-divider/40"
@@ -169,15 +174,15 @@ export function PageRuler(props: PageRulerProps): ReactNode {
       />
       {ticks.map((u) => {
         const pct = (u / totalUnits) * 100;
-        const isMajor = Math.round(u) === u;
+        const major = isMajorTick(u);
         return (
           <div
             key={u}
             className="absolute top-0 flex h-full flex-col items-center"
             style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
           >
-            <div className="bg-secondary" style={{ width: 1, height: isMajor ? "70%" : "40%" }} />
-            {isMajor && u !== 0 && <span className="mt-[1px] tabular-nums">{Math.round(u)}</span>}
+            <div className="bg-secondary" style={{ width: 1, height: major ? "70%" : "40%" }} />
+            {major && u !== 0 && <span className="mt-[1px] tabular-nums">{Math.round(u)}</span>}
           </div>
         );
       })}
@@ -190,6 +195,7 @@ export function PageRuler(props: PageRulerProps): ReactNode {
             useMetric={useMetric}
             onPointerDown={(e) => beginDrag("left", e)}
             active={dragRef.current === "left"}
+            t={t}
           />
           <MarginHandle
             side="right"
@@ -198,6 +204,7 @@ export function PageRuler(props: PageRulerProps): ReactNode {
             useMetric={useMetric}
             onPointerDown={(e) => beginDrag("right", e)}
             active={dragRef.current === "right"}
+            t={t}
           />
         </>
       ) : null}
@@ -212,17 +219,21 @@ interface MarginHandleProps {
   useMetric: boolean;
   active: boolean;
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  t: (key: string, vars?: Readonly<Record<string, string | number>>) => string;
 }
 
 function MarginHandle(props: MarginHandleProps) {
-  const { side, positionPct, twips, useMetric, active, onPointerDown } = props;
+  const { side, positionPct, twips, useMetric, active, onPointerDown, t } = props;
   const factor = useMetric ? TWIPS_PER_CM : TWIPS_PER_INCH;
   const labelValue = (twips / factor).toFixed(2);
   const unit = useMetric ? "cm" : "in";
+  const ariaKey = side === "left" ? "docx.pageRuler.leftMargin" : "docx.pageRuler.rightMargin";
+  const titleKey =
+    side === "left" ? "docx.pageRuler.leftMarginValue" : "docx.pageRuler.rightMarginValue";
   return (
     <div
       role="slider"
-      aria-label={`${side === "left" ? "Left" : "Right"} margin`}
+      aria-label={t(ariaKey)}
       aria-valuenow={Number(labelValue)}
       aria-valuemin={0}
       data-testid={`page-ruler-handle-${side}`}
@@ -231,7 +242,7 @@ function MarginHandle(props: MarginHandleProps) {
         active ? "bg-accent" : "bg-secondary/50 hover:bg-accent/70"
       }`}
       style={{ left: `${positionPct}%` }}
-      title={`${side === "left" ? "Left" : "Right"} margin: ${labelValue} ${unit}`}
+      title={t(titleKey, { value: labelValue, unit })}
     />
   );
 }
@@ -258,16 +269,6 @@ function trailingSectionProperties(snapshot: DocxSnapshot | null): SectionProper
     if (block.kind === "section-break") return block.properties;
   }
   return null;
-}
-
-function isMetricLocale(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const lang = (navigator.language || "en-US").toLowerCase();
-  if (lang.startsWith("en-us")) return false;
-  if (lang.startsWith("en-gb")) return false;
-  if (lang.startsWith("en-lr")) return false;
-  if (lang === "my-mm") return false;
-  return true;
 }
 
 function clamp(n: number, lo: number, hi: number): number {

@@ -1996,11 +1996,15 @@ function mergeRunAttrs(r: TextRun): Record<string, string> {
 
 function serializePresentationXml(root: PptxPresentation): string {
   // We rebuild from the captured presentationOpaqueTail, replacing
-  // <p:sldIdLst> in-place with one that matches root.slides order.
+  // <p:sldIdLst> with one that matches root.slides order and <p:sldSz>
+  // with one matching root.slideSize (which may have been updated by
+  // pptx:set-slide-size).
   const newChildren: unknown[] = [];
   for (const o of root.presentationOpaqueTail) {
     if (o.tag === "p:sldIdLst") {
       newChildren.push(buildSldIdLst(root));
+    } else if (o.tag === "p:sldSz") {
+      newChildren.push(buildSldSz(root));
     } else {
       newChildren.push(opaqueToEntry(o));
     }
@@ -2034,6 +2038,15 @@ function buildSldIdLst(root: PptxPresentation): Record<string, unknown> {
     entry[ATTR_KEY] = makeRawAttrs(root.sldIdLstAttrs);
   }
   return entry;
+}
+
+function buildSldSz(root: PptxPresentation): Record<string, unknown> {
+  const attrs: Record<string, string> = {
+    cx: String(root.slideSize.cxEmu),
+    cy: String(root.slideSize.cyEmu),
+  };
+  if (root.slideSize.type) attrs.type = root.slideSize.type;
+  return makeEntry("p:sldSz", [], attrs);
 }
 
 // ─── Rels serialization ───────────────────────────────────────────────────

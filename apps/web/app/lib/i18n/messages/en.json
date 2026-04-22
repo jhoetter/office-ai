@@ -767,6 +767,18 @@
     },
     "outline": "Outline",
     "slidePanel": "Slides",
+    "view": {
+      "rulers": "Rulers",
+      "showRulers": "Show rulers",
+      "hideRulers": "Hide rulers",
+      "gridlines": "Gridlines",
+      "showGridlines": "Show gridlines",
+      "hideGridlines": "Hide gridlines"
+    },
+    "ruler": {
+      "unitInch": "in",
+      "unitCm": "cm"
+    },
     "connector": {
       "straight": "Straight",
       "elbow": "Elbow",
@@ -983,7 +995,8 @@
         "Lists": "Lists",
         "Layout": "Layout",
         "View": "View",
-        "Mode": "Mode"
+        "Mode": "Mode",
+        "Review": "Review"
       },
       "add-comment": {
         "label": "Add comment",
@@ -1073,6 +1086,66 @@
         "label": "Insert table (2 × 2)",
         "description": "Insert a 2 × 2 table at the current selection."
       },
+      "delete-row": {
+        "label": "Delete table row",
+        "description": "Remove a row from a table. The table must have at least 2 rows."
+      },
+      "delete-column": {
+        "label": "Delete table column",
+        "description": "Remove a column from a table. The table must have at least 2 columns."
+      },
+      "delete-table": {
+        "label": "Delete table",
+        "description": "Remove a top-level table from the document."
+      },
+      "resolve-comment": {
+        "label": "Resolve comment",
+        "description": "Mark a comment as resolved (or re-open it)."
+      },
+      "reply-comment": {
+        "label": "Reply to comment",
+        "description": "Append a reply to an existing comment."
+      },
+      "delete-comment": {
+        "label": "Delete comment",
+        "description": "Delete a comment and its reply thread."
+      },
+      "accept-all-changes": {
+        "label": "Accept all changes",
+        "description": "Accept every pending tracked change in one mutation."
+      },
+      "reject-all-changes": {
+        "label": "Reject all changes",
+        "description": "Reject every pending tracked change in one mutation."
+      },
+      "insert-page-number": {
+        "label": "Insert page number",
+        "description": "Insert a page-number field at a position selector."
+      },
+      "insert-section-break": {
+        "label": "Insert section break",
+        "description": "Insert a section break (next page / continuous / even / odd) at a position selector."
+      },
+      "insert-page-break": {
+        "label": "Insert page break",
+        "description": "Insert a hard page break at a position selector."
+      },
+      "set-page-setup": {
+        "label": "Set page setup",
+        "description": "Update page size / margins / orientation on the section that owns a paragraph (in twips)."
+      },
+      "set-page-margins": {
+        "label": "Set page margins",
+        "description": "Set the top / right / bottom / left / header / footer / gutter margins (in twips) on a section."
+      },
+      "set-page-orientation": {
+        "label": "Set page orientation",
+        "description": "Set page orientation (portrait/landscape). Swaps width/height when needed."
+      },
+      "set-page-size": {
+        "label": "Set page size",
+        "description": "Set page width and height (in twips) on a section, by preset (letter/legal/a4/a3/a5) or explicit twips."
+      },
       "page-setup": {
         "label": "Page setup…",
         "description": "Open the page setup dialog to configure margins, paper size, and orientation."
@@ -1092,6 +1165,30 @@
       "set-mode-view": {
         "label": "Switch to Viewing mode",
         "description": "Read-only mode — block all mutations."
+      },
+      "set-protection": {
+        "label": "Restrict editing",
+        "description": "Toggle Word's Restrict Editing element in word/settings.xml. Pass --enabled false to clear; precomputed password hashes are accepted via --password-hash + --algorithm-name + --salt-value + --spin-count."
+      },
+      "set-cell-shading": {
+        "label": "Cell shading",
+        "description": "Set the background fill on a single table cell. Pass --fill null to clear."
+      },
+      "set-cell-alignment": {
+        "label": "Cell vertical alignment",
+        "description": "Set the vertical alignment (top/center/bottom) of a single table cell."
+      },
+      "set-row-height": {
+        "label": "Row height",
+        "description": "Set a table row's height in twips. Pass --height-twips null to clear."
+      },
+      "set-column-width": {
+        "label": "Column width",
+        "description": "Set a table column's width in twips (1440 twips = 1 inch)."
+      },
+      "merge-cells-horizontal": {
+        "label": "Merge cells (horizontal)",
+        "description": "Merge a contiguous run of cells in a single row into one cell with gridSpan."
       }
     },
     "xlsx": {
@@ -1101,7 +1198,11 @@
         "Sheet": "Sheet",
         "Comments": "Comments",
         "Data": "Data",
-        "Insert": "Insert"
+        "Insert": "Insert",
+        "Review": "Review",
+        "Formulas": "Formulas",
+        "Page Layout": "Page Layout",
+        "View": "View"
       },
       "set-cell": {
         "label": "Set cell value",
@@ -1150,6 +1251,14 @@
       "unmerge-cells": {
         "label": "Unmerge cells",
         "description": "Unmerge an existing merged range (must match exactly)."
+      },
+      "set-column-width": {
+        "label": "Set column width",
+        "description": "Override a column's width in CSS pixels (or pass --reset to clear)."
+      },
+      "set-row-height": {
+        "label": "Set row height",
+        "description": "Override a row's height in CSS pixels (or pass --reset to clear)."
       },
       "add-comment": {
         "label": "Add comment",
@@ -1262,6 +1371,126 @@
       "edit-chart": {
         "label": "Edit chart…",
         "description": "Edit the currently selected chart's data range, type, and title."
+      },
+      "add-conditional-format": {
+        "label": "Add conditional format",
+        "description": "Add a conditional formatting rule to a range. Pass --rule as JSON matching the ConditionalFormat schema."
+      },
+      "remove-conditional-format": {
+        "label": "Remove conditional format",
+        "description": "Remove a conditional formatting rule by id."
+      },
+      "clear-conditional-formats": {
+        "label": "Clear conditional formats",
+        "description": "Drop every conditional formatting rule from a sheet."
+      },
+      "add-data-validation": {
+        "label": "Add data validation",
+        "description": "Add a data validation rule to a range. Pass --rule as JSON matching the DataValidation schema."
+      },
+      "remove-data-validation": {
+        "label": "Remove data validation",
+        "description": "Remove a data validation rule by id."
+      },
+      "clear-data-validations": {
+        "label": "Clear data validations",
+        "description": "Drop every data validation rule on a sheet."
+      },
+      "add-defined-name": {
+        "label": "Add defined name",
+        "description": "Define a workbook- or sheet-scoped name (named range)."
+      },
+      "update-defined-name": {
+        "label": "Update defined name",
+        "description": "Update an existing defined name's reference, scope, or rename it."
+      },
+      "remove-defined-name": {
+        "label": "Remove defined name",
+        "description": "Delete a defined name."
+      },
+      "add-table": {
+        "label": "Add table",
+        "description": "Convert a range into a structured table (with auto-filter and styles)."
+      },
+      "remove-table": {
+        "label": "Remove table",
+        "description": "Convert a structured table back to a plain range."
+      },
+      "remove-chart": {
+        "label": "Remove chart",
+        "description": "Remove an inserted chart by id."
+      },
+      "move-chart": {
+        "label": "Move chart",
+        "description": "Reposition a chart on the sheet."
+      },
+      "resize-chart": {
+        "label": "Resize chart",
+        "description": "Resize a chart on the sheet (in CSS pixels)."
+      },
+      "update-chart": {
+        "label": "Update chart",
+        "description": "Patch a chart's type, data range, header/category toggles, title, palette, legend/data-label/gridline toggles, or axis titles."
+      },
+      "set-auto-filter": {
+        "label": "Set auto-filter",
+        "description": "Apply an auto-filter to a range. Pass --range null to remove."
+      },
+      "set-filter-column": {
+        "label": "Filter column",
+        "description": "Configure a column filter inside an existing auto-filter. Pass --criterion as JSON."
+      },
+      "clear-filter-column": {
+        "label": "Clear column filter",
+        "description": "Clear the filter on a single column."
+      },
+      "sort-range": {
+        "label": "Sort range",
+        "description": "Sort the rows inside a range (excluding the header) by a single column."
+      },
+      "set-wrap-text": {
+        "label": "Toggle wrap text",
+        "description": "Toggle wrap-text on a range. Wrapped cells display long content on multiple lines instead of overflowing."
+      },
+      "set-sheet-protection": {
+        "label": "Protect sheet",
+        "description": "Toggle Excel's Protect Sheet element on a worksheet. Pass --enabled false to clear; precomputed password hashes are accepted via --password-hash + --algorithm-name + --salt-value + --spin-count."
+      },
+      "set-workbook-protection": {
+        "label": "Protect workbook",
+        "description": "Toggle Excel's Protect Workbook element. Defaults to lockStructure=1 when no flags are supplied. Pass --enabled false to clear."
+      },
+      "set-calc-mode": {
+        "label": "Calculation options",
+        "description": "Set Excel's Formulas → Calculation Options (auto / autoNoTable / manual) and the related calcOnSave / iterate knobs."
+      },
+      "set-show-formulas": {
+        "label": "Show formulas",
+        "description": "Toggle the Formulas → Formula Auditing → Show Formulas view mode on a worksheet."
+      },
+      "set-page-setup": {
+        "label": "Set page setup",
+        "description": "Configure the worksheet's <pageSetup> element (orientation, paper size, scaling, fit-to-pages, page numbering)."
+      },
+      "set-page-margins": {
+        "label": "Set page margins",
+        "description": "Set worksheet page margins via preset (normal | wide | narrow) or individual inch overrides."
+      },
+      "set-print-options": {
+        "label": "Set print options",
+        "description": "Toggle Page Layout → Sheet Options (gridlines, headings, centering on page)."
+      },
+      "set-print-area": {
+        "label": "Set print area",
+        "description": "Define the worksheet's _xlnm.Print_Area defined name to a range, or clear it."
+      },
+      "set-print-titles": {
+        "label": "Set print titles",
+        "description": "Define _xlnm.Print_Titles (rows / columns repeated on each printed page)."
+      },
+      "set-sheet-view": {
+        "label": "Set sheet view",
+        "description": "Patch the worksheet's <sheetView> element. Toggles view mode, gridlines, headings, ruler, zoom, and right-to-left."
       }
     },
     "pptx": {
@@ -1269,7 +1498,10 @@
         "Slide": "Slide",
         "Format": "Format",
         "Insert": "Insert",
-        "View": "View"
+        "View": "View",
+        "Design": "Design",
+        "Transitions": "Transitions",
+        "Slideshow": "Slideshow"
       },
       "add-slide": {
         "label": "Add slide",
@@ -1291,9 +1523,37 @@
         "label": "Set slide transition",
         "description": "Set the entry transition for a slide."
       },
+      "set-slide-size": {
+        "label": "Set slide size",
+        "description": "Resize the deck. Pass a preset (widescreen / standard / a4 / letter) or 'custom' with explicit cxEmu / cyEmu."
+      },
+      "set-show-options": {
+        "label": "Set show options",
+        "description": "Configure slideshow playback (mode, loop, narration, animation, timings). Pass --clear to drop existing show options."
+      },
+      "set-slide-transition": {
+        "label": "Set slide transition",
+        "description": "Set the entry transition for a slide. Pass --kind none to remove an existing transition."
+      },
+      "set-slide-hidden": {
+        "label": "Hide / show slide",
+        "description": "Toggle a slide's hidden flag. Hidden slides stay in the deck but are skipped during slideshow playback."
+      },
       "format-text": {
         "label": "Format text run",
         "description": "Apply font / size / bold / italic / underline / color to a text run range."
+      },
+      "set-position": {
+        "label": "Set shape position",
+        "description": "Set a shape's x/y position (in EMU; 914400 EMU = 1 inch)."
+      },
+      "set-size": {
+        "label": "Set shape size",
+        "description": "Set a shape's width/height (in EMU)."
+      },
+      "set-rotation": {
+        "label": "Set shape rotation",
+        "description": "Rotate a shape by N degrees clockwise around its centre."
       },
       "add-text-box": {
         "label": "Add text box",
@@ -1510,6 +1770,63 @@
         "label": "Print…",
         "description": "Open the browser's native print dialog for the PDF."
       }
+    }
+  },
+  "ribbon": {
+    "tabs": {
+      "start": "Home",
+      "insert": "Insert",
+      "layout": "Layout",
+      "review": "Review",
+      "view": "View",
+      "data": "Data",
+      "design": "Design",
+      "transitions": "Transitions",
+      "animations": "Animations",
+      "slideshow": "Slide Show",
+      "image-tools": "Image Tools",
+      "table-tools": "Table Tools",
+      "header-footer": "Header & Footer",
+      "chart-tools": "Chart Tools",
+      "shape-tools": "Shape Format",
+      "picture-tools": "Picture Format"
+    },
+    "groups": {
+      "clipboard": "Clipboard",
+      "font": "Font",
+      "paragraph": "Paragraph",
+      "alignment": "Alignment",
+      "borders": "Borders",
+      "number": "Number",
+      "styles": "Styles",
+      "tables": "Tables",
+      "illustrations": "Illustrations",
+      "charts": "Charts",
+      "comments": "Comments",
+      "links": "Links",
+      "media": "Media",
+      "text": "Text",
+      "header-footer-options": "Options",
+      "header-footer-insert": "Insert",
+      "header-footer-close": "Close",
+      "image": "Image",
+      "table": "Table",
+      "data-tools": "Data Tools",
+      "sort-filter": "Sort & Filter",
+      "window": "Window",
+      "slides": "Slides",
+      "themes": "Themes",
+      "transition": "Transition to This Slide",
+      "advanced-anim": "Advanced Animation",
+      "start-slideshow": "Start Slide Show",
+      "show": "Show",
+      "shape-styles": "Shape Styles",
+      "arrange": "Arrange",
+      "shape": "Shape",
+      "adjust": "Adjust",
+      "undo": "Undo",
+      "review": "Review",
+      "chart": "Chart"
     }
   }
 }

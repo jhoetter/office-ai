@@ -692,3 +692,212 @@ export interface UpdateChartPayload {
   readonly xAxisTitle?: string | null;
   readonly yAxisTitle?: string | null;
 }
+
+// ─── Phase 6 — Protection ─────────────────────────────────────────────────
+
+/**
+ * `xlsx:set-sheet-protection` — toggle / configure the
+ * `<sheetProtection>` element on a worksheet. Mirrors Excel's
+ * "Protect Sheet" dialog under the Review tab. No password hashing
+ * is performed by the handler — pass precomputed `passwordHash` /
+ * `algorithmName` / `saltValue` / `spinCount` if those attributes
+ * should be written.
+ */
+export interface SetSheetProtectionPayload {
+  readonly sheet: string;
+  readonly enabled: boolean;
+  readonly passwordHash?: string;
+  readonly algorithmName?: string;
+  readonly hashValue?: string;
+  readonly saltValue?: string;
+  readonly spinCount?: number;
+  readonly objects?: boolean;
+  readonly scenarios?: boolean;
+  readonly formatCells?: boolean;
+  readonly formatColumns?: boolean;
+  readonly formatRows?: boolean;
+  readonly insertColumns?: boolean;
+  readonly insertRows?: boolean;
+  readonly insertHyperlinks?: boolean;
+  readonly deleteColumns?: boolean;
+  readonly deleteRows?: boolean;
+  readonly selectLockedCells?: boolean;
+  readonly sort?: boolean;
+  readonly autoFilter?: boolean;
+  readonly pivotTables?: boolean;
+  readonly selectUnlockedCells?: boolean;
+}
+
+/**
+ * `xlsx:set-workbook-protection` — toggle / configure the
+ * `<workbookProtection>` element. Mirrors Excel's "Protect Workbook"
+ * command on the Review tab.
+ */
+export interface SetWorkbookProtectionPayload {
+  readonly enabled: boolean;
+  readonly workbookPasswordHash?: string;
+  readonly algorithmName?: string;
+  readonly hashValue?: string;
+  readonly saltValue?: string;
+  readonly spinCount?: number;
+  readonly lockStructure?: boolean;
+  readonly lockWindows?: boolean;
+  readonly lockRevision?: boolean;
+}
+
+// ─── Phase 4c — Formulas tab knobs ────────────────────────────────────────
+
+/**
+ * `xlsx:set-calc-mode` — Excel's Formulas tab "Calculation Options".
+ * Patches `<calcPr>` attributes on `xl/workbook.xml` in-place;
+ * untouched attributes (`calcId`, etc.) round-trip verbatim.
+ */
+export interface SetCalcModePayload {
+  /** `auto` / `autoNoTable` / `manual` (mirrors `<calcPr @calcMode>`). */
+  readonly calcMode?: "auto" | "autoNoTable" | "manual";
+  readonly calcOnSave?: boolean;
+  readonly iterate?: boolean;
+  readonly iterateCount?: number;
+  readonly iterateDelta?: number;
+}
+
+/**
+ * `xlsx:set-show-formulas` — Excel's "Show Formulas" view-mode toggle
+ * (Formulas tab → Formula Auditing). Per-sheet boolean.
+ */
+export interface SetShowFormulasPayload {
+  readonly sheet: string;
+  readonly show: boolean;
+}
+
+// ─── Phase 4b — Page Layout tab knobs ─────────────────────────────────────
+
+/**
+ * `xlsx:set-page-setup` — Excel's Page Layout tab "Page Setup" group.
+ * Patches the `<pageSetup .../>` element on a worksheet (orientation,
+ * paper size, scaling, fit-to-pages, page numbering).
+ *
+ * All fields are optional patches; pass only what you want to change.
+ * Pass `clear: true` to drop the `<pageSetup>` element entirely (revert
+ * to Excel defaults).
+ */
+export interface SetPageSetupPayload {
+  readonly sheet: string;
+  readonly clear?: boolean;
+  readonly orientation?: "default" | "portrait" | "landscape";
+  /** OOXML `paperSize` enum (1 = letter, 9 = A4, etc.). */
+  readonly paperSize?: number;
+  /** Print scaling percentage (10–400). Mutually exclusive with fitToWidth/Height. */
+  readonly scale?: number;
+  /** `fitToWidth` — number of pages wide; 0 = use scaling. */
+  readonly fitToWidth?: number;
+  /** `fitToHeight` — number of pages tall; 0 = use scaling. */
+  readonly fitToHeight?: number;
+  /** First page number (default 1) when `useFirstPageNumber=true`. */
+  readonly firstPageNumber?: number;
+  readonly useFirstPageNumber?: boolean;
+  /** Print quality in DPI. */
+  readonly horizontalDpi?: number;
+  readonly verticalDpi?: number;
+  /** B&W vs colour. */
+  readonly blackAndWhite?: boolean;
+  /** Draft quality (skip graphics). */
+  readonly draft?: boolean;
+  /** Cell errors handling: displayed | blank | dash | NA. */
+  readonly cellComments?: "none" | "asDisplayed" | "atEnd";
+  readonly errors?: "displayed" | "blank" | "dash" | "NA";
+}
+
+/**
+ * `xlsx:set-page-margins` — Excel's Page Layout tab "Margins" picker.
+ * All values are in inches and overwrite the existing `<pageMargins>`
+ * element wholesale. Pass `clear: true` to drop the element entirely.
+ */
+export interface SetPageMarginsPayload {
+  readonly sheet: string;
+  readonly clear?: boolean;
+  readonly preset?: "normal" | "wide" | "narrow";
+  readonly leftIn?: number;
+  readonly rightIn?: number;
+  readonly topIn?: number;
+  readonly bottomIn?: number;
+  readonly headerIn?: number;
+  readonly footerIn?: number;
+}
+
+/**
+ * `xlsx:set-print-options` — Excel's Page Layout tab "Sheet Options"
+ * group. Patches `<printOptions .../>` (print headings, gridlines,
+ * centering). Pass `clear: true` to remove the element.
+ */
+export interface SetPrintOptionsPayload {
+  readonly sheet: string;
+  readonly clear?: boolean;
+  readonly horizontalCentered?: boolean;
+  readonly verticalCentered?: boolean;
+  readonly headings?: boolean;
+  readonly gridLines?: boolean;
+  readonly gridLinesSet?: boolean;
+}
+
+/**
+ * `xlsx:set-print-area` — Define / clear the worksheet's
+ * `_xlnm.Print_Area` defined name. Mirrors Page Layout → Print Area.
+ *
+ * `range` is an A1 reference (e.g. `"A1:D20"`) on the *named* sheet;
+ * the handler injects the proper sheet-qualified, absolute reference.
+ * Pass `clear: true` to remove the existing print area.
+ */
+export interface SetPrintAreaPayload {
+  readonly sheet: string;
+  readonly range?: string;
+  readonly clear?: boolean;
+}
+
+/**
+ * `xlsx:set-print-titles` — Define / clear `_xlnm.Print_Titles` (rows
+ * and / or columns repeated on each printed page). Mirrors Page Layout
+ * → Print Titles.
+ *
+ * `rows` and `cols` are 1-based ranges (e.g. `rows: "1:1"`, `cols: "A:B"`).
+ * Pass either or both. `clear: true` removes the entire defined name.
+ */
+export interface SetPrintTitlesPayload {
+  readonly sheet: string;
+  readonly rows?: string;
+  readonly cols?: string;
+  readonly clear?: boolean;
+}
+
+// ─── Phase 7 — View tab ──────────────────────────────────────────────────
+
+/**
+ * `xlsx:set-sheet-view` — patch the first `<sheetView>` element on a
+ * worksheet. Mirrors Excel's View tab (Normal / Page Layout / Page
+ * Break Preview, gridlines, headings, formula bar, zoom, ruler, RTL).
+ *
+ * All fields are optional patches; pass only what you want to change.
+ * Untouched attributes round-trip verbatim. Pass `false` for boolean
+ * toggles to clear the corresponding attribute.
+ */
+export interface SetSheetViewPayload {
+  readonly sheet: string;
+  /** OOXML `view` enum on `<sheetView>`. */
+  readonly view?: "normal" | "pageBreakPreview" | "pageLayout";
+  /** Show worksheet gridlines (default true; pass false to hide). */
+  readonly showGridLines?: boolean;
+  /** Show row & column headers (default true). */
+  readonly showRowColHeaders?: boolean;
+  /** Show zero values (default true; false displays blanks for 0). */
+  readonly showZeros?: boolean;
+  /** Show the page ruler (Page Layout view only). */
+  readonly showRuler?: boolean;
+  /** Show outline-level symbols. */
+  readonly showOutlineSymbols?: boolean;
+  /** Render right-to-left. */
+  readonly rightToLeft?: boolean;
+  /** Zoom scale (10–400, integer). */
+  readonly zoomScale?: number;
+  /** Zoom scale specific to the normal view (10–400). */
+  readonly zoomScaleNormal?: number;
+}

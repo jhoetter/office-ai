@@ -143,9 +143,11 @@ export async function parsePptx(
     }
   }
 
-  // Slide size.
+  // Slide size. Fallback matches PowerPoint's 16:9 widescreen default
+  // (12192000 × 6858000 EMU = 13.333 in × 7.5 in), used when a deck
+  // omits `<p:sldSz>` entirely.
   const slideSize = readSlideSize(presentationChildren) ?? {
-    cxEmu: 9144000,
+    cxEmu: 12192000,
     cyEmu: 6858000,
   };
   const notesSize = readNotesSize(presentationChildren);

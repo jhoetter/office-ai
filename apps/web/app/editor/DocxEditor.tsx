@@ -46,8 +46,10 @@ import {
   pageNumberForPos,
   PAGE_ZONE_COMMIT_EVENT,
   PAGE_ZONE_FOCUS_EVENT,
+  PAGE_ZONE_MINT_EVENT,
   type PageZoneCommitDetail,
   type PageZoneFocusDetail,
+  type PageZoneMintDetail,
 } from "@/lib/page-decorations";
 import { GOTO_PAGE_EVENT, pageKeymapPlugin } from "@/lib/page-keymap";
 import {
@@ -905,6 +907,22 @@ function DocxEditorInner({
       if (!detail || !detail.partPath) return;
       const agent = agentRef.current;
       if (!agent) return;
+      // Word-style in-place authoring: when the rich-edit surface
+      // produced a multi-paragraph / token-bearing body, dispatch
+      // `docx:set-header-footer-blocks` so page-number fields and
+      // inline images survive the round-trip. Otherwise fall back
+      // to the legacy plain-text command for back-compat with the
+      // single-paragraph happy path.
+      if (detail.blocks && detail.blocks.length > 0) {
+        void agent
+          .applyCommand({
+            type: "docx:set-header-footer-blocks",
+            payload: { partPath: detail.partPath, body: detail.blocks },
+            source: "human",
+          })
+          .catch((err) => pushToast("error", err instanceof Error ? err.message : String(err)));
+        return;
+      }
       const cmdType = detail.slot === "header" ? "docx:set-header-text" : "docx:set-footer-text";
       void agent
         .applyCommand({
@@ -937,6 +955,59 @@ function DocxEditorInner({
     return () => hostEl.removeEventListener(PAGE_ZONE_FOCUS_EVENT, onZoneFocus as EventListener);
   }, [hostEl]);
 
+  // Word-style "double-click an empty header/footer to start typing":
+  // the empty zone fires `PAGE_ZONE_MINT_EVENT` on dblclick, we
+  // dispatch the mint command, then drop the caret into the freshly
+  // rendered editable zone after the next paint. The
+  // `requestAnimationFrame` ensures the snapshot has propagated and
+  // the page-decorations plugin has rebuilt the widget; otherwise
+  // the focus would land on a stale (still-no-part) DOM node.
+  useEffect(() => {
+    if (!hostEl) return;
+    const onZoneMint = (event: Event) => {
+      const ce = event as CustomEvent<PageZoneMintDetail>;
+      const detail = ce.detail;
+      if (!detail) return;
+      const agent = agentRef.current;
+      if (!agent) return;
+      void (async () => {
+        try {
+          await agent.applyCommand({
+            type: "docx:create-header-footer-part",
+            payload: { slot: detail.slot },
+            source: "human",
+          });
+        } catch (err) {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+          return;
+        }
+        const tryFocus = (attempt: number): void => {
+          const target = hostEl.querySelector<HTMLElement>(
+            `.pm-page-zone-${detail.slot}[data-page-number="${detail.pageNumber}"] [contenteditable='true']`
+          );
+          if (target) {
+            target.focus();
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            range.collapse(false);
+            const sel = window.getSelection();
+            if (sel) {
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+            return;
+          }
+          if (attempt < 6) {
+            requestAnimationFrame(() => tryFocus(attempt + 1));
+          }
+        };
+        requestAnimationFrame(() => tryFocus(0));
+      })();
+    };
+    hostEl.addEventListener(PAGE_ZONE_MINT_EVENT, onZoneMint as EventListener);
+    return () => hostEl.removeEventListener(PAGE_ZONE_MINT_EVENT, onZoneMint as EventListener);
+  }, [hostEl, pushToast]);
+
   const closeHeaderFooter = useCallback(() => {
     if (!hostEl) return;
     const focused = hostEl.querySelector<HTMLElement>(".pm-page-zone-focused [contenteditable='true']");
@@ -944,6 +1015,122 @@ function DocxEditorInner({
     if (view) view.focus();
     setHfZoneFocus(null);
   }, [hostEl, view]);
+
+  // Hidden file input reused by the H/F toolbar's "Insert image"
+  // affordance. We can't reuse the body-side `imageInputRef` because
+  // its onChange routes to `handleImageFile`, which targets the body
+  // selection. The H/F image needs to land in the focused part via
+  // `docx:insert-header-footer-image`, so it gets its own input.
+  const hfImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Resolve which paragraph (and char offset) inside the focused H/F
+  // zone the caret is in. We rely on `data-paragraph-id` stamped on
+  // each `.pm-page-zone-line` by the rich rendering pass — that's the
+  // only authoritative link from a DOM line back to a `Paragraph.id`
+  // in the snapshot. When no selection exists (toolbar clicked
+  // without first putting the caret in the zone), fall back to the
+  // last line so newly-inserted fields land at the end of the part.
+  const resolveFocusedHFLine = useCallback((): {
+    paragraphId: string;
+    offset: number;
+    paragraphIndex: number;
+  } | null => {
+    if (!hostEl) return null;
+    const zone = hostEl.querySelector<HTMLElement>(".pm-page-zone-focused [contenteditable='true']");
+    if (!zone) return null;
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    let line: HTMLElement | null = null;
+    let offset = 0;
+    if (sel && sel.focusNode && zone.contains(sel.focusNode)) {
+      let node: Node | null = sel.focusNode;
+      while (node && node !== zone) {
+        if (node instanceof HTMLElement && node.classList.contains("pm-page-zone-line")) {
+          line = node;
+          break;
+        }
+        node = node.parentNode;
+      }
+      if (line) {
+        const range = document.createRange();
+        range.setStart(line, 0);
+        range.setEnd(sel.focusNode, sel.focusOffset);
+        offset = range.toString().length;
+      }
+    }
+    if (!line) {
+      const lines = zone.querySelectorAll<HTMLElement>(".pm-page-zone-line");
+      line = lines[lines.length - 1] ?? null;
+      if (line) offset = (line.textContent ?? "").length;
+    }
+    if (!line) return null;
+    const paragraphId = line.dataset.paragraphId;
+    if (!paragraphId) return null;
+    const lines = Array.from(zone.querySelectorAll<HTMLElement>(".pm-page-zone-line"));
+    const paragraphIndex = lines.indexOf(line);
+    return { paragraphId, offset, paragraphIndex: paragraphIndex < 0 ? 0 : paragraphIndex };
+  }, [hostEl]);
+
+  const insertHeaderFooterField = useCallback(
+    async (field: "PAGE" | "NUMPAGES") => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      const focus = resolveFocusedHFLine();
+      if (!focus) {
+        pushToast("warn", "Click into the header or footer first.");
+        return;
+      }
+      try {
+        await agent.applyCommand({
+          type: "docx:insert-page-number",
+          payload: { paragraphId: focus.paragraphId, offset: focus.offset, field },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast, resolveFocusedHFLine]
+  );
+
+  const handleHeaderFooterImageFile = useCallback(
+    async (file: File) => {
+      const agent = agentRef.current;
+      if (!agent || !hfZoneFocus?.partPath) {
+        pushToast("warn", "Click into the header or footer first.");
+        return;
+      }
+      const focus = resolveFocusedHFLine();
+      try {
+        const buffer = await file.arrayBuffer();
+        // Default to a modest 96 px display size — Word's "Insert
+        // picture" never inserts at the original raster pixel size
+        // for H/F images either; users typically resize via the
+        // sizing handles afterwards. We pick a square hint and let
+        // the natural aspect ratio re-flow once typed sizing handles
+        // ship.
+        const probe = await probeImageDimensions(file).catch(() => null);
+        const cssWidth = probe?.width ?? 96;
+        const cssHeight = probe?.height ?? 96;
+        await agent.applyCommand({
+          type: "docx:insert-header-footer-image",
+          payload: {
+            partPath: hfZoneFocus.partPath,
+            paragraphIndex: focus?.paragraphIndex,
+            data: new Uint8Array(buffer),
+            mimeType: file.type || "image/png",
+            width: cssWidth,
+            height: cssHeight,
+            name: file.name,
+          },
+          source: "human",
+        });
+        pushToast("info", `Inserted ${file.name || "image"} into ${hfZoneFocus.slot}.`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [hfZoneFocus, pushToast, resolveFocusedHFLine]
+  );
 
   const toggleSectionDifferentFirst = useCallback(
     async (enabled: boolean) => {
@@ -1700,6 +1887,12 @@ function DocxEditorInner({
   const activeIndentLeft = computeActiveIndentLeft(snapshot, activeParagraphIndex);
   const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   const trackedChangesCount = countTrackedChanges(snapshot);
+  // Drive the contextual ribbon tabs ("Bildtools", "Tabellentools").
+  // We re-derive on every render because `uiTick` already forces one
+  // on every selection change, so this is essentially `O(1)` work
+  // gated to the same cadence as the rest of the toolbar state.
+  const selectedImage = view ? extractSelectedImage(view) : null;
+  const selectedTableId = view ? extractSelectedTableId(view) : null;
   void commentParagraphIndex;
 
   // The side rail hosts the comments sidebar; tracked changes are no
@@ -2112,51 +2305,21 @@ function DocxEditorInner({
             onAcceptAllChanges={() => void acceptAllChanges()}
             onRejectAllChanges={() => void rejectAllChanges()}
             onInsertSectionBreak={(type) => void insertSectionBreak(type)}
+            hfFocus={hfZoneFocus}
+            onCloseHeaderFooter={closeHeaderFooter}
+            onToggleSectionDifferentFirst={(checked) => void toggleSectionDifferentFirst(checked)}
+            onInsertHFField={(kind) => void insertHeaderFooterField(kind)}
+            onInsertHFImage={() => hfImageInputRef.current?.click()}
+            selectedImage={selectedImage}
+            onEditImageAlt={handleImageEditAlt}
+            onDeleteImage={(id) => void handleImageDelete(id)}
+            selectedTableId={selectedTableId}
+            onInsertTableRow={(id, where) => void handleTableInsertRow(id, where)}
+            onInsertTableColumn={(id, where) => void handleTableInsertColumn(id, where)}
           />
         }
         body={
           <div className="docx-editor flex min-h-0 flex-1 flex-col gap-3 p-3">
-            {hfZoneFocus ? (
-              <div
-                role="toolbar"
-                aria-label={`${hfZoneFocus.slot === "header" ? "Header" : "Footer"} tools`}
-                data-testid="docx-hf-context-bar"
-                className="flex items-center gap-3 rounded-md border border-divider bg-surface px-3 py-1.5 text-xs text-secondary"
-              >
-                <span className="flex items-center gap-1.5 font-medium text-foreground">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
-                  {hfZoneFocus.slot === "header" ? "Header" : "Footer"}
-                  {hfZoneFocus.target && hfZoneFocus.target !== "default" ? (
-                    <span className="rounded bg-divider/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-secondary">
-                      {hfZoneFocus.target}
-                    </span>
-                  ) : null}
-                  {hfZoneFocus.pageNumber ? (
-                    <span className="font-normal text-secondary">· page {hfZoneFocus.pageNumber}</span>
-                  ) : null}
-                </span>
-                <label className="inline-flex items-center gap-1.5 hover:text-foreground">
-                  <input
-                    type="checkbox"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onChange={(e) => void toggleSectionDifferentFirst(e.target.checked)}
-                    data-testid="docx-hf-toggle-different-first"
-                    className="h-3 w-3 accent-[var(--accent)]"
-                  />
-                  Different first page
-                </label>
-                <span className="flex-1" />
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={closeHeaderFooter}
-                  data-testid="docx-hf-close"
-                  className="rounded px-2 py-1 text-[11px] font-medium text-foreground hover:bg-hover"
-                >
-                  Close header &amp; footer
-                </button>
-              </div>
-            ) : null}
             <input
               ref={imageInputRef}
               data-testid="image-file-input"
@@ -2166,6 +2329,18 @@ function DocxEditorInner({
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void handleImageFile(f);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={hfImageInputRef}
+              data-testid="docx-hf-image-file-input"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleHeaderFooterImageFile(f);
                 e.target.value = "";
               }}
             />
@@ -2422,6 +2597,35 @@ function pickImageFile(files: FileList | null | undefined): File | null {
 }
 
 /**
+ * Decode the supplied image file just enough to read its natural
+ * width/height in CSS pixels. Used by the H/F "Insert image" toolbar
+ * button so we round-trip a sensible default sizing into
+ * `docx:insert-header-footer-image` instead of always shipping a
+ * 96×96 box. Resolves null on any decode failure (caller falls back
+ * to the safe default). The blob URL is revoked synchronously after
+ * the load handler fires to avoid leaking it.
+ */
+function probeImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("not in a browser"));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth || 96, height: img.naturalHeight || 96 });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image decode failed"));
+    };
+    img.src = url;
+  });
+}
+
+/**
  * P3.1 / W4 — derive the effective spacing for the paragraph at the
  * caret. Reads the resolved cascade so an inherited "Heading1 → 1.5
  * line" surfaces in the toolbar even when the paragraph has no direct
@@ -2461,6 +2665,40 @@ function computeActiveIndentLeft(snapshot: DocxSnapshot | null, paragraphIndex: 
  * count for its badge and for disabling Accept-all / Reject-all
  * when the document is clean.
  */
+/**
+ * Pull the currently NodeSelection-selected inline image off the
+ * editor view, or return `null` when no image is selected. Mirrors
+ * the observation logic in {@link ImageContextToolbar} but is
+ * pure-synchronous (no React state) so the contextual ribbon tab can
+ * read it during render.
+ */
+function extractSelectedImage(view: EditorView): SelectedImageInfo | null {
+  const sel = view.state.selection;
+  const node = (sel as { node?: { type: { name: string }; attrs: Record<string, unknown> } }).node;
+  if (!node || node.type.name !== "image") return null;
+  const runId = typeof node.attrs.runId === "string" ? node.attrs.runId : null;
+  if (!runId) return null;
+  const dom = view.nodeDOM(sel.from) as HTMLElement | null;
+  const rect = dom?.getBoundingClientRect();
+  const width = typeof node.attrs.width === "number" ? node.attrs.width : Math.round(rect?.width ?? 0);
+  const height = typeof node.attrs.height === "number" ? node.attrs.height : Math.round(rect?.height ?? 0);
+  const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
+  return { imageId: runId, widthPx: width, heightPx: height, altText: alt };
+}
+
+/**
+ * Pull the currently NodeSelection-selected table id off the editor
+ * view. Tables surface as PM atom nodes today (cell editing is not
+ * yet wired) so a NodeSelection at a `table` node is the canonical
+ * "table is selected" signal.
+ */
+function extractSelectedTableId(view: EditorView): string | null {
+  const sel = view.state.selection;
+  const node = (sel as { node?: { type: { name: string }; attrs: Record<string, unknown> } }).node;
+  if (!node || node.type.name !== "table") return null;
+  return typeof node.attrs.tableId === "string" ? node.attrs.tableId : null;
+}
+
 function countTrackedChanges(snapshot: DocxSnapshot | null): number {
   if (!snapshot) return 0;
   const seen = new Set<string>();

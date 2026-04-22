@@ -11,12 +11,24 @@ export { Toaster, createToastId, type ToastKind, type ToastItem, type ToasterPro
 export { ZoomControl, type ZoomControlProps } from "./ZoomControl";
 export { ToolbarRow, type ToolbarRowProps } from "./ToolbarRow";
 export { ToolbarMenu, type ToolbarMenuProps } from "./ToolbarMenu";
+export { Ribbon, type RibbonProps } from "./Ribbon";
+export type { RibbonCatalogue, RibbonContextualAccent, RibbonGroup, RibbonTab } from "./RibbonTypes";
 export { ExportDialog, type ExportDialogProps } from "./ExportDialog";
 export {
   buildPaletteFromCatalogue,
   type PaletteRunner,
   type PaletteRunners,
 } from "./buildPaletteFromCatalogue";
+export {
+  ClipboardGroup,
+  type ClipboardGroupProps,
+  RibbonGalleryButton,
+  type RibbonGalleryButtonProps,
+  type GalleryItem,
+  SelectionPane,
+  type SelectionPaneProps,
+  type SelectionPaneItem,
+} from "./groups";
 export { translateAction, type TranslateFn, type TranslatedActionStrings } from "./translateAction";
 export { useAction, getAction, type ResolvedAction } from "./useAction";
 export type {

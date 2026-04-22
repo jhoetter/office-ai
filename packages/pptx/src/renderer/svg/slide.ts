@@ -3,10 +3,13 @@ import { DEFAULT_THEME } from "../layout/color.js";
 import { slideViewBox } from "../layout/slide.js";
 import { collectObstacles } from "../connector-router/index.js";
 import { resolveSchemeOrLiteralColor, shapeToSvg, type SvgRenderCtx } from "./shapes.js";
+import { resolveSlideBackgroundPaint } from "./paint.js";
 
 export function slideToSvgString(slide: Slide, ctx: SvgRenderCtx): string {
-  const bg = resolveSlideBackgroundColor(slide.cSldHead, ctx.theme ?? DEFAULT_THEME);
-  const fillAttr = bg ? `#${bg}` : "white";
+  const theme = ctx.theme ?? DEFAULT_THEME;
+  const bg = resolveSlideBackgroundPaint(slide.cSldHead, theme, slide.id);
+  const bgFill = bg?.paintRef ?? "white";
+  const bgDefs = bg?.defs ?? "";
   const shapesByCNvPrId = ctx.shapesByCNvPrId ?? buildShapesByCNvPrId(slide.shapes);
   // Pre-collect the slide-wide obstacle list once; each connector
   // filters out its own anchored target shapes downstream. We skip
@@ -17,8 +20,8 @@ export function slideToSvgString(slide: Slide, ctx: SvgRenderCtx): string {
     ctx.shapesByCNvPrId && ctx.connectorObstacles ? ctx : { ...ctx, shapesByCNvPrId, connectorObstacles };
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${slideViewBox(ctx.slideSize)}" preserveAspectRatio="xMidYMid meet">`,
-    CONNECTOR_DEFS_SVG,
-    `<rect width="100%" height="100%" fill="${fillAttr}"/>`,
+    `<defs>${CONNECTOR_DEFS_INNER_SVG}${bgDefs}</defs>`,
+    `<rect width="100%" height="100%" fill="${bgFill}"/>`,
   ];
   for (const s of slide.shapes) parts.push(shapeToSvg(s, ctxWithExtras));
   parts.push(`</svg>`);
@@ -46,13 +49,11 @@ const EMPTY_NUMBER_SET: ReadonlySet<number> = new Set();
  * endpoint. `refX=5` on the oval centres the disc so the line ends
  * inside the dot rather than peeking out.
  */
-const CONNECTOR_DEFS_SVG = [
-  `<defs>`,
+const CONNECTOR_DEFS_INNER_SVG = [
   `<marker id="cxn-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker>`,
   `<marker id="cxn-triangle" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 L 2 5 z" fill="context-stroke"/></marker>`,
   `<marker id="cxn-oval" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto" markerUnits="strokeWidth"><circle cx="5" cy="5" r="4" fill="context-stroke"/></marker>`,
   `<marker id="cxn-none" viewBox="0 0 1 1" refX="0" refY="0" markerWidth="0.01" markerHeight="0.01" markerUnits="strokeWidth"></marker>`,
-  `</defs>`,
 ].join("");
 
 export function buildShapesByCNvPrId(shapes: ReadonlyArray<Shape>): Map<number, Shape> {

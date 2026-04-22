@@ -97,6 +97,13 @@ export interface DocxDirtyFlags {
    * OLE-package authoring path.
    */
   embeddings: ReadonlySet<string>;
+  /**
+   * Whether `word/settings.xml` has been mutated and must be re-emitted
+   * on save. Currently only flipped by `docx:set-protection`, which
+   * patches / removes the `<w:documentProtection>` element on the
+   * settings root.
+   */
+  settings: boolean;
 }
 
 export interface DocxDocument {
@@ -214,6 +221,15 @@ export interface DocxDocument {
    */
   readonly footnotesPart?: FootnotesPart;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+  /**
+   * Verbatim contents of `word/settings.xml`, when the part is present.
+   * Mutated by `docx:set-protection` (which surgically patches the
+   * `<w:documentProtection>` child of `<w:settings>` and dirties
+   * `dirty.settings`). Untouched documents leave this string as the
+   * load-time bytes so the part round-trips byte-identical via the
+   * container's part cache.
+   */
+  readonly settingsXml?: string;
 }
 
 /* ── Footnotes part (F1) ─────────────────────────────────────────────────── */

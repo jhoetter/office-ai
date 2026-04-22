@@ -94,6 +94,54 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       await runMcpStdioServer();
     });
 
+  // ── action discovery ─────────────────────────────────────────────────────
+  // Emits a JSON manifest of every catalogue action (id, label, section,
+  // command type, surfaces, args). Useful for AI agents that want to
+  // probe what `office-agent` can do without parsing `--help` text.
+  program
+    .command("list-actions")
+    .description("Print a JSON manifest of every catalogue action across docx / xlsx / pptx / pdf.")
+    .option("--format <fmt>", "Restrict to one format")
+    .option("--surface <surface>", "Restrict to actions exposing the given surface (cli, palette, toolbar, contextMenu, mcp)")
+    .option("--pretty", "Pretty-print JSON output", false)
+    .action((opts: Record<string, unknown>) => {
+      const filterFormat = typeof opts.format === "string" ? opts.format : undefined;
+      const filterSurface = typeof opts.surface === "string" ? opts.surface : undefined;
+      const groups: Array<{ format: string; actions: ReadonlyArray<unknown> }> = [];
+      for (const { format, actions } of [
+        { format: "docx", actions: docxActions },
+        { format: "xlsx", actions: xlsxActions },
+        { format: "pptx", actions: pptxActions },
+        { format: "pdf", actions: pdfActions },
+      ]) {
+        if (filterFormat && filterFormat !== format) continue;
+        const filtered = actions
+          .filter((a) => !filterSurface || a.surfaces.includes(filterSurface as never))
+          .map((a) => ({
+            id: a.id,
+            label: a.label,
+            description: a.description,
+            section: a.section,
+            commandType: a.commandType,
+            surfaces: a.surfaces,
+            hidden: a.hidden ? true : false,
+            args: (a.args ?? []).map((arg) => ({
+              name: arg.name,
+              flag: arg.flag,
+              kind: arg.kind,
+              required: arg.required ?? false,
+              description: arg.description,
+              choices: arg.choices,
+              default: arg.default,
+            })),
+            autoBindable: a.commandType !== null && Boolean(a.args && a.buildPayload),
+          }));
+        groups.push({ format, actions: filtered });
+      }
+      const text = JSON.stringify({ groups }, null, opts.pretty === true ? 2 : 0);
+      io.stdout.write(text + "\n");
+    });
+
   try {
     await program.parseAsync(argv, { from: "user" });
     return 0;

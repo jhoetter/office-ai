@@ -22,8 +22,8 @@ test.describe("editor: paginated page sheets", () => {
     const surface = page.locator(".ProseMirror").first();
     await expect(surface).toBeVisible();
 
-    const headerZone = surface.locator(".pm-page-cap-top .pm-page-zone-header");
-    const footerZone = surface.locator(".pm-page-cap-bottom .pm-page-zone-footer");
+    const headerZone = surface.locator(".pm-page-header-band .pm-page-zone-header").first();
+    const footerZone = surface.locator(".pm-page-footer-band .pm-page-zone-footer").first();
 
     await expect(headerZone).toBeVisible();
     await expect(footerZone).toBeVisible();
@@ -50,7 +50,7 @@ test.describe("editor: paginated page sheets", () => {
     await gotoEditor(page);
     const surface = page.locator(".ProseMirror").first();
     const headerContent = surface
-      .locator(".pm-page-cap-top .pm-page-zone-header .pm-page-zone-content")
+      .locator(".pm-page-header-band .pm-page-zone-header .pm-page-zone-content")
       .first();
     await expect(headerContent).toBeVisible();
     // No part → the inner content is NOT contenteditable; the user

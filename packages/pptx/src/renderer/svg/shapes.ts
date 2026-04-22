@@ -24,6 +24,7 @@ import {
   routeConnector as routeConnectorShared,
   type RouterObstacle,
 } from "../connector-router/index.js";
+import { resolveShapePaint } from "./paint.js";
 
 /**
  * Convert an EMU value to the renderer's user-unit space (1 unit ≈ 1px @ 96 DPI).
@@ -454,6 +455,11 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   const theme = ctx.theme ?? DEFAULT_THEME;
 
   const fill = readFillFromOpaque(shape.spPrTail, theme);
+  // Richer paint resolver: returns either a literal color, or a gradient
+  // `<defs>` block + `url(#…)` reference. Falls back to the legacy
+  // `fill` (literal hex string) when the spPrTail only carries a solid
+  // fill — keeps text-color resolution and pre-existing snapshots stable.
+  const paint = resolveShapePaint(shape.spPrTail, theme, shape.id);
   const stroke = readStrokeFromOpaque(shape.spPrTail, theme);
   const prst = readPrstGeom(shape.spPrTail);
   // F-D: typed adjustments from `<a:avLst>` flow into `renderGeometry`
@@ -468,7 +474,8 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
     ].join("");
   }
 
-  const rectFill = fill ? `#${fill}` : "transparent";
+  const rectFill = paint?.paintRef ?? (fill ? `#${fill}` : "transparent");
+  const paintDefs = paint?.defs ?? "";
   const strokeAttrs = stroke ? ` stroke="#${stroke.color}" stroke-width="${u(stroke.widthEmu)}"` : "";
 
   const hasText = shape.txBody.paragraphs.some((p) =>
@@ -481,7 +488,11 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   // we don't yet model — the bounding box is preserved either way.
   const geometry = renderGeometry(prst, box.cx, box.cy, rectFill, strokeAttrs, adjustments);
 
-  const out = [groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }), geometry];
+  const out = [
+    groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }),
+    paintDefs ? `<defs>${paintDefs}</defs>` : "",
+    geometry,
+  ];
   if (hasText) {
     out.push(renderWrappedTextHtml(shape, box.cx, box.cy, fill, theme));
   } else if (shape.placeholder && (ctx.renderPlaceholderHints ?? true)) {

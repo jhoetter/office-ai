@@ -1404,7 +1404,49 @@ function rewriteWorkbookSheets(workbook: XlsxWorkbook, container: ooxml.OoxmlCon
   // session also drops the block from the OOXML.
   next = injectDefinedNames(next, workbook);
 
+  // Phase 6 — workbook protection. The verbatim block lives on
+  // `workbookProtectionXml`; mutated by `xlsx:set-workbook-protection`.
+  // Always rewrite on workbook dirty so a protection that was cleared
+  // also drops out of the on-disk part.
+  next = injectWorkbookProtection(next, workbook);
+
+  // Phase 4c — calcPr. Mutated by `xlsx:set-calc-mode` (changes
+  // `@calcMode`, `@iterate`, `@calcOnSave` attributes verbatim).
+  next = injectCalcPr(next, workbook);
+
   container.writeText(WORKBOOK_PART, next);
+}
+
+function injectCalcPr(xml: string, workbook: XlsxWorkbook): string {
+  const block = workbook.calcPrXml ?? "";
+  const re = /<calcPr\b[^>]*?(?:\/>|>[\s\S]*?<\/calcPr>)/;
+  const m = re.exec(xml);
+  if (m) {
+    return xml.slice(0, m.index) + block + xml.slice(m.index + m[0].length);
+  }
+  if (!block) return xml;
+  // Canonical position: right before `</workbook>`.
+  return xml.replace(/<\/workbook>/, `${block}</workbook>`);
+}
+
+function injectWorkbookProtection(xml: string, workbook: XlsxWorkbook): string {
+  const block = workbook.workbookProtectionXml ?? "";
+  const re = /<workbookProtection\b[^>]*?(?:\/>|>[\s\S]*?<\/workbookProtection>)/;
+  const m = re.exec(xml);
+  if (m) {
+    return xml.slice(0, m.index) + block + xml.slice(m.index + m[0].length);
+  }
+  if (!block) return xml;
+  // Canonical position: after `<fileVersion>`/`<workbookPr>` and
+  // before `<bookViews>` / `<sheets>`. Splice immediately before
+  // `<bookViews>` when present, otherwise before `<sheets>`.
+  const bookViewsRe = /<bookViews\b/;
+  const bv = bookViewsRe.exec(xml);
+  if (bv) return xml.slice(0, bv.index) + block + xml.slice(bv.index);
+  const sheetsRe = /<sheets\b/;
+  const sm = sheetsRe.exec(xml);
+  if (sm) return xml.slice(0, sm.index) + block + xml.slice(sm.index);
+  return xml.replace(/<\/workbook>/, `${block}</workbook>`);
 }
 
 function injectDefinedNames(xml: string, workbook: XlsxWorkbook): string {

@@ -194,6 +194,10 @@ export async function parseXlsx(
     return out;
   });
 
+  const workbookXmlText = container.readText(WORKBOOK_PART);
+  const workbookProtectionXml = extractFirstBlock(workbookXmlText, "workbookProtection");
+  const calcPrXml = extractFirstBlock(workbookXmlText, "calcPr");
+
   const workbook: XlsxWorkbook = {
     id: mintNodeId(),
     sheets,
@@ -201,6 +205,8 @@ export async function parseXlsx(
     opaqueParts,
     date1904,
     workbookRootAttrs,
+    ...(workbookProtectionXml ? { workbookProtectionXml } : {}),
+    ...(calcPrXml ? { calcPrXml } : {}),
     styles,
     sheetjs: sheetjsBook,
     images,

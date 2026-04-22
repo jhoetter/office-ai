@@ -17,6 +17,63 @@
 import type { ActionDescriptor } from "@officeai/core";
 
 /**
+ * Page-size presets in twips (1440 twips = 1 inch). Used by
+ * `docx.set-page-size` to translate `--preset letter|legal|a4|a3|a5`
+ * into typed `{ w, h }` payload fields.
+ */
+const PAGE_SIZE_PRESETS = {
+  letter: { w: 12240, h: 15840 },
+  legal: { w: 12240, h: 20160 },
+  a4: { w: 11906, h: 16838 },
+  a3: { w: 16838, h: 23811 },
+  a5: { w: 8391, h: 11906 },
+} as const;
+
+/**
+ * Shared payload builder for `docx:set-page-setup` catalogue entries.
+ * Splits the flat parsed CLI/MCP args into `pgSz` (page geometry) and
+ * `pgMar` (margins) sub-payloads, omitting either when no relevant
+ * fields were supplied.
+ */
+function buildSetPageSetupPayload(parsed: Record<string, unknown>): {
+  paragraphIndex: number;
+  pgSz?: { w?: number; h?: number; orient?: "portrait" | "landscape" };
+  pgMar?: {
+    top?: number;
+    right?: number;
+    bottom?: number;
+    left?: number;
+    header?: number;
+    footer?: number;
+    gutter?: number;
+  };
+} {
+  const paragraphIndex = Number(parsed.paragraphIndex);
+  const pgSz: { w?: number; h?: number; orient?: "portrait" | "landscape" } = {};
+  if (parsed.width !== undefined) pgSz.w = Number(parsed.width);
+  if (parsed.height !== undefined) pgSz.h = Number(parsed.height);
+  if (parsed.orient !== undefined) pgSz.orient = String(parsed.orient) as "portrait" | "landscape";
+
+  const pgMar: {
+    top?: number;
+    right?: number;
+    bottom?: number;
+    left?: number;
+    header?: number;
+    footer?: number;
+    gutter?: number;
+  } = {};
+  for (const f of ["top", "right", "bottom", "left", "header", "footer", "gutter"] as const) {
+    if (parsed[f] !== undefined) pgMar[f] = Number(parsed[f]);
+  }
+
+  const out: ReturnType<typeof buildSetPageSetupPayload> = { paragraphIndex };
+  if (Object.keys(pgSz).length > 0) out.pgSz = pgSz;
+  if (Object.keys(pgMar).length > 0) out.pgMar = pgMar;
+  return out;
+}
+
+/**
  * Free-form section taxonomy for DOCX. Kept stable so palette /
  * help-screen grouping doesn't churn between releases.
  */
@@ -419,7 +476,8 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Resolve comment",
     description: "Mark a comment as resolved (or re-open with --reopen) and write the result.",
     section: "Comments",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "CheckCheck",
     args: [
       {
         name: "file",
@@ -449,7 +507,8 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Reply to comment",
     description: "Append a reply to an existing comment and write the result.",
     section: "Comments",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette", "contextMenu"],
+    icon: "Reply",
     args: [
       {
         name: "file",
@@ -487,7 +546,8 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Delete comment",
     description: "Delete a comment (and its reply thread) and write the result.",
     section: "Comments",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette", "contextMenu"],
+    icon: "Trash2",
     args: [
       {
         name: "file",
@@ -709,6 +769,65 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
         description: "Column width in twips (defaults to equal split)",
       },
     ],
+  },
+  {
+    id: "docx.delete-row",
+    commandType: "docx:delete-row",
+    label: "Delete table row",
+    description: "Remove a row from a table. The table must have at least 2 rows.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "Minus",
+    args: [
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id (see `docx inspect`)",
+      },
+      { name: "at", flag: "--at <n>", kind: "number", required: true, description: "0-based row index" },
+    ],
+    buildPayload: ({ tableId, at }) => ({ tableId: String(tableId), at: Number(at) }),
+  },
+  {
+    id: "docx.delete-column",
+    commandType: "docx:delete-column",
+    label: "Delete table column",
+    description: "Remove a column from a table. The table must have at least 2 columns.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "Minus",
+    args: [
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id",
+      },
+      { name: "at", flag: "--at <n>", kind: "number", required: true, description: "0-based column index" },
+    ],
+    buildPayload: ({ tableId, at }) => ({ tableId: String(tableId), at: Number(at) }),
+  },
+  {
+    id: "docx.delete-table",
+    commandType: "docx:delete-table",
+    label: "Delete table",
+    description: "Remove a top-level table from the document.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "Trash2",
+    args: [
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id",
+      },
+    ],
+    buildPayload: ({ tableId }) => ({ tableId: String(tableId) }),
   },
   {
     id: "docx.set-cell-text",
@@ -1328,6 +1447,34 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     ],
   },
 
+  {
+    id: "docx.set-header-footer-blocks",
+    commandType: "docx:set-header-footer-blocks",
+    label: "Set header/footer body",
+    description:
+      "Replace the entire body of a header or footer part with a typed BlockNode array (preserves multi-paragraph + page-number-field + image leaves).",
+    section: "Headers",
+    surfaces: [],
+  },
+  {
+    id: "docx.insert-header-footer-image",
+    commandType: "docx:insert-header-footer-image",
+    label: "Insert image into header/footer",
+    description:
+      "Insert an inline image into a header or footer part. The relationship lands in the part's own .rels file so multiple sections can share the same media.",
+    section: "Headers",
+    surfaces: [],
+  },
+  {
+    id: "docx.create-header-footer-part",
+    commandType: "docx:create-header-footer-part",
+    label: "Create header/footer part",
+    description:
+      "Mint a fresh header or footer part on the trailing section so the editor can drop the caret into a previously-empty zone (Word's double-click behavior).",
+    section: "Headers",
+    surfaces: [],
+  },
+
   // ── Generic apply / pending ───────────────────────────────────────
   {
     id: "docx.apply",
@@ -1536,8 +1683,10 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Accept all changes",
     description: "Accept every pending tracked change in one mutation.",
     section: "Review",
-    surfaces: [],
-    hidden: { reason: "Reachable today via the tracked-changes UI; CLI exposure is deferred." },
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "CheckCheck",
+    args: [],
+    buildPayload: () => ({}),
   },
   {
     id: "docx.reject-all-changes",
@@ -1545,8 +1694,10 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Reject all changes",
     description: "Reject every pending tracked change in one mutation.",
     section: "Review",
-    surfaces: [],
-    hidden: { reason: "Reachable today via the tracked-changes UI; CLI exposure is deferred." },
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "X",
+    args: [],
+    buildPayload: () => ({}),
   },
   {
     id: "docx.insert-text-tracked",
@@ -1588,10 +1739,39 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.insert-page-number",
     commandType: "docx:insert-page-number",
     label: "Insert page number",
-    description: "Insert a page-number field at a position selector.",
+    description: "Insert a page-number field into a header/footer paragraph at a flat-text byte offset.",
     section: "Insert",
-    surfaces: [],
-    hidden: { reason: "Reached via the header/footer toolbar; CLI exposure is deferred." },
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "Hash",
+    args: [
+      {
+        name: "paragraphId",
+        flag: "--paragraph-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target header/footer paragraph id (use `docx inspect` to find ids)",
+      },
+      {
+        name: "offset",
+        flag: "--offset <n>",
+        kind: "number",
+        required: true,
+        description: "0-based flat-text byte offset where the field should land",
+      },
+      {
+        name: "field",
+        flag: "--field <kind>",
+        kind: "enum",
+        choices: ["PAGE", "NUMPAGES"],
+        default: "PAGE",
+        description: "Field type — current page (PAGE) or total pages (NUMPAGES)",
+      },
+    ],
+    buildPayload: ({ paragraphId, offset, field }) => ({
+      paragraphId: String(paragraphId),
+      offset: Number(offset),
+      field: (field as string | undefined) ?? "PAGE",
+    }),
   },
   {
     id: "docx.set-section-different-first",
@@ -1606,10 +1786,94 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.set-page-setup",
     commandType: "docx:set-page-setup",
     label: "Set page setup",
-    description: "Update page size / margins / orientation on a section.",
+    description: "Update page size / margins / orientation on the section that owns a paragraph (in twips).",
     section: "Layout",
-    surfaces: [],
-    hidden: { reason: "Reached via the page-setup dialog; CLI exposure is deferred." },
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "FileText",
+    args: [
+      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
+      { name: "width", flag: "--width <twips>", kind: "number", description: "Page width in twips (1440 twips = 1 inch)" },
+      { name: "height", flag: "--height <twips>", kind: "number", description: "Page height in twips" },
+      { name: "orient", flag: "--orient <portrait|landscape>", kind: "enum", choices: ["portrait", "landscape"], description: "Page orientation" },
+      { name: "top", flag: "--top <twips>", kind: "number", description: "Top margin in twips" },
+      { name: "right", flag: "--right <twips>", kind: "number", description: "Right margin in twips" },
+      { name: "bottom", flag: "--bottom <twips>", kind: "number", description: "Bottom margin in twips" },
+      { name: "left", flag: "--left <twips>", kind: "number", description: "Left margin in twips" },
+      { name: "header", flag: "--header <twips>", kind: "number", description: "Header offset in twips" },
+      { name: "footer", flag: "--footer <twips>", kind: "number", description: "Footer offset in twips" },
+      { name: "gutter", flag: "--gutter <twips>", kind: "number", description: "Gutter margin in twips" },
+    ],
+    buildPayload: (parsed) => buildSetPageSetupPayload(parsed),
+  },
+  {
+    id: "docx.set-page-margins",
+    commandType: "docx:set-page-setup",
+    label: "Set page margins",
+    description: "Set the top / right / bottom / left / header / footer / gutter margins (twips) on a section.",
+    section: "Layout",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "AlignJustify",
+    args: [
+      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
+      { name: "top", flag: "--top <twips>", kind: "number", description: "Top margin in twips" },
+      { name: "right", flag: "--right <twips>", kind: "number", description: "Right margin in twips" },
+      { name: "bottom", flag: "--bottom <twips>", kind: "number", description: "Bottom margin in twips" },
+      { name: "left", flag: "--left <twips>", kind: "number", description: "Left margin in twips" },
+      { name: "header", flag: "--header <twips>", kind: "number", description: "Header offset in twips" },
+      { name: "footer", flag: "--footer <twips>", kind: "number", description: "Footer offset in twips" },
+      { name: "gutter", flag: "--gutter <twips>", kind: "number", description: "Gutter margin in twips" },
+    ],
+    buildPayload: (parsed) => {
+      const payload = buildSetPageSetupPayload(parsed);
+      if (!payload.pgMar) {
+        throw new Error("set-page-margins requires at least one margin field");
+      }
+      return { paragraphIndex: payload.paragraphIndex, pgMar: payload.pgMar };
+    },
+  },
+  {
+    id: "docx.set-page-orientation",
+    commandType: "docx:set-page-setup",
+    label: "Set page orientation",
+    description: "Set page orientation (portrait/landscape) on the section that owns a paragraph. Swaps width/height when needed.",
+    section: "Layout",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "RectangleHorizontal",
+    args: [
+      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
+      { name: "orient", flag: "--orient <portrait|landscape>", kind: "enum", choices: ["portrait", "landscape"], required: true, description: "Page orientation" },
+    ],
+    buildPayload: ({ paragraphIndex, orient }) => ({
+      paragraphIndex: Number(paragraphIndex),
+      pgSz: { orient: String(orient) as "portrait" | "landscape" },
+    }),
+  },
+  {
+    id: "docx.set-page-size",
+    commandType: "docx:set-page-setup",
+    label: "Set page size",
+    description: "Set the page width and height (in twips) on the section that owns a paragraph. 1440 twips = 1 inch.",
+    section: "Layout",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "Maximize",
+    args: [
+      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
+      { name: "preset", flag: "--preset <name>", kind: "enum", choices: ["letter", "legal", "a4", "a3", "a5"], description: "Convenience preset (overridden by explicit --width/--height)" },
+      { name: "width", flag: "--width <twips>", kind: "number", description: "Page width in twips" },
+      { name: "height", flag: "--height <twips>", kind: "number", description: "Page height in twips" },
+    ],
+    buildPayload: ({ paragraphIndex, preset, width, height }) => {
+      const presetSize = preset ? PAGE_SIZE_PRESETS[String(preset) as keyof typeof PAGE_SIZE_PRESETS] : undefined;
+      const w = width !== undefined ? Number(width) : presetSize?.w;
+      const h = height !== undefined ? Number(height) : presetSize?.h;
+      if (w === undefined || h === undefined) {
+        throw new Error("set-page-size requires either --preset or both --width and --height");
+      }
+      return {
+        paragraphIndex: Number(paragraphIndex),
+        pgSz: { w, h },
+      };
+    },
   },
   {
     id: "docx.set-image-properties",
@@ -1633,18 +1897,243 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.insert-section-break",
     commandType: "docx:insert-section-break",
     label: "Insert section break",
-    description: "Insert a section break (next page / continuous / even / odd).",
+    description: "Insert a section break (next page / continuous / even / odd) at a body-block index.",
     section: "Layout",
-    surfaces: [],
-    hidden: { reason: "Reached via the toolbar Insert ▸ Breaks menu; CLI exposure is deferred." },
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "SeparatorHorizontal",
+    args: [
+      {
+        name: "paragraphIndex",
+        flag: "--paragraph-index <n>",
+        kind: "number",
+        required: true,
+        description: "0-based body block index where the break should land (=== body length appends)",
+      },
+      {
+        name: "type",
+        flag: "--type <kind>",
+        kind: "enum",
+        choices: ["nextPage", "continuous", "evenPage", "oddPage"],
+        default: "nextPage",
+        description: "Section break type",
+      },
+    ],
+    buildPayload: ({ paragraphIndex, type }) => ({
+      paragraphIndex: Number(paragraphIndex),
+      type: (type as string | undefined) ?? "nextPage",
+    }),
   },
   {
     id: "docx.insert-page-break",
     commandType: "docx:insert-page-break",
     label: "Insert page break",
-    description: "Insert a hard page break.",
+    description: "Splice a hard page break into a body paragraph at a flat-text byte offset.",
     section: "Layout",
-    surfaces: [],
-    hidden: { reason: "Reached via the toolbar Insert ▸ Breaks menu; CLI exposure is deferred." },
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "FileText",
+    args: [
+      {
+        name: "paragraphId",
+        flag: "--paragraph-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target body paragraph id",
+      },
+      {
+        name: "offset",
+        flag: "--offset <n>",
+        kind: "number",
+        required: true,
+        description: "0-based flat-text byte offset",
+      },
+    ],
+    buildPayload: ({ paragraphId, offset }) => ({
+      paragraphId: String(paragraphId),
+      offset: Number(offset),
+    }),
+  },
+
+  // ── Phase 3e — Table tools ───────────────────────────────────────
+  {
+    id: "docx.set-cell-shading",
+    commandType: "docx:set-cell-shading",
+    label: "Cell shading",
+    description: "Set the background fill on a single table cell. Pass --fill null to clear.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "PaintBucket",
+    args: [
+      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
+      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "0-based grid column index." },
+      { name: "fill", flag: "--fill <hex|null>", kind: "string", required: true, description: "Hex RGB color (e.g. FFE699), 'auto', or 'null' to clear." },
+      { name: "color", flag: "--color <hex>", kind: "string", description: "Optional pattern foreground color." },
+      { name: "pattern", flag: "--pattern <val>", kind: "string", description: "Optional shading pattern (clear/solid/pct25/...)." },
+    ],
+    buildPayload: (parsed) => {
+      const fillRaw = String(parsed.fill);
+      const fill = fillRaw === "null" ? null : fillRaw;
+      const out: Record<string, unknown> = {
+        tableId: String(parsed.tableId),
+        row: Number(parsed.row),
+        column: Number(parsed.column),
+        fill,
+      };
+      if (parsed.color) out.color = String(parsed.color);
+      if (parsed.pattern) out.pattern = String(parsed.pattern);
+      return out;
+    },
+  },
+  {
+    id: "docx.set-cell-alignment",
+    commandType: "docx:set-cell-alignment",
+    label: "Cell vertical alignment",
+    description: "Set the vertical alignment of a single table cell.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "AlignVerticalJustifyCenter",
+    args: [
+      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
+      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "0-based grid column index." },
+      {
+        name: "vAlign",
+        flag: "--v-align <v>",
+        kind: "enum",
+        choices: ["top", "center", "bottom", "null"],
+        required: true,
+        description: "top | center | bottom — pass 'null' to clear.",
+      },
+    ],
+    buildPayload: ({ tableId, row, column, vAlign }) => ({
+      tableId: String(tableId),
+      row: Number(row),
+      column: Number(column),
+      vAlign: String(vAlign) === "null" ? null : (String(vAlign) as "top"),
+    }),
+  },
+  {
+    id: "docx.set-row-height",
+    commandType: "docx:set-row-height",
+    label: "Row height",
+    description: "Set a table row's height in twips. Pass --height-twips null to clear.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "MoveVertical",
+    args: [
+      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
+      { name: "heightTwips", flag: "--height-twips <n|null>", kind: "string", required: true, description: "Row height in twips, or 'null' to clear." },
+      { name: "rule", flag: "--rule <r>", kind: "enum", choices: ["auto", "exact", "atLeast"], description: "Row-height rule." },
+    ],
+    buildPayload: ({ tableId, row, heightTwips, rule }) => {
+      const raw = String(heightTwips);
+      const out: Record<string, unknown> = {
+        tableId: String(tableId),
+        row: Number(row),
+        heightTwips: raw === "null" ? null : Number(raw),
+      };
+      if (rule) out.rule = String(rule);
+      return out;
+    },
+  },
+  {
+    id: "docx.set-column-width",
+    commandType: "docx:set-column-width",
+    label: "Column width",
+    description: "Set a table column's width in twips (1440 twips = 1 inch).",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "MoveHorizontal",
+    args: [
+      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "0-based grid column index." },
+      { name: "widthTwips", flag: "--width-twips <n>", kind: "number", required: true, description: "Column width in twips." },
+    ],
+    buildPayload: ({ tableId, column, widthTwips }) => ({
+      tableId: String(tableId),
+      column: Number(column),
+      widthTwips: Number(widthTwips),
+    }),
+  },
+  {
+    id: "docx.merge-cells-horizontal",
+    commandType: "docx:merge-cells-horizontal",
+    label: "Merge cells (horizontal)",
+    description: "Merge a contiguous run of cells in a single row into one cell with gridSpan.",
+    section: "Tables",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "TableCellsMerge",
+    args: [
+      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
+      { name: "fromColumn", flag: "--from-column <n>", kind: "number", required: true, description: "0-based starting grid column." },
+      { name: "toColumn", flag: "--to-column <n>", kind: "number", required: true, description: "0-based ending grid column (inclusive)." },
+    ],
+    buildPayload: ({ tableId, row, fromColumn, toColumn }) => ({
+      tableId: String(tableId),
+      row: Number(row),
+      fromColumn: Number(fromColumn),
+      toColumn: Number(toColumn),
+    }),
+  },
+
+  // ── Phase 6 — Protection ─────────────────────────────────────────
+  {
+    id: "docx.set-protection",
+    commandType: "docx:set-protection",
+    label: "Restrict editing",
+    description:
+      "Toggle Word's Restrict Editing element in word/settings.xml. Pass --enabled false to clear; precomputed password hashes are accepted via --password-hash + --algorithm-name + --salt-value + --spin-count.",
+    section: "Review",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "Lock",
+    args: [
+      {
+        name: "enabled",
+        flag: "--enabled <bool>",
+        kind: "boolean",
+        default: true,
+        description: "true to enable protection, false to clear.",
+      },
+      {
+        name: "edit",
+        flag: "--edit <kind>",
+        kind: "enum",
+        choices: ["readOnly", "comments", "trackedChanges", "forms", "none"],
+        description: "Allowed edit type when protection is on.",
+        default: "readOnly",
+      },
+      {
+        name: "enforce",
+        flag: "--enforce <bool>",
+        kind: "boolean",
+        default: true,
+        description: "Whether the protection is enforced (Word may otherwise treat it as a recommendation).",
+      },
+      {
+        name: "formatting",
+        flag: "--formatting <bool>",
+        kind: "boolean",
+        description: "Restrict formatting changes too.",
+      },
+      { name: "passwordHash", flag: "--password-hash <hex>", kind: "string", description: "Precomputed password hash." },
+      { name: "algorithmName", flag: "--algorithm-name <name>", kind: "string", description: "Hash algorithm name." },
+      { name: "saltValue", flag: "--salt-value <b64>", kind: "string", description: "Salt for the hash." },
+      { name: "spinCount", flag: "--spin-count <n>", kind: "number", description: "Iteration count." },
+    ],
+    buildPayload: (parsed) => {
+      const out: Record<string, unknown> = {
+        enabled: parsed.enabled === false || parsed.enabled === "false" ? false : true,
+      };
+      if (parsed.edit) out.edit = String(parsed.edit);
+      if (parsed.enforce !== undefined) out.enforce = parsed.enforce !== false && parsed.enforce !== "false";
+      if (parsed.formatting !== undefined) out.formatting = parsed.formatting !== false && parsed.formatting !== "false";
+      if (parsed.passwordHash) out.passwordHash = String(parsed.passwordHash);
+      if (parsed.algorithmName) out.algorithmName = String(parsed.algorithmName);
+      if (parsed.saltValue) out.saltValue = String(parsed.saltValue);
+      if (parsed.spinCount !== undefined) out.spinCount = Number(parsed.spinCount);
+      return out;
+    },
   },
 ];

@@ -767,6 +767,18 @@
     },
     "outline": "Gliederung",
     "slidePanel": "Folien",
+    "view": {
+      "rulers": "Lineale",
+      "showRulers": "Lineale anzeigen",
+      "hideRulers": "Lineale ausblenden",
+      "gridlines": "Gitternetzlinien",
+      "showGridlines": "Gitternetzlinien anzeigen",
+      "hideGridlines": "Gitternetzlinien ausblenden"
+    },
+    "ruler": {
+      "unitInch": "in",
+      "unitCm": "cm"
+    },
     "connector": {
       "straight": "Gerade",
       "elbow": "Winkel",
@@ -983,7 +995,8 @@
         "Lists": "Listen",
         "Layout": "Layout",
         "View": "Ansicht",
-        "Mode": "Modus"
+        "Mode": "Modus",
+        "Review": "Überprüfen"
       },
       "add-comment": {
         "label": "Kommentar hinzufügen",
@@ -1073,6 +1086,66 @@
         "label": "Tabelle einfügen (2 × 2)",
         "description": "Fügt eine 2 × 2-Tabelle an der aktuellen Auswahl ein."
       },
+      "delete-row": {
+        "label": "Tabellenzeile löschen",
+        "description": "Entfernt eine Zeile aus einer Tabelle. Die Tabelle muss mindestens 2 Zeilen haben."
+      },
+      "delete-column": {
+        "label": "Tabellenspalte löschen",
+        "description": "Entfernt eine Spalte aus einer Tabelle. Die Tabelle muss mindestens 2 Spalten haben."
+      },
+      "delete-table": {
+        "label": "Tabelle löschen",
+        "description": "Entfernt eine Tabelle der obersten Ebene aus dem Dokument."
+      },
+      "resolve-comment": {
+        "label": "Kommentar auflösen",
+        "description": "Markiert einen Kommentar als aufgelöst (oder öffnet ihn erneut)."
+      },
+      "reply-comment": {
+        "label": "Auf Kommentar antworten",
+        "description": "Hängt eine Antwort an einen vorhandenen Kommentar an."
+      },
+      "delete-comment": {
+        "label": "Kommentar löschen",
+        "description": "Löscht einen Kommentar samt Antwort-Thread."
+      },
+      "accept-all-changes": {
+        "label": "Alle Änderungen akzeptieren",
+        "description": "Akzeptiert in einer Operation alle ausstehenden nachverfolgten Änderungen."
+      },
+      "reject-all-changes": {
+        "label": "Alle Änderungen ablehnen",
+        "description": "Lehnt in einer Operation alle ausstehenden nachverfolgten Änderungen ab."
+      },
+      "insert-page-number": {
+        "label": "Seitenzahl einfügen",
+        "description": "Fügt ein Seitenzahl-Feld an einer Positions-Auswahl ein."
+      },
+      "insert-section-break": {
+        "label": "Abschnittswechsel einfügen",
+        "description": "Fügt einen Abschnittswechsel (Nächste Seite / Fortlaufend / Gerade / Ungerade) ein."
+      },
+      "insert-page-break": {
+        "label": "Seitenumbruch einfügen",
+        "description": "Fügt einen festen Seitenumbruch an einer Positions-Auswahl ein."
+      },
+      "set-page-setup": {
+        "label": "Seiteneinrichtung festlegen",
+        "description": "Aktualisiert Seitengröße / Ränder / Ausrichtung des Abschnitts, der einen Absatz enthält (in Twips)."
+      },
+      "set-page-margins": {
+        "label": "Seitenränder festlegen",
+        "description": "Setzt die Ränder oben / rechts / unten / links / Kopfzeile / Fußzeile / Bundsteg (in Twips) eines Abschnitts."
+      },
+      "set-page-orientation": {
+        "label": "Seitenausrichtung festlegen",
+        "description": "Setzt die Seitenausrichtung (Hoch-/Querformat). Tauscht Breite/Höhe bei Bedarf."
+      },
+      "set-page-size": {
+        "label": "Seitengröße festlegen",
+        "description": "Setzt Seitenbreite und -höhe (in Twips) eines Abschnitts per Voreinstellung (letter/legal/a4/a3/a5) oder explizit."
+      },
       "page-setup": {
         "label": "Seite einrichten…",
         "description": "Öffnet den Dialog zum Konfigurieren von Rändern, Papiergröße und Ausrichtung."
@@ -1092,11 +1165,39 @@
       "set-mode-view": {
         "label": "In Lesemodus wechseln",
         "description": "Schreibgeschützt — alle Mutationen blockiert."
+      },
+      "set-protection": {
+        "label": "Bearbeitung einschränken",
+        "description": "Schaltet Words „Bearbeitung einschränken“-Element in word/settings.xml. Mit --enabled false zurücksetzen; vorausberechnete Passwort-Hashes via --password-hash + --algorithm-name + --salt-value + --spin-count übergeben."
+      },
+      "set-cell-shading": {
+        "label": "Zellschattierung",
+        "description": "Legt die Hintergrundfarbe einer einzelnen Tabellenzelle fest. Mit --fill null entfernen."
+      },
+      "set-cell-alignment": {
+        "label": "Vertikale Zellausrichtung",
+        "description": "Legt die vertikale Ausrichtung (oben/mittig/unten) einer Tabellenzelle fest."
+      },
+      "set-row-height": {
+        "label": "Zeilenhöhe",
+        "description": "Setzt die Höhe einer Tabellenzeile in Twips. Mit --height-twips null zurücksetzen."
+      },
+      "set-column-width": {
+        "label": "Spaltenbreite",
+        "description": "Setzt die Breite einer Tabellenspalte in Twips (1440 Twips = 1 Zoll)."
+      },
+      "merge-cells-horizontal": {
+        "label": "Zellen verbinden (horizontal)",
+        "description": "Verbindet aufeinanderfolgende Zellen einer Zeile zu einer Zelle mit gridSpan."
       }
     },
     "xlsx": {
       "sections": {
         "Edit": "Bearbeiten",
+        "Review": "Überprüfen",
+        "Formulas": "Formeln",
+        "Page Layout": "Seitenlayout",
+        "View": "Ansicht",
         "Format": "Format",
         "Sheet": "Tabellenblatt",
         "Comments": "Kommentare",
@@ -1150,6 +1251,14 @@
       "unmerge-cells": {
         "label": "Zellverbund aufheben",
         "description": "Hebt einen bestehenden verbundenen Bereich auf (muss exakt übereinstimmen)."
+      },
+      "set-column-width": {
+        "label": "Spaltenbreite festlegen",
+        "description": "Überschreibt die Spaltenbreite in CSS-Pixeln (oder --reset zum Zurücksetzen)."
+      },
+      "set-row-height": {
+        "label": "Zeilenhöhe festlegen",
+        "description": "Überschreibt die Zeilenhöhe in CSS-Pixeln (oder --reset zum Zurücksetzen)."
       },
       "add-comment": {
         "label": "Kommentar hinzufügen",
@@ -1262,6 +1371,126 @@
       "edit-chart": {
         "label": "Diagramm bearbeiten…",
         "description": "Bearbeitet den Datenbereich, Typ und Titel des aktuell ausgewählten Diagramms."
+      },
+      "add-conditional-format": {
+        "label": "Bedingte Formatierung hinzufügen",
+        "description": "Fügt eine bedingte Formatierungsregel zu einem Bereich hinzu. Übergeben Sie --rule als JSON gemäß dem ConditionalFormat-Schema."
+      },
+      "remove-conditional-format": {
+        "label": "Bedingte Formatierung entfernen",
+        "description": "Entfernt eine bedingte Formatierungsregel anhand der ID."
+      },
+      "clear-conditional-formats": {
+        "label": "Bedingte Formatierungen löschen",
+        "description": "Entfernt alle bedingten Formatierungsregeln eines Blattes."
+      },
+      "add-data-validation": {
+        "label": "Datenüberprüfung hinzufügen",
+        "description": "Fügt eine Datenüberprüfungsregel zu einem Bereich hinzu. Übergeben Sie --rule als JSON gemäß dem DataValidation-Schema."
+      },
+      "remove-data-validation": {
+        "label": "Datenüberprüfung entfernen",
+        "description": "Entfernt eine Datenüberprüfungsregel anhand der ID."
+      },
+      "clear-data-validations": {
+        "label": "Datenüberprüfungen löschen",
+        "description": "Entfernt alle Datenüberprüfungsregeln eines Blattes."
+      },
+      "add-defined-name": {
+        "label": "Namen definieren",
+        "description": "Definiert einen arbeitsmappen- oder blattbezogenen Namen (benannten Bereich)."
+      },
+      "update-defined-name": {
+        "label": "Definierten Namen aktualisieren",
+        "description": "Aktualisiert Bezug, Bereich oder Namen eines bestehenden definierten Namens."
+      },
+      "remove-defined-name": {
+        "label": "Definierten Namen entfernen",
+        "description": "Löscht einen definierten Namen."
+      },
+      "add-table": {
+        "label": "Tabelle hinzufügen",
+        "description": "Konvertiert einen Bereich in eine strukturierte Tabelle (mit AutoFilter und Stilen)."
+      },
+      "remove-table": {
+        "label": "Tabelle entfernen",
+        "description": "Wandelt eine strukturierte Tabelle wieder in einen einfachen Bereich um."
+      },
+      "remove-chart": {
+        "label": "Diagramm entfernen",
+        "description": "Entfernt ein eingefügtes Diagramm anhand der ID."
+      },
+      "move-chart": {
+        "label": "Diagramm verschieben",
+        "description": "Positioniert ein Diagramm auf dem Blatt neu."
+      },
+      "resize-chart": {
+        "label": "Diagrammgröße ändern",
+        "description": "Ändert die Größe eines Diagramms (in CSS-Pixeln)."
+      },
+      "update-chart": {
+        "label": "Diagramm aktualisieren",
+        "description": "Aktualisiert Typ, Datenbereich, Header-/Kategorie-Schalter, Titel, Palette, Legende-/Datenbeschriftungs-/Gitter-Schalter oder Achsentitel eines Diagramms."
+      },
+      "set-auto-filter": {
+        "label": "AutoFilter festlegen",
+        "description": "Wendet einen AutoFilter auf einen Bereich an. Übergeben Sie --range null zum Entfernen."
+      },
+      "set-filter-column": {
+        "label": "Spaltenfilter festlegen",
+        "description": "Konfiguriert einen Spaltenfilter innerhalb eines bestehenden AutoFilters. Übergeben Sie --criterion als JSON."
+      },
+      "clear-filter-column": {
+        "label": "Spaltenfilter löschen",
+        "description": "Löscht den Filter einer einzelnen Spalte."
+      },
+      "sort-range": {
+        "label": "Bereich sortieren",
+        "description": "Sortiert die Zeilen eines Bereichs (ohne Kopfzeile) nach einer einzelnen Spalte."
+      },
+      "set-wrap-text": {
+        "label": "Zeilenumbruch umschalten",
+        "description": "Schaltet den Zeilenumbruch in einem Bereich um. Bei umgebrochenen Zellen werden lange Inhalte mehrzeilig angezeigt."
+      },
+      "set-sheet-protection": {
+        "label": "Blatt schützen",
+        "description": "Schaltet Excels „Blattschutz“-Element auf einem Arbeitsblatt um. Mit --enabled false zurücksetzen; vorausberechnete Passwort-Hashes via --password-hash + --algorithm-name + --salt-value + --spin-count übergeben."
+      },
+      "set-workbook-protection": {
+        "label": "Arbeitsmappe schützen",
+        "description": "Schaltet Excels „Arbeitsmappenschutz“-Element um. Standard ist lockStructure=1, wenn keine Flags angegeben werden. Mit --enabled false zurücksetzen."
+      },
+      "set-calc-mode": {
+        "label": "Berechnungsoptionen",
+        "description": "Setzt die Berechnungsoptionen unter Formeln (auto / autoNoTable / manual) sowie calcOnSave / iterate."
+      },
+      "set-show-formulas": {
+        "label": "Formeln anzeigen",
+        "description": "Schaltet den Ansichtsmodus „Formeln anzeigen“ unter Formeln → Formelüberwachung um."
+      },
+      "set-page-setup": {
+        "label": "Seite einrichten",
+        "description": "Konfiguriert das <pageSetup>-Element (Ausrichtung, Papierformat, Skalierung, An Seiten anpassen, Seitennummerierung)."
+      },
+      "set-page-margins": {
+        "label": "Seitenränder festlegen",
+        "description": "Setzt Seitenränder per Voreinstellung (normal | breit | schmal) oder einzelnen Zollwerten."
+      },
+      "set-print-options": {
+        "label": "Druckoptionen festlegen",
+        "description": "Schaltet Optionen unter Seitenlayout → Blattoptionen (Gitternetzlinien, Überschriften, Zentrierung auf der Seite)."
+      },
+      "set-print-area": {
+        "label": "Druckbereich festlegen",
+        "description": "Definiert den definierten Namen _xlnm.Print_Area des Arbeitsblatts oder entfernt ihn."
+      },
+      "set-print-titles": {
+        "label": "Drucktitel festlegen",
+        "description": "Definiert _xlnm.Print_Titles (auf jeder gedruckten Seite zu wiederholende Zeilen / Spalten)."
+      },
+      "set-sheet-view": {
+        "label": "Blattansicht festlegen",
+        "description": "Patcht das <sheetView>-Element des Arbeitsblatts (Ansichtsmodus, Gitternetzlinien, Überschriften, Lineal, Zoom, von rechts nach links)."
       }
     },
     "pptx": {
@@ -1269,7 +1498,10 @@
         "Slide": "Folie",
         "Format": "Format",
         "Insert": "Einfügen",
-        "View": "Ansicht"
+        "View": "Ansicht",
+        "Design": "Entwurf",
+        "Transitions": "Übergänge",
+        "Slideshow": "Bildschirmpräsentation"
       },
       "add-slide": {
         "label": "Folie hinzufügen",
@@ -1291,9 +1523,37 @@
         "label": "Folienübergang festlegen",
         "description": "Setzt den Eingangsübergang einer Folie."
       },
+      "set-slide-size": {
+        "label": "Foliengröße festlegen",
+        "description": "Ändert die Foliengröße. Übergibt einen Voreinstellungs­wert (widescreen / standard / a4 / letter) oder 'custom' mit expliziten cxEmu / cyEmu."
+      },
+      "set-show-options": {
+        "label": "Bildschirmpräsentations­optionen",
+        "description": "Konfiguriert die Wiedergabe (Modus, Schleife, Sprachausgabe, Animationen, Anzeigedauer). Mit --clear werden bestehende Show-Optionen entfernt."
+      },
+      "set-slide-transition": {
+        "label": "Folienübergang festlegen",
+        "description": "Setzt den Eingangsübergang einer Folie. --kind none entfernt einen vorhandenen Übergang."
+      },
+      "set-slide-hidden": {
+        "label": "Folie ausblenden / einblenden",
+        "description": "Schaltet das Verbergen einer Folie um. Ausgeblendete Folien bleiben im Foliensatz, werden aber in der Bildschirmpräsentation übersprungen."
+      },
       "format-text": {
         "label": "Textlauf formatieren",
         "description": "Wendet Schrift / Größe / fett / kursiv / unterstrichen / Farbe auf einen Textlauf an."
+      },
+      "set-position": {
+        "label": "Position der Form festlegen",
+        "description": "Setzt die x/y-Position einer Form (in EMU; 914400 EMU = 1 Zoll)."
+      },
+      "set-size": {
+        "label": "Größe der Form festlegen",
+        "description": "Setzt Breite/Höhe einer Form (in EMU)."
+      },
+      "set-rotation": {
+        "label": "Drehung der Form festlegen",
+        "description": "Dreht eine Form um N Grad im Uhrzeigersinn um ihre Mitte."
       },
       "add-text-box": {
         "label": "Textfeld hinzufügen",
@@ -1510,6 +1770,63 @@
         "label": "Drucken…",
         "description": "Öffnet den nativen Druckdialog des Browsers für das PDF."
       }
+    }
+  },
+  "ribbon": {
+    "tabs": {
+      "start": "Start",
+      "insert": "Einfügen",
+      "layout": "Layout",
+      "review": "Überprüfen",
+      "view": "Ansicht",
+      "data": "Daten",
+      "design": "Entwurf",
+      "transitions": "Übergänge",
+      "animations": "Animationen",
+      "slideshow": "Bildschirmpräsentation",
+      "image-tools": "Bildtools",
+      "table-tools": "Tabellentools",
+      "header-footer": "Kopf- und Fußzeile",
+      "chart-tools": "Diagrammtools",
+      "shape-tools": "Formformat",
+      "picture-tools": "Bildformat"
+    },
+    "groups": {
+      "clipboard": "Zwischenablage",
+      "font": "Schriftart",
+      "paragraph": "Absatz",
+      "alignment": "Ausrichtung",
+      "borders": "Rahmen",
+      "number": "Zahl",
+      "styles": "Formatvorlagen",
+      "tables": "Tabellen",
+      "illustrations": "Illustrationen",
+      "charts": "Diagramme",
+      "comments": "Kommentare",
+      "links": "Verknüpfungen",
+      "media": "Medien",
+      "text": "Text",
+      "header-footer-options": "Optionen",
+      "header-footer-insert": "Einfügen",
+      "header-footer-close": "Schließen",
+      "image": "Bild",
+      "table": "Tabelle",
+      "data-tools": "Datentools",
+      "sort-filter": "Sortieren und Filtern",
+      "window": "Fenster",
+      "slides": "Folien",
+      "themes": "Designs",
+      "transition": "Übergang zu dieser Folie",
+      "advanced-anim": "Erweiterte Animation",
+      "start-slideshow": "Bildschirmpräsentation starten",
+      "show": "Anzeigen",
+      "shape-styles": "Formenarten",
+      "arrange": "Anordnen",
+      "shape": "Form",
+      "adjust": "Anpassen",
+      "undo": "Rückgängig",
+      "review": "Überprüfen",
+      "chart": "Diagramm"
     }
   }
 }

@@ -2,7 +2,22 @@ import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorState, Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type { DocxAgent, DocxSnapshot, Footnote, HeaderFooterPart, Measure, PageChunk } from "@officeai/docx";
+import type {
+  BlockNode,
+  DocxAgent,
+  DocxSnapshot,
+  Footnote,
+  HeaderFooterPart,
+  InlineImageDrawing,
+  InlineNode,
+  Measure,
+  PageChunk,
+  PageNumberFieldLeaf,
+  Paragraph,
+  Run,
+  RunChild,
+  TextLeaf,
+} from "@officeai/docx";
 import { chunkIntoPages, resolveHeaderFooterParts } from "@officeai/docx";
 
 /**
@@ -60,7 +75,22 @@ export interface PageZoneCommitDetail {
   readonly partPath: string | null;
   readonly target: "default" | "first" | "even" | null;
   readonly pageNumber: number;
+  /**
+   * Plain-text fall-back. DocxEditor still wires this into the
+   * legacy `docx:set-header-text` / `docx:set-footer-text`
+   * commands when {@link blocks} is null (single-paragraph text-only
+   * edit, no tokens to preserve).
+   */
   readonly text: string;
+  /**
+   * Rich block-level body produced by the in-place authoring
+   * surface. Non-null when the part has multi-paragraph content,
+   * page-number-field tokens, or inline images that we don't want
+   * the legacy plain-text command to flatten on commit. DocxEditor
+   * dispatches `docx:set-header-footer-blocks` with this body when
+   * present.
+   */
+  readonly blocks: ReadonlyArray<BlockNode> | null;
 }
 
 export const PAGE_ZONE_COMMIT_EVENT = "pm-page-zone-commit";
@@ -79,6 +109,21 @@ export interface PageZoneFocusDetail {
 }
 
 export const PAGE_ZONE_FOCUS_EVENT = "pm-page-zone-focus";
+
+/**
+ * CustomEvent payload dispatched when the user double-clicks an empty
+ * header / footer zone (one whose section has no `<w:headerReference>` /
+ * `<w:footerReference>` of the requested kind). DocxEditor catches this
+ * and dispatches `docx:create-header-footer-part` so the next render
+ * shows an editable zone the caret can land in (Word's
+ * "double-click-the-header" affordance).
+ */
+export interface PageZoneMintDetail {
+  readonly slot: "header" | "footer";
+  readonly pageNumber: number;
+}
+
+export const PAGE_ZONE_MINT_EVENT = "pm-page-zone-mint";
 
 export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsState> {
   // Per-block measured heights, in twips, indexed by `body` block index.
@@ -293,15 +338,45 @@ function buildDecorations(
       );
     }
 
-    // Page cap (header zone) for page 1: widget at the very start
-    // of the document so the first sheet has visible header chrome.
+    // Word-faithful page chrome (no card sandwich): every chunk has
+    // its OWN header band attached at the chunk's start position and
+    // its OWN footer band attached at the chunk's end position. The
+    // bands paint white sheet + side borders so they read as a
+    // continuation of the same piece of paper as the body blocks
+    // between them. Between two adjacent chunks we attach a thin
+    // transparent `page-break` strip that lets the desk colour show
+    // through — the only visible separator between two stacked
+    // sheets, with no rounded corners or drop shadow.
+    //
+    // Side ordering at a position shared between two adjacent chunks
+    // (`childPositions[chunk.endBlock] === childPositions[next.startBlock]`):
+    //   side: -3  filler  (closes prev chunk's content area)
+    //   side: -2  footer  (prev chunk)
+    //   side: -1  break   (transparent strip between sheets)
+    //   side:  0  header  (next chunk)
+    // The first chunk's header sits at position 0 with side: -1.
+    // The last chunk's footer sits at docEnd with side: -2 and owns
+    // the footnote lane (until per-page footnote distribution
+    // lands).
+
+    // Header band for THIS chunk.
     if (i === 0) {
       decos.push(
-        Decoration.widget(0, () => renderHeaderCap(chunk, headerPart), {
+        Decoration.widget(0, () => renderHeaderBand(chunk, headerPart, "first"), {
           side: -1,
-          key: `page-cap-top-${chunk.pageNumber}`,
+          key: `page-header-band-${chunk.pageNumber}`,
         })
       );
+    } else {
+      const insertAt = childPositions[chunk.startBlock];
+      if (insertAt !== undefined) {
+        decos.push(
+          Decoration.widget(insertAt, () => renderHeaderBand(chunk, headerPart, "mid"), {
+            side: 0,
+            key: `page-header-band-${chunk.pageNumber}`,
+          })
+        );
+      }
     }
 
     // Page filler — pads the page's body region down to the full
@@ -326,54 +401,39 @@ function buildDecorations(
     }
     const fillerTwips = Math.max(0, contentAreaTwips - measuredTwips);
     const fillerCssPx = fillerTwips / TWIPS_PER_CSS_PX;
-    // The filler attaches to the position right after the chunk's
-    // last block — that's `childPositions[chunk.endBlock]` for any
-    // non-final chunk, and `docEnd` for the very last chunk. Use a
-    // more-negative `side` than the page-edge / cap-bottom widgets
-    // (which use `side: -1` / `side: 1`) so the filler always renders
-    // *above* the page break chrome that closes the page.
     const fillerInsertAt = chunk.endBlock < childPositions.length ? childPositions[chunk.endBlock] : docEnd;
     decos.push(
       Decoration.widget(fillerInsertAt, () => renderPageFiller(fillerCssPx, chunk.pageNumber), {
-        side: -2,
+        side: -3,
         key: `page-filler-${chunk.pageNumber}-${Math.round(fillerCssPx)}`,
       })
     );
 
-    // Page-edge widget between this chunk and the next chunk. Owns
-    // the footer of *this* page + the gap + the header of the next
-    // page so the visual page break tells a complete story.
-    if (i < chunks.length - 1) {
-      const nextChunk = chunks[i + 1];
-      const nextResolved = resolveHeaderFooterParts(snapshot, nextChunk.sectionIndex);
-      const nextHeaderPart = pickHeaderFooter(nextResolved.headers, nextChunk.pageWithinSection);
-      const insertAt = childPositions[nextChunk.startBlock];
-      if (insertAt === undefined) continue;
-      decos.push(
-        Decoration.widget(insertAt, () => renderPageEdge(chunk, nextChunk, footerPart, nextHeaderPart), {
-          side: -1,
-          key: `page-edge-${chunk.pageNumber}->${nextChunk.pageNumber}`,
-        })
-      );
-    }
+    // Footer band for THIS chunk. The last chunk hosts the footnote
+    // lane until per-page footnote distribution lands.
+    const isLastChunk = i === chunks.length - 1;
+    const laneFootnotes = isLastChunk ? collectAuthoredFootnotes(snapshot) : [];
+    const laneKey = laneFootnotes.map((fn) => fn.id).join(",");
+    decos.push(
+      Decoration.widget(
+        fillerInsertAt,
+        () => renderFooterBand(chunk, footerPart, isLastChunk ? "last" : "mid", laneFootnotes),
+        {
+          side: -2,
+          key: `page-footer-band-${chunk.pageNumber}-fn:${laneKey}`,
+        }
+      )
+    );
 
-    // Page cap (footer zone) for the last page: widget at the very
-    // end of the document.
-    //
-    // F1-UI Phase 1 — footnote lane. Until per-page footnote
-    // assignment is modelled (requires line-break / page-break
-    // detection that doesn't exist yet) we render the entire
-    // `footnotesPart.footnotes` collection on the LAST page, above
-    // its footer zone. Future phases will swap `laneFootnotes` for
-    // a per-chunk lookup keyed off footnote-reference positions in
-    // the chunk's blocks.
-    if (i === chunks.length - 1) {
-      const laneFootnotes = collectAuthoredFootnotes(snapshot);
-      const laneKey = laneFootnotes.map((fn) => fn.id).join(",");
+    // Page break between THIS chunk and the next: a thin transparent
+    // strip showing the desk colour through. No rounded corners, no
+    // shadow — the paired top/bottom borders on the bands above and
+    // below already imply the page edges.
+    if (!isLastChunk) {
       decos.push(
-        Decoration.widget(docEnd, () => renderFooterCap(chunk, footerPart, laneFootnotes), {
-          side: 1,
-          key: `page-cap-bottom-${chunk.pageNumber}-fn:${laneKey}`,
+        Decoration.widget(fillerInsertAt, () => renderPageBreak(chunk.pageNumber + 1), {
+          side: -1,
+          key: `page-break-${chunk.pageNumber}->${chunk.pageNumber + 1}`,
         })
       );
     }
@@ -395,27 +455,70 @@ function pickHeaderFooter(
   return resolved.default ?? resolved.first ?? resolved.even;
 }
 
-function renderHeaderCap(chunk: PageChunk, headerPart: HeaderFooterPart | undefined): HTMLElement {
-  const cap = document.createElement("div");
-  cap.className = "pm-page-cap pm-page-cap-top";
-  cap.setAttribute("contenteditable", "false");
-  cap.appendChild(renderHeaderZone(chunk, headerPart));
-  return cap;
+/**
+ * Word-faithful header band. Lives inside the chunk's own top
+ * margin and reads as a continuation of the same white sheet as
+ * the body blocks below it. `position` is `"first"` for the first
+ * page (the band is the top edge of the document) and `"mid"` for
+ * every following chunk (the page-break above it provides the
+ * visual separation). The band carries the chunk's geometry so
+ * its padding aligns with the page margins.
+ */
+function renderHeaderBand(
+  chunk: PageChunk,
+  headerPart: HeaderFooterPart | undefined,
+  position: "first" | "mid"
+): HTMLElement {
+  const band = document.createElement("div");
+  band.className = "pm-page-header-band";
+  band.dataset.bandPosition = position;
+  band.setAttribute("contenteditable", "false");
+  band.setAttribute("data-page-number", String(chunk.pageNumber));
+  applyChunkGeometryStyle(band, chunk);
+  band.appendChild(renderHeaderZone(chunk, headerPart));
+  return band;
 }
 
-function renderFooterCap(
+/**
+ * Word-faithful footer band. Mirrors the header band: lives
+ * inside the chunk's own bottom margin, paints the same white
+ * sheet, and aligns its padding with the page margins. The last
+ * chunk's band hosts the footnote lane (until per-page footnote
+ * distribution ships) above the footer zone proper.
+ */
+function renderFooterBand(
   chunk: PageChunk,
   footerPart: HeaderFooterPart | undefined,
+  position: "mid" | "last",
   laneFootnotes: ReadonlyArray<Footnote> = []
 ): HTMLElement {
-  const cap = document.createElement("div");
-  cap.className = "pm-page-cap pm-page-cap-bottom";
-  cap.setAttribute("contenteditable", "false");
+  const band = document.createElement("div");
+  band.className = "pm-page-footer-band";
+  band.dataset.bandPosition = position;
+  band.setAttribute("contenteditable", "false");
+  band.setAttribute("data-page-number", String(chunk.pageNumber));
+  applyChunkGeometryStyle(band, chunk);
   if (laneFootnotes.length > 0) {
-    cap.appendChild(renderFootnoteLane(chunk, laneFootnotes));
+    band.appendChild(renderFootnoteLane(chunk, laneFootnotes));
   }
-  cap.appendChild(renderFooterZone(chunk, footerPart));
-  return cap;
+  band.appendChild(renderFooterZone(chunk, footerPart));
+  return band;
+}
+
+/**
+ * Thin transparent strip between two adjacent page chunks. Lets
+ * the desk colour show through so two stacked sheets read as
+ * separate pieces of paper, without imposing any chrome of its
+ * own (no rounded corners, no shadow). The chunk number stamped
+ * in `data-page-number` is the INCOMING page so screen readers
+ * announce "page N break" when they hit it.
+ */
+function renderPageBreak(incomingPageNumber: number): HTMLElement {
+  const br = document.createElement("div");
+  br.className = "pm-page-break";
+  br.setAttribute("contenteditable", "false");
+  br.setAttribute("data-page-number", String(incomingPageNumber));
+  return br;
 }
 
 /**
@@ -515,31 +618,6 @@ function renderPageFiller(heightCssPx: number, pageNumber: number): HTMLElement 
   return filler;
 }
 
-function renderPageEdge(
-  prev: PageChunk,
-  next: PageChunk,
-  prevFooter: HeaderFooterPart | undefined,
-  nextHeader: HeaderFooterPart | undefined
-): HTMLElement {
-  const edge = document.createElement("div");
-  edge.className = "pm-page-edge";
-  edge.setAttribute("contenteditable", "false");
-  edge.appendChild(renderFooterZone(prev, prevFooter));
-
-  const gap = document.createElement("div");
-  gap.className = "pm-page-gap";
-  // Word does not paint a "Page N" banner inside the gap between
-  // sheets — the active page is surfaced in the status bar instead
-  // (see PageStatusBar in DocxEditor.tsx). The gap stays as a pure
-  // visual break so the user reads two stacked sheets, but the
-  // chrome stays out of the way.
-  gap.setAttribute("data-page-number", String(next.pageNumber));
-  edge.appendChild(gap);
-
-  edge.appendChild(renderHeaderZone(next, nextHeader));
-  return edge;
-}
-
 function renderHeaderZone(chunk: PageChunk, part: HeaderFooterPart | undefined): HTMLElement {
   const el = renderZone("header", chunk, part);
   applyChunkGeometryStyle(el, chunk);
@@ -585,23 +663,46 @@ function renderZone(
     zone.setAttribute("data-part-target", part.target);
   }
 
-  const text = part ? extractZoneText(part) : "";
   const inner = document.createElement("div");
   inner.className = "pm-page-zone-content";
   inner.setAttribute("data-page-zone-content", slot);
 
   if (!part) {
     // Word's empty header/footer is invisible until the user hovers
-    // or double-clicks into the zone — there's no permanent banner.
-    // We mirror that: the placeholder text is exposed via a data
-    // attribute and only painted by CSS on hover so the page surface
-    // stays uncluttered when no part exists.
+    // or double-clicks into the zone. We mirror that: the
+    // placeholder text is exposed via a data attribute and only
+    // painted by CSS on hover. A double-click fires
+    // `PAGE_ZONE_MINT_EVENT` so the editor can dispatch
+    // `docx:create-header-footer-part` and the next render swaps
+    // this no-part shell for an editable zone (Word's
+    // "double-click-the-header" affordance).
     inner.classList.add("pm-page-zone-empty", "pm-page-zone-no-part");
-    inner.dataset.emptyText = `No ${slot} for this section`;
-    zone.title = `Documents without a ${slot} part are read-only here.`;
+    inner.dataset.emptyText = `Doppelklicken zum Bearbeiten der ${slot === "header" ? "Kopfzeile" : "Fußzeile"}`;
+    zone.title = `Doppelklick: ${slot === "header" ? "Kopfzeile" : "Fußzeile"} hinzufügen`;
+    const onMintDblClick = (ev: MouseEvent): void => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const detail: PageZoneMintDetail = { slot, pageNumber: chunk.pageNumber };
+      zone.dispatchEvent(
+        new CustomEvent<PageZoneMintDetail>(PAGE_ZONE_MINT_EVENT, {
+          detail,
+          bubbles: true,
+        })
+      );
+    };
+    zone.addEventListener("dblclick", onMintDblClick);
+    inner.addEventListener("dblclick", onMintDblClick);
     zone.appendChild(inner);
     return zone;
   }
+
+  // Build a leaf-id index over the original blocks so the commit
+  // path can recover the typed `PageNumberFieldLeaf` and
+  // `InlineImageDrawing` instances by their stable id when the
+  // user moves a token around inside the contenteditable.
+  const leafIndex = buildLeafIndex(part);
+  const originalSerialized = JSON.stringify(part.body);
+  inner.dataset.original = originalSerialized;
 
   // Word's in-place authoring: the inner content is contenteditable.
   // PM keeps the outer widget read-only and skips selection mapping
@@ -611,28 +712,28 @@ function renderZone(
   // interpret typing here as a doc edit.
   inner.setAttribute("contenteditable", "true");
   inner.spellcheck = true;
-  inner.dataset.original = text;
-  if (text.length === 0) {
+
+  const isEmptyPart = part.body.every((b) => b.kind === "paragraph" && paragraphIsBlank(b));
+  if (isEmptyPart) {
     inner.classList.add("pm-page-zone-empty");
     inner.dataset.placeholder = `Click to add ${slot} text`;
   } else {
-    inner.textContent = text;
+    populateZoneContent(inner, part);
   }
   zone.title = `Click to edit ${slot}`;
 
-  const commit = (rawText: string): void => {
-    const next = rawText
-      .replace(/\s+\n/g, "\n")
-      .replace(/\u00a0/g, " ")
-      .trimEnd();
-    if (next === inner.dataset.original) return;
-    inner.dataset.original = next;
+  const commit = (): void => {
+    const blocks = serializeZoneToBlocks(inner, leafIndex);
+    const serialized = JSON.stringify(blocks);
+    if (serialized === inner.dataset.original) return;
+    inner.dataset.original = serialized;
     const detail: PageZoneCommitDetail = {
       slot,
       partPath: part.partPath,
       target: part.target,
       pageNumber: chunk.pageNumber,
-      text: next,
+      text: blocksToPlainText(blocks),
+      blocks,
     };
     zone.dispatchEvent(
       new CustomEvent<PageZoneCommitDetail>(PAGE_ZONE_COMMIT_EVENT, {
@@ -644,6 +745,13 @@ function renderZone(
 
   inner.addEventListener("focus", () => {
     inner.classList.remove("pm-page-zone-empty");
+    if ((inner.textContent ?? "").length === 0 && inner.children.length === 0) {
+      // Seed an editable empty paragraph so the caret has a home.
+      const line = document.createElement("div");
+      line.className = "pm-page-zone-line";
+      line.appendChild(document.createElement("br"));
+      inner.appendChild(line);
+    }
     zone.classList.add("pm-page-zone-focused");
     const detail: PageZoneFocusDetail = {
       slot,
@@ -660,11 +768,11 @@ function renderZone(
   });
   inner.addEventListener("blur", () => {
     const value = inner.textContent ?? "";
-    if (value.length === 0) {
+    if (value.length === 0 && inner.querySelector(".pm-hf-token") === null) {
       inner.classList.add("pm-page-zone-empty");
     }
     zone.classList.remove("pm-page-zone-focused");
-    commit(value);
+    commit();
     const detail: PageZoneFocusDetail = {
       slot: null,
       target: null,
@@ -679,19 +787,21 @@ function renderZone(
     );
   });
   inner.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      ev.stopPropagation();
-      inner.blur();
-      return;
-    }
     if (ev.key === "Escape") {
       ev.preventDefault();
       ev.stopPropagation();
-      inner.textContent = inner.dataset.original ?? "";
+      // Restore from the serialized original snapshot.
+      inner.innerHTML = "";
+      const original = part;
+      populateZoneContent(inner, original);
+      inner.dataset.original = JSON.stringify(original.body);
       inner.blur();
       return;
     }
+    // Allow Enter to create a new paragraph line — Word does the
+    // same. We let the browser handle the actual splitting via the
+    // default contenteditable behaviour (browsers insert <div> or
+    // <br>; both serialise sanely in `serializeZoneToBlocks`).
     // Stop PM's keymap from interpreting our typing as a doc edit.
     ev.stopPropagation();
   });
@@ -703,15 +813,271 @@ function renderZone(
   return zone;
 }
 
-function extractZoneText(part: HeaderFooterPart): string {
-  // Surface the first non-empty paragraph's text. Page-number
-  // fields render as their canonical name (`PAGE`, `NUMPAGES`)
-  // wrapped in brackets so the user sees what's there even though
-  // the rendered value is dynamic.
+/* ── Rich H/F rendering helpers ────────────────────────────────── */
+
+interface LeafIndex {
+  fields: Map<string, PageNumberFieldLeaf>;
+  images: Map<string, InlineImageDrawing>;
+}
+
+function buildLeafIndex(part: HeaderFooterPart): LeafIndex {
+  const fields = new Map<string, PageNumberFieldLeaf>();
+  const images = new Map<string, InlineImageDrawing>();
   for (const block of part.body) {
     if (block.kind !== "paragraph") continue;
-    let acc = "";
     for (const inline of block.children) {
+      if (inline.kind !== "run") continue;
+      for (const c of inline.children) {
+        if (c.kind === "page-number-field") fields.set(c.id, c);
+        else if (c.kind === "drawing" && c.subkind === "inline-image") images.set(c.id, c);
+      }
+    }
+  }
+  return { fields, images };
+}
+
+function paragraphIsBlank(p: Paragraph): boolean {
+  for (const inline of p.children) {
+    if (inline.kind !== "run") continue;
+    for (const c of inline.children) {
+      if (c.kind === "text" && c.text.length > 0) return false;
+      if (c.kind === "page-number-field") return false;
+      if (c.kind === "drawing") return false;
+    }
+  }
+  return true;
+}
+
+function populateZoneContent(host: HTMLElement, part: HeaderFooterPart): void {
+  for (const block of part.body) {
+    if (block.kind !== "paragraph") continue;
+    host.appendChild(paragraphToLine(block, part));
+  }
+  if (host.children.length === 0) {
+    const line = document.createElement("div");
+    line.className = "pm-page-zone-line";
+    line.appendChild(document.createElement("br"));
+    host.appendChild(line);
+  }
+}
+
+function paragraphToLine(p: Paragraph, part: HeaderFooterPart): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "pm-page-zone-line";
+  line.dataset.paragraphId = p.id;
+  let hasContent = false;
+  for (const inline of p.children) {
+    if (inline.kind !== "run") continue;
+    for (const c of inline.children) {
+      if (c.kind === "text") {
+        if (c.text.length > 0) {
+          line.appendChild(document.createTextNode(c.text));
+          hasContent = true;
+        }
+      } else if (c.kind === "page-number-field") {
+        line.appendChild(renderFieldToken(c));
+        hasContent = true;
+      } else if (c.kind === "drawing" && c.subkind === "inline-image") {
+        line.appendChild(renderImageToken(c, part));
+        hasContent = true;
+      }
+    }
+  }
+  if (!hasContent) line.appendChild(document.createElement("br"));
+  return line;
+}
+
+function renderFieldToken(leaf: PageNumberFieldLeaf): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.className = "pm-hf-token pm-hf-field";
+  span.contentEditable = "false";
+  span.dataset.tokenKind = "page-number-field";
+  span.dataset.leafId = leaf.id;
+  span.dataset.field = leaf.field;
+  span.textContent = `[${leaf.field}]`;
+  span.title = leaf.field === "PAGE" ? "Page number field" : "Total pages field";
+  return span;
+}
+
+function renderImageToken(leaf: InlineImageDrawing, part: HeaderFooterPart): HTMLElement {
+  // We don't have access to the snapshot's media here without
+  // threading it through; the user-visible result is the alt text
+  // surrounded by a chip. The actual image bytes are still
+  // preserved on commit via the leaf-id round-trip.
+  const span = document.createElement("span");
+  span.className = "pm-hf-token pm-hf-image";
+  span.contentEditable = "false";
+  span.dataset.tokenKind = "inline-image";
+  span.dataset.leafId = leaf.id;
+  span.dataset.relId = leaf.relId;
+  span.dataset.partPath = part.partPath;
+  span.dataset.cx = String(leaf.cx);
+  span.dataset.cy = String(leaf.cy);
+  const label = leaf.descr ?? leaf.name ?? "image";
+  span.textContent = `[${label}]`;
+  span.title = `${leaf.name ?? "Image"} (${Math.round(leaf.cx / 9525)} × ${Math.round(leaf.cy / 9525)} px)`;
+  return span;
+}
+
+/**
+ * Walk the contenteditable surface and rebuild a `BlockNode[]` for
+ * the part's body. Each top-level child element (or text run) is
+ * one paragraph; inside a paragraph, text nodes become
+ * {@link TextLeaf}s, `.pm-hf-field` spans become
+ * {@link PageNumberFieldLeaf}s (recovered by `data-leaf-id` from
+ * the index when present), and `.pm-hf-image` spans become
+ * {@link InlineImageDrawing}s (also recovered by id).
+ */
+function serializeZoneToBlocks(host: HTMLElement, leafIndex: LeafIndex): BlockNode[] {
+  const lines = collectLines(host);
+  const blocks: BlockNode[] = [];
+  for (const line of lines) {
+    const para = lineToParagraph(line, leafIndex);
+    blocks.push(para);
+  }
+  if (blocks.length === 0) {
+    blocks.push({
+      kind: "paragraph",
+      id: synthId("para"),
+      properties: {},
+      children: [],
+    });
+  }
+  return blocks;
+}
+
+function collectLines(host: HTMLElement): HTMLElement[] {
+  const lines: HTMLElement[] = [];
+  // The browser may produce `<div>`s, `<p>`s, `<br>`s mixed at the
+  // top level. We treat each top-level Element child as its own
+  // line; text nodes and inline elements floating loose are merged
+  // into the previous line (or a fresh first line).
+  let current: HTMLElement | null = null;
+  for (const node of Array.from(host.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "br") {
+        if (current === null) {
+          const line = document.createElement("div");
+          lines.push(line);
+          current = line;
+        }
+        // BR ends the current line.
+        current = null;
+      } else if (tag === "div" || tag === "p") {
+        lines.push(el);
+        current = null;
+      } else {
+        if (current === null) {
+          current = document.createElement("div");
+          lines.push(current);
+        }
+        current.appendChild(el.cloneNode(true));
+      }
+    } else if (node.nodeType === Node.TEXT_NODE) {
+      if (current === null) {
+        current = document.createElement("div");
+        lines.push(current);
+      }
+      current.appendChild(node.cloneNode(true));
+    }
+  }
+  return lines;
+}
+
+function lineToParagraph(line: HTMLElement, leafIndex: LeafIndex): Paragraph {
+  const id = line.dataset?.paragraphId ?? synthId("para");
+  const children: InlineNode[] = [];
+  let textBuffer: string[] = [];
+  const flushText = (): void => {
+    if (textBuffer.length === 0) return;
+    const joined = textBuffer.join("");
+    if (joined.length === 0) {
+      textBuffer = [];
+      return;
+    }
+    const leaf: TextLeaf = {
+      kind: "text",
+      id: synthId("text"),
+      text: joined,
+      xmlSpacePreserve: /^\s|\s$/.test(joined),
+    };
+    const run: Run = {
+      kind: "run",
+      id: synthId("run"),
+      properties: {},
+      children: [leaf],
+    };
+    children.push(run);
+    textBuffer = [];
+  };
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      textBuffer.push(node.textContent ?? "");
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const kind = el.dataset?.tokenKind;
+    if (kind === "page-number-field") {
+      flushText();
+      const id = el.dataset.leafId ?? "";
+      const original = leafIndex.fields.get(id);
+      const field = (el.dataset.field === "NUMPAGES" ? "NUMPAGES" : "PAGE") as "PAGE" | "NUMPAGES";
+      const fieldLeaf: PageNumberFieldLeaf = original ?? {
+        kind: "page-number-field",
+        id: synthId("field"),
+        field,
+        instr: ` ${field} \\* MERGEFORMAT `,
+      };
+      const fieldRun: Run = {
+        kind: "run",
+        id: synthId("run"),
+        properties: {},
+        children: [fieldLeaf as RunChild],
+      };
+      children.push(fieldRun);
+      return;
+    }
+    if (kind === "inline-image") {
+      flushText();
+      const id = el.dataset.leafId ?? "";
+      const original = leafIndex.images.get(id);
+      if (original) {
+        const imgRun: Run = {
+          kind: "run",
+          id: synthId("run"),
+          properties: {},
+          children: [original as RunChild],
+        };
+        children.push(imgRun);
+      }
+      return;
+    }
+    if (el.tagName.toLowerCase() === "br") {
+      // mid-line BR — collapse to a space so the paragraph's
+      // flat-text length stays in sync with what the user sees.
+      textBuffer.push(" ");
+      return;
+    }
+    for (const c of Array.from(el.childNodes)) visit(c);
+  };
+  for (const c of Array.from(line.childNodes)) visit(c);
+  flushText();
+  return {
+    kind: "paragraph",
+    id,
+    properties: {},
+    children,
+  };
+}
+
+function blocksToPlainText(blocks: ReadonlyArray<BlockNode>): string {
+  for (const b of blocks) {
+    if (b.kind !== "paragraph") continue;
+    let acc = "";
+    for (const inline of b.children) {
       if (inline.kind !== "run") continue;
       for (const c of inline.children) {
         if (c.kind === "text") acc += c.text;
@@ -721,6 +1087,12 @@ function extractZoneText(part: HeaderFooterPart): string {
     if (acc.trim().length > 0) return acc;
   }
   return "";
+}
+
+let synthCounter = 0;
+function synthId(prefix: string): string {
+  synthCounter += 1;
+  return `${prefix}-mint-${Date.now().toString(36)}-${synthCounter.toString(36)}`;
 }
 
 /**

@@ -405,6 +405,13 @@ function XlsxEditorInner({
   const [formulaDraft, setFormulaDraft] = useState("");
   const [formulaFocused, setFormulaFocused] = useState(false);
   const formulaInputRef = useRef<HTMLInputElement | null>(null);
+  // Sheet that was active when the user entered the formula bar. While
+  // editing, clicking another sheet tab navigates the grid view but
+  // keeps the formula's destination cell pinned to this sheet, and any
+  // cell picks on a different sheet are inserted as `Sheet!A1` refs
+  // (Excel "point mode" parity). Cleared on commit / cancel.
+  const [formulaOriginSheet, setFormulaOriginSheet] = useState<string | null>(null);
+  const formulaOriginSheetRef = useRef<string | null>(null);
   // Dedicated hidden <input type=file> for the toolbar's "Insert image"
   // affordance — kept separate from the workbook open input so the
   // accept= filter doesn't bleed across the two flows.
@@ -697,6 +704,9 @@ function XlsxEditorInner({
     stylesRef.current = snapshot?.root.styles ?? null;
     snapshotRef.current = snapshot ?? null;
   }, [snapshot]);
+  useEffect(() => {
+    formulaOriginSheetRef.current = formulaOriginSheet;
+  }, [formulaOriginSheet]);
 
   const selectedCell = useMemo(() => {
     if (!activeSheet || !selection) return null;
@@ -818,6 +828,15 @@ function XlsxEditorInner({
   // subsequent Shift-click / drag can extend the ref into A1:C3.
   const pendingRefAnchorRef = useRef<CellPos | null>(null);
 
+  // Wrap a sheet name in single quotes and double inner apostrophes when
+  // it isn't a bare A1-safe identifier (Excel quoting parity, e.g.
+  // `'My Sheet'!A1`, `'Bob''s'!B2`).
+  const formatSheetPrefixedRef = useCallback((sheetName: string, body: string): string => {
+    const needsQuoting = /[^A-Za-z0-9_.]/.test(sheetName) || /^\d/.test(sheetName);
+    const quoted = needsQuoting ? `'${sheetName.replace(/'/g, "''")}'` : sheetName;
+    return `${quoted}!${body}`;
+  }, []);
+
   const insertRefAtCaret = useCallback(
     (ref: string) => {
       const span = pendingRefSpanRef.current;
@@ -899,6 +918,15 @@ function XlsxEditorInner({
       // cell) is intentionally NOT moved here — Excel keeps the
       // original cell as the destination while the user picks refs.
       if (formulaEditing) {
+        // When the active sheet differs from where the formula edit
+        // started, qualify the picked ref with `Sheet!` so the
+        // formula points at the cell on the *other* sheet (Excel's
+        // sheet-tab-during-edit behaviour).
+        const origin = formulaOriginSheetRef.current;
+        const currentSheet = activeSheetRef.current?.name ?? null;
+        const crossSheet = origin !== null && currentSheet !== null && currentSheet !== origin;
+        const qualify = (body: string): string =>
+          crossSheet && currentSheet ? formatSheetPrefixedRef(currentSheet, body) : body;
         if (opts?.extend && pendingRefSpanRef.current) {
           // Build "anchor:focus" from the *first* clicked ref (stored
           // implicitly in pendingRefAnchorRef) and the new pos.
@@ -907,12 +935,12 @@ function XlsxEditorInner({
             anchor,
             focus: pos,
           };
-          const ref = isSingle(sel) ? formatA1(sel.anchor) : formatRange(selectionToRange(sel));
-          insertRefAtCaret(ref);
+          const body = isSingle(sel) ? formatA1(sel.anchor) : formatRange(selectionToRange(sel));
+          insertRefAtCaret(qualify(body));
         } else {
           pendingRefSpanRef.current = null;
           pendingRefAnchorRef.current = pos;
-          insertRefAtCaret(formatA1(pos));
+          insertRefAtCaret(qualify(formatA1(pos)));
         }
         return;
       }
@@ -959,7 +987,7 @@ function XlsxEditorInner({
       // user's mouseup completes.
       surfaceRef.current?.focus({ preventScroll: true });
     },
-    [formulaEditing, insertRefAtCaret]
+    [formulaEditing, formatSheetPrefixedRef, insertRefAtCaret]
   );
 
   // Grid-level keyboard handler: when nothing else has focus, a
@@ -1621,6 +1649,7 @@ function XlsxEditorInner({
         if (!fi) return;
         setFormulaDraft(derivedFormulaDisplay);
         setFormulaFocused(true);
+        if (activeSheet) setFormulaOriginSheet(activeSheet.name);
         requestAnimationFrame(() => {
           fi.focus();
           const len = fi.value.length;
@@ -1869,6 +1898,7 @@ function XlsxEditorInner({
       e.preventDefault();
       setFormulaDraft(e.key === " " ? "" : e.key);
       setFormulaFocused(true);
+      if (activeSheet) setFormulaOriginSheet(activeSheet.name);
       requestAnimationFrame(() => {
         const fi = formulaInputRef.current;
         if (!fi) return;
@@ -1924,13 +1954,18 @@ function XlsxEditorInner({
     (move: { row: number; col: number } = { row: 1, col: 0 }) => {
       if (!activeSheet || !selection) return;
       // Formula-bar Enter applies to the *anchor* cell, mirroring Excel
-      // (the moving end of the range doesn't receive the value).
+      // (the moving end of the range doesn't receive the value). When
+      // the user navigated to another sheet during the edit (point
+      // mode), commit to — and return to — the origin sheet.
       const anchor = selection.anchor;
       const ref = formatA1({ row: anchor.row, col: anchor.col });
-      void dispatchCellEdit(activeSheet.name, ref, formulaDraft);
+      const targetSheet = formulaOriginSheetRef.current ?? activeSheet.name;
+      void dispatchCellEdit(targetSheet, ref, formulaDraft);
       setFormulaFocused(false);
       setFormulaDraft("");
+      setFormulaOriginSheet(null);
       formulaInputRef.current?.blur();
+      if (targetSheet !== activeSheet.name) setActiveSheetName(targetSheet);
       // Move the selection in Excel-style: Enter→down, Shift+Enter→up,
       // Tab→right, Shift+Tab→left. Caller passes the delta.
       const next: CellPos = {
@@ -4081,6 +4116,12 @@ function XlsxEditorInner({
               onOpenMoreBorders={() => setFormatCellsTab("border")}
               onActivateFormatPainter={activateFormatPainter}
               formatPainterActive={formatPainter !== null}
+              onOpenInsertChart={() => setInsertChartOpen(true)}
+              onOpenInsertPivot={() => setInsertPivotOpen(true)}
+              selectedChartId={selectedChartId}
+              onEditSelectedChart={() => {
+                if (selectedChartId !== null) setEditChartId(selectedChartId);
+              }}
             />
           ) : (
             // Placeholder before the workbook loads so opening the
@@ -4257,13 +4298,28 @@ function XlsxEditorInner({
                         // clobbered by the cell's prior value.
                         if (formulaDraft === "") setFormulaDraft(derivedFormulaDisplay);
                         setFormulaFocused(true);
+                        // Pin the origin sheet on the *first* focus of an
+                        // edit session — re-focus from a sheet-tab roundtrip
+                        // must not re-pin to the new sheet.
+                        if (formulaOriginSheetRef.current === null && activeSheet) {
+                          setFormulaOriginSheet(activeSheet.name);
+                        }
                         requestAnimationFrame(captureCaret);
                       }}
                       onBlur={() => {
+                        // Clicking outside the formula bar (e.g. a toolbar
+                        // button) cancels the in-flight edit; restore the
+                        // origin sheet view so the user lands back where
+                        // they started.
+                        const origin = formulaOriginSheetRef.current;
                         setFormulaFocused(false);
                         setFormulaDraft("");
+                        setFormulaOriginSheet(null);
                         pendingRefSpanRef.current = null;
                         pendingRefAnchorRef.current = null;
+                        if (origin && activeSheetRef.current?.name !== origin) {
+                          setActiveSheetName(origin);
+                        }
                       }}
                       onKeyDown={(e) => {
                         const hasSuggestions = suggestionMatches.length > 0;
@@ -4295,10 +4351,15 @@ function XlsxEditorInner({
                           onFormulaSubmit({ row: 0, col: e.shiftKey ? -1 : 1 });
                         } else if (e.key === "Escape") {
                           e.preventDefault();
+                          const origin = formulaOriginSheetRef.current;
                           setFormulaFocused(false);
                           setFormulaDraft("");
+                          setFormulaOriginSheet(null);
                           pendingRefSpanRef.current = null;
                           pendingRefAnchorRef.current = null;
+                          if (origin && activeSheetRef.current?.name !== origin) {
+                            setActiveSheetName(origin);
+                          }
                           formulaInputRef.current?.blur();
                           surfaceRef.current?.focus();
                         } else {
@@ -4447,6 +4508,19 @@ function XlsxEditorInner({
                     }
                     setActiveSheetName(name);
                     setExtraAreas([]);
+                    // While the formula bar is in point mode, switching
+                    // tabs should not steal focus or commit — keep the
+                    // bar focused so the next cell click inserts a
+                    // sheet-qualified ref. The pending ref span is reset
+                    // so a click on the new sheet starts a fresh ref
+                    // (clicks across sheets cannot extend a range).
+                    if (formulaEditing) {
+                      pendingRefSpanRef.current = null;
+                      pendingRefAnchorRef.current = null;
+                      requestAnimationFrame(() => {
+                        formulaInputRef.current?.focus();
+                      });
+                    }
                   }}
                   onRename={(currentName, nextName) => onRenameSheet(currentName, nextName)}
                   onDelete={(name) => onDeleteSheet(name)}

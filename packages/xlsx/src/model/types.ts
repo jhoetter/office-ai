@@ -108,6 +108,20 @@ export interface XlsxWorkbook {
    */
   readonly date1904: boolean;
   /**
+   * Verbatim `<workbookProtection …/>` element captured from
+   * `xl/workbook.xml`, when present. Mirrors the per-sheet
+   * `Sheet.sheetProtectionXml` opaque slot. Mutated by
+   * `xlsx:set-workbook-protection` and re-injected on dirty save.
+   */
+  readonly workbookProtectionXml?: string;
+  /**
+   * Verbatim `<calcPr …/>` element captured from `xl/workbook.xml`,
+   * when present. Round-trips byte-identical, except when
+   * `xlsx:set-calc-mode` rewrites attributes such as `calcMode`,
+   * `calcOnSave`, or `iterate`.
+   */
+  readonly calcPrXml?: string;
+  /**
    * Original namespace declarations + non-content root attributes from
    * `xl/workbook.xml`. Re-emitted verbatim when the workbook part is
    * dirty.

@@ -17,10 +17,11 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { DocxAgent } from "@officeai/docx";
-import { XlsxAgent, diffXlsxSnapshots } from "@officeai/xlsx";
-import { PptxAgent } from "@officeai/pptx";
+import { DocxAgent, docxActions } from "@officeai/docx";
+import { XlsxAgent, diffXlsxSnapshots, xlsxActions } from "@officeai/xlsx";
+import { PptxAgent, pptxActions } from "@officeai/pptx";
 import { PdfAgent } from "@officeai/pdf";
+import { registerActionsAsMcpTools, type McpDispatchContext } from "./actions-to-mcp.js";
 import {
   addPageNumbers,
   addWatermark,
@@ -509,6 +510,7 @@ export function createMcpServer(): McpServer {
 
   registerXlsxTools(server);
   registerPdfTools(server);
+  registerCatalogueActionTools(server);
 
   // ── pptx_load ─────────────────────────────────────────────────────────
   server.registerTool(
@@ -1939,6 +1941,142 @@ function registerPdfMutationTool(
       }
     }
   );
+}
+
+/**
+ * Bridge each format's `ActionDescriptor[]` into the generic
+ * `registerActionsAsMcpTools` adapter. Every catalogue entry that
+ * declares `surfaces.includes("cli")`, has a non-null `commandType`,
+ * and supplies `args` + `buildPayload` becomes an MCP tool of the
+ * form `<format>_<verb>_<noun>` (e.g. `docx_delete_row`).
+ *
+ * Hand-rolled tools registered earlier in `createMcpServer` stay
+ * authoritative because the adapter doesn't overwrite existing tools
+ * with the same name — but no overlap should exist, since the read
+ * tools have `commandType: null` and are skipped here.
+ */
+function registerCatalogueActionTools(server: McpServer): void {
+  registerActionsAsMcpTools(server, docxActions, dispatchContextFor("docx"));
+  registerActionsAsMcpTools(server, xlsxActions, dispatchContextFor("xlsx"));
+  registerActionsAsMcpTools(server, pptxActions, dispatchContextFor("pptx"));
+}
+
+function dispatchContextFor(format: "docx" | "xlsx" | "pptx"): McpDispatchContext {
+  switch (format) {
+    case "docx":
+      return {
+        format,
+        lookup: (handle) => lookupAgent(handle),
+        async dispatch({ handle, agent, commandType, payload, outPath, source, approve }) {
+          const docxAgent = agent as DocxAgent;
+          const mut = await docxAgent.applyCommand({
+            type: commandType,
+            payload,
+            source,
+          } as Parameters<DocxAgent["applyCommand"]>[0]);
+          if (mut.status === "rejected") {
+            throw new Error(
+              `${commandType} rejected: ${mut.rejection?.code ?? "unknown"} — ${mut.rejection?.message ?? ""}`
+            );
+          }
+          if (approve && mut.status === "pending") {
+            docxAgent.approveMutation(mut.id);
+          }
+          let wrote: string | null = null;
+          if (outPath) {
+            const target = resolve(outPath);
+            const buf = Buffer.from(await docxAgent.exportFile());
+            await writeFile(target, buf);
+            wrote = target;
+          }
+          return {
+            handle,
+            commandType,
+            mutationId: mut.id,
+            status: approve ? "approved" : mut.status,
+            revision: docxAgent.getSnapshot().revision,
+            wrote,
+          };
+        },
+      };
+    case "xlsx":
+      return {
+        format,
+        lookup: (handle) => lookupXlsxAgent(handle),
+        async dispatch({ handle, agent, commandType, payload, outPath, source, approve }) {
+          const xlsxAgent = agent as XlsxAgent;
+          const mut = await xlsxAgent.applyCommand({
+            type: commandType,
+            payload,
+            source,
+          } as Parameters<XlsxAgent["applyCommand"]>[0]);
+          if (mut.status === "rejected") {
+            throw new Error(
+              `${commandType} rejected: ${mut.rejection?.code ?? "unknown"} — ${mut.rejection?.message ?? ""}`
+            );
+          }
+          if (approve && mut.status === "pending") {
+            xlsxAgent.approveMutation(mut.id);
+          }
+          let wrote: string | null = null;
+          if (outPath) {
+            const target = resolve(outPath);
+            const buf = Buffer.from(await xlsxAgent.exportFile());
+            await writeFile(target, buf);
+            wrote = target;
+          }
+          return {
+            handle,
+            commandType,
+            mutationId: mut.id,
+            status: approve ? "approved" : mut.status,
+            revision: xlsxAgent.getSnapshot().revision,
+            wrote,
+          };
+        },
+      };
+    case "pptx":
+      return {
+        format,
+        lookup: (handle) => lookupPptxAgent(handle),
+        async dispatch({ handle, agent, commandType, payload, outPath, source, approve }) {
+          const pptxAgent = agent as PptxAgent;
+          const mut = await pptxAgent.applyCommand({
+            type: commandType,
+            payload,
+            source,
+          } as Parameters<PptxAgent["applyCommand"]>[0]);
+          if (mut.status === "rejected") {
+            throw new Error(
+              `${commandType} rejected: ${mut.rejection?.code ?? "unknown"} — ${mut.rejection?.message ?? ""}`
+            );
+          }
+          if (approve && mut.status === "pending") {
+            pptxAgent.approveMutation(mut.id);
+          }
+          let wrote: string | null = null;
+          if (outPath) {
+            const target = resolve(outPath);
+            const buf = Buffer.from(await pptxAgent.exportFile());
+            await writeFile(target, buf);
+            wrote = target;
+          }
+          return {
+            handle,
+            commandType,
+            mutationId: mut.id,
+            status: approve ? "approved" : mut.status,
+            revision: pptxAgent.getSnapshot().revision,
+            wrote,
+          };
+        },
+      };
+    default: {
+      const _exhaustive: never = format;
+      void _exhaustive;
+      throw new Error(`unknown format: ${String(format)}`);
+    }
+  }
 }
 
 /**

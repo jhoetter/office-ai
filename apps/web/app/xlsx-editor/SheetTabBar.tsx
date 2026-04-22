@@ -149,6 +149,13 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
                   type="button"
                   data-testid={`sheet-tab-${s.name}`}
                   draggable
+                  // Skip default mousedown focus on the tab button so
+                  // that clicking a tab while the formula bar is in
+                  // Excel-style "point mode" does not blur the bar
+                  // (which would otherwise commit/cancel the in-flight
+                  // edit). The drag handlers below still fire because
+                  // dragstart runs after mousedown.
+                  onMouseDown={(e) => e.preventDefault()}
                   onDragStart={(e) => {
                     dragName.current = s.name;
                     e.dataTransfer.effectAllowed = "move";

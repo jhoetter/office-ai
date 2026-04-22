@@ -38,14 +38,16 @@ export function serializeHeaderFooterParts(
         `header/footer part "${partPath}" marked dirty but missing from snapshot`
       );
     }
-    if (!container.has(partPath)) {
-      throw new DocxSerializeError(
-        "header-footer-missing",
-        `header/footer part "${partPath}" missing from container`
-      );
-    }
     const xml = serializeHeaderFooterXml(part, serializeBlock);
-    container.writeText(partPath, xml);
+    if (container.has(partPath)) {
+      container.writeText(partPath, xml);
+    } else {
+      // The part is brand-new (e.g. minted by `docx:create-header-footer-part`
+      // when the user double-clicks an empty header/footer zone). Add it to
+      // the container; the matching content-type override is registered by
+      // `ensureMediaContentTypes` in `serialize.ts` on the same dirty pass.
+      container.addPart(partPath, new TextEncoder().encode(xml));
+    }
   }
 }
 

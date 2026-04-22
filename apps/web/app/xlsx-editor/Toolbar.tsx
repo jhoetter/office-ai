@@ -20,6 +20,9 @@ import {
   SquareDashed,
   Grid3x3,
   Paintbrush,
+  BarChart3,
+  Sigma,
+  Pencil,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { TextFormatBar, cn } from "@officeai/ui";
@@ -28,7 +31,7 @@ import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx
 import { flattenCellXf } from "@officeai/xlsx";
 import { NUMBER_FORMAT_PRESETS, type NumberFormatPresetId } from "./styles";
 import type { Selection } from "./selection";
-import { ToolbarMenu, ToolbarRow } from "../lib/shell";
+import { Ribbon, ToolbarMenu, type RibbonCatalogue } from "../lib/shell";
 
 export interface ToolbarProps {
   readonly disabled: boolean;
@@ -129,6 +132,24 @@ export interface ToolbarProps {
    */
   readonly onActivateFormatPainter: (sticky: boolean) => void;
   readonly formatPainterActive: boolean;
+  /**
+   * Open the Insert Chart dialog. Disabled when no selection exists.
+   */
+  readonly onOpenInsertChart: () => void;
+  /**
+   * Open the Insert PivotTable dialog. Disabled when no selection
+   * exists.
+   */
+  readonly onOpenInsertPivot: () => void;
+  /**
+   * The currently selected chart id on the active sheet, or `null`.
+   * Drives the contextual "Diagrammtools" tab.
+   */
+  readonly selectedChartId: string | null;
+  /**
+   * Open the chart editor for the currently selected chart.
+   */
+  readonly onEditSelectedChart: () => void;
 }
 
 /**
@@ -164,36 +185,7 @@ export type BorderPreset =
  * counterpart in DOCX or PPTX.
  */
 export function Toolbar(props: ToolbarProps): ReactNode {
-  const {
-    disabled,
-    anchorStyleId,
-    styles,
-    selection,
-    onApply,
-    textFormatProvider,
-    textFormatActive,
-    canMerge,
-    canUnmerge,
-    onMerge,
-    onUnmerge,
-    canUndo,
-    canRedo,
-    onUndo,
-    onRedo,
-    onTextToColumns,
-    canTextToColumns,
-    onAddComment,
-    onToggleFilter,
-    filterActive,
-    onInsertImage,
-    onFreeze,
-    freeze,
-    freezeAnchor,
-    onApplyBorderPreset,
-    onOpenMoreBorders,
-    onActivateFormatPainter,
-    formatPainterActive,
-  } = props;
+  const { disabled, anchorStyleId, styles, selection, onApply, textFormatProvider, textFormatActive } = props;
 
   // C6 — Last-used border preset, so the icon-side click re-applies
   // it (Excel parity). Defaults to "all" since that's what the icon
@@ -229,170 +221,332 @@ export function Toolbar(props: ToolbarProps): ReactNode {
     [apply]
   );
 
-  return (
-    <ToolbarRow ariaLabel="Spreadsheet toolbar" testId="xlsx-toolbar">
-      <ActionBtn
-        icon={<Undo2 size={14} />}
-        label="Undo (⌘Z)"
-        testId="action-undo"
-        disabled={!canUndo}
-        onClick={onUndo}
-      />
-      <ActionBtn
-        icon={<Redo2 size={14} />}
-        label="Redo (⇧⌘Z)"
-        testId="action-redo"
-        disabled={!canRedo}
-        onClick={onRedo}
-      />
+  const ctx: XlsxRibbonCtx = {
+    props,
+    effective,
+    lastBorder,
+    setLastBorder,
+    onAlign,
+    onNumberFormat,
+  };
 
-      <button
-        type="button"
-        data-testid="action-format-painter"
-        title="Format Painter (double-click for sticky)"
-        aria-label="Format Painter"
-        aria-pressed={formatPainterActive}
-        disabled={disabled}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => onActivateFormatPainter(false)}
-        onDoubleClick={() => onActivateFormatPainter(true)}
-        className={cn(
-          "inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-40",
-          formatPainterActive && "bg-accent-soft text-accent"
-        )}
-      >
-        <Paintbrush size={14} />
-      </button>
-
-      <Divider />
-
-      <TextFormatBar
-        provider={textFormatProvider}
-        active={textFormatActive}
-        disabled={disabled}
-        testIdPrefix="format"
-      />
-
-      <Divider />
-
-      <ToggleBtn
-        icon={<AlignLeft size={14} />}
-        label="Align left"
-        testId="format-align-left"
-        active={effective.alignment?.horizontal === "left"}
-        disabled={disabled}
-        onClick={() => onAlign("left")}
-      />
-      <ToggleBtn
-        icon={<AlignCenter size={14} />}
-        label="Align center"
-        testId="format-align-center"
-        active={effective.alignment?.horizontal === "center"}
-        disabled={disabled}
-        onClick={() => onAlign("center")}
-      />
-      <ToggleBtn
-        icon={<AlignRight size={14} />}
-        label="Align right"
-        testId="format-align-right"
-        active={effective.alignment?.horizontal === "right"}
-        disabled={disabled}
-        onClick={() => onAlign("right")}
-      />
-
-      <Divider />
-
-      <BordersMenu
-        disabled={disabled}
-        last={lastBorder}
-        onApply={(preset) => {
-          if (preset !== "none") setLastBorder(preset);
-          onApplyBorderPreset(preset);
-        }}
-        onOpenMore={onOpenMoreBorders}
-      />
-
-      <Divider />
-
-      <ActionBtn
-        icon={<Merge size={14} />}
-        label="Merge cells"
-        testId="format-merge"
-        disabled={disabled || !canMerge}
-        onClick={onMerge}
-      />
-      <ActionBtn
-        icon={<Split size={14} />}
-        label="Unmerge cells"
-        testId="format-unmerge"
-        disabled={disabled || !canUnmerge}
-        onClick={onUnmerge}
-      />
-
-      <Divider />
-
-      <ActionBtn
-        icon={<TableProperties size={14} />}
-        label="Text to Columns"
-        testId="data-text-to-columns"
-        disabled={disabled || !canTextToColumns}
-        onClick={onTextToColumns}
-      />
-
-      <ToggleBtn
-        icon={<Filter size={14} />}
-        label={filterActive ? "Remove AutoFilter" : "Apply AutoFilter"}
-        testId="data-filter-toggle"
-        active={filterActive}
-        disabled={disabled}
-        onClick={onToggleFilter}
-      />
-
-      <Divider />
-
-      <ActionBtn
-        icon={<MessageSquarePlus size={14} />}
-        label="Add comment"
-        testId="action-add-comment"
-        disabled={disabled || !selection}
-        onClick={onAddComment}
-      />
-
-      <ActionBtn
-        icon={<ImageIcon size={14} />}
-        label="Insert image"
-        testId="action-insert-image"
-        disabled={disabled}
-        onClick={onInsertImage}
-      />
-
-      <FreezeMenu disabled={disabled} freeze={freeze} anchor={freezeAnchor} onFreeze={onFreeze} />
-
-      <Divider />
-
-      <select
-        data-testid="format-number"
-        aria-label="Number format"
-        disabled={disabled}
-        defaultValue=""
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v) onNumberFormat(v as NumberFormatPresetId);
-          e.currentTarget.value = "";
-        }}
-        className="h-7 rounded border border-divider bg-background px-1 text-xs text-foreground disabled:opacity-50"
-      >
-        <option value="" disabled>
-          Format…
-        </option>
-        {NUMBER_FORMAT_PRESETS.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.label}
-          </option>
-        ))}
-      </select>
-    </ToolbarRow>
+  const catalogue = useMemo<RibbonCatalogue<XlsxRibbonCtx>>(
+    () => buildXlsxRibbonCatalogue({ disabled, textFormatProvider, textFormatActive }),
+    [disabled, textFormatProvider, textFormatActive]
   );
+
+  return <Ribbon ariaLabel="Spreadsheet toolbar" testId="xlsx-toolbar" catalogue={catalogue} ctx={ctx} />;
+}
+
+interface XlsxRibbonCtx {
+  readonly props: ToolbarProps;
+  readonly effective: EffectiveStyle;
+  readonly lastBorder: BorderPreset;
+  readonly setLastBorder: (preset: BorderPreset) => void;
+  readonly onAlign: (h: "left" | "center" | "right") => void;
+  readonly onNumberFormat: (id: NumberFormatPresetId) => void;
+}
+
+interface XlsxRibbonOptions {
+  readonly disabled: boolean;
+  readonly textFormatProvider: TextFormatProvider;
+  readonly textFormatActive: ActiveTextFormat;
+}
+
+/**
+ * XLSX subset-pragmatic catalogue. Tab names mirror Excel DE:
+ * Start / Einfügen / Daten / Ansicht. Diagrammtools auto-activates
+ * when a chart is selected on the sheet.
+ */
+function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<XlsxRibbonCtx> {
+  const { disabled, textFormatProvider, textFormatActive } = opts;
+  return {
+    defaultTabId: "start",
+    tabs: [
+      {
+        id: "start",
+        label: "Start",
+        groups: [
+          {
+            id: "undo",
+            label: "Rückgängig",
+            render: ({ props }) => (
+              <>
+                <ActionBtn
+                  icon={<Undo2 size={14} />}
+                  label="Undo (⌘Z)"
+                  testId="action-undo"
+                  disabled={!props.canUndo}
+                  onClick={props.onUndo}
+                />
+                <ActionBtn
+                  icon={<Redo2 size={14} />}
+                  label="Redo (⇧⌘Z)"
+                  testId="action-redo"
+                  disabled={!props.canRedo}
+                  onClick={props.onRedo}
+                />
+              </>
+            ),
+          },
+          {
+            id: "clipboard",
+            label: "Zwischenablage",
+            render: ({ props }) => (
+              <button
+                type="button"
+                data-testid="action-format-painter"
+                title="Format Painter (double-click for sticky)"
+                aria-label="Format Painter"
+                aria-pressed={props.formatPainterActive}
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => props.onActivateFormatPainter(false)}
+                onDoubleClick={() => props.onActivateFormatPainter(true)}
+                className={cn(
+                  "inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-hover disabled:opacity-40",
+                  props.formatPainterActive && "bg-accent-soft text-accent"
+                )}
+              >
+                <Paintbrush size={14} />
+              </button>
+            ),
+          },
+          {
+            id: "font",
+            label: "Schriftart",
+            render: () => (
+              <TextFormatBar
+                provider={textFormatProvider}
+                active={textFormatActive}
+                disabled={disabled}
+                testIdPrefix="format"
+              />
+            ),
+          },
+          {
+            id: "alignment",
+            label: "Ausrichtung",
+            render: ({ effective, onAlign, props }) => (
+              <>
+                <ToggleBtn
+                  icon={<AlignLeft size={14} />}
+                  label="Align left"
+                  testId="format-align-left"
+                  active={effective.alignment?.horizontal === "left"}
+                  disabled={disabled}
+                  onClick={() => onAlign("left")}
+                />
+                <ToggleBtn
+                  icon={<AlignCenter size={14} />}
+                  label="Align center"
+                  testId="format-align-center"
+                  active={effective.alignment?.horizontal === "center"}
+                  disabled={disabled}
+                  onClick={() => onAlign("center")}
+                />
+                <ToggleBtn
+                  icon={<AlignRight size={14} />}
+                  label="Align right"
+                  testId="format-align-right"
+                  active={effective.alignment?.horizontal === "right"}
+                  disabled={disabled}
+                  onClick={() => onAlign("right")}
+                />
+                <ActionBtn
+                  icon={<Merge size={14} />}
+                  label="Merge cells"
+                  testId="format-merge"
+                  disabled={disabled || !props.canMerge}
+                  onClick={props.onMerge}
+                />
+                <ActionBtn
+                  icon={<Split size={14} />}
+                  label="Unmerge cells"
+                  testId="format-unmerge"
+                  disabled={disabled || !props.canUnmerge}
+                  onClick={props.onUnmerge}
+                />
+              </>
+            ),
+          },
+          {
+            id: "borders",
+            label: "Rahmen",
+            render: ({ lastBorder, setLastBorder, props }) => (
+              <BordersMenu
+                disabled={disabled}
+                last={lastBorder}
+                onApply={(preset) => {
+                  if (preset !== "none") setLastBorder(preset);
+                  props.onApplyBorderPreset(preset);
+                }}
+                onOpenMore={props.onOpenMoreBorders}
+              />
+            ),
+          },
+          {
+            id: "number",
+            label: "Zahl",
+            render: ({ onNumberFormat }) => (
+              <select
+                data-testid="format-number"
+                aria-label="Number format"
+                disabled={disabled}
+                defaultValue=""
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v) onNumberFormat(v as NumberFormatPresetId);
+                  e.currentTarget.value = "";
+                }}
+                className="h-7 rounded border border-divider bg-background px-1 text-xs text-foreground disabled:opacity-50"
+              >
+                <option value="" disabled>
+                  Format…
+                </option>
+                {NUMBER_FORMAT_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            ),
+          },
+        ],
+      },
+      {
+        id: "insert",
+        label: "Einfügen",
+        groups: [
+          {
+            id: "tables",
+            label: "Tabellen",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<Sigma size={14} />}
+                label="Insert PivotTable"
+                testId="action-insert-pivot"
+                disabled={disabled || !props.selection}
+                onClick={props.onOpenInsertPivot}
+              />
+            ),
+          },
+          {
+            id: "illustrations",
+            label: "Illustrationen",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<ImageIcon size={14} />}
+                label="Insert image"
+                testId="action-insert-image"
+                disabled={disabled}
+                onClick={props.onInsertImage}
+              />
+            ),
+          },
+          {
+            id: "charts",
+            label: "Diagramme",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<BarChart3 size={14} />}
+                label="Insert chart"
+                testId="action-insert-chart"
+                disabled={disabled || !props.selection}
+                onClick={props.onOpenInsertChart}
+              />
+            ),
+          },
+          {
+            id: "comments",
+            label: "Kommentare",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<MessageSquarePlus size={14} />}
+                label="Add comment"
+                testId="action-add-comment"
+                disabled={disabled || !props.selection}
+                onClick={props.onAddComment}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "data",
+        label: "Daten",
+        groups: [
+          {
+            id: "tools",
+            label: "Datentools",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<TableProperties size={14} />}
+                label="Text to Columns"
+                testId="data-text-to-columns"
+                disabled={disabled || !props.canTextToColumns}
+                onClick={props.onTextToColumns}
+              />
+            ),
+          },
+          {
+            id: "filter",
+            label: "Sortieren und Filtern",
+            render: ({ props }) => (
+              <ToggleBtn
+                icon={<Filter size={14} />}
+                label={props.filterActive ? "Remove AutoFilter" : "Apply AutoFilter"}
+                testId="data-filter-toggle"
+                active={props.filterActive}
+                disabled={disabled}
+                onClick={props.onToggleFilter}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "view",
+        label: "Ansicht",
+        groups: [
+          {
+            id: "window",
+            label: "Fenster",
+            render: ({ props }) => (
+              <FreezeMenu
+                disabled={disabled}
+                freeze={props.freeze}
+                anchor={props.freezeAnchor}
+                onFreeze={props.onFreeze}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "chart-tools",
+        label: "Diagrammtools",
+        contextual: { accent: "chart" },
+        visible: ({ props }) => props.selectedChartId !== null,
+        autoActivateWhen: ({ props }) => props.selectedChartId !== null,
+        groups: [
+          {
+            id: "chart-actions",
+            label: "Diagramm",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<Pencil size={14} />}
+                label="Edit chart"
+                testId="action-edit-chart"
+                disabled={disabled || !props.selectedChartId}
+                onClick={props.onEditSelectedChart}
+              />
+            ),
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function Divider(): ReactNode {

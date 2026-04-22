@@ -24,6 +24,7 @@ import {
   Copy,
   CornerDownRight,
   Diamond,
+  Grid3x3,
   Group,
   Image as ImageIcon,
   Layers,
@@ -34,6 +35,7 @@ import {
   MoveUp,
   Play,
   Plus,
+  Ruler,
   Shapes,
   Spline,
   Square,
@@ -48,11 +50,19 @@ import {
 } from "lucide-react";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
-import type { AlignMode, LayoutKindPayload, ReorderShapeMode, ShapePreset, TextAnchor } from "@officeai/pptx";
+import type {
+  AlignMode,
+  FillSpec,
+  LayoutKindPayload,
+  ReorderShapeMode,
+  ShapePreset,
+  TextAnchor,
+} from "@officeai/pptx";
+import { FillPicker } from "./FillPicker";
 
 export type TextAlignment = "left" | "center" | "right" | "justify";
 import { LayoutTemplate } from "lucide-react";
-import { ToolbarMenu, ToolbarRow } from "../lib/shell";
+import { Ribbon, ToolbarMenu, type RibbonCatalogue } from "../lib/shell";
 
 export interface PptxToolbarProps {
   readonly disabled: boolean;
@@ -60,7 +70,18 @@ export interface PptxToolbarProps {
   readonly hasSelection: boolean;
   /** Total number of selected shapes; drives align/distribute enablement. */
   readonly selectionCount: number;
-  readonly currentFill: string | null;
+  /**
+   * Active shape's typed fill, used to drive the toolbar `FillPicker`'s
+   * trigger swatch + initial section. `null` means "no shape selected"
+   * or "shape inherits its fill from the layout / style chain".
+   */
+  readonly currentShapeFill: FillSpec | null;
+  /**
+   * Active slide's `<p:bg>` fill (typed), or `null` when the slide
+   * inherits its background from the layout/master. Drives the Design
+   * tab's slide-background picker.
+   */
+  readonly currentSlideBackground: FillSpec | null;
   readonly textFormatProvider: TextFormatProvider;
   readonly textFormatActive: ActiveTextFormat;
   readonly onAddSlide: () => void;
@@ -127,7 +148,18 @@ export interface PptxToolbarProps {
   readonly onDuplicateShape: () => void;
   readonly canGroup: boolean;
   readonly canUngroup: boolean;
-  readonly onChangeFill: (hex: string | null) => void;
+  /**
+   * Apply a new typed fill to the currently selected shape. Pass
+   * `null` to clear the explicit fill (the shape then inherits).
+   */
+  readonly onChangeShapeFill: (fill: FillSpec | null) => void;
+  /**
+   * Apply a new typed background to the currently active slide. Pass
+   * `null` to clear the explicit `<p:bg>` (the slide then inherits its
+   * background from the layout / master, matching PowerPoint's
+   * "Reset background").
+   */
+  readonly onChangeSlideBackground: (fill: FillSpec | null) => void;
   /**
    * Per-paragraph horizontal text alignment inside the active text
    * shape (or the paragraph the text-edit caret is in). Pass `null`
@@ -170,6 +202,29 @@ export interface PptxToolbarProps {
    */
   readonly onToggleNotes: () => void;
   readonly notesOpen: boolean;
+  /**
+   * Toggle the PowerPoint-style horizontal + vertical rulers around
+   * the slide card. `rulersVisible` mirrors the active state for
+   * `aria-pressed` / pressed styling. Both default to "rulers on" in
+   * the host editor (matches PowerPoint).
+   */
+  readonly onToggleRulers: () => void;
+  readonly rulersVisible: boolean;
+  /**
+   * Toggle the gridlines overlay painted across the slide rectangle.
+   * `gridVisible` mirrors the active state. Default off in the host
+   * editor (matches PowerPoint).
+   */
+  readonly onToggleGrid: () => void;
+  readonly gridVisible: boolean;
+  /**
+   * Open a specific tab in the right-hand rail. The contextual
+   * "Entwurf" and "Animationen" ribbon tabs use this to surface the
+   * master / animation panels without owning their own state. Optional
+   * because legacy call sites without ribbon contextual tabs can still
+   * render the toolbar.
+   */
+  readonly onOpenRail?: (tab: "comments" | "outline" | "animations" | "master") => void;
 }
 
 interface ShapeOption {
@@ -188,18 +243,69 @@ const SHAPE_OPTIONS: ReadonlyArray<ShapeOption> = [
   { preset: "rightArrow", label: "Arrow", icon: <MoveRight size={14} /> },
 ];
 
+interface PptxRibbonCtx {
+  readonly props: PptxToolbarProps;
+  readonly imageInputRef: React.RefObject<HTMLInputElement | null>;
+  readonly mediaInputRef: React.RefObject<HTMLInputElement | null>;
+  readonly alignRelativeTo: "selection" | "slide";
+  readonly setAlignRelativeTo: (v: "selection" | "slide") => void;
+  readonly canAlign: boolean;
+  readonly canDistribute: boolean;
+}
+
 export function PptxToolbar(props: PptxToolbarProps) {
-  const { disabled, hasSelection, selectionCount, currentFill, textFormatProvider, textFormatActive } = props;
+  const {
+    disabled,
+    hasSelection,
+    selectionCount,
+    currentShapeFill,
+    currentSlideBackground,
+    textFormatProvider,
+    textFormatActive,
+  } = props;
   const [alignRelativeTo, setAlignRelativeTo] = React.useState<"selection" | "slide">("selection");
   const minAlignSelection = alignRelativeTo === "slide" ? 1 : 2;
   const canAlign = !disabled && selectionCount >= minAlignSelection;
   const canDistribute = !disabled && selectionCount >= 3;
   const imageInputRef = React.useRef<HTMLInputElement | null>(null);
   const mediaInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const ctx: PptxRibbonCtx = {
+    props,
+    imageInputRef,
+    mediaInputRef,
+    alignRelativeTo,
+    setAlignRelativeTo,
+    canAlign,
+    canDistribute,
+  };
+
+  const catalogue = React.useMemo<RibbonCatalogue<PptxRibbonCtx>>(
+    () =>
+      buildPptxRibbonCatalogue({
+        disabled,
+        hasSelection,
+        currentShapeFill,
+        currentSlideBackground,
+        textFormatProvider,
+        textFormatActive,
+      }),
+    [
+      disabled,
+      hasSelection,
+      currentShapeFill,
+      currentSlideBackground,
+      textFormatProvider,
+      textFormatActive,
+    ]
+  );
+
   return (
-    <ToolbarRow
+    <Ribbon
       ariaLabel="Slide toolbar"
       testId="pptx-toolbar"
+      catalogue={catalogue}
+      ctx={ctx}
       trailing={
         <div className="inline-flex items-center gap-1">
           <button
@@ -229,263 +335,591 @@ export function PptxToolbar(props: PptxToolbarProps) {
           </button>
         </div>
       }
-    >
-      <ToolbarButton
-        onClick={props.onAddSlide}
-        icon={<Plus size={14} />}
-        label="Add slide"
-        disabled={disabled}
-      />
-      <ToolbarButton
-        onClick={props.onDuplicateSlide}
-        icon={<Copy size={14} />}
-        label="Duplicate"
-        disabled={disabled || props.slideCount < 1}
-      />
-      <ToolbarButton
-        onClick={props.onDeleteSlide}
-        icon={<Trash2 size={14} />}
-        label="Delete slide"
-        disabled={disabled || props.slideCount <= 1}
-      />
-      <LayoutMenu
-        disabled={disabled}
-        onAddWithLayout={props.onAddSlideWithLayout}
-        onSetLayout={props.onSetSlideLayout}
-        canSetLayout={props.slideCount > 0}
-      />
-      <TransitionMenu
-        disabled={disabled || props.slideCount < 1}
-        currentKind={props.currentTransitionKind ?? "none"}
-        currentSpeed={props.currentTransitionSpeed ?? null}
-        onSetTransition={props.onSetSlideTransition}
-      />
-      <Sep />
-      <ToolbarButton
-        onClick={props.onAddTextBox}
-        icon={<Type size={14} />}
-        label="Text box"
-        disabled={disabled}
-      />
-      <ShapeMenu disabled={disabled} onPick={props.onAddShape} />
-      <ConnectorMenu disabled={disabled} onPick={props.onAddConnector} activeType={props.connectorToolType} />
-      <ToolbarButton
-        onClick={() => imageInputRef.current?.click()}
-        icon={<ImageIcon size={14} />}
-        label="Image"
-        disabled={disabled}
-      />
-      <input
-        ref={imageInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) props.onInsertImage(f);
-          e.target.value = "";
-        }}
-      />
-      <PictureReplaceButton
-        onReplace={props.onReplacePicture}
-        disabled={disabled || !props.selectedIsPicture}
-      />
-      <ToolbarButton
-        onClick={() => mediaInputRef.current?.click()}
-        icon={<Video size={14} />}
-        label="Media"
-        title="Insert video or audio"
-        disabled={disabled}
-        testId="pptx-insert-media"
-      />
-      <input
-        ref={mediaInputRef}
-        type="file"
-        accept="video/*,audio/*"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) props.onInsertMedia(f);
-          e.target.value = "";
-        }}
-      />
-      <ToolbarButton
-        onClick={props.onInsertFromXlsx}
-        icon={<Table2 size={14} />}
-        label="From xlsx"
-        disabled={disabled}
-      />
-      <ToolbarButton
-        onClick={props.onDeleteShape}
-        icon={<Trash2 size={14} />}
-        label="Delete"
-        disabled={disabled || !hasSelection}
-      />
-      <Sep />
-      <IconButton
-        onClick={() => props.onAlign("left", alignRelativeTo)}
-        icon={<AlignStartVertical size={14} />}
-        label={`Align left (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
-        disabled={!canAlign}
-      />
-      <IconButton
-        onClick={() => props.onAlign("center-h", alignRelativeTo)}
-        icon={<AlignCenterVertical size={14} />}
-        label={`Align center (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
-        disabled={!canAlign}
-      />
-      <IconButton
-        onClick={() => props.onAlign("right", alignRelativeTo)}
-        icon={<AlignEndVertical size={14} />}
-        label={`Align right (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
-        disabled={!canAlign}
-      />
-      <IconButton
-        onClick={() => props.onAlign("top", alignRelativeTo)}
-        icon={<AlignStartHorizontal size={14} />}
-        label={`Align top (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
-        disabled={!canAlign}
-      />
-      <IconButton
-        onClick={() => props.onAlign("middle-v", alignRelativeTo)}
-        icon={<AlignCenterHorizontal size={14} />}
-        label={`Align middle (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
-        disabled={!canAlign}
-      />
-      <IconButton
-        onClick={() => props.onAlign("bottom", alignRelativeTo)}
-        icon={<AlignEndHorizontal size={14} />}
-        label={`Align bottom (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
-        disabled={!canAlign}
-      />
-      <AlignTargetToggle value={alignRelativeTo} onChange={setAlignRelativeTo} disabled={disabled} />
-      <IconButton
-        onClick={() => props.onDistribute("horizontal")}
-        icon={<AlignHorizontalDistributeCenter size={14} />}
-        label="Distribute horizontally"
-        disabled={!canDistribute}
-      />
-      <IconButton
-        onClick={() => props.onDistribute("vertical")}
-        icon={<AlignVerticalDistributeCenter size={14} />}
-        label="Distribute vertically"
-        disabled={!canDistribute}
-      />
-      <ArrangeMenu
-        disabled={disabled || !hasSelection}
-        onReorder={props.onReorder}
-        onGroup={props.onGroup}
-        onUngroup={props.onUngroup}
-        onDuplicateShape={props.onDuplicateShape}
-        canGroup={props.canGroup}
-        canUngroup={props.canUngroup}
-        canDuplicate={hasSelection}
-      />
-      <Sep />
-      {/*
-        The wrapper opts the entire shared text-format bar into the
-        contenteditable's "keep editing" guard (see TextEditOverlay's
-        onBlur in SlideCanvas). Without it, mousedown on a toggle would
-        blur the editable, commit a plain-text overwrite, and *also*
-        wipe the selection ref the provider depends on.
-      */}
-      <div data-pptx-keep-edit className="inline-flex items-center">
-        <TextFormatBar
-          provider={textFormatProvider}
-          active={textFormatActive}
-          disabled={disabled}
-          testIdPrefix="pptx-format"
-        />
-      </div>
-      <Sep />
-      {/*
-        Text-alignment cluster. PowerPoint's "Align Text" controls:
-        the four horizontal options drive `pptx:set-paragraph-alignment`
-        and the three vertical ones drive `pptx:set-text-anchor`. Both
-        target the currently active text shape (selection caret's shape
-        if a text-edit overlay is open, otherwise the canvas-selected
-        shape). The `data-pptx-keep-edit` wrapper is the same trick the
-        TextFormatBar uses — it stops mousedown from blurring an open
-        contenteditable.
-      */}
-      <div data-pptx-keep-edit className="inline-flex items-center gap-0.5">
-        <TextAlignToggle
-          label="Align text left"
-          icon={<AlignLeft size={14} />}
-          active={props.activeTextAlignment === "left"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAlignment("left")}
-          testId="pptx-text-align-left"
-        />
-        <TextAlignToggle
-          label="Align text center"
-          icon={<AlignCenter size={14} />}
-          active={props.activeTextAlignment === "center"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAlignment("center")}
-          testId="pptx-text-align-center"
-        />
-        <TextAlignToggle
-          label="Align text right"
-          icon={<AlignRight size={14} />}
-          active={props.activeTextAlignment === "right"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAlignment("right")}
-          testId="pptx-text-align-right"
-        />
-        <TextAlignToggle
-          label="Justify text"
-          icon={<AlignJustify size={14} />}
-          active={props.activeTextAlignment === "justify"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAlignment("justify")}
-          testId="pptx-text-align-justify"
-        />
-        <span className="mx-0.5 h-5 w-px bg-divider" aria-hidden />
-        <TextAlignToggle
-          label="Align text top"
-          icon={<AlignVerticalJustifyStart size={14} />}
-          active={props.activeTextAnchor === "top"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAnchor("top")}
-          testId="pptx-text-anchor-top"
-        />
-        <TextAlignToggle
-          label="Align text middle"
-          icon={<AlignVerticalJustifyCenter size={14} />}
-          active={props.activeTextAnchor === "middle"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAnchor("middle")}
-          testId="pptx-text-anchor-middle"
-        />
-        <TextAlignToggle
-          label="Align text bottom"
-          icon={<AlignVerticalJustifyEnd size={14} />}
-          active={props.activeTextAnchor === "bottom"}
-          disabled={disabled || !props.hasTextShapeFocus}
-          onClick={() => props.onSetTextAnchor("bottom")}
-          testId="pptx-text-anchor-bottom"
-        />
-      </div>
-      <ColorWell
-        label="Fill"
-        value={currentFill ?? "#ffffff"}
-        showClear={hasSelection && currentFill !== null}
-        disabled={disabled || !hasSelection}
-        onChange={(hex) => props.onChangeFill(hex)}
-        onClear={() => props.onChangeFill(null)}
-      />
-      <Sep />
-      <ToolbarButton
-        onClick={props.onAddComment}
-        icon={<MessageSquarePlus size={14} />}
-        label="Comment"
-        title={hasSelection ? "Comment on selected shape" : "Add comment to slide"}
-        disabled={disabled}
-        testId="pptx-add-comment"
-      />
-    </ToolbarRow>
+    />
   );
+}
+
+interface PptxRibbonOptions {
+  readonly disabled: boolean;
+  readonly hasSelection: boolean;
+  readonly currentShapeFill: FillSpec | null;
+  readonly currentSlideBackground: FillSpec | null;
+  readonly textFormatProvider: TextFormatProvider;
+  readonly textFormatActive: ActiveTextFormat;
+}
+
+function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<PptxRibbonCtx> {
+  const {
+    disabled,
+    hasSelection,
+    currentShapeFill,
+    currentSlideBackground,
+    textFormatProvider,
+    textFormatActive,
+  } = opts;
+  return {
+    defaultTabId: "start",
+    tabs: [
+      {
+        id: "start",
+        label: "Start",
+        groups: [
+          {
+            id: "slides",
+            label: "Folien",
+            render: ({ props }) => (
+              <>
+                <ToolbarButton
+                  onClick={props.onAddSlide}
+                  icon={<Plus size={14} />}
+                  label="Add slide"
+                  disabled={disabled}
+                />
+                <ToolbarButton
+                  onClick={props.onDuplicateSlide}
+                  icon={<Copy size={14} />}
+                  label="Duplicate"
+                  disabled={disabled || props.slideCount < 1}
+                />
+                <ToolbarButton
+                  onClick={props.onDeleteSlide}
+                  icon={<Trash2 size={14} />}
+                  label="Delete slide"
+                  disabled={disabled || props.slideCount <= 1}
+                />
+                <LayoutMenu
+                  disabled={disabled}
+                  onAddWithLayout={props.onAddSlideWithLayout}
+                  onSetLayout={props.onSetSlideLayout}
+                  canSetLayout={props.slideCount > 0}
+                />
+              </>
+            ),
+          },
+          {
+            id: "font",
+            label: "Schriftart",
+            render: () => (
+              <div data-pptx-keep-edit className="inline-flex items-center">
+                <TextFormatBar
+                  provider={textFormatProvider}
+                  active={textFormatActive}
+                  disabled={disabled}
+                  testIdPrefix="pptx-format"
+                />
+              </div>
+            ),
+          },
+          {
+            id: "paragraph",
+            label: "Absatz",
+            render: ({ props }) => (
+              <div data-pptx-keep-edit className="inline-flex items-center gap-0.5">
+                <TextAlignToggle
+                  label="Align text left"
+                  icon={<AlignLeft size={14} />}
+                  active={props.activeTextAlignment === "left"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAlignment("left")}
+                  testId="pptx-text-align-left"
+                />
+                <TextAlignToggle
+                  label="Align text center"
+                  icon={<AlignCenter size={14} />}
+                  active={props.activeTextAlignment === "center"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAlignment("center")}
+                  testId="pptx-text-align-center"
+                />
+                <TextAlignToggle
+                  label="Align text right"
+                  icon={<AlignRight size={14} />}
+                  active={props.activeTextAlignment === "right"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAlignment("right")}
+                  testId="pptx-text-align-right"
+                />
+                <TextAlignToggle
+                  label="Justify text"
+                  icon={<AlignJustify size={14} />}
+                  active={props.activeTextAlignment === "justify"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAlignment("justify")}
+                  testId="pptx-text-align-justify"
+                />
+                <span className="mx-0.5 h-5 w-px bg-divider" aria-hidden />
+                <TextAlignToggle
+                  label="Align text top"
+                  icon={<AlignVerticalJustifyStart size={14} />}
+                  active={props.activeTextAnchor === "top"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAnchor("top")}
+                  testId="pptx-text-anchor-top"
+                />
+                <TextAlignToggle
+                  label="Align text middle"
+                  icon={<AlignVerticalJustifyCenter size={14} />}
+                  active={props.activeTextAnchor === "middle"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAnchor("middle")}
+                  testId="pptx-text-anchor-middle"
+                />
+                <TextAlignToggle
+                  label="Align text bottom"
+                  icon={<AlignVerticalJustifyEnd size={14} />}
+                  active={props.activeTextAnchor === "bottom"}
+                  disabled={disabled || !props.hasTextShapeFocus}
+                  onClick={() => props.onSetTextAnchor("bottom")}
+                  testId="pptx-text-anchor-bottom"
+                />
+              </div>
+            ),
+          },
+        ],
+      },
+      {
+        id: "insert",
+        label: "Einfügen",
+        groups: [
+          {
+            id: "text",
+            label: "Text",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onAddTextBox}
+                icon={<Type size={14} />}
+                label="Text box"
+                disabled={disabled}
+              />
+            ),
+          },
+          {
+            id: "shapes",
+            label: "Illustrationen",
+            render: ({ props }) => (
+              <>
+                <ShapeMenu disabled={disabled} onPick={props.onAddShape} />
+                <ConnectorMenu
+                  disabled={disabled}
+                  onPick={props.onAddConnector}
+                  activeType={props.connectorToolType}
+                />
+              </>
+            ),
+          },
+          {
+            id: "media",
+            label: "Medien",
+            render: ({ props, imageInputRef, mediaInputRef }) => (
+              <>
+                <ToolbarButton
+                  onClick={() => imageInputRef.current?.click()}
+                  icon={<ImageIcon size={14} />}
+                  label="Image"
+                  disabled={disabled}
+                />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) props.onInsertImage(f);
+                    e.target.value = "";
+                  }}
+                />
+                <ToolbarButton
+                  onClick={() => mediaInputRef.current?.click()}
+                  icon={<Video size={14} />}
+                  label="Media"
+                  title="Insert video or audio"
+                  disabled={disabled}
+                  testId="pptx-insert-media"
+                />
+                <input
+                  ref={mediaInputRef}
+                  type="file"
+                  accept="video/*,audio/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) props.onInsertMedia(f);
+                    e.target.value = "";
+                  }}
+                />
+              </>
+            ),
+          },
+          {
+            id: "links",
+            label: "Verknüpfungen",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onInsertFromXlsx}
+                icon={<Table2 size={14} />}
+                label="From xlsx"
+                disabled={disabled}
+              />
+            ),
+          },
+          {
+            id: "comments",
+            label: "Kommentare",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onAddComment}
+                icon={<MessageSquarePlus size={14} />}
+                label="Comment"
+                title={hasSelection ? "Comment on selected shape" : "Add comment to slide"}
+                disabled={disabled}
+                testId="pptx-add-comment"
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "design",
+        label: "Entwurf",
+        groups: [
+          {
+            id: "themes",
+            label: "Designs",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={() => props.onOpenRail?.("master")}
+                icon={<LayoutTemplate size={14} />}
+                label="Folienmaster"
+                title="Open master / theme rail"
+                disabled={disabled || !props.onOpenRail}
+                testId="pptx-open-master-rail"
+              />
+            ),
+          },
+          {
+            id: "background",
+            label: "Hintergrund",
+            render: ({ props }) => (
+              <FillPicker
+                label="Hintergrund formatieren"
+                value={currentSlideBackground}
+                disabled={disabled || props.slideCount < 1}
+                onChange={(spec) => props.onChangeSlideBackground(spec)}
+                testId="pptx-slide-background"
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "transitions",
+        label: "Übergänge",
+        groups: [
+          {
+            id: "transition",
+            label: "Übergang zu dieser Folie",
+            render: ({ props }) => (
+              <TransitionMenu
+                disabled={disabled || props.slideCount < 1}
+                currentKind={props.currentTransitionKind ?? "none"}
+                currentSpeed={props.currentTransitionSpeed ?? null}
+                onSetTransition={props.onSetSlideTransition}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "animations",
+        label: "Animationen",
+        groups: [
+          {
+            id: "anim-panel",
+            label: "Erweiterte Animation",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={() => props.onOpenRail?.("animations")}
+                icon={<Wand2 size={14} />}
+                label="Animationsbereich"
+                title="Open animations rail"
+                disabled={disabled || !props.onOpenRail}
+                testId="pptx-open-animations-rail"
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "slideshow",
+        label: "Bildschirmpräsentation",
+        groups: [
+          {
+            id: "start-slideshow",
+            label: "Bildschirmpräsentation starten",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onPresent}
+                icon={<Play size={14} />}
+                label="Von Anfang"
+                title="Start presentation (F5)"
+                disabled={!props.canPresent}
+                testId="pptx-present-from-ribbon"
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "view",
+        label: "Ansicht",
+        groups: [
+          {
+            id: "show",
+            label: "Anzeigen",
+            render: ({ props }) => (
+              <>
+                <button
+                  type="button"
+                  onClick={props.onToggleRulers}
+                  disabled={disabled}
+                  aria-pressed={props.rulersVisible}
+                  title={props.rulersVisible ? "Hide rulers" : "Show rulers"}
+                  data-testid="pptx-rulers-toggle"
+                  className={`inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
+                    props.rulersVisible ? "bg-hover ring-1 ring-[var(--accent)]/40" : ""
+                  }`}
+                >
+                  <Ruler size={14} />
+                  <span className="hidden sm:inline">Rulers</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={props.onToggleGrid}
+                  disabled={disabled}
+                  aria-pressed={props.gridVisible}
+                  title={props.gridVisible ? "Hide gridlines" : "Show gridlines"}
+                  data-testid="pptx-grid-toggle"
+                  className={`inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
+                    props.gridVisible ? "bg-hover ring-1 ring-[var(--accent)]/40" : ""
+                  }`}
+                >
+                  <Grid3x3 size={14} />
+                  <span className="hidden sm:inline">Gridlines</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={props.onToggleNotes}
+                  disabled={disabled}
+                  aria-pressed={props.notesOpen}
+                  title={props.notesOpen ? "Hide speaker notes" : "Show speaker notes"}
+                  data-testid="pptx-notes-toggle-tab"
+                  className={`inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
+                    props.notesOpen ? "bg-hover ring-1 ring-[var(--accent)]/40" : ""
+                  }`}
+                >
+                  <StickyNote size={14} />
+                  <span className="hidden sm:inline">Notes</span>
+                </button>
+                <ToolbarButton
+                  onClick={() => props.onOpenRail?.("outline")}
+                  icon={<Layers size={14} />}
+                  label="Gliederung"
+                  title="Open outline rail"
+                  disabled={disabled || !props.onOpenRail}
+                  testId="pptx-open-outline-rail"
+                />
+              </>
+            ),
+          },
+        ],
+      },
+      {
+        id: "shape-tools",
+        label: "Formformat",
+        contextual: { accent: "shape" },
+        visible: ({ props }) => props.hasSelection && !props.selectedIsPicture,
+        autoActivateWhen: ({ props }) =>
+          props.hasSelection && !props.selectedIsPicture && !props.connectorToolType,
+        groups: [
+          {
+            id: "shape-fill",
+            label: "Formenarten",
+            render: ({ props }) => (
+              <FillPicker
+                label="Fülleffekt"
+                value={currentShapeFill}
+                disabled={disabled || !hasSelection}
+                onChange={(spec) => props.onChangeShapeFill(spec)}
+                testId="pptx-shape-fill"
+              />
+            ),
+          },
+          {
+            id: "shape-arrange",
+            label: "Anordnen",
+            render: ({ props, alignRelativeTo, setAlignRelativeTo, canAlign, canDistribute }) => (
+              <>
+                <IconButton
+                  onClick={() => props.onAlign("left", alignRelativeTo)}
+                  icon={<AlignStartVertical size={14} />}
+                  label={`Align left (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("center-h", alignRelativeTo)}
+                  icon={<AlignCenterVertical size={14} />}
+                  label={`Align center (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("right", alignRelativeTo)}
+                  icon={<AlignEndVertical size={14} />}
+                  label={`Align right (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("top", alignRelativeTo)}
+                  icon={<AlignStartHorizontal size={14} />}
+                  label={`Align top (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("middle-v", alignRelativeTo)}
+                  icon={<AlignCenterHorizontal size={14} />}
+                  label={`Align middle (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("bottom", alignRelativeTo)}
+                  icon={<AlignEndHorizontal size={14} />}
+                  label={`Align bottom (${alignRelativeTo === "slide" ? "to slide" : "to selection"})`}
+                  disabled={!canAlign}
+                />
+                <AlignTargetToggle
+                  value={alignRelativeTo}
+                  onChange={setAlignRelativeTo}
+                  disabled={disabled}
+                />
+                <IconButton
+                  onClick={() => props.onDistribute("horizontal")}
+                  icon={<AlignHorizontalDistributeCenter size={14} />}
+                  label="Distribute horizontally"
+                  disabled={!canDistribute}
+                />
+                <IconButton
+                  onClick={() => props.onDistribute("vertical")}
+                  icon={<AlignVerticalDistributeCenter size={14} />}
+                  label="Distribute vertically"
+                  disabled={!canDistribute}
+                />
+                <ArrangeMenu
+                  disabled={disabled || !hasSelection}
+                  onReorder={props.onReorder}
+                  onGroup={props.onGroup}
+                  onUngroup={props.onUngroup}
+                  onDuplicateShape={props.onDuplicateShape}
+                  canGroup={props.canGroup}
+                  canUngroup={props.canUngroup}
+                  canDuplicate={hasSelection}
+                />
+              </>
+            ),
+          },
+          {
+            id: "shape-actions",
+            label: "Form",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onDeleteShape}
+                icon={<Trash2 size={14} />}
+                label="Delete"
+                disabled={disabled || !hasSelection}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "picture-tools",
+        label: "Bildformat",
+        contextual: { accent: "picture" },
+        visible: ({ props }) => props.selectedIsPicture,
+        autoActivateWhen: ({ props }) => props.selectedIsPicture,
+        groups: [
+          {
+            id: "adjust",
+            label: "Anpassen",
+            render: ({ props }) => (
+              <PictureReplaceButton
+                onReplace={props.onReplacePicture}
+                disabled={disabled || !props.selectedIsPicture}
+              />
+            ),
+          },
+          {
+            id: "picture-arrange",
+            label: "Anordnen",
+            render: ({ props, alignRelativeTo, setAlignRelativeTo, canAlign, canDistribute }) => (
+              <>
+                <IconButton
+                  onClick={() => props.onAlign("left", alignRelativeTo)}
+                  icon={<AlignStartVertical size={14} />}
+                  label="Align left"
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("center-h", alignRelativeTo)}
+                  icon={<AlignCenterVertical size={14} />}
+                  label="Align center"
+                  disabled={!canAlign}
+                />
+                <IconButton
+                  onClick={() => props.onAlign("right", alignRelativeTo)}
+                  icon={<AlignEndVertical size={14} />}
+                  label="Align right"
+                  disabled={!canAlign}
+                />
+                <AlignTargetToggle
+                  value={alignRelativeTo}
+                  onChange={setAlignRelativeTo}
+                  disabled={disabled}
+                />
+                <IconButton
+                  onClick={() => props.onDistribute("horizontal")}
+                  icon={<AlignHorizontalDistributeCenter size={14} />}
+                  label="Distribute horizontally"
+                  disabled={!canDistribute}
+                />
+                <ArrangeMenu
+                  disabled={disabled || !hasSelection}
+                  onReorder={props.onReorder}
+                  onGroup={props.onGroup}
+                  onUngroup={props.onUngroup}
+                  onDuplicateShape={props.onDuplicateShape}
+                  canGroup={props.canGroup}
+                  canUngroup={props.canUngroup}
+                  canDuplicate={hasSelection}
+                />
+              </>
+            ),
+          },
+          {
+            id: "picture-actions",
+            label: "Bild",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onDeleteShape}
+                icon={<Trash2 size={14} />}
+                label="Delete"
+                disabled={disabled || !hasSelection}
+              />
+            ),
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function Sep() {

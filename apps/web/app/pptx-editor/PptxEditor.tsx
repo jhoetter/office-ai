@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CommentComposer, CommentsSidebar } from "@officeai/ui";
 import { I18nProvider, useTranslator, type Locale } from "@/lib/i18n";
+import { rulerUnitForLocale } from "@/lib/ruler/units";
 import { createPptxCommentsProvider } from "./pptxCommentsProvider";
 import { PptxAgent } from "@officeai/pptx/agent";
 import {
@@ -16,14 +17,18 @@ import {
 import { MAX_ZOOM, MIN_ZOOM, clampZoom } from "@officeai/pptx/renderer";
 import {
   createPlayback,
+  readFillSpec,
   resolveConnectorEndpoint,
   type ConnectorShape,
+  type FillSpec,
   type LayoutKindPayload,
+  type OpaqueXml,
   type Picture,
   type PlaybackController,
   type PptxSnapshot,
   type Shape,
   type ShapePreset,
+  type Slide,
   type TextAnchor,
   type TextShape,
 } from "@officeai/pptx";
@@ -408,6 +413,34 @@ function PptxEditorInner({
   // the panel takes meaningful vertical space and the default state is
   // what users expect when reopening a deck.
   const [notesOpen, setNotesOpen] = useState(false);
+  // PowerPoint-style View-tab preferences. Rulers are on by default
+  // (matches PowerPoint), gridlines are off. Both are persisted to
+  // localStorage so reopening the editor restores the user's choice
+  // — these are pure UI prefs (not part of the deck), so we don't
+  // route them through the command bus.
+  const [rulersVisible, setRulersVisible] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const raw = window.localStorage.getItem("pptx:view:rulers");
+    return raw === null ? true : raw === "1";
+  });
+  const [gridVisible, setGridVisible] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("pptx:view:grid") === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pptx:view:rulers", rulersVisible ? "1" : "0");
+  }, [rulersVisible]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pptx:view:grid", gridVisible ? "1" : "0");
+  }, [gridVisible]);
+  // Locale → unit (cm in metric locales, in elsewhere). Memoised so
+  // the SlideCanvas prop reference stays stable across re-renders.
+  const rulerUnit = useMemo<"in" | "cm">(
+    () => rulerUnitForLocale(typeof navigator !== "undefined" ? navigator.language : "en-US").unit,
+    []
+  );
   const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
   // Imperative request to open the shared right rail to a specific
   // tab (consumed by `EditorShell` via `requestRailTab`). Bumping the
@@ -1146,7 +1179,7 @@ function PptxEditorInner({
   const snap = agent?.getSnapshot() ?? null;
   void tick;
   const slides = snap?.root.slides ?? [];
-  const slideSize = snap?.root.slideSize ?? { cxEmu: 9144000, cyEmu: 6858000 };
+  const slideSize = snap?.root.slideSize ?? { cxEmu: 12192000, cyEmu: 6858000 };
   const themeDefault = snap?.root.themeDefault;
   const slide = slides[activeIndex];
 
@@ -1172,11 +1205,17 @@ function PptxEditorInner({
     return [...ids];
   }, [snap, slide]);
 
-  const currentFill = useMemo(() => {
+  const currentShapeFill = useMemo<FillSpec | null>(() => {
     if (!selectedShape) return null;
     if (selectedShape.kind !== "text" && selectedShape.kind !== "pic") return null;
-    return readSolidFill(selectedShape) ?? null;
+    return readShapeFill(selectedShape);
   }, [selectedShape]);
+
+  const currentSlideBackground = useMemo<FillSpec | null>(() => {
+    const s = slides[activeIndex];
+    if (!s) return null;
+    return readSlideBackgroundFillSpec(s);
+  }, [slides, activeIndex]);
 
   // ActiveTextFormat for the shared TextFormatBar. Recomputed on every
   // render that touches the snapshot tick or text selection so the
@@ -1274,24 +1313,67 @@ function PptxEditorInner({
     [activeIndex, onError]
   );
 
+  const deleteSlideAt = useCallback(
+    async (slideIndex: number) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const total = a.getSnapshot().root.slides.length;
+      if (total <= 1) {
+        pushToast("warn", "Cannot delete the last slide.");
+        return;
+      }
+      if (slideIndex < 0 || slideIndex >= total) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:delete-slide",
+          payload: { slideIndex },
+          source: "human",
+        });
+        // Keep the selection on the same slot when possible so the
+        // user lands on the slide that visually replaced the deleted
+        // one. When the last slide was removed, fall back to the new
+        // last index.
+        const nextTotal = total - 1;
+        setActiveIndex(Math.min(slideIndex, nextTotal - 1));
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError, pushToast]
+  );
+
   const deleteSlide = useCallback(async () => {
-    const a = agentRef.current;
-    if (!a) return;
-    if (a.getSnapshot().root.slides.length <= 1) {
-      pushToast("warn", "Cannot delete the last slide.");
-      return;
-    }
-    try {
-      await a.applyCommand({
-        type: "pptx:delete-slide",
-        payload: { slideIndex: activeIndex },
-        source: "human",
-      });
-      setActiveIndex((i) => Math.max(0, i - 1));
-    } catch (err) {
-      onError(err);
-    }
-  }, [activeIndex, onError, pushToast]);
+    await deleteSlideAt(activeIndex);
+  }, [activeIndex, deleteSlideAt]);
+
+  // Keyboard Delete / Backspace on the slides sidebar removes the
+  // focused thumbnail's slide. Mirrors PowerPoint / Keynote: clicking
+  // a thumbnail focuses its button, then pressing Delete drops that
+  // slide. We resolve the target slide from the focused element's
+  // `data-slide-index` (present on every sidebar row) and fall back
+  // to the active slide if the user pressed Delete while the aside
+  // itself — but no specific row — held focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      // Never hijack typing inside a real input or contenteditable.
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (target.isContentEditable) return;
+      const aside = target.closest('[data-testid="pptx-sidebar"]');
+      if (!aside) return;
+      const row = target.closest<HTMLElement>("[data-slide-index]");
+      const idx = row ? Number.parseInt(row.dataset.slideIndex ?? "", 10) : activeIndex;
+      if (!Number.isFinite(idx) || idx < 0) return;
+      e.preventDefault();
+      void deleteSlideAt(idx);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeIndex, deleteSlideAt]);
 
   const duplicateSlide = useCallback(async () => {
     const a = agentRef.current;
@@ -2355,13 +2437,22 @@ function PptxEditorInner({
   );
 
   const changeFill = useCallback(
-    async (hex: string | null) => {
+    async (next: FillSpec | null) => {
       const a = agentRef.current;
       if (!a || !selectedShapeId) return;
       try {
+        // The handler accepts both `string | null` (legacy) and full
+        // `FillSpec`; we always pass the typed form so gradient /
+        // pattern / picture work end-to-end. `null` clears the explicit
+        // fill so the shape inherits its style — equivalent to
+        // PowerPoint's "Fill: Automatic".
         await a.applyCommand({
           type: "pptx:set-shape-fill",
-          payload: { slideIndex: activeIndex, shapeId: selectedShapeId, fill: hex },
+          payload: {
+            slideIndex: activeIndex,
+            shapeId: selectedShapeId,
+            fill: next ?? null,
+          },
           source: "human",
         });
       } catch (err) {
@@ -2369,6 +2460,23 @@ function PptxEditorInner({
       }
     },
     [activeIndex, onError, selectedShapeId]
+  );
+
+  const changeSlideBackground = useCallback(
+    async (next: FillSpec | null) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-slide-background",
+          payload: { slideIndex: activeIndex, fill: next },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError]
   );
 
   // Dispatcher behind the floating geometry bar's `<input type="range">`.
@@ -2935,7 +3043,8 @@ function PptxEditorInner({
             slideCount={slides.length}
             hasSelection={selectedShapeId != null}
             selectionCount={selectedShapeIds.length}
-            currentFill={currentFill ? `#${currentFill}` : null}
+            currentShapeFill={currentShapeFill}
+            currentSlideBackground={currentSlideBackground}
             textFormatProvider={textFormatProvider}
             textFormatActive={textFormatActive}
             onAddSlide={() => void addSlide()}
@@ -2961,7 +3070,8 @@ function PptxEditorInner({
             onDuplicateShape={() => void duplicateSelectedShapes()}
             canGroup={selectedShapeIds.length >= 2}
             canUngroup={selectedShapeIds.length === 1 && selectedShape?.kind === "group"}
-            onChangeFill={(h) => void changeFill(h)}
+            onChangeShapeFill={(spec) => void changeFill(spec)}
+            onChangeSlideBackground={(spec) => void changeSlideBackground(spec)}
             onSetTextAlignment={(alignment) => void setTextAlignment(alignment)}
             onSetTextAnchor={(anchor) => void setTextAnchorAction(anchor)}
             activeTextAlignment={activeTextAlignment}
@@ -2972,9 +3082,14 @@ function PptxEditorInner({
             canPresent={ready && slides.length > 0}
             onToggleNotes={() => setNotesOpen((v) => !v)}
             notesOpen={notesOpen}
+            onToggleRulers={() => setRulersVisible((v) => !v)}
+            rulersVisible={rulersVisible}
+            onToggleGrid={() => setGridVisible((v) => !v)}
+            gridVisible={gridVisible}
             currentTransitionKind={slides[activeIndex]?.transition?.kind ?? "none"}
             currentTransitionSpeed={slides[activeIndex]?.transition?.speed ?? null}
             onSetSlideTransition={(kind, speed) => void setSlideTransition(kind, speed)}
+            onOpenRail={(tab) => requestRail(tab)}
           />
         }
         statusBarLeft={
@@ -3074,6 +3189,9 @@ function PptxEditorInner({
                         connectorTool={connectorTool}
                         onConnectorToolExit={exitConnectorTool}
                         remotePeers={remotePptxPeers}
+                        showRulers={rulersVisible}
+                        showGrid={gridVisible}
+                        rulerUnit={rulerUnit}
                       />
                       {selectedShape &&
                       selectedShape.kind === "connector" &&
@@ -3138,9 +3256,13 @@ function PptxEditorInner({
         onCancel={() => setEditingEmbed(null)}
         onSave={(r) => void handleEmbeddedXlsxSave(r)}
       />
-      {presenting && snap ? (
+      {presenting && snap && agent ? (
         <PresentMode
           snapshot={snap}
+          subscribeSnapshot={{
+            getSnapshot: () => agent.getSnapshot(),
+            subscribe: (listener) => agent.subscribe(() => listener()),
+          }}
           initialSlideIndex={activeIndex}
           mediaUrls={mediaUrls}
           charts={snap.root.charts}
@@ -3247,21 +3369,70 @@ function collectShapesByCNvPrIdLocal(shape: Shape, out: Map<number, Shape>): voi
   }
 }
 
-/** Walks `spPrTail` for the first `<a:solidFill><a:srgbClr val="…"/></a:solidFill>`. */
-function readSolidFill(shape: TextShape | Picture): string | null {
-  for (const c of shape.spPrTail) {
-    if (c.tag !== "a:solidFill") continue;
-    for (const inner of c.subtree) {
+/**
+ * Resolve the typed `FillSpec` painted on a text or picture shape so the
+ * toolbar's `FillPicker` can render the active value (and reopen on the
+ * matching tab — solid / gradient / pattern / picture). Returns `null`
+ * when no fill node is declared (caller treats as "inherit").
+ */
+function readShapeFill(shape: TextShape | Picture): FillSpec | null {
+  return readFillSpec(shape.spPrTail);
+}
+
+/**
+ * Resolve the typed `FillSpec` for a slide's `<p:bg>`. The fill nodes
+ * live one level deeper than `spPrTail` (inside `<p:bgPr>`), so we walk
+ * manually rather than reusing `readShapeFill`.
+ */
+function readSlideBackgroundFillSpec(slide: { cSldHead: Slide["cSldHead"] }): FillSpec | null {
+  for (const node of slide.cSldHead) {
+    if (node.tag !== "p:bg") continue;
+    for (const inner of node.subtree) {
       if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
       const obj = inner as Record<string, unknown>;
-      const attrs = obj[":@"] as Record<string, unknown> | undefined;
-      const val = attrs && typeof attrs === "object" ? attrs["@_val"] : undefined;
-      if (typeof val === "string" && /^[0-9a-fA-F]{6}$/.test(val)) {
-        return val.toUpperCase();
-      }
+      if (!Array.isArray(obj["p:bgPr"])) continue;
+      const fillNodes = collectFillNodesFromObjects(obj["p:bgPr"] as unknown[]);
+      const spec = readFillSpec(fillNodes);
+      if (spec) return spec;
     }
   }
   return null;
+}
+
+/**
+ * Walk a fast-xml-parser preserveOrder array (`{tag: [...]}` entries)
+ * and lift any fill-related children into `OpaqueXml` form so
+ * `readFillSpec` can consume them without further translation.
+ */
+function collectFillNodesFromObjects(arr: ReadonlyArray<unknown>): OpaqueXml[] {
+  const out: OpaqueXml[] = [];
+  for (const inner of arr) {
+    if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+    const obj = inner as Record<string, unknown>;
+    const keys = Object.keys(obj).filter((k) => k !== ":@");
+    if (keys.length !== 1) continue;
+    const tag = keys[0];
+    if (
+      tag !== "a:solidFill" &&
+      tag !== "a:noFill" &&
+      tag !== "a:gradFill" &&
+      tag !== "a:pattFill" &&
+      tag !== "a:blipFill"
+    ) {
+      continue;
+    }
+    const sub = obj[tag];
+    const attrs = (obj[":@"] as Record<string, unknown> | undefined) ?? {};
+    const rawAttrs: Record<string, string> = {};
+    const flatAttrs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(attrs)) {
+      const sv = String(v);
+      rawAttrs[k] = sv;
+      flatAttrs[k.startsWith("@_") ? k.slice(2) : k] = sv;
+    }
+    out.push({ tag, attrs: flatAttrs, rawAttrs, subtree: Array.isArray(sub) ? (sub as unknown[]) : [] });
+  }
+  return out;
 }
 
 /**

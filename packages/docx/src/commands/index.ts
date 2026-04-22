@@ -12,6 +12,9 @@ export { replyCommentHandler } from "./reply-comment.js";
 export { deleteCommentHandler } from "./delete-comment.js";
 export { setHeaderTextHandler } from "./set-header-text.js";
 export { setFooterTextHandler } from "./set-footer-text.js";
+export { setHeaderFooterBlocksHandler } from "./set-header-footer-blocks.js";
+export { createHeaderFooterPartHandler } from "./create-header-footer-part.js";
+export { insertHeaderFooterImageHandler } from "./insert-header-footer-image.js";
 export { acceptChangeHandler } from "./accept-change.js";
 export { acceptAllChangesHandler } from "./accept-all-changes.js";
 export { rejectChangeHandler } from "./reject-change.js";
@@ -20,6 +23,9 @@ export { insertTableHandler } from "./insert-table.js";
 export { setCellContentHandler } from "./set-cell-content.js";
 export { insertRowHandler } from "./insert-row.js";
 export { insertColumnHandler } from "./insert-column.js";
+export { deleteRowHandler, type DeleteRowPayload } from "./delete-row.js";
+export { deleteColumnHandler, type DeleteColumnPayload } from "./delete-column.js";
+export { deleteTableHandler, type DeleteTablePayload } from "./delete-table.js";
 export { insertImageHandler } from "./insert-image.js";
 export { applyListFormatHandler } from "./apply-list-format.js";
 export { setParagraphListHandler } from "./set-paragraph-list.js";
@@ -31,6 +37,19 @@ export { setParagraphIndentHandler } from "./set-paragraph-indent.js";
 export { setParagraphSpacingHandler, type SetParagraphSpacingPayload } from "./set-paragraph-spacing.js";
 export { insertPageNumberHandler } from "./insert-page-number.js";
 export { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
+export { setProtectionHandler } from "./set-protection.js";
+export {
+  mergeCellsHorizontalHandler,
+  setCellAlignmentHandler,
+  setCellShadingHandler,
+  setColumnWidthHandler,
+  setRowHeightHandler,
+  type MergeCellsHorizontalPayload,
+  type SetCellAlignmentPayload,
+  type SetCellShadingPayload,
+  type SetColumnWidthPayload,
+  type SetRowHeightPayload,
+} from "./set-table-cell-properties.js";
 export { deleteImageHandler } from "./delete-image.js";
 export { setImagePropertiesHandler } from "./set-image-properties.js";
 export { setPageSetupHandler } from "./set-page-setup.js";

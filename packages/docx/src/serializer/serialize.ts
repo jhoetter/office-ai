@@ -171,6 +171,13 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
     throw new DocxSerializeError("numbering-failed", "Failed to write numbering.xml", { cause: err });
   }
 
+  // word/settings.xml. Currently only `docx:set-protection` flips
+  // `dirty.settings`. The handler patches the `<w:documentProtection>`
+  // element on the verbatim XML; we just write it back here.
+  if (snapshot.dirty.settings && snapshot.root.settingsXml) {
+    container.writeText("word/settings.xml", snapshot.root.settingsXml);
+  }
+
   // [Content_Types].xml. We update this when the caller has set the
   // contentTypes dirty flag (currently driven by `docx:insert-image` when
   // it adds a new image MIME type or registers a new override). The typed
@@ -206,6 +213,22 @@ function ensureMediaContentTypes(container: ooxml.OoxmlContainer, snapshot: Docx
       ct.addDefault(ext, part.mimeType);
       changed = true;
     }
+  }
+  // Header/footer parts dirtied this round may be brand-new (minted by
+  // `docx:create-header-footer-part`). The package needs an `<Override>`
+  // entry per H/F part so Word recognises the content type. Idempotent —
+  // we add only when missing, never remove.
+  for (const partPath of snapshot.dirty.headersAndFooters) {
+    const part = snapshot.root.headersAndFooters.find((p) => p.partPath === partPath);
+    if (!part) continue;
+    const overridePath = `/${partPath}`;
+    if (ct.hasOverride(overridePath)) continue;
+    const contentType =
+      part.kind === "header"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+    ct.addOverride(overridePath, contentType);
+    changed = true;
   }
   if (changed) ct.writeBack(container);
 }

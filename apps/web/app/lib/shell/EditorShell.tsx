@@ -230,7 +230,12 @@ export function EditorShell({
         changes never push it down by a row.
       */}
       {toolbar ? (
-        <div className="h-10 min-h-10 max-h-10 shrink-0 border-b border-divider bg-background">{toolbar}</div>
+        // The toolbar slot used to be a fixed-40px row; the Office-
+        // style Ribbon now stacks a tab strip (28 px) on top of a
+        // groups row (48 px) for a 76 px total. We let the slot
+        // shrink to its content (legacy single-row toolbars still
+        // collapse to 40 px) while shrink-0 keeps the body anchored.
+        <div className="shrink-0 border-b border-divider bg-background">{toolbar}</div>
       ) : null}
 
       <div className="relative flex min-h-0 min-w-0 flex-1">

@@ -51,6 +51,9 @@ test.describe("pptx-editor route", () => {
 
   test("toolbar 'Text box' adds a new shape on the active slide", async ({ page }) => {
     await gotoPptxEditor(page);
+    // Text box now lives on the Einfügen ribbon tab (per the
+    // contextual ribbon refactor); switch to it before clicking.
+    await page.getByTestId("ribbon-tab-insert").click();
 
     const before = await shapesOnCanvas(page).count();
     await page.getByRole("button", { name: "Text box" }).click();
@@ -83,6 +86,7 @@ test.describe("pptx-editor route", () => {
 
   test("connector menu arms the tool, surfaces a banner, and Esc exits", async ({ page }) => {
     await gotoPptxEditor(page);
+    await page.getByTestId("ribbon-tab-insert").click();
 
     const trigger = page.getByTestId("pptx-connector-menu-trigger");
     await expect(trigger).toHaveAttribute("data-active-type", "");
@@ -106,6 +110,7 @@ test.describe("pptx-editor route", () => {
 
   test("re-clicking the active connector type exits the tool", async ({ page }) => {
     await gotoPptxEditor(page);
+    await page.getByTestId("ribbon-tab-insert").click();
 
     const trigger = page.getByTestId("pptx-connector-menu-trigger");
     await trigger.click();
@@ -121,6 +126,7 @@ test.describe("pptx-editor route", () => {
 
   test("arming the connector tool reveals the connectable-shapes overlay", async ({ page }) => {
     await gotoPptxEditor(page);
+    await page.getByTestId("ribbon-tab-insert").click();
 
     // Overlay is hidden by default — only mounts while the tool is
     // armed (or while an existing endpoint is being edited).
@@ -137,6 +143,7 @@ test.describe("pptx-editor route", () => {
 
   test("the connector menu exposes the three connector types", async ({ page }) => {
     await gotoPptxEditor(page);
+    await page.getByTestId("ribbon-tab-insert").click();
 
     await page.getByTestId("pptx-connector-menu-trigger").click();
     await expect(page.getByTestId("pptx-connector-straight")).toBeVisible();
@@ -146,6 +153,7 @@ test.describe("pptx-editor route", () => {
 
   test("switching connector type from the menu updates the active type", async ({ page }) => {
     await gotoPptxEditor(page);
+    await page.getByTestId("ribbon-tab-insert").click();
 
     const trigger = page.getByTestId("pptx-connector-menu-trigger");
 

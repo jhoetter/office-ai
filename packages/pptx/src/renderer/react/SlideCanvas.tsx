@@ -21,12 +21,15 @@ import { DEFAULT_DPI, EMU_PER_PX_AT_96DPI, clampZoom } from "../layout/units.js"
 import type { SvgRenderCtx } from "../svg/shapes.js";
 import { shapeToSvg } from "../svg/shapes.js";
 import { buildShapesByCNvPrId, resolveSlideBackgroundColor } from "../svg/slide.js";
+import { resolveSlideBackgroundPaint } from "../svg/paint.js";
 import {
   collectObstacles,
   routeConnector as routeConnectorShared,
   type RouterObstacle,
 } from "../connector-router/index.js";
 import { useAgentSnapshot } from "./use-agent-snapshot.js";
+import { SlideRulers } from "./SlideRulers.js";
+import { slideGridSvgString } from "./SlideGridOverlay.js";
 
 /**
  * Dynamic stage viewBox for the editor canvas.
@@ -259,6 +262,25 @@ export interface SlideCanvasProps {
    * Empty / undefined → nothing is drawn.
    */
   readonly remotePeers?: ReadonlyArray<RemoteSelectionPeer>;
+  /**
+   * Toggle the PowerPoint-style rulers (horizontal strip on top, vertical
+   * strip on the left of the slide card). Default `false` so nothing
+   * changes for hosts that don't opt in. The host editor owns the
+   * preference (typically persisted to localStorage) and the
+   * locale-derived `rulerUnit`.
+   */
+  readonly showRulers?: boolean;
+  /**
+   * Toggle the gridlines overlay painted across the slide rectangle.
+   * The grid uses the same major step as the ruler (0.5 in / 1 cm)
+   * plus a finer minor grid for layout precision. Default `false`.
+   */
+  readonly showGrid?: boolean;
+  /**
+   * Display unit for the rulers and grid. Locale-driven and chosen
+   * by the host editor. Default `"in"`.
+   */
+  readonly rulerUnit?: "in" | "cm";
 }
 
 export interface RemoteSelectionPeer {
@@ -1540,9 +1562,45 @@ export function SlideCanvas(props: SlideCanvasProps): React.ReactElement | null 
           preserveAspectRatio="xMidYMid meet"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
           dangerouslySetInnerHTML={{
-            __html: `<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${slideBackgroundFillAttr(slide, themeDefault)}"/>${svgInner}${animationBadgesSvg(slide, slideSize, hiddenIds)}`,
+            __html: (() => {
+              const bgPaint = slideBackgroundPaint(slide, themeDefault);
+              const defsBlock = bgPaint.defs ? `<defs>${bgPaint.defs}</defs>` : "";
+              return `${defsBlock}<rect x="0" y="0" width="${slideWUser}" height="${slideHUser}" fill="${bgPaint.paintRef}"/>${
+                props.showGrid ? slideGridSvgString(slideSize, props.rulerUnit ?? "in") : ""
+              }${svgInner}${animationBadgesSvg(slide, slideSize, hiddenIds)}`;
+            })(),
           }}
         />
+        {props.showRulers && stageLayout ? (
+          <>
+            <SlideRulers
+              axis="h"
+              slideSize={slideSize}
+              stage={{
+                stageW: stageLayout.stageW,
+                stageH: stageLayout.stageH,
+                slidePxLeft: stageLayout.slidePxLeft,
+                slidePxTop: stageLayout.slidePxTop,
+                slidePxW: stageLayout.slidePxW,
+                slidePxH: stageLayout.slidePxH,
+              }}
+              unit={props.rulerUnit ?? "in"}
+            />
+            <SlideRulers
+              axis="v"
+              slideSize={slideSize}
+              stage={{
+                stageW: stageLayout.stageW,
+                stageH: stageLayout.stageH,
+                slidePxLeft: stageLayout.slidePxLeft,
+                slidePxTop: stageLayout.slidePxTop,
+                slidePxW: stageLayout.slidePxW,
+                slidePxH: stageLayout.slidePxH,
+              }}
+              unit={props.rulerUnit ?? "in"}
+            />
+          </>
+        ) : null}
         {drag && preview ? (
           <DragGhostLayer slideSize={slideSize} ghosts={dragGhosts} preview={preview} ctx={ctx} />
         ) : null}
@@ -1676,6 +1734,18 @@ function renderPortHoverOverlay(
 function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
   const bg = resolveSlideBackgroundColor(slide.cSldHead, theme);
   return bg ? `#${bg}` : "white";
+}
+
+/**
+ * Richer slide background paint resolver — returns the SVG `<defs>`
+ * block (gradients, patterns, …) the caller must inject into the slide
+ * SVG plus the `fill="…"` attribute the background `<rect>` should use.
+ * Falls back to `{defs:"", paintRef:"white"}` when no `<p:bg>` is
+ * declared so the React canvas keeps painting white slides like before.
+ */
+function slideBackgroundPaint(slide: Slide, theme: typeof DEFAULT_THEME): { defs: string; paintRef: string } {
+  const paint = resolveSlideBackgroundPaint(slide.cSldHead, theme, slide.id);
+  return paint ?? { defs: "", paintRef: "white" };
 }
 
 /**

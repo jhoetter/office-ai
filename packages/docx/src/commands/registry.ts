@@ -12,6 +12,9 @@ import { deleteCommentHandler } from "./delete-comment.js";
 import { deleteRangeHandler } from "./delete-range.js";
 import { deleteRangeTrackedHandler } from "./delete-range-tracked.js";
 import { formatRangeHandler } from "./format-range.js";
+import { deleteColumnHandler } from "./delete-column.js";
+import { deleteRowHandler } from "./delete-row.js";
+import { deleteTableHandler } from "./delete-table.js";
 import { insertColumnHandler } from "./insert-column.js";
 import { insertHyperlinkHandler } from "./insert-hyperlink.js";
 import { insertImageHandler } from "./insert-image.js";
@@ -31,6 +34,9 @@ import { resolveCommentHandler } from "./resolve-comment.js";
 import { setCellContentHandler } from "./set-cell-content.js";
 import { setFooterTextHandler } from "./set-footer-text.js";
 import { setHeaderTextHandler } from "./set-header-text.js";
+import { setHeaderFooterBlocksHandler } from "./set-header-footer-blocks.js";
+import { createHeaderFooterPartHandler } from "./create-header-footer-part.js";
+import { insertHeaderFooterImageHandler } from "./insert-header-footer-image.js";
 import { setParagraphAlignmentHandler } from "./set-paragraph-alignment.js";
 import { setParagraphIndentHandler } from "./set-paragraph-indent.js";
 import { setParagraphListHandler } from "./set-paragraph-list.js";
@@ -39,7 +45,15 @@ import { setParagraphStyleHandler } from "./set-paragraph-style.js";
 import { deleteImageHandler } from "./delete-image.js";
 import { setImagePropertiesHandler } from "./set-image-properties.js";
 import { setPageSetupHandler } from "./set-page-setup.js";
+import { setProtectionHandler } from "./set-protection.js";
 import { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
+import {
+  mergeCellsHorizontalHandler,
+  setCellAlignmentHandler,
+  setCellShadingHandler,
+  setColumnWidthHandler,
+  setRowHeightHandler,
+} from "./set-table-cell-properties.js";
 import { deleteFootnoteHandler, insertFootnoteHandler, setFootnoteBodyHandler } from "./footnote-commands.js";
 
 export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot>> = [
@@ -54,6 +68,9 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   deleteCommentHandler as CommandHandler<unknown, DocxSnapshot>,
   setHeaderTextHandler as CommandHandler<unknown, DocxSnapshot>,
   setFooterTextHandler as CommandHandler<unknown, DocxSnapshot>,
+  setHeaderFooterBlocksHandler as CommandHandler<unknown, DocxSnapshot>,
+  createHeaderFooterPartHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertHeaderFooterImageHandler as CommandHandler<unknown, DocxSnapshot>,
   acceptChangeHandler as CommandHandler<unknown, DocxSnapshot>,
   rejectChangeHandler as CommandHandler<unknown, DocxSnapshot>,
   acceptAllChangesHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -62,6 +79,9 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setCellContentHandler as CommandHandler<unknown, DocxSnapshot>,
   insertRowHandler as CommandHandler<unknown, DocxSnapshot>,
   insertColumnHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteRowHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteColumnHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteTableHandler as CommandHandler<unknown, DocxSnapshot>,
   insertImageHandler as CommandHandler<unknown, DocxSnapshot>,
   setParagraphListHandler as CommandHandler<unknown, DocxSnapshot>,
   removeParagraphListHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -89,6 +109,12 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   insertFootnoteHandler as CommandHandler<unknown, DocxSnapshot>,
   setFootnoteBodyHandler as CommandHandler<unknown, DocxSnapshot>,
   deleteFootnoteHandler as CommandHandler<unknown, DocxSnapshot>,
+  setProtectionHandler as CommandHandler<unknown, DocxSnapshot>,
+  setCellShadingHandler as CommandHandler<unknown, DocxSnapshot>,
+  setCellAlignmentHandler as CommandHandler<unknown, DocxSnapshot>,
+  setRowHeightHandler as CommandHandler<unknown, DocxSnapshot>,
+  setColumnWidthHandler as CommandHandler<unknown, DocxSnapshot>,
+  mergeCellsHorizontalHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

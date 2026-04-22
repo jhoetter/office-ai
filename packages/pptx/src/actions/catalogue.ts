@@ -114,12 +114,159 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     hidden: { reason: "Reached via the notes pane; CLI exposure is deferred." },
   },
   {
+    id: "pptx.set-slide-hidden",
+    commandType: "pptx:set-slide-hidden",
+    label: "Hide / show slide",
+    description:
+      "Toggle a slide's hidden flag. Hidden slides stay in the deck but are skipped during slideshow playback.",
+    section: "Slide",
+    surfaces: ["cli", "palette", "toolbar", "contextMenu"],
+    icon: "EyeOff",
+    args: [
+      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "hidden", flag: "--hidden <bool>", kind: "boolean", default: true, description: "true to hide, false to unhide" },
+    ],
+    buildPayload: ({ slideIndex, hidden }) => ({
+      slideIndex: Number(slideIndex),
+      hidden: hidden === false || hidden === "false" ? false : true,
+    }),
+  },
+  {
     id: "pptx.set-slide-transition",
     commandType: "pptx:set-slide-transition",
     label: "Set slide transition",
-    description: "Set the entry transition for a slide.",
-    section: "Slide",
-    surfaces: ["cli", "palette"],
+    description: "Set the entry transition for a slide. Pass --kind none to remove an existing transition.",
+    section: "Transitions",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "ChevronsLeftRightEllipsis",
+    args: [
+      { name: "slideIndex", flag: "--slide-index <n>", kind: "number", required: true, description: "0-based slide index." },
+      {
+        name: "kind",
+        flag: "--kind <k>",
+        kind: "enum",
+        choices: ["none", "fade", "push", "wipe", "split", "cut"],
+        required: true,
+        description: "Transition effect.",
+      },
+      {
+        name: "speed",
+        flag: "--speed <s>",
+        kind: "enum",
+        choices: ["slow", "med", "fast"],
+        description: "Transition speed.",
+      },
+    ],
+    buildPayload: ({ slideIndex, kind, speed }) => ({
+      slideIndex: Number(slideIndex),
+      kind: String(kind) as "none",
+      ...(speed ? { speed: String(speed) as "slow" } : {}),
+    }),
+  },
+  {
+    id: "pptx.set-slide-size",
+    commandType: "pptx:set-slide-size",
+    label: "Set slide size",
+    description:
+      "Resize the deck. Pass a preset (widescreen / standard / a4 / letter) or 'custom' with explicit cxEmu / cyEmu.",
+    section: "Design",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "Maximize",
+    args: [
+      {
+        name: "preset",
+        flag: "--preset <kind>",
+        kind: "enum",
+        description: "widescreen | standard | a4 | letter | custom",
+        choices: ["widescreen", "standard", "a4", "letter", "custom"],
+        default: "widescreen",
+      },
+      {
+        name: "cxEmu",
+        flag: "--cx-emu <n>",
+        kind: "number",
+        description: "Custom width in EMU (only when --preset=custom).",
+      },
+      {
+        name: "cyEmu",
+        flag: "--cy-emu <n>",
+        kind: "number",
+        description: "Custom height in EMU (only when --preset=custom).",
+      },
+      {
+        name: "sizeType",
+        flag: "--size-type <hint>",
+        kind: "string",
+        description: "Optional <p:sldSz @type> hint (e.g. screen16x9).",
+      },
+    ],
+    buildPayload: ({ preset, cxEmu, cyEmu, sizeType }) => ({
+      preset: typeof preset === "string" ? (preset as "widescreen") : "widescreen",
+      ...(cxEmu !== undefined ? { cxEmu: Number(cxEmu) } : {}),
+      ...(cyEmu !== undefined ? { cyEmu: Number(cyEmu) } : {}),
+      ...(sizeType ? { sizeType: String(sizeType) } : {}),
+    }),
+  },
+  {
+    id: "pptx.set-show-options",
+    commandType: "pptx:set-show-options",
+    label: "Set show options",
+    description:
+      "Configure presentation-wide slideshow options (mode, loop, narration, animation, timings). Pass --clear to drop the existing <p:showPr>.",
+    section: "Slideshow",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "MonitorPlay",
+    args: [
+      {
+        name: "showType",
+        flag: "--show-type <kind>",
+        kind: "enum",
+        description: "Playback mode (presenter | browse | kiosk).",
+        choices: ["presenter", "browse", "kiosk"],
+      },
+      {
+        name: "loop",
+        flag: "--loop <bool>",
+        kind: "boolean",
+        description: "Restart slideshow at first slide after the last.",
+      },
+      {
+        name: "showNarration",
+        flag: "--show-narration <bool>",
+        kind: "boolean",
+        description: "Play recorded narration during slideshow.",
+      },
+      {
+        name: "showAnimation",
+        flag: "--show-animation <bool>",
+        kind: "boolean",
+        description: "Play animations during slideshow (default: true).",
+      },
+      {
+        name: "useTimings",
+        flag: "--use-timings <bool>",
+        kind: "boolean",
+        description: "Honour rehearsed slide timings (default: true).",
+      },
+      {
+        name: "clear",
+        flag: "--clear",
+        kind: "boolean",
+        description: "Remove the <p:showPr> element entirely (revert to defaults).",
+      },
+    ],
+    buildPayload: (args) => {
+      const out: Record<string, unknown> = {};
+      if (typeof args.showType === "string") {
+        out.showType = args.showType as "presenter";
+      }
+      if (typeof args.loop === "boolean") out.loop = args.loop;
+      if (typeof args.showNarration === "boolean") out.showNarration = args.showNarration;
+      if (typeof args.showAnimation === "boolean") out.showAnimation = args.showAnimation;
+      if (typeof args.useTimings === "boolean") out.useTimings = args.useTimings;
+      if (args.clear === true) out.clear = true;
+      return out;
+    },
   },
 
   // ── Text shapes ───────────────────────────────────────────────────
@@ -211,7 +358,20 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Set shape position",
     description: "Set a shape's x/y position (in EMU).",
     section: "Edit",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette"],
+    icon: "Move",
+    args: [
+      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
+      { name: "x", flag: "--x <emu>", kind: "number", required: true, description: "X coordinate in EMU (914400 EMU = 1 inch)" },
+      { name: "y", flag: "--y <emu>", kind: "number", required: true, description: "Y coordinate in EMU" },
+    ],
+    buildPayload: ({ slideIndex, shapeId, x, y }) => ({
+      slideIndex: Number(slideIndex),
+      shapeId: String(shapeId),
+      x: Number(x),
+      y: Number(y),
+    }),
   },
   {
     id: "pptx.set-size",
@@ -219,7 +379,20 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Set shape size",
     description: "Set a shape's width/height (in EMU).",
     section: "Edit",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette"],
+    icon: "Maximize2",
+    args: [
+      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
+      { name: "width", flag: "--width <emu>", kind: "number", required: true, description: "Width in EMU" },
+      { name: "height", flag: "--height <emu>", kind: "number", required: true, description: "Height in EMU" },
+    ],
+    buildPayload: ({ slideIndex, shapeId, width, height }) => ({
+      slideIndex: Number(slideIndex),
+      shapeId: String(shapeId),
+      width: Number(width),
+      height: Number(height),
+    }),
   },
   {
     id: "pptx.set-rotation",
@@ -227,7 +400,18 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Set shape rotation",
     description: "Rotate a shape by N degrees clockwise around its centre.",
     section: "Edit",
-    surfaces: ["cli"],
+    surfaces: ["cli", "palette"],
+    icon: "RotateCw",
+    args: [
+      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
+      { name: "degrees", flag: "--degrees <deg>", kind: "number", required: true, description: "Rotation in degrees (normalised to [0, 360))" },
+    ],
+    buildPayload: ({ slideIndex, shapeId, degrees }) => ({
+      slideIndex: Number(slideIndex),
+      shapeId: String(shapeId),
+      degrees: Number(degrees),
+    }),
   },
   {
     id: "pptx.set-shape-fill",
@@ -239,13 +423,38 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     hidden: { reason: "Reached via the format pane; CLI exposure is deferred." },
   },
   {
+    id: "pptx.set-slide-background",
+    commandType: "pptx:set-slide-background",
+    label: "Set slide background",
+    description:
+      "Apply a fill (solid colour, gradient, pattern, picture) as the slide-level background, or pass null to clear it.",
+    section: "Design",
+    surfaces: ["palette"],
+    hidden: {
+      reason:
+        "Reached via the Design ribbon's Format Background popover; CLI / palette exposure is deferred until the FillSpec arg matrix is finalised.",
+    },
+  },
+  {
     id: "pptx.set-shape-geometry",
     commandType: "pptx:set-shape-geometry",
     label: "Set shape geometry adjustment",
     description:
       "Tune a preset shape's geometry parameter (corner radius, arrow head size, etc.) by writing into a:avLst > a:gd.",
     section: "Format",
-    surfaces: ["palette"],
+    surfaces: ["cli", "palette"],
+    args: [
+      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
+      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
+      { name: "adjName", flag: "--adj <name>", kind: "string", required: true, description: 'Adjustment name (e.g. "adj", "adj1")' },
+      { name: "value", flag: "--value <n>", kind: "number", required: true, description: "OOXML adjustment value in 1000-th-of-percent units (0–100000)" },
+    ],
+    buildPayload: ({ slideIndex, shapeId, adjName, value }) => ({
+      slideIndex: Number(slideIndex),
+      shapeId: String(shapeId),
+      adjName: String(adjName),
+      value: Number(value),
+    }),
   },
   {
     id: "pptx.reorder-shape",

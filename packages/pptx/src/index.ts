@@ -1,4 +1,19 @@
 export * from "./model/types.js";
+export {
+  fillSpecToOpaque,
+  normaliseFillSpec,
+  readFillSpec,
+  spliceFillIntoSpPr,
+  spliceSlideBackground,
+  type FillSpec,
+  type GradientFillSpec,
+  type GradientKind,
+  type GradientStop,
+  type PatternFillSpec,
+  type PatternPreset,
+  type PictureFillSpec,
+  type SolidFillSpec,
+} from "./model/fill.js";
 export { parsePptx, type ParseOptions } from "./parser/parse.js";
 export { PptxParseError } from "./parser/errors.js";
 export { serializePptx } from "./serializer/serialize.js";
@@ -35,6 +50,7 @@ export type {
   SetConnectorStylePayload,
   SetPositionPayload,
   SetShapeFillPayload,
+  SetSlideBackgroundPayload,
   ReorderShapePayload,
   ReorderShapeMode,
   SetParagraphAlignmentPayload,

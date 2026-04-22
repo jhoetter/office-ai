@@ -14,9 +14,9 @@ import { focusEditor, gotoEditor } from "./_helpers";
  *
  * Without measured pagination the bundled welcome doc renders as a
  * single page sheet regardless of how many paragraphs the user adds.
- * With it, we expect at least one `pm-page-edge` widget (the visible
- * grey gap that separates two adjacent page sheets) once enough
- * paragraphs have been typed.
+ * With it, we expect at least one `pm-page-break` widget (the thin
+ * transparent strip that separates two adjacent page sheets) once
+ * enough paragraphs have been typed.
  */
 test.describe("editor: measured pagination", () => {
   test("a long body produces multiple page sheets without any hard break", async ({ page }) => {
@@ -26,7 +26,7 @@ test.describe("editor: measured pagination", () => {
     await expect(surface).toBeVisible();
 
     // Baseline: bundled welcome doc fits on one sheet.
-    await expect(surface.locator(".pm-page-edge")).toHaveCount(0);
+    await expect(surface.locator(".pm-page-break")).toHaveCount(0);
 
     // Type enough paragraphs to push past DIN A4 content height
     // (~933 CSS px = (16838 - 1417 - 1417) / 15). Each Enter creates a
@@ -42,17 +42,14 @@ test.describe("editor: measured pagination", () => {
 
     // Allow the measurement RAF + force-recompute round trip to land.
     // The plugin runs one extra cycle after each measurement-driven
-    // re-chunk; a short waitFor against the edge widget is enough.
-    const edges = surface.locator(".pm-page-edge");
-    await expect.poll(async () => edges.count(), { timeout: 5_000 }).toBeGreaterThan(0);
+    // re-chunk; a short waitFor against the page-break widget is enough.
+    const breaks = surface.locator(".pm-page-break");
+    await expect.poll(async () => breaks.count(), { timeout: 5_000 }).toBeGreaterThan(0);
 
-    // Sanity: every page-edge separator carries a `data-page-number`
-    // attribute on its inner gap so the visual break is discoverable
-    // by tests + assistive tech. The user-facing page number lives in
-    // the status bar, not in a banner inside the gap (Word does not
-    // paint a "Page N" pill between sheets either).
-    const firstEdgeGap = edges.first().locator(".pm-page-gap");
-    await expect(firstEdgeGap).toHaveAttribute("data-page-number", /\d+/);
+    // Sanity: every page-break strip carries a `data-page-number`
+    // attribute (the INCOMING page number) so the visual break is
+    // discoverable by tests + assistive tech.
+    await expect(breaks.first()).toHaveAttribute("data-page-number", /\d+/);
   });
 
   test("editor card width matches US-Letter (12240 twips ≈ 816 CSS px)", async ({ page }) => {

@@ -114,6 +114,56 @@ export interface SetSlideNotesPayload {
   readonly text: string;
 }
 
+export interface SetSlideHiddenPayload {
+  readonly slideIndex: number;
+  readonly hidden: boolean;
+}
+
+/**
+ * Resize the deck. Mirrors the "Slide Size" picker in PowerPoint's
+ * Design tab. Either pick a named preset or pass `preset: "custom"`
+ * with explicit `cxEmu` / `cyEmu` (and optional `sizeType` for the
+ * `<p:sldSz @type>` hint).
+ */
+export interface SetSlideSizePayload {
+  readonly preset?: "widescreen" | "standard" | "a4" | "letter" | "custom";
+  readonly cxEmu?: number;
+  readonly cyEmu?: number;
+  /** Optional OOXML `<p:sldSz @type>` hint, e.g. "screen16x9". */
+  readonly sizeType?: string;
+}
+
+/**
+ * Configure presentation-wide slideshow options. Maps to `<p:showPr>`
+ * inside `ppt/presentation.xml`. Pass `clear: true` to remove the
+ * `<p:showPr>` element entirely (revert to PowerPoint defaults).
+ *
+ * `showType` controls the playback mode:
+ *   • `"presenter"` (default) — plain `<p:showPr>` with no child
+ *   • `"browse"`   — windowed presentation (`<p:browse/>`)
+ *   • `"kiosk"`    — kiosk full-screen (`<p:kiosk/>`)
+ */
+export interface SetShowOptionsPayload {
+  /** When true, remove any existing `<p:showPr>` element and exit. */
+  readonly clear?: boolean;
+  /** Slideshow playback mode. */
+  readonly showType?: "presenter" | "browse" | "kiosk";
+  /** `loop="1"` — return to first slide after last. */
+  readonly loop?: boolean;
+  /** `showNarration="1"` — play recorded narration. */
+  readonly showNarration?: boolean;
+  /**
+   * `showAnimation="1"` — play animations. Default in PowerPoint is
+   * true; set explicitly to `false` to disable.
+   */
+  readonly showAnimation?: boolean;
+  /**
+   * `useTimings="1"` — honour rehearsed slide timings. Default is
+   * true; set to `false` to advance manually only.
+   */
+  readonly useTimings?: boolean;
+}
+
 export interface SetSlideLayoutPayload {
   readonly slideIndex: number;
   readonly layoutPartPath?: string;
@@ -374,8 +424,28 @@ export interface ReorderShapePayload {
 export interface SetShapeFillPayload {
   readonly slideIndex: number;
   readonly shapeId: NodeId;
-  /** 6-char hex; pass `null` to clear the fill (renders as transparent). */
-  readonly fill: string | null;
+  /**
+   * Backward-compatible shorthand that accepts:
+   *   - 6-char hex string  → equivalent to `{ type: "solid", color: hex }`
+   *   - `null`             → equivalent to `{ type: "none" }` (transparent)
+   *   - `FillSpec`         → solid / gradient / pattern / picture / none
+   *
+   * The handler normalises everything through `normaliseFillSpec` before
+   * applying, so invalid hex / out-of-range alpha throw a typed
+   * `invalid-payload` error.
+   */
+  readonly fill: string | null | import("../model/fill.js").FillSpec;
+}
+
+export interface SetSlideBackgroundPayload {
+  readonly slideIndex: number;
+  /**
+   * Pass `null` to clear the slide's `<p:bg>` (the slide then inherits
+   * the layout/master background — this is PowerPoint's "Reset
+   * Background"). Otherwise any FillSpec works: solid colour, gradient,
+   * pattern, picture.
+   */
+  readonly fill: import("../model/fill.js").FillSpec | null;
 }
 
 // ─── Alignment / distribution (multi-select operations) ───────────────────
@@ -760,6 +830,7 @@ export const PPTX_COMMAND_TYPES = {
   addShape: "pptx:add-shape",
   deleteShape: "pptx:delete-shape",
   setShapeFill: "pptx:set-shape-fill",
+  setSlideBackground: "pptx:set-slide-background",
   reorderShape: "pptx:reorder-shape",
   duplicateShape: "pptx:duplicate-shape",
   pasteShapes: "pptx:paste-shapes",
@@ -786,6 +857,9 @@ export const PPTX_COMMAND_TYPES = {
   setConnectorWaypoint: "pptx:set-connector-waypoint",
   rerouteConnector: "pptx:reroute-connector",
   swapConnectorDirection: "pptx:swap-connector-direction",
+  setSlideHidden: "pptx:set-slide-hidden",
+  setSlideSize: "pptx:set-slide-size",
+  setShowOptions: "pptx:set-show-options",
   setSlideLayout: "pptx:set-slide-layout",
   setSlideNotes: "pptx:set-slide-notes",
   addComment: "pptx:add-comment",

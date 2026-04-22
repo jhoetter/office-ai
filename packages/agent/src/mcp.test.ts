@@ -67,11 +67,13 @@ describe("OfficeAI MCP server", () => {
   beforeEach(() => __resetMcpSessionsForTests());
   afterEach(() => __resetMcpSessionsForTests());
 
-  it("lists every registered docx_*, xlsx_*, pptx_* and pdf_* tool", async () => {
+  it("registers the hand-rolled docx_*, xlsx_*, pptx_* and pdf_* tools", async () => {
     const client = await makeClient();
     const list = await client.listTools();
-    const names = list.tools.map((t) => t.name).sort();
-    expect(names).toEqual([
+    const names = new Set(list.tools.map((t) => t.name));
+    // Hand-rolled, stable surface — additions/removals here are
+    // breaking changes for MCP clients and should be reviewed.
+    const handRolled = [
       "docx_apply_command",
       "docx_approve",
       "docx_diff",
@@ -136,7 +138,52 @@ describe("OfficeAI MCP server", () => {
       "xlsx_set_range",
       "xlsx_undo",
       "xlsx_unmerge",
-    ]);
+    ];
+    for (const expected of handRolled) {
+      expect(names.has(expected), `missing hand-rolled tool ${expected}`).toBe(true);
+    }
+  });
+
+  it("auto-binds catalogue actions that declare args + buildPayload as MCP tools", async () => {
+    const client = await makeClient();
+    const list = await client.listTools();
+    const names = new Set(list.tools.map((t) => t.name));
+    // Sanity-check a few catalogue-driven tool names that the
+    // actions-to-mcp adapter is expected to register. New catalogue
+    // entries with `buildPayload` will appear here automatically; the
+    // assertion intentionally stops at "must contain" rather than
+    // pinning the exact shape so the catalogue can grow.
+    expect(names.has("docx_delete_row")).toBe(true);
+    expect(names.has("docx_delete_column")).toBe(true);
+    expect(names.has("docx_delete_table")).toBe(true);
+    expect(names.has("docx_accept_all_changes")).toBe(true);
+    expect(names.has("docx_reject_all_changes")).toBe(true);
+    expect(names.has("docx_insert_page_break")).toBe(true);
+  });
+
+  it("auto-bound docx_insert_page_break dispatches the bus command and bumps the revision", async () => {
+    const client = await makeClient();
+    const path = await makeFixture();
+    const loaded = structured(await client.callTool({ name: "docx_load", arguments: { path } }));
+    const handle = loaded.handle as string;
+    const inspectResult = structured(await client.callTool({ name: "docx_inspect", arguments: { handle } }));
+    const beforeRev = (inspectResult.revision as number | undefined) ?? 0;
+    const text = structured(
+      await client.callTool({ name: "docx_get_text", arguments: { handle, format: "json" } })
+    );
+    const paragraphs = text.paragraphs as Array<{ id: string }>;
+    const targetId = paragraphs[1].id;
+    const result = structured(
+      await client.callTool({
+        name: "docx_insert_page_break",
+        arguments: { handle, paragraphId: targetId, offset: 0 },
+      })
+    );
+    expect(result.commandType).toBe("docx:insert-page-break");
+    expect(result.status).toBe("approved");
+    const after = structured(await client.callTool({ name: "docx_inspect", arguments: { handle } }));
+    const afterRev = (after.revision as number | undefined) ?? 0;
+    expect(afterRev).toBeGreaterThan(beforeRev);
   });
 
   it("docx_load returns a handle and an inspection summary", async () => {

@@ -1,5 +1,10 @@
 import type { CommandHandler } from "@officeai/core";
-import type { OpaqueXml, Picture, PptxSnapshot, Shape, TextShape } from "../model/types.js";
+import type { Picture, PptxSnapshot, Shape, TextShape } from "../model/types.js";
+import {
+  normaliseFillSpec,
+  spliceFillIntoSpPr,
+  type FillSpec,
+} from "../model/fill.js";
 import {
   buildDiff,
   evolveSnapshot,
@@ -19,13 +24,11 @@ function isFillCapable(shape: Shape): shape is FillCapableShape {
 }
 
 /**
- * Replaces (or removes) the `<a:solidFill>` entry in a shape's `spPrTail`.
- *
- * D13 — used to be TextShape-only, which left the toolbar swatch
- * permanently disabled for inserted pictures (and any future shape
- * subtype that exposes `spPrTail`). Now also operates on `Picture`,
- * matching PowerPoint's behaviour where a picture frame can carry an
- * outline-style background fill.
+ * Apply any kind of fill — solid, gradient, pattern, picture or none —
+ * to a shape's `<p:spPr>` block. Accepts the legacy `string | null`
+ * shorthand for back-compat with callers (and tests) that only knew
+ * about solid colours; under the hood everything goes through
+ * `FillSpec`.
  */
 export const setShapeFillHandler: CommandHandler<SetShapeFillPayload, PptxSnapshot> = {
   type: "pptx:set-shape-fill",
@@ -36,7 +39,8 @@ export const setShapeFillHandler: CommandHandler<SetShapeFillPayload, PptxSnapsh
       throw makeError("not-applicable", `cannot set fill on shape of kind ${shape.kind}`);
     }
 
-    const next: Shape = applyFill(shape, payload.fill);
+    const spec = coerceFillPayload(payload.fill);
+    const next: Shape = applyFill(shape, spec);
 
     const root = withSlide(snapshot.root, sIdx, (s) => ({
       ...s,
@@ -51,45 +55,53 @@ export const setShapeFillHandler: CommandHandler<SetShapeFillPayload, PptxSnapsh
         nodeId: shape.id,
         path: ["slides", sIdx, "shapes", ...path],
         field: "fill",
-        summary: payload.fill ? `#${normaliseHex(payload.fill)}` : "(none)",
+        summary: summariseFill(spec),
       }),
     };
   },
 };
 
-function applyFill<S extends FillCapableShape>(shape: S, fill: string | null): S {
-  return { ...shape, spPrTail: spliceFill(shape.spPrTail, fill) };
+function applyFill<S extends FillCapableShape>(shape: S, spec: FillSpec): S {
+  return { ...shape, spPrTail: spliceFillIntoSpPr(shape.spPrTail, spec) };
 }
 
-function spliceFill(tail: ReadonlyArray<OpaqueXml>, fill: string | null): ReadonlyArray<OpaqueXml> {
-  // Strip every existing fill-related entry first; PowerPoint allows at
-  // most one of solidFill / noFill / gradFill / pattFill at the spPr
-  // level, so dropping all of them keeps the result well-formed.
-  const filtered = tail.filter(
-    (c) => c.tag !== "a:solidFill" && c.tag !== "a:noFill" && c.tag !== "a:gradFill" && c.tag !== "a:pattFill"
-  );
-  const replacement: OpaqueXml = fill
-    ? {
-        tag: "a:solidFill",
-        attrs: {},
-        rawAttrs: {},
-        subtree: [{ "a:srgbClr": [], ":@": { "@_val": normaliseHex(fill) } }],
-      }
-    : { tag: "a:noFill", attrs: {}, rawAttrs: {}, subtree: [] };
-
-  // The fill must come AFTER prstGeom (otherwise the rendered shape's
-  // path wouldn't pick up the fill in PowerPoint's serializer). Insert
-  // immediately after the first prstGeom, otherwise prepend.
-  const idx = filtered.findIndex((c) => c.tag === "a:prstGeom");
-  return idx >= 0
-    ? [...filtered.slice(0, idx + 1), replacement, ...filtered.slice(idx + 1)]
-    : [replacement, ...filtered];
-}
-
-function normaliseHex(input: string): string {
-  const v = input.trim().replace(/^#/, "").toUpperCase();
-  if (!/^[0-9A-F]{6}$/.test(v)) {
-    throw makeError("invalid-payload", `invalid hex color: ${input}`);
+/**
+ * Normalise the legacy `string | null` shorthand into a `FillSpec` and
+ * validate everything in one place. `null` maps to `noFill` to match
+ * the original handler's "transparent" semantics; `string` → solid.
+ */
+function coerceFillPayload(input: SetShapeFillPayload["fill"]): FillSpec {
+  if (input === null) return { type: "none" };
+  if (typeof input === "string") {
+    try {
+      return normaliseFillSpec({ type: "solid", color: input });
+    } catch (err) {
+      throw makeError("invalid-payload", err instanceof Error ? err.message : String(err));
+    }
   }
-  return v;
+  try {
+    return normaliseFillSpec(input);
+  } catch (err) {
+    throw makeError("invalid-payload", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function summariseFill(spec: FillSpec): string {
+  switch (spec.type) {
+    case "none":
+      return "(none)";
+    case "solid":
+      return `#${spec.color}${spec.alpha !== undefined ? ` @${Math.round(spec.alpha * 100)}%` : ""}`;
+    case "gradient":
+      return `gradient(${spec.kind}, ${spec.stops.length} stops)`;
+    case "pattern":
+      return `pattern(${spec.preset})`;
+    case "picture":
+      return `picture(${spec.embedRelId})`;
+    default: {
+      const _exhaustive: never = spec;
+      void _exhaustive;
+      return "(unknown)";
+    }
+  }
 }

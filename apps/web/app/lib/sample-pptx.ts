@@ -49,12 +49,13 @@ const MASTER_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>
 </Relationships>`;
 
-// 16:9 default: 9144000 x 6858000 EMU
+// 16:9 widescreen (PowerPoint 2013+ default): 12192000 × 6858000 EMU
+// = 13.333 in × 7.5 in. Notes page stays portrait at 7.5 in × 10 in.
 const PRESENTATION_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" saveSubsetFonts="1">
   <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
   <p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>
-  <p:sldSz cx="9144000" cy="6858000" type="screen16x9"/>
+  <p:sldSz cx="12192000" cy="6858000" type="screen16x9"/>
   <p:notesSz cx="6858000" cy="9144000"/>
 </p:presentation>`;
 

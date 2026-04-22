@@ -197,6 +197,10 @@ export async function parseDocx(
     parseTableTyped(entry, mint, parseParagraph)
   );
 
+  const settingsXml = container.has("word/settings.xml")
+    ? container.readText("word/settings.xml")
+    : undefined;
+
   const root: DocxDocument = {
     id: mintNodeId(),
     body,
@@ -210,6 +214,7 @@ export async function parseDocx(
     ...(styles ? { styles } : {}),
     ...(theme ? { theme } : {}),
     ...(footnotesPart ? { footnotesPart } : {}),
+    ...(settingsXml !== undefined ? { settingsXml } : {}),
     documentRootAttrs,
   };
 
@@ -232,6 +237,7 @@ export async function parseDocx(
     charts: new Set<string>(),
     embeddings: new Set<string>(),
     footnotes: false,
+    settings: false,
   };
 
   return {

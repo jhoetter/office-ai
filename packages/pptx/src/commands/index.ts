@@ -7,6 +7,7 @@ import { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 import { deleteShapeHandler } from "./delete-shape.js";
 import { deleteSlideHandler } from "./delete-slide.js";
 import { setShapeFillHandler } from "./set-shape-fill.js";
+import { setSlideBackgroundHandler } from "./set-slide-background.js";
 import { setShapeGeometryHandler } from "./set-shape-geometry.js";
 import { reorderShapeHandler } from "./reorder-shape.js";
 import { duplicateShapeHandler } from "./duplicate-shape.js";
@@ -51,6 +52,9 @@ import {
   swapConnectorDirectionHandler,
 } from "./connector-commands.js";
 import { setSlideLayoutHandler } from "./set-slide-layout.js";
+import { setSlideHiddenHandler } from "./set-slide-hidden.js";
+import { setShowOptionsHandler } from "./set-show-options.js";
+import { setSlideSizeHandler } from "./set-slide-size.js";
 import { setSlideNotesHandler } from "./set-slide-notes.js";
 import {
   addCommentHandler,
@@ -68,6 +72,7 @@ export { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 export { deleteShapeHandler } from "./delete-shape.js";
 export { deleteSlideHandler } from "./delete-slide.js";
 export { setShapeFillHandler } from "./set-shape-fill.js";
+export { setSlideBackgroundHandler } from "./set-slide-background.js";
 export { setShapeGeometryHandler } from "./set-shape-geometry.js";
 export type { SetShapeGeometryPayload } from "./set-shape-geometry.js";
 export { reorderShapeHandler } from "./reorder-shape.js";
@@ -112,6 +117,10 @@ export {
   setConnectorWaypointHandler,
   swapConnectorDirectionHandler,
 } from "./connector-commands.js";
+export { setShowOptionsHandler } from "./set-show-options.js";
+export { setSlideHiddenHandler } from "./set-slide-hidden.js";
+export { setSlideSizeHandler, SLIDE_SIZE_PRESETS } from "./set-slide-size.js";
+export type { SlideSizePresetKey } from "./set-slide-size.js";
 export { setSlideLayoutHandler } from "./set-slide-layout.js";
 export { setSlideNotesHandler } from "./set-slide-notes.js";
 export {
@@ -145,6 +154,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   addShapeHandler,
   deleteShapeHandler,
   setShapeFillHandler,
+  setSlideBackgroundHandler,
   setShapeGeometryHandler,
   reorderShapeHandler,
   duplicateShapeHandler,
@@ -172,6 +182,9 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setConnectorWaypointHandler,
   rerouteConnectorHandler,
   swapConnectorDirectionHandler,
+  setSlideHiddenHandler,
+  setSlideSizeHandler,
+  setShowOptionsHandler,
   setSlideLayoutHandler,
   setSlideNotesHandler,
   addCommentHandler,
