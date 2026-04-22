@@ -40,6 +40,7 @@ import { deleteImageHandler } from "./delete-image.js";
 import { setImagePropertiesHandler } from "./set-image-properties.js";
 import { setPageSetupHandler } from "./set-page-setup.js";
 import { setSectionDifferentFirstHandler } from "./set-section-different-first.js";
+import { deleteFootnoteHandler, insertFootnoteHandler, setFootnoteBodyHandler } from "./footnote-commands.js";
 
 export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot>> = [
   insertTextHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -85,6 +86,9 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setChartTypeHandler as CommandHandler<unknown, DocxSnapshot>,
   insertSpreadsheetHandler as CommandHandler<unknown, DocxSnapshot>,
   updateSpreadsheetHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertFootnoteHandler as CommandHandler<unknown, DocxSnapshot>,
+  setFootnoteBodyHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteFootnoteHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

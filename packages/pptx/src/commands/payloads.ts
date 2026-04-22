@@ -238,6 +238,29 @@ export interface InsertImagePayload {
 }
 
 /**
+ * Insert an embedded video / audio file onto a slide. Phase-1: writes
+ * the binary part under `ppt/media/`, registers a slide-rel of type
+ * `…/relationships/video` (or `audio`), updates `[Content_Types].xml`
+ * with a Default for the file extension, and stamps a typed
+ * `MediaShape` whose `<p:pic>` blob carries an `<a:videoFile>` /
+ * `<a:audioFile>` reference plus a transparent placeholder poster
+ * image. Trigger / loop / mute / showControls live on `MediaShape`'s
+ * `raw` for now and are not surfaced as typed payload fields — those
+ * land with the corresponding `pptx:set-media-*` commands in a
+ * follow-up phase.
+ */
+export interface InsertMediaPayload {
+  readonly slideIndex: number;
+  readonly mediaType: "video" | "audio";
+  /** MIME type. Must be one of the supported audio/video types. */
+  readonly contentType: string;
+  readonly bytes: Uint8Array | ArrayBuffer;
+  readonly position: { readonly xEmu: number; readonly yEmu: number };
+  readonly size: { readonly cxEmu: number; readonly cyEmu: number };
+  readonly name?: string;
+}
+
+/**
  * Replace the bitmap behind an existing `Picture` with a new file
  * while preserving its position, size, alt-text and `spPrTail` (so any
  * border / shadow / corner-radius styling stays intact). Mints a new
@@ -701,6 +724,7 @@ export const PPTX_COMMAND_TYPES = {
   setParagraphAlignment: "pptx:set-paragraph-alignment",
   setTextAnchor: "pptx:set-text-anchor",
   insertImage: "pptx:insert-image",
+  insertMedia: "pptx:insert-media",
   replacePictureMedia: "pptx:replace-picture-media",
   addTextBox: "pptx:add-text-box",
   addShape: "pptx:add-shape",

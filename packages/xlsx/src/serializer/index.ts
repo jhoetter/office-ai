@@ -9,4 +9,5 @@ export {
   mintDrawingPartPath,
   DRAWING_CONTENT_TYPE,
 } from "./drawings.js";
+export { serializePivotParts } from "./pivot-tables.js";
 export { XlsxSerializeError, type XlsxSerializeErrorCode } from "./errors.js";

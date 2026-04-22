@@ -10,6 +10,7 @@ import {
   type PptxSnapshot,
   type Slide,
   type SlideSize,
+  type SlideTransition,
   type ThemeColorScheme,
 } from "@officeai/pptx";
 import { slideAspectRatio, slideToSvgString } from "@officeai/pptx/renderer";
@@ -184,6 +185,32 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
 
   const currentSlide = slides[index];
   const nextSlide = slides[index + 1] ?? null;
+
+  // F-C2: slide-to-slide transitions. Keep a snapshot of the previous
+  // slide whenever `index` advances forward (Office's transition is
+  // applied on the **incoming** slide; backwards navigation is
+  // intentionally instant — PowerPoint's behaviour). The overlay
+  // mounts both slides, runs WAAPI on the matching motion, then
+  // unmounts the previous one.
+  const prevIndexRef = React.useRef(index);
+  const [transitioning, setTransitioning] = React.useState<{
+    fromIndex: number;
+    toIndex: number;
+    kind: SlideTransition["kind"];
+    speed: SlideTransition["speed"] | undefined;
+  } | null>(null);
+  React.useEffect(() => {
+    const prev = prevIndexRef.current;
+    if (prev === index) return;
+    if (index > prev) {
+      const t = currentSlide?.transition;
+      if (t && t.kind !== "none" && t.kind !== "unsupported") {
+        setTransitioning({ fromIndex: prev, toIndex: index, kind: t.kind, speed: t.speed });
+      }
+    }
+    prevIndexRef.current = index;
+  }, [index, currentSlide]);
+  const handleTransitionDone = React.useCallback(() => setTransitioning(null), []);
   const notesText = currentSlide ? readNotesText(notesSlides, currentSlide.notesSlidePartPath) : "";
 
   const aspect = slideAspectRatio(slideSize);
@@ -236,15 +263,31 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
           data-testid="pptx-present-stage"
         >
           {currentSlide ? (
-            <SlideStage
-              slide={currentSlide}
-              slideSize={slideSize}
-              mediaUrls={props.mediaUrls}
-              theme={theme}
-              charts={props.charts}
-              aspectRatio={aspect}
-              onPlaybackReady={handlePlaybackReady}
-            />
+            <div className="relative h-full w-full">
+              <SlideStage
+                slide={currentSlide}
+                slideSize={slideSize}
+                mediaUrls={props.mediaUrls}
+                theme={theme}
+                charts={props.charts}
+                aspectRatio={aspect}
+                onPlaybackReady={handlePlaybackReady}
+              />
+              {transitioning && transitioning.toIndex === index ? (
+                <SlideTransitionOverlay
+                  fromSlide={slides[transitioning.fromIndex]!}
+                  toSlide={currentSlide}
+                  slideSize={slideSize}
+                  mediaUrls={props.mediaUrls}
+                  theme={theme}
+                  charts={props.charts}
+                  aspectRatio={aspect}
+                  kind={transitioning.kind}
+                  speed={transitioning.speed}
+                  onDone={handleTransitionDone}
+                />
+              ) : null}
+            </div>
           ) : (
             <span className="text-sm opacity-60">No slides</span>
           )}
@@ -492,4 +535,139 @@ function formatClock(ms: number): string {
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
+}
+
+// ─── F-C2: slide-to-slide transitions ────────────────────────────────
+
+interface SlideTransitionOverlayProps {
+  readonly fromSlide: Slide;
+  readonly toSlide: Slide;
+  readonly slideSize: SlideSize;
+  readonly mediaUrls?: ReadonlyMap<string, string>;
+  readonly theme?: ThemeColorScheme;
+  readonly charts?: ReadonlyMap<string, ChartPart>;
+  readonly aspectRatio: number;
+  readonly kind: SlideTransition["kind"];
+  readonly speed: SlideTransition["speed"] | undefined;
+  readonly onDone: () => void;
+}
+
+/**
+ * Render the previous slide on top of the next, then animate it off
+ * via the WAAPI motion appropriate to the captured transition kind.
+ * The overlay drops itself when the animation finishes (or after a
+ * safety timeout in case WAAPI never fires `finish`).
+ *
+ * Only the four most-common kinds get bespoke motions: fade, push,
+ * wipe, split. `cut` resolves to instant. Anything else falls back
+ * to a quick crossfade so the transition is visible but not jarring.
+ */
+function SlideTransitionOverlay(props: SlideTransitionOverlayProps): React.ReactElement | null {
+  const durationMs = transitionDuration(props.speed);
+  const fromSvg = React.useMemo(
+    () =>
+      slideToSvgString(props.fromSlide, {
+        slideSize: props.slideSize,
+        ...(props.mediaUrls ? { mediaUrls: props.mediaUrls } : {}),
+        ...(props.theme ? { theme: props.theme } : {}),
+        ...(props.charts ? { charts: props.charts } : {}),
+      }),
+    [props.fromSlide, props.slideSize, props.mediaUrls, props.theme, props.charts]
+  );
+  const overlayRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (props.kind === "cut") {
+      props.onDone();
+      return;
+    }
+    const el = overlayRef.current;
+    if (!el) {
+      props.onDone();
+      return;
+    }
+    const animation = playTransitionAnimation(el, props.kind, durationMs);
+    const safetyId = window.setTimeout(props.onDone, durationMs + 200);
+    if (animation) {
+      animation.addEventListener("finish", props.onDone, { once: true });
+      animation.addEventListener("cancel", props.onDone, { once: true });
+    }
+    return () => {
+      window.clearTimeout(safetyId);
+      animation?.cancel();
+    };
+  }, [props, durationMs]);
+  if (props.kind === "cut") return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div
+        ref={overlayRef}
+        className="bg-white shadow-2xl will-change-transform"
+        style={{
+          aspectRatio: String(props.aspectRatio),
+          maxWidth: "100%",
+          maxHeight: "100%",
+          width: "100%",
+          height: "100%",
+        }}
+        dangerouslySetInnerHTML={{ __html: fromSvg }}
+      />
+    </div>
+  );
+}
+
+function transitionDuration(speed: SlideTransition["speed"] | undefined): number {
+  switch (speed) {
+    case "fast":
+      return 250;
+    case "slow":
+      return 750;
+    case "med":
+    default:
+      return 500;
+  }
+}
+
+function playTransitionAnimation(
+  el: HTMLElement,
+  kind: SlideTransition["kind"],
+  durationMs: number
+): Animation | null {
+  // Delegated per-kind keyframes. WAAPI returns null in non-browser
+  // jest envs; callers handle that by short-circuiting via `onDone`.
+  const easing = "cubic-bezier(0.4, 0, 0.2, 1)";
+  switch (kind) {
+    case "fade":
+      return el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: durationMs, easing, fill: "forwards" });
+    case "push":
+      // PowerPoint's default push direction is "left" (incoming from
+      // right). We translate the outgoing slide off to the left.
+      return el.animate([{ transform: "translateX(0%)" }, { transform: "translateX(-100%)" }], {
+        duration: durationMs,
+        easing,
+        fill: "forwards",
+      });
+    case "wipe":
+      return el.animate([{ clipPath: "inset(0 0 0 0)" }, { clipPath: "inset(0 100% 0 0)" }], {
+        duration: durationMs,
+        easing,
+        fill: "forwards",
+      });
+    case "split":
+      return el.animate([{ clipPath: "inset(0 0 0 0)" }, { clipPath: "inset(0 50% 0 50%)" }], {
+        duration: durationMs,
+        easing,
+        fill: "forwards",
+      });
+    case "none":
+    case "cut":
+    case "unsupported":
+    default:
+      // Fallback crossfade so the user isn't left looking at a frozen
+      // overlay if we ever land here.
+      return el.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: Math.min(180, durationMs),
+        easing,
+        fill: "forwards",
+      });
+  }
 }

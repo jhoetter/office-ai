@@ -258,6 +258,14 @@ function deepCloneShape(s: Shape, nextCNvPrId: () => number, mintNodeId: () => s
       };
       return c;
     }
+    case "media": {
+      // Media shapes carry the entire <p:pic> as opaque XML; the
+      // duplicate keeps the same media binary reference (rels are not
+      // re-allocated here — this duplicates within the same slide so
+      // the existing rId stays valid).
+      const c: Shape = { ...s, id, cNvPrId, raw: cloneOpaque(s.raw) };
+      return c;
+    }
     case "connector": {
       const c: ConnectorShape = {
         ...s,

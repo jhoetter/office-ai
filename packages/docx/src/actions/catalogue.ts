@@ -880,6 +880,40 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     ],
   },
   {
+    id: "docx.insert-footnote",
+    commandType: "docx:insert-footnote",
+    label: "Insert footnote",
+    description: "Insert a footnote reference at the caret and add an empty footnote body.",
+    section: "Insert",
+    surfaces: ["palette"],
+    hidden: {
+      reason:
+        "Footnote model + commands shipped in F1; UI surfaces (insert button + bottom-of-page lane) land in a follow-up phase.",
+    },
+  },
+  {
+    id: "docx.set-footnote-body",
+    commandType: "docx:set-footnote-body",
+    label: "Set footnote body",
+    description: "Replace the body of an existing footnote with new block content.",
+    section: "Insert",
+    surfaces: ["palette"],
+    hidden: {
+      reason: "Footnote model + commands shipped in F1; UI surfaces land in a follow-up phase.",
+    },
+  },
+  {
+    id: "docx.delete-footnote",
+    commandType: "docx:delete-footnote",
+    label: "Delete footnote",
+    description: "Remove a footnote and strip every reference leaf to it across body + headers/footers.",
+    section: "Insert",
+    surfaces: ["palette"],
+    hidden: {
+      reason: "Footnote model + commands shipped in F1; UI surfaces land in a follow-up phase.",
+    },
+  },
+  {
     id: "docx.set-chart-type",
     commandType: "docx:set-chart-type",
     label: "Set chart type",

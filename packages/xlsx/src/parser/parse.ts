@@ -26,6 +26,7 @@ import type { NodeId } from "@officeai/core";
 import { parseCommentsPart } from "./comments.js";
 import { resolveDrawings } from "./drawings.js";
 import { XlsxParseError } from "./errors.js";
+import { discoverPivotParts } from "./pivot-tables.js";
 import { parseStylesXml } from "./styles.js";
 
 const WORKBOOK_PART = "xl/workbook.xml";
@@ -145,6 +146,14 @@ export async function parseXlsx(
   }
   const modeledMediaParts = new Set(images.keys());
 
+  // F1 Phase 1 — pivot tables + caches lift from the catch-all
+  // `opaqueParts` bucket into typed `pivotTables` / `pivotCaches`
+  // slots on the workbook. The bytes still travel verbatim via the
+  // typed record's `raw` field; the serializer re-emits them
+  // byte-identical when no typed pivot edit has occurred (always in
+  // Phase 1). See `spec/xlsx/pivot-tables.md`.
+  const pivot = discoverPivotParts(container, ctMap, sheets);
+
   const opaqueParts = new Map<string, OpaquePart>();
   const partHashes: Record<string, string> = {};
   for (const [path, part] of container.parts) {
@@ -153,6 +162,7 @@ export async function parseXlsx(
     if (isModeledPath(path)) continue;
     if (modeledDrawingParts.has(path)) continue;
     if (modeledMediaParts.has(path)) continue;
+    if (pivot.modeledPaths.has(path)) continue;
     opaqueParts.set(path, {
       path,
       bytes: part.bytes,
@@ -195,6 +205,8 @@ export async function parseXlsx(
     sheetjs: sheetjsBook,
     images,
     definedNames,
+    pivotTables: pivot.pivotTables,
+    pivotCaches: pivot.pivotCaches,
   };
 
   return {

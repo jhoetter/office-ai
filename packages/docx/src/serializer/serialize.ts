@@ -18,6 +18,7 @@ import { ATTR_KEY, opaqueToEntry } from "../parser/xml-helpers.js";
 import { serializeChartDrawing, serializeChartParts } from "./charts.js";
 import { serializeEmbeddingParts } from "./embeddings.js";
 import { DocxSerializeError } from "./errors.js";
+import { serializeFootnotesPart } from "./footnotes.js";
 import { serializeHeaderFooterParts } from "./headers-footers.js";
 import { serializeInlineImageDrawing } from "./images.js";
 import { serializeMediaParts } from "./media.js";
@@ -139,6 +140,18 @@ export async function serializeDocx(snapshot: DocxSnapshot): Promise<ArrayBuffer
   } catch (err) {
     if (err instanceof DocxSerializeError) throw err;
     throw new DocxSerializeError("embedding-failed", "Failed to write embedding parts", { cause: err });
+  }
+
+  // Footnotes part (`word/footnotes.xml`). Untouched documents leave
+  // the byte cache alone (this code path only activates when
+  // `dirty.footnotes` is true). When dirty, every footnote with a
+  // cached `raw` envelope re-emits byte-identical, so a single-footnote
+  // edit only re-writes that footnote's bytes.
+  try {
+    serializeFootnotesPart(container, snapshot, serializeBlock);
+  } catch (err) {
+    if (err instanceof DocxSerializeError) throw err;
+    throw new DocxSerializeError("footnotes-failed", "Failed to write footnotes.xml", { cause: err });
   }
 
   // Numbering definitions (`word/numbering.xml`). Skipped unless
@@ -624,6 +637,15 @@ function serializeRunChild(c: RunChild): unknown {
     }
     case "embedded-spreadsheet":
       return serializeEmbeddedSpreadsheet(c);
+    case "footnote-ref": {
+      // F1 — promoted typed leaf round-trips back to
+      // `<w:footnoteReference w:id="N"/>`. We don't carry a `raw`
+      // envelope here because the element has zero unmodelled state
+      // beyond its two attributes, so re-emission is exact.
+      const attrs: Record<string, string> = { "w:id": String(c.footnoteId) };
+      if (c.customMarkFollows) attrs["w:customMarkFollows"] = "1";
+      return makeEl("w:footnoteReference", attrs);
+    }
     case "opaque":
       return opaqueToEntry(c.raw);
     default: {

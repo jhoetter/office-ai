@@ -7,6 +7,7 @@ import { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 import { deleteShapeHandler } from "./delete-shape.js";
 import { deleteSlideHandler } from "./delete-slide.js";
 import { setShapeFillHandler } from "./set-shape-fill.js";
+import { setShapeGeometryHandler } from "./set-shape-geometry.js";
 import { reorderShapeHandler } from "./reorder-shape.js";
 import { duplicateShapeHandler } from "./duplicate-shape.js";
 import { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
@@ -14,6 +15,7 @@ import { duplicateSlideHandler } from "./duplicate-slide.js";
 import { formatTextHandler } from "./format-text.js";
 import { insertChartHandler } from "./insert-chart.js";
 import { insertImageHandler } from "./insert-image.js";
+import { insertMediaHandler } from "./insert-media.js";
 import { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
 import { insertTableFromGridHandler } from "./insert-table-from-grid.js";
 import { replacePictureMediaHandler } from "./replace-picture-media.js";
@@ -65,6 +67,8 @@ export { alignShapesHandler, distributeShapesHandler } from "./align-shapes.js";
 export { deleteShapeHandler } from "./delete-shape.js";
 export { deleteSlideHandler } from "./delete-slide.js";
 export { setShapeFillHandler } from "./set-shape-fill.js";
+export { setShapeGeometryHandler } from "./set-shape-geometry.js";
+export type { SetShapeGeometryPayload } from "./set-shape-geometry.js";
 export { reorderShapeHandler } from "./reorder-shape.js";
 export { duplicateShapeHandler } from "./duplicate-shape.js";
 export { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
@@ -72,6 +76,7 @@ export { duplicateSlideHandler } from "./duplicate-slide.js";
 export { formatTextHandler } from "./format-text.js";
 export { insertChartHandler } from "./insert-chart.js";
 export { insertImageHandler } from "./insert-image.js";
+export { insertMediaHandler } from "./insert-media.js";
 export { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
 export { insertTableFromGridHandler } from "./insert-table-from-grid.js";
 export { replacePictureMediaHandler } from "./replace-picture-media.js";
@@ -129,6 +134,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setTextAnchorHandler,
   insertChartHandler,
   insertImageHandler,
+  insertMediaHandler,
   insertSpreadsheetHandler,
   updateSpreadsheetHandler,
   insertTableFromGridHandler,
@@ -137,6 +143,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   addShapeHandler,
   deleteShapeHandler,
   setShapeFillHandler,
+  setShapeGeometryHandler,
   reorderShapeHandler,
   duplicateShapeHandler,
   groupShapesHandler,

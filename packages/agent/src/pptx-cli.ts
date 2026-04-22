@@ -1772,6 +1772,9 @@ function bumpShapeKind(
     case "ole-spreadsheet":
       counts.opaque++;
       return;
+    case "media":
+      counts.opaque++;
+      return;
     default: {
       const _exhaustive: never = s;
       void _exhaustive;

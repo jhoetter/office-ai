@@ -75,6 +75,19 @@ export interface DocxDirtyFlags {
    */
   charts: ReadonlySet<string>;
   /**
+   * Whether `word/footnotes.xml` itself has been mutated and must be
+   * re-emitted on save. Added in F1 alongside the typed
+   * {@link FootnotesPart}. Untouched documents leave the flag at
+   * `false` so the part round-trips byte-identical via the container's
+   * cache. Footnote-authoring commands (`docx:insert-footnote`,
+   * `docx:set-footnote-body`, `docx:delete-footnote`) flip it on; the
+   * serializer regenerates `word/footnotes.xml` from the typed model
+   * (re-using each footnote's `raw` envelope when the footnote itself
+   * is untouched, so a single-footnote edit only re-emits that
+   * footnote's bytes).
+   */
+  footnotes: boolean;
+  /**
    * Set of embedded-binary part paths (e.g.
    * `"word/embeddings/oleObject1.xlsx"`) that have been added or
    * mutated since load. Untouched embedded parts ride the container's
@@ -183,7 +196,100 @@ export interface DocxDocument {
    * (re-)written by the serializer.
    */
   readonly embeddings: ReadonlyMap<string, EmbeddedBinaryPart>;
+  /**
+   * Typed projection of `word/footnotes.xml` (F1). `undefined` when the
+   * package has no footnotes part — the common case for short notes /
+   * letters.
+   *
+   * Round-trip contract: untouched parts ride the container's byte
+   * cache; only when `dirty.footnotes` is set does the serializer
+   * regenerate the part from this typed model. Per-footnote `raw`
+   * envelopes preserve every footnote (including the standard
+   * `separator` / `continuationSeparator` notes Word inserts) when
+   * the document is saved without any footnote-level mutation.
+   *
+   * `endnotesPart` is a future workstream and intentionally not
+   * surfaced here; existing `word/endnotes.xml` parts continue to
+   * round-trip byte-identical via the container cache.
+   */
+  readonly footnotesPart?: FootnotesPart;
   readonly documentRootAttrs: Readonly<Record<string, string>>;
+}
+
+/* ── Footnotes part (F1) ─────────────────────────────────────────────────── */
+
+/**
+ * `<w:footnote w:type>` discriminator. Word writes the four standard
+ * values; an absent attribute is treated as `"normal"` (a regular
+ * authored footnote).
+ */
+export type FootnoteType = "normal" | "separator" | "continuationSeparator" | "continuationNotice";
+
+/**
+ * Typed `<w:footnote>` projection. Reuses the body block schema for
+ * `body`, so the same parser, serializer, and ProseMirror schema work
+ * unchanged inside footnote text.
+ *
+ * Round-trip contract: when `raw` is present AND no field of the
+ * footnote has been mutated since parse, the serializer re-emits the
+ * cached subtree byte-for-byte (mirrors `Table.raw`). Mutating commands
+ * (e.g. `docx:set-footnote-body`) MUST drop `raw` on the new
+ * `Footnote` they produce.
+ */
+export interface Footnote {
+  /** OOXML id; -1 and 0 are conventionally separator/continuation. */
+  readonly id: number;
+  readonly type: FootnoteType;
+  /** Typed body blocks; identical schema to {@link DocxDocument.body}. */
+  readonly body: ReadonlyArray<BlockNode>;
+  /**
+   * Original `<w:footnote>` subtree captured at parse time. Present on
+   * freshly parsed footnotes and on footnotes that have not been
+   * touched by a mutating command. Absent (`undefined`) on footnotes
+   * produced by mutation; the serializer uses its presence as the
+   * per-footnote "clean / re-emit cached bytes" signal.
+   */
+  readonly raw?: OpaqueXml;
+}
+
+/**
+ * Typed `word/footnotes.xml` carrier. Holds every `<w:footnote>` —
+ * including the standard `separator` (`w:id="-1"`) and
+ * `continuationSeparator` (`w:id="0"`) Word inserts on every
+ * footnote-bearing document — in load order, so byte-identical
+ * round-trip is preserved on no-edit save.
+ *
+ * `tail` captures any unmodelled top-level child of `<w:footnotes>`
+ * (extension elements, comments, etc.). Today the parser puts
+ * everything into typed `footnotes`; the field is reserved for future
+ * extensions that might find non-`w:footnote` children in the wild.
+ */
+export interface FootnotesPart {
+  readonly footnotes: ReadonlyArray<Footnote>;
+  /** Original `<w:footnotes>` root attributes (namespace decls, etc.). */
+  readonly rootAttrs: Readonly<Record<string, string>>;
+  /** Other top-level children of `<w:footnotes>` we don't model. */
+  readonly tail?: ReadonlyArray<OpaqueXml>;
+}
+
+/**
+ * `<w:footnoteReference w:id="N"/>` promoted from {@link OpaqueRunChild}
+ * to a typed run-child leaf in F1. The renderer uses this to draw the
+ * superscript reference inline, and command handlers
+ * (`docx:delete-footnote`) walk every run looking for matching
+ * `footnoteId`s.
+ */
+export interface FootnoteReferenceLeaf {
+  readonly kind: "footnote-ref";
+  readonly id: NodeId;
+  readonly footnoteId: number;
+  /**
+   * `<w:footnoteReference w:customMarkFollows="1"/>` — when set, Word
+   * emits the immediately-following `<w:t>` as the user-visible mark
+   * instead of the auto-numbered glyph. Captured for byte-identical
+   * round-trip; the renderer ignores it for now.
+   */
+  readonly customMarkFollows?: boolean;
 }
 
 /* ── Chart parts (DOCX, mirrors PPTX shape) ─────────────────────────────── */
@@ -875,6 +981,7 @@ export type RunChild =
   | PageBreakLeaf
   | LastRenderedPageBreakLeaf
   | PageNumberFieldLeaf
+  | FootnoteReferenceLeaf
   | EmbeddedSpreadsheet
   | OpaqueRunChild;
 

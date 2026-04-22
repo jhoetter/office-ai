@@ -1279,6 +1279,10 @@
         "label": "Insert image",
         "description": "Insert an image on a slide."
       },
+      "insert-media": {
+        "label": "Insert media",
+        "description": "Insert a video or audio clip on a slide. Embeds the binary as a media part with a poster image and the appropriate <p:pic> reference."
+      },
       "insert-chart": {
         "label": "Insert chart",
         "description": "Insert a chart on a slide. Embeds a backing .xlsx workbook so 'Edit Data' works in PowerPoint."

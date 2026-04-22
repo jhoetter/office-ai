@@ -41,3 +41,11 @@ export { deleteRangeTrackedHandler } from "./delete-range-tracked.js";
 export { insertChartHandler } from "./insert-chart.js";
 export { setChartDataHandler, setChartTitleHandler, setChartTypeHandler } from "./chart-edits.js";
 export { insertSpreadsheetHandler, updateSpreadsheetHandler } from "./insert-spreadsheet.js";
+export {
+  insertFootnoteHandler,
+  setFootnoteBodyHandler,
+  deleteFootnoteHandler,
+  type InsertFootnotePayload,
+  type SetFootnoteBodyPayload,
+  type DeleteFootnotePayload,
+} from "./footnote-commands.js";

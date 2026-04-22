@@ -7,19 +7,20 @@
 
 ## Decisions
 
-| Date (UTC) | Decision                                                                                                                                                                       | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-18 | Adopt SheetJS Community Edition (Apache 2.0) as the cell-layer parser/serializer fallback                                                                                      | Battle-tested across thousands of real workbooks; lets us focus engineering on agent + formula engine instead of OOXML grunt-work.                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-04-18 | OOXML is the source of truth; the in-memory model is a working surface                                                                                                         | Same byte-preservation discipline as `@officeai/docx`. Untouched parts must round-trip bit-identical via `OoxmlContainer.partHashes`.                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 2026-04-18 | Discriminated-union typed payloads, schema-validated at the bus boundary                                                                                                       | Differs from Univer's stringly-typed `unknown` params; trades some flexibility for editor + agent type safety.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 2026-04-18 | Sync-only formula evaluator. No iterative calc. Circular refs surface as a structured `#REF!`                                                                                  | Matches the 80% scope; iterative calc is rare in practice and adds complexity that derails the night shift.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 2026-04-18 | Renderer is a virtualized DOM grid (no canvas)                                                                                                                                 | Mirrors how `@officeai/docx` renders. Keeps every interaction routable through ProseMirror-style command dispatch.                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-04-18 | Sparse cell store keyed by `${row}:${col}` strings (Phase 5)                                                                                                                   | Agent workloads write in scattered patterns; `Map<string, Cell>` is faster for `delete` and avoids wasted intermediate row objects.                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 2026-04-18 | Phase 4 ships a thin model: typed `Sheet` (id/name/index/path/state/kind) + opaque parts; cells exposed only via the SheetJS escape hatch                                      | Phase 5 needs the typed cell model anyway; shipping the round-trip oracle first lets us verify byte-preservation against the synthetic corpus before any commands exist that could falsify it.                                                                                                                                                                                                                                                                                                                                           |
-| 2026-04-18 | Phase 5 ships only the 5 P0 commands that don't depend on the formula engine or new OPC parts; the other 8 commands defer to Phase 6/7                                         | Lets us land the cell model + bus wiring + dirty-sheet serializer behind a passing test suite, instead of stubbing 8 handlers without recalc/style/comment infrastructure to back them.                                                                                                                                                                                                                                                                                                                                                  |
-| 2026-04-18 | String cells written by Phase 5 commands are emitted inline (`bookSST: false`)                                                                                                 | Avoids touching `xl/sharedStrings.xml`, which keeps that part byte-identical for partially-edited workbooks. SST coalescing is a Phase 6+ concern.                                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-04-19 | XLSX toolbar consumes the shared `@officeai/text-formatting` `TextFormatBar` via an `xlsxFormatProvider` adapter                                                               | One toolbar across DOCX/XLSX/PPTX. Provider flattens each selected cell's `EffectiveStyle` (cellXf + named style + workbook default) and `collapse()`-s the values into `MaybeMixed<...>` so heterogeneous selections render the MIXED styling correctly. Highlight is reported as `"fill-fallback"` and patches are translated to `fill.color` + `pattern: "solid"`. Bonus: deprecated `CellFormatPatch.font.family` in favour of `font.fontFamily` to match the canonical `TextFormat` shape (alias kept for backwards compatibility). |
-| 2026-04-20 | Replace SheetJS CDN tarball (`xlsx@https://cdn.sheetjs.com/...`) with the registry-published community fork [`@e965/xlsx`](https://www.npmjs.com/package/@e965/xlsx) `^0.20.3` | Public npm rejects URL deps for published packages. `@e965/xlsx` is API-identical to SheetJS 0.20.x (same source, registry-republished under MIT). Required to make `@officeai/xlsx` (and its consumers `docx`, `pptx`, `agent`) publishable for the hof-os bundle. Phase 0 of the [officeai-hofos-bundle plan](../../.cursor/plans/officeai-hofos-bundle_47106ed3.plan.md). All 855 xlsx unit tests stayed green; LibreOffice chart round-trip still passes; no behavioural deltas observed.                                            |
+| Date (UTC) | Decision                                                                                                                                                                       | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-18 | Adopt SheetJS Community Edition (Apache 2.0) as the cell-layer parser/serializer fallback                                                                                      | Battle-tested across thousands of real workbooks; lets us focus engineering on agent + formula engine instead of OOXML grunt-work.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-18 | OOXML is the source of truth; the in-memory model is a working surface                                                                                                         | Same byte-preservation discipline as `@officeai/docx`. Untouched parts must round-trip bit-identical via `OoxmlContainer.partHashes`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2026-04-18 | Discriminated-union typed payloads, schema-validated at the bus boundary                                                                                                       | Differs from Univer's stringly-typed `unknown` params; trades some flexibility for editor + agent type safety.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-04-18 | Sync-only formula evaluator. No iterative calc. Circular refs surface as a structured `#REF!`                                                                                  | Matches the 80% scope; iterative calc is rare in practice and adds complexity that derails the night shift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2026-04-18 | Renderer is a virtualized DOM grid (no canvas)                                                                                                                                 | Mirrors how `@officeai/docx` renders. Keeps every interaction routable through ProseMirror-style command dispatch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-18 | Sparse cell store keyed by `${row}:${col}` strings (Phase 5)                                                                                                                   | Agent workloads write in scattered patterns; `Map<string, Cell>` is faster for `delete` and avoids wasted intermediate row objects.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 2026-04-18 | Phase 4 ships a thin model: typed `Sheet` (id/name/index/path/state/kind) + opaque parts; cells exposed only via the SheetJS escape hatch                                      | Phase 5 needs the typed cell model anyway; shipping the round-trip oracle first lets us verify byte-preservation against the synthetic corpus before any commands exist that could falsify it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-04-18 | Phase 5 ships only the 5 P0 commands that don't depend on the formula engine or new OPC parts; the other 8 commands defer to Phase 6/7                                         | Lets us land the cell model + bus wiring + dirty-sheet serializer behind a passing test suite, instead of stubbing 8 handlers without recalc/style/comment infrastructure to back them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2026-04-18 | String cells written by Phase 5 commands are emitted inline (`bookSST: false`)                                                                                                 | Avoids touching `xl/sharedStrings.xml`, which keeps that part byte-identical for partially-edited workbooks. SST coalescing is a Phase 6+ concern.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-19 | XLSX toolbar consumes the shared `@officeai/text-formatting` `TextFormatBar` via an `xlsxFormatProvider` adapter                                                               | One toolbar across DOCX/XLSX/PPTX. Provider flattens each selected cell's `EffectiveStyle` (cellXf + named style + workbook default) and `collapse()`-s the values into `MaybeMixed<...>` so heterogeneous selections render the MIXED styling correctly. Highlight is reported as `"fill-fallback"` and patches are translated to `fill.color` + `pattern: "solid"`. Bonus: deprecated `CellFormatPatch.font.family` in favour of `font.fontFamily` to match the canonical `TextFormat` shape (alias kept for backwards compatibility).                                                                                                                                                                                                                                                              |
+| 2026-04-20 | Replace SheetJS CDN tarball (`xlsx@https://cdn.sheetjs.com/...`) with the registry-published community fork [`@e965/xlsx`](https://www.npmjs.com/package/@e965/xlsx) `^0.20.3` | Public npm rejects URL deps for published packages. `@e965/xlsx` is API-identical to SheetJS 0.20.x (same source, registry-republished under MIT). Required to make `@officeai/xlsx` (and its consumers `docx`, `pptx`, `agent`) publishable for the hof-os bundle. Phase 0 of the [officeai-hofos-bundle plan](../../.cursor/plans/officeai-hofos-bundle_47106ed3.plan.md). All 855 xlsx unit tests stayed green; LibreOffice chart round-trip still passes; no behavioural deltas observed.                                                                                                                                                                                                                                                                                                         |
+| 2026-04-21 | F-B5 pivot/CUBE function stubs (`packages/xlsx/src/formula/functions/pivot.ts`)                                                                                                | New `registerPivotStubs(reg)` registers `GETPIVOTDATA`, `CUBEMEMBER`, `CUBEVALUE`, `CUBESET`, `CUBEMEMBERPROPERTY`, `CUBESETCOUNT`, `CUBERANKEDMEMBER`, `CUBEKPIMEMBER` with the documented arities and a body that returns `#NAME?` until Phase 4 (`spec/xlsx/pivot-tables.md`) lands the typed pivot model + cache evaluator. Why a stub-but-registered function rather than letting the parser reject the name: workbooks authored in Excel that contain `=GETPIVOTDATA(...)` now reparse without parser warnings, and the formula autocomplete (`registered-functions.ts` → new `pivot` category) surfaces every pivot helper from day one — swapping in real bodies later is a one-file change. Covered by `formula/__tests__/functions/pivot.test.ts`; full XLSX suite (871 tests) stays green. |
 
 ## Deviations from spec
 
@@ -2404,3 +2405,126 @@ A1 ref to seed a new comment's anchor.
   their diff payloads.
 - `spec/shared/comments.md` is the cross-product canonical contract;
   XLSX is one of three adapter implementations.
+
+### Phase F1 (Pivot tables) — Phase 1 preservation (2026-04-22)
+
+Promoted `xl/pivotTables/*` and `xl/pivotCache/*` from the catch-all
+`opaqueParts` bucket into two dedicated typed slots on
+`XlsxWorkbook` per `spec/xlsx/pivot-tables.md` "Phase 1 — preservation".
+Phase 1 is **opaque-typed**: the entire `<pivotTableDefinition>` /
+`<pivotCacheDefinition>` element rides verbatim on `raw` so the
+serializer re-emits it byte-identical, but `name` (pivot table) and
+`cacheId` (pivot cache) are lifted out of the root element so
+consumers can identify the parts without re-walking the OPC graph.
+This unblocks Phase 2 (refresh) and Phase 3 (create + edit) without
+shipping a single line of pivot rendering or evaluation tonight.
+
+#### Typed model
+
+`packages/xlsx/src/model/types.ts` grows two interfaces and matching
+fields on `XlsxWorkbook`:
+
+- `PivotTablePart { partPath, name, cacheId?, raw, contentType?, relsXml? }`
+- `PivotCachePart { partPath, cacheId, raw, contentType?, relsXml?, recordsPartPath?, recordsRaw?, recordsContentType? }`
+- `XlsxWorkbook.pivotTables: ReadonlyArray<PivotTablePart>`
+- `XlsxWorkbook.pivotCaches: ReadonlyArray<PivotCachePart>`
+
+`XlsxDirtyFlags` gains an **optional** `pivotTables?: boolean` so the
+Phase 3 typed-edit hook is in place without forcing every existing
+`mergeDirty` / inline literal in `commands/` to grow a field for a
+flag they can never trigger today. The serializer treats undefined
+as `false` (re-emit byte-identical from `raw`).
+
+#### Parser
+
+`packages/xlsx/src/parser/pivot-tables.ts` (new) walks the rels
+graph — never the filesystem — to discover every pivot part:
+
+1. `xl/_rels/workbook.xml.rels` → `pivotCacheDefinition` rels →
+   each cache part (the actual paths are arbitrary; LibreOffice
+   and external tools occasionally place them outside `xl/pivotCache/`,
+   so hardcoding paths would be wrong).
+2. Each cache's `_rels/*.xml.rels` → `pivotCacheRecords` rel →
+   the records part.
+3. Each worksheet's `_rels/*.xml.rels` → `pivotTable` rels → the
+   pivot table parts anchored on that sheet.
+
+Every discovered path lands in a `modeledPaths` set that
+`parser/parse.ts` subtracts from `opaqueParts`, so the bytes aren't
+double-tracked. `cacheId` falls back to (a) the workbook-side
+`<pivotCaches><pivotCache cacheId="…" r:id="…"/>` mapping when the
+cache part itself omits the attribute and (b) a sequential index
+when both sides omit it (rare; legacy authoring tools).
+
+#### Serializer
+
+`packages/xlsx/src/serializer/pivot-tables.ts` (new) calls
+`container.writeText(part.partPath, part.raw)` for every cache /
+table / records part and reconciles `[Content_Types].xml` overrides
+against the live pivot list. The writes are byte-equivalent to what's
+already in the cloned container in Phase 1, but the explicit emission
+path means flipping `dirty.pivotTables` to `true` in Phase 3 becomes
+the only knob needed to swap to a deterministic re-render.
+
+`serialize.ts` calls `serializePivotParts(snapshot.root, container)`
+unconditionally at the tail of the dirty pipeline (it's a no-op when
+the workbook has no pivots).
+
+#### Test fixture (synthesised in-memory)
+
+No fixture in `fixtures/xlsx/synthetic/` ships a pivot, and the
+`real-excel-mac-2021-pivot.xlsx` slot in `fixtures/xlsx/MANIFEST.md`
+is reserved for a future Microsoft-emitted file we don't have on
+disk yet. `parser/__tests__/pivot-tables.test.ts` (new) builds one
+in-memory by augmenting `01-single-sheet-numbers.xlsx` via JSZip:
+
+- New parts: `xl/pivotTables/pivotTable1.xml` + its rels,
+  `xl/pivotCache/pivotCacheDefinition1.xml` + its rels, and
+  `xl/pivotCache/pivotCacheRecords1.xml`.
+- `xl/_rels/workbook.xml.rels` gains a `pivotCacheDefinition` rel.
+- `xl/workbook.xml` gains `<pivotCaches><pivotCache cacheId="1"
+r:id="rId99"/></pivotCaches>` after `</sheets>`.
+- `xl/worksheets/_rels/sheet1.xml.rels` gains a `pivotTable` rel.
+- `[Content_Types].xml` gains the three pivot-content-type
+  overrides.
+
+The pivot definition is the smallest valid OOXML pivot we could
+draft against the spec: one row field (`Item`), one data field
+(`Sum of Qty`), source range `A1:B3` on `Inventory`. Excel /
+LibreOffice load it without "needs repair" warnings (verified
+manually on a one-off generated file).
+
+#### Round-trip oracle (4 tests)
+
+1. **Lifts pivot parts into typed slots without losing bytes.**
+   `pivotTables[0].name === "PivotInventory"`, `cacheId === 1`,
+   `raw` is byte-identical to the input, content type + rels XML
+   surface correctly, cache exposes `recordsPartPath` +
+   `recordsRaw`.
+2. **Does not double-track pivot parts in opaqueParts.** None of
+   the pivot definition / records / rels paths appear in
+   `workbook.opaqueParts.keys()`.
+3. **Round-trips pivot part bytes byte-identical via serialize →
+   re-parse.** All five pivot part hashes survive untouched. As a
+   belt-and-braces check we also `sha256Hex` the reparsed
+   `raw` directly.
+4. **Source-range cell values unchanged across the round-trip.**
+   The `Inventory` sheet still reads `Item / Qty / …` headers and
+   the `Widget / 10 / 2.5 / 25` first data row after the full
+   parse → serialize → re-parse cycle.
+
+Suite at close: 875 xlsx unit tests pass (4 new pivot tests +
+prior 871). `pnpm --filter @officeai/xlsx build` is green.
+
+#### Out of scope tonight (deferred to future phases per spec)
+
+- Native pivot rendering in the grid (Phase 1 `render in grid` in
+  the spec; staged separately).
+- Pivot creation wizard / `xlsx:create-pivot-table` command
+  (Phase 3).
+- `xlsx:add-pivot-field` / `move-pivot-field` / `set-pivot-layout`
+  / `refresh-pivot` commands (Phase 2 + Phase 3).
+- Slicers, calculated fields, OLAP (Phase 4 — already stubbed at
+  the formula function level via the F-B5 entry above).
+- Promoting `cacheFields[i].sharedItems` and `<r>` records into
+  typed `PivotCacheField` / `records[][]` (Phase 2 prerequisite).

@@ -1,5 +1,7 @@
 import { defaultIdMinter, ooxml, sha256Hex, type IdMinter } from "@officeai/core";
 import { DEFAULT_THEME, type ThemeColorScheme } from "../renderer/layout/color.js";
+import { buildMasterIdByPath, enrichLayout, parseSlideMaster, parseTheme } from "./masters.js";
+import { tryParseMediaShape } from "./media.js";
 import { parseThemeColorScheme } from "./theme.js";
 import type {
   ChartPart,
@@ -38,6 +40,7 @@ import type {
   Size,
   Slide,
   SlideLayout,
+  SlideMaster,
   SlideSize,
   SlideTransition,
   TableCell,
@@ -49,6 +52,7 @@ import type {
   TextRun,
   TextRunProperties,
   TextShape,
+  Theme,
   TransitionKind,
   TransitionSpeed,
 } from "../model/types.js";
@@ -203,20 +207,42 @@ export async function parsePptx(
     if (slide.notesSlidePartPath) notesSlidePaths.add(slide.notesSlidePartPath);
   }
 
-  // ── Opaque master/layout/theme/notes/media maps ─────────────────────
-  const masters = new Map<string, OpaquePart>();
-  for (const p of masterPaths) {
-    masters.set(p, opaquePartFor(container, p, "p:sldMaster"));
-  }
-  const layouts = new Map<string, SlideLayout>();
+  // ── Typed master/layout/theme/notes/media maps ──────────────────────
+  // F1 master-editing: masters and themes are now typed (SlideMaster /
+  // Theme) so future master-view commands have stable handles. We
+  // preserve the verbatim XML in `raw` so untouched parts still
+  // round-trip byte-identical via the serializer.
+  //
+  // Layouts are parsed first into a temporary base map so the
+  // master-parser can decorate each layout with its parent
+  // `masterPartPath`, numeric `layoutId`, and a verbatim copy of the
+  // layout's `_rels` blob — fields that need the master's rels graph
+  // and `<p:sldLayoutIdLst>` to populate.
+  const baseLayouts = new Map<string, SlideLayout>();
   for (const p of layoutPaths) {
-    layouts.set(p, parseSlideLayout(container, p));
+    baseLayouts.set(p, parseSlideLayout(container, p));
   }
-  const theme = new Map<string, OpaquePart>();
+  const masterIdByPath = buildMasterIdByPath(container, PRESENTATION_PART, presentationXml);
+  const masters = new Map<string, SlideMaster>();
+  const enrichedLayouts = new Map<string, SlideLayout>();
+  for (const p of masterPaths) {
+    const m = parseSlideMaster(container, p, masterIdByPath, baseLayouts);
+    masters.set(p, m);
+    for (const layout of m.layouts) enrichedLayouts.set(layout.partPath, layout);
+  }
+  // Defensive fallback: any layout the master walk didn't claim still
+  // gets the F1 fields (`type`, `relsXml`) lifted via `enrichLayout`
+  // so the public `layouts` map is uniformly typed.
+  const layouts = new Map<string, SlideLayout>();
+  for (const [path, base] of baseLayouts) {
+    const enriched = enrichedLayouts.get(path);
+    layouts.set(path, enriched ?? enrichLayout(container, base));
+  }
+  const theme = new Map<string, Theme>();
   let themeDefault: ThemeColorScheme = DEFAULT_THEME;
   let themeDefaultFromPath: string | null = null;
   for (const p of themePaths) {
-    theme.set(p, opaquePartFor(container, p, "a:theme"));
+    theme.set(p, parseTheme(container, p));
     // First theme part wins; usually `theme1.xml`. Subsequent themes are
     // preserved verbatim but not used to drive `<a:schemeClr>` resolution.
     if (themeDefaultFromPath === null) {
@@ -538,8 +564,11 @@ function parseShape(
   switch (tag) {
     case "p:sp":
       return parseSp(entry, mintNodeId);
-    case "p:pic":
+    case "p:pic": {
+      const media = tryParseMediaShape(entry, mintNodeId, partPath, slideRelTargets);
+      if (media) return media;
       return parsePic(entry, mintNodeId, partPath, slideRelTargets);
+    }
     case "p:cxnSp":
       return parseCxnSp(entry, mintNodeId);
     case "p:grpSp":
@@ -1681,6 +1710,21 @@ function mediaContentType(ext: string): string {
       return "image/tiff";
     case "webp":
       return "image/webp";
+    case "mp4":
+    case "m4v":
+      return "video/mp4";
+    case "webm":
+      return "video/webm";
+    case "mov":
+      return "video/quicktime";
+    case "mp3":
+      return "audio/mpeg";
+    case "m4a":
+      return "audio/mp4";
+    case "wav":
+      return "audio/wav";
+    case "ogg":
+      return "audio/ogg";
     default:
       return "application/octet-stream";
   }

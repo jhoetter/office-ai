@@ -3,9 +3,10 @@ import { registerInfo } from "./functions/info.js";
 import { registerLogic } from "./functions/logic.js";
 import { registerLookup } from "./functions/lookup.js";
 import { registerMath } from "./functions/math.js";
+import { registerPivotStubs } from "./functions/pivot.js";
 import { registerText } from "./functions/text.js";
 
-export type FunctionCategory = "math" | "logic" | "info" | "lookup" | "text";
+export type FunctionCategory = "math" | "logic" | "info" | "lookup" | "text" | "pivot";
 
 export interface RegisteredFunctionInfo {
   readonly name: string;
@@ -58,6 +59,10 @@ export function listRegisteredFunctions(): ReadonlyArray<RegisteredFunctionInfo>
   collect("info", registerInfo);
   collect("lookup", registerLookup);
   collect("text", registerText);
+  // Surface pivot/CUBE stubs in the autocomplete so users can discover
+  // them; today they always evaluate to `#NAME?` (see
+  // `functions/pivot.ts` and `spec/xlsx/pivot-tables.md`).
+  collect("pivot", registerPivotStubs);
 
   // Sort alphabetically by name for stable autocomplete ordering.
   out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
