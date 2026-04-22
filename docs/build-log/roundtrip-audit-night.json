@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-20T11:35:43.041Z",
+  "generatedAt": "2026-04-21T23:25:28.202Z",
   "formats": [
     {
       "id": "docx",
@@ -102,8 +102,8 @@
     },
     {
       "id": "pptx",
-      "total": 13,
-      "ok": 13,
+      "total": 14,
+      "ok": 14,
       "fixtures": [
         {
           "fixture": "fixtures/pptx/synthetic/01-blank.pptx",
@@ -156,6 +156,11 @@
           "losses": []
         },
         {
+          "fixture": "fixtures/pptx/synthetic/11-animations-gallery.pptx",
+          "ok": true,
+          "losses": []
+        },
+        {
           "fixture": "fixtures/pptx/real/01-styled-deck.pptx",
           "ok": true,
           "losses": []
@@ -187,7 +192,7 @@
             "hasPageHeading": true,
             "hasTitleHeading": true,
             "pages": 1,
-            "markdownBytes": 95
+            "markdownBytes": 102
           }
         },
         {
@@ -200,7 +205,7 @@
             "hasPageHeading": true,
             "hasTitleHeading": true,
             "pages": 1,
-            "markdownBytes": 100
+            "markdownBytes": 107
           }
         },
         {
@@ -213,7 +218,7 @@
             "hasPageHeading": true,
             "hasTitleHeading": true,
             "pages": 50,
-            "markdownBytes": 3192
+            "markdownBytes": 3242
           }
         },
         {
@@ -265,7 +270,7 @@
             "hasPageHeading": true,
             "hasTitleHeading": true,
             "pages": 1,
-            "markdownBytes": 99
+            "markdownBytes": 100
           }
         },
         {
@@ -291,7 +296,7 @@
             "hasPageHeading": true,
             "hasTitleHeading": true,
             "pages": 3,
-            "markdownBytes": 319
+            "markdownBytes": 331
           }
         },
         {
@@ -330,7 +335,7 @@
             "hasPageHeading": true,
             "hasTitleHeading": true,
             "pages": 3,
-            "markdownBytes": 371
+            "markdownBytes": 383
           }
         }
       ]

@@ -1279,6 +1279,10 @@
         "label": "Bild einfügen",
         "description": "Fügt ein Bild auf einer Folie ein."
       },
+      "insert-media": {
+        "label": "Medien einfügen",
+        "description": "Fügt ein Video oder Audio auf einer Folie ein. Bettet die Binärdatei als Media-Part mit Posterbild und passendem <p:pic>-Verweis ein."
+      },
       "insert-chart": {
         "label": "Diagramm einfügen",
         "description": "Fügt ein Diagramm auf einer Folie ein. Bettet eine .xlsx-Arbeitsmappe ein, damit „Daten bearbeiten“ in PowerPoint funktioniert."

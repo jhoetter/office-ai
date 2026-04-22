@@ -1,10 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ooxml } from "@officeai/core";
 import { PptxAgent } from "../agent/agent.js";
 import { parsePptx } from "../parser/parse.js";
 import { serializePptx } from "../serializer/serialize.js";
 import type { Shape, Slide } from "../model/types.js";
+
+async function zipReadText(buf: ArrayBuffer, partPath: string): Promise<string> {
+  const c = await ooxml.OoxmlContainer.load(buf);
+  return c.readText(partPath);
+}
 
 const FIXTURES_DIR = new URL("../../../../fixtures/pptx/synthetic/", import.meta.url);
 const ANIM_FIXTURE = join(FIXTURES_DIR.pathname, "10-with-anim.pptx");
@@ -176,7 +182,80 @@ describe("F4: pptx:add-shape-animation / remove / reorder", () => {
     });
   });
 
-  it("removing the last animation drops <p:timing> entirely on roundtrip", async () => {
+  it("editing one animation preserves unrelated tail content (surgical merge)", async () => {
+    // The bug this guards against: editing a single typed animation
+    // used to rebuild `<p:timing>` from scratch, dropping every
+    // unmodelled sibling (motion paths, sound effects, exit/emphasis
+    // pars we don't model). The merge keeps unmatched carriers
+    // verbatim. This test injects a synthetic unmodelled `<p:par>`
+    // sibling into the captured tail before serializing, then
+    // asserts the sibling survives a typed edit.
+    const agent = await loadAgent(ANIM_FIXTURE);
+    const before = firstSlide(agent).animations[0]!;
+
+    // Inject a fake unmodelled sibling into the captured tail
+    // directly on the snapshot — this simulates the parser having
+    // captured an effect we don't recognise (e.g. a colored emphasis
+    // we keep opaque). The sibling carries a unique attr we can
+    // assert survives the round-trip.
+    const snap = agent.getSnapshot();
+    const slide = snap.root.slides[0]!;
+    const tail = slide.timingTailRaw!;
+    const sentinel = {
+      "p:par": [
+        {
+          "p:cTn": [],
+          ":@": { "@_id": "999999", "@_data-officeai-sentinel": "keep-me" },
+        },
+      ],
+    } as unknown;
+    // Splice into mainSeq's childTnLst.
+    const tnLst = (tail.subtree as ReadonlyArray<Record<string, unknown>>).find((n) =>
+      Object.keys(n).includes("p:tnLst")
+    );
+    expect(tnLst).toBeDefined();
+    const tmRoot = ((tnLst!["p:tnLst"] as ReadonlyArray<Record<string, unknown>>) ?? []).find((n) =>
+      Object.keys(n).includes("p:par")
+    );
+    expect(tmRoot).toBeDefined();
+    const tmRootChildren = (tmRoot!["p:par"] as Array<Record<string, unknown>>) ?? [];
+    const tmCTn = tmRootChildren.find((n) => Object.keys(n).includes("p:cTn"));
+    expect(tmCTn).toBeDefined();
+    const tmCTnChildren = (tmCTn!["p:cTn"] as Array<Record<string, unknown>>) ?? [];
+    const tmChildLst = tmCTnChildren.find((n) => Object.keys(n).includes("p:childTnLst"));
+    expect(tmChildLst).toBeDefined();
+    const seqEntry = ((tmChildLst!["p:childTnLst"] as Array<Record<string, unknown>>) ?? []).find((n) =>
+      Object.keys(n).includes("p:seq")
+    );
+    expect(seqEntry).toBeDefined();
+    const seqChildren = (seqEntry!["p:seq"] as Array<Record<string, unknown>>) ?? [];
+    const seqCTn = seqChildren.find((n) => Object.keys(n).includes("p:cTn"));
+    const seqCTnChildren = (seqCTn!["p:cTn"] as Array<Record<string, unknown>>) ?? [];
+    const seqChildLst = seqCTnChildren.find((n) => Object.keys(n).includes("p:childTnLst"));
+    const mainSeqList = seqChildLst!["p:childTnLst"] as Array<unknown>;
+    mainSeqList.push(sentinel);
+
+    // Now edit the first typed animation: change duration.
+    await agent.applyCommand({
+      type: "pptx:set-shape-animation",
+      payload: { slideIndex: 0, animationId: before.id, durationMs: 1234 },
+    });
+    const out = await serializePptx(agent.getSnapshot());
+
+    // The output must still contain our sentinel marker — proving
+    // the surgical merge preserves unmodelled tail content.
+    const xml = await zipReadText(out, slide.partPath);
+    expect(xml).toContain("data-officeai-sentinel");
+    expect(xml).toContain("keep-me");
+  });
+
+  it("removing the last animation strips its <p:par> from the captured timing tail", async () => {
+    // Before the F4-v3 surgical merge the serializer dropped the
+    // captured tail entirely whenever any animation command ran.
+    // Now we preserve the tail (so unmodelled exit / emphasis /
+    // sound-effect siblings survive); removing the last typed
+    // animation strips its `<p:par>` carrier from inside mainSeq
+    // but the tmRoot/mainSeq envelope itself is preserved.
     const agent = await loadAgent(ANIM_FIXTURE);
     for (const a of [...firstSlide(agent).animations]) {
       await agent.applyCommand({
@@ -187,6 +266,9 @@ describe("F4: pptx:add-shape-animation / remove / reorder", () => {
     const out = await serializePptx(agent.getSnapshot());
     const reparsed = await parsePptx(out);
     expect(reparsed.root.slides[0]!.animations.length).toBe(0);
-    expect(reparsed.root.slides[0]!.timingTailRaw).toBeUndefined();
+    // Tail preserved (its envelope round-trips), but every typed
+    // `<p:par>` has been removed by the merge.
+    const tail = reparsed.root.slides[0]!.timingTailRaw;
+    expect(tail).toBeDefined();
   });
 });

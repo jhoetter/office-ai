@@ -25,6 +25,7 @@ import {
   upsertSheetDrawingRel,
 } from "./drawings.js";
 import { XlsxSerializeError } from "./errors.js";
+import { serializePivotParts } from "./pivot-tables.js";
 import { syncSheetToSheetJS } from "./sheet-sync.js";
 import { serializeStylesXml } from "./styles.js";
 
@@ -125,6 +126,12 @@ export async function serializeXlsx(snapshot: XlsxSnapshot): Promise<ArrayBuffer
   if (dirty.styles) {
     rewriteStylesXml(snapshot.root, container);
   }
+
+  // F1 Phase 1 — pivot tables and caches re-emit byte-identical
+  // from `raw`. Phase 3 will gate this on `dirty.pivotTables` for
+  // typed re-renders; today the call is unconditional and idempotent
+  // (the bytes are equal to what's already in the cloned container).
+  serializePivotParts(snapshot.root, container);
 
   try {
     return await container.serialize();

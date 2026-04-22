@@ -28,6 +28,7 @@ import type {
 import { connectorXfrm, resolveEndpoint } from "../model/connector-geometry.js";
 import { ATTR_KEY, ATTR_PREFIX, opaqueToEntry } from "../parser/xml-helpers.js";
 import { findPreset, subtypeFor, type EmitHelpers } from "../animation/presets.js";
+import { mediaShapeToEntry } from "./media.js";
 import { PptxSerializeError } from "./errors.js";
 
 const PRESENTATION_PART = "ppt/presentation.xml";
@@ -356,12 +357,20 @@ function serializeSlideXml(slide: Slide): string {
   // children to mirror PowerPoint's element order: cSld → clrMapOvr →
   // transition → timing → extLst.
   if (slide.transition) sldChildren.push(transitionToEntry(slide.transition));
+  // F4 surgical-merge:
+  //  - With a captured `timingTailRaw` AND typed animations: walk the
+  //    tail and splice in rebuilt `<p:par>` for edited animations
+  //    while preserving every other tail node verbatim.
+  //  - With a captured `timingTailRaw` but no typed animations: the
+  //    user removed every typed animation; emit only the unmodelled
+  //    pieces (sound effects, exit/emphasis siblings) by stripping
+  //    typed-animation pars from the tail.
+  //  - With no captured tail but typed animations: synthesise a
+  //    minimal timing tree (new from scratch).
+  //  - With neither: omit `<p:timing>`.
   if (slide.timingTailRaw) {
-    sldChildren.push(opaqueToEntry(slide.timingTailRaw));
+    sldChildren.push(mergeTimingFromAnimations(slide.timingTailRaw, slide.animations));
   } else if (slide.animations.length > 0) {
-    // F4: animations were edited via typed commands, which dropped the
-    // verbatim <p:timing> blob. Rebuild a minimal timing tree from the
-    // typed list so the entrance sequence survives the roundtrip.
     sldChildren.push(timingFromAnimations(slide.animations));
   }
   const sld = makeEntry("p:sld", sldChildren, slide.slideRootAttrs);
@@ -480,6 +489,350 @@ function triggerNodeType(trigger: ShapeAnimation["trigger"]): string {
   }
 }
 
+// ─── F4 v3: surgical merge of typed animations into captured tail ───
+//
+// The parser captures the entire `<p:timing>` blob as
+// `slide.timingTailRaw`. Each typed animation also captures its own
+// `<p:par>` carrier as `a.raw`. When the user runs an animation
+// command we now keep the tail (we used to drop it — that lost
+// every unmodelled effect on the slide). The serializer reconciles:
+//
+// - For each typed animation that **was edited** (`a.raw` is
+//   undefined): rebuild a fresh `<p:par>` carrier via
+//   `buildAnimationPar` and splice it where the original lived.
+// - For each typed animation that **was preserved** (`a.raw` is
+//   defined): emit `a.raw` verbatim — same effect as the previous
+//   "happy path" but now also when other animations on the slide
+//   were edited.
+// - For each `<p:par>` carrier in the tail that doesn't correspond
+//   to any typed animation (an unmodelled exit / emphasis effect
+//   we kept opaque): leave it untouched.
+// - For typed animations that have no matching carrier in the tail
+//   (newly added): append them at the end of the mainSeq's
+//   `<p:childTnLst>`.
+//
+// The walk identifies a "typed-animation carrier" as a `<p:par>`
+// whose first `<p:cTn>` declares `presetClass` + `presetID` — the
+// same predicate the parser uses. This keeps the merge trivially
+// symmetric with parsing.
+function mergeTimingFromAnimations(
+  tail: OpaqueXml,
+  animations: ReadonlyArray<ShapeAnimation>
+): Record<string, unknown> {
+  // Track which typed animations have already been emitted (by
+  // identity) so they appear exactly once: either spliced into a
+  // `<p:childTnLst>` that already had a matching carrier, or
+  // appended into the deepest mainSeq if no carrier matched.
+  const consumed = new Set<ShapeAnimation>();
+
+  // Walk the tail, looking for `<p:childTnLst>` containers whose
+  // children include at least one typed-animation `<p:par>` carrier.
+  // For those containers, re-emit the carriers in `slide.animations`
+  // order (which honours user-driven reordering) while preserving
+  // every non-carrier sibling at its original position.
+  const rewrite = (nodes: ReadonlyArray<unknown>): unknown[] => {
+    const out: unknown[] = [];
+    for (const node of nodes) {
+      if (!node || typeof node !== "object" || Array.isArray(node)) {
+        out.push(node);
+        continue;
+      }
+      const e = node as Record<string, unknown>;
+      const tag = entryTag(e);
+      if (!tag) {
+        out.push(node);
+        continue;
+      }
+
+      if (tag === "p:childTnLst") {
+        const children = (e[tag] as unknown[] | undefined) ?? [];
+        const rewrittenChildren = rewriteChildTnLstChildren(children, animations, consumed, rewrite);
+        out.push(rebuildEntry(e, tag, rewrittenChildren));
+        continue;
+      }
+
+      const children = e[tag] as unknown[] | undefined;
+      if (Array.isArray(children)) {
+        const nextChildren = rewrite(children);
+        out.push(rebuildEntry(e, tag, nextChildren));
+      } else {
+        out.push(node);
+      }
+    }
+    return out;
+  };
+
+  const rewritten = rewrite(tail.subtree);
+
+  // Append any typed animations that had no matching carrier (newly
+  // added since parse). We splice them into the deepest reachable
+  // mainSeq `<p:childTnLst>`. If we can't find one (synthetic tail),
+  // fall back to appending a fresh mainSeq tree at the top level —
+  // this mirrors `timingFromAnimations`.
+  const newPars: unknown[] = [];
+  for (const a of animations) {
+    if (consumed.has(a)) continue;
+    newPars.push(a.raw ? opaqueToEntry(a.raw) : buildAnimationPar(a));
+  }
+  let withAppended: unknown[];
+  if (newPars.length > 0) {
+    const appended = appendIntoMainSeq(rewritten, newPars);
+    withAppended = appended.ok ? appended.subtree : [...rewritten, ...newPars];
+  } else {
+    withAppended = rewritten;
+  }
+
+  // Re-wrap as `<p:timing>` with the original attrs.
+  const attrs: Record<string, string> = {};
+  for (const [k, v] of Object.entries(tail.rawAttrs)) attrs[k] = v;
+  const entry: Record<string, unknown> = { [tail.tag]: withAppended };
+  if (Object.keys(attrs).length > 0) entry[ATTR_KEY] = attrs;
+  return entry;
+}
+
+/**
+ * Rewrite the children of a `<p:childTnLst>` from a captured timing
+ * tail.
+ *
+ * The container may hold a mix of typed-animation `<p:par>` carriers
+ * (matched against `slide.animations` by `(spid, presetClass,
+ * presetId)`) and arbitrary unmodelled siblings (sound effects,
+ * complex sub-sequences, etc.). The contract:
+ *
+ *   - Non-carrier siblings keep their original positions verbatim.
+ *   - The slot where the first carrier appeared in tail order
+ *     becomes the anchor for ALL typed animations matching this
+ *     container, emitted in `slide.animations` order. This makes
+ *     reorder commands actually re-order on disk while preserving
+ *     non-carrier siblings.
+ *   - Carriers whose typed counterpart was deleted are dropped.
+ *   - Typed animations not represented in this container are
+ *     deferred to the caller (which may append them into the
+ *     deepest mainSeq via `appendIntoMainSeq`).
+ *
+ * `consumed` tracks identity of typed animations emitted into any
+ * container so the caller's "append leftover" pass doesn't double-
+ * emit them.
+ */
+function rewriteChildTnLstChildren(
+  children: ReadonlyArray<unknown>,
+  animations: ReadonlyArray<ShapeAnimation>,
+  consumed: Set<ShapeAnimation>,
+  rewriteOther: (nodes: ReadonlyArray<unknown>) => unknown[]
+): unknown[] {
+  // First pass — find which carriers live in this list and which
+  // typed animations they correspond to (by appearance order). The
+  // carrier→typed-animation association is stable across reorders
+  // because we re-derive it from the carrier key.
+  type CarrierSlot = { kind: "carrier"; key: string };
+  type SiblingSlot = { kind: "sibling"; node: unknown };
+  const slots: Array<CarrierSlot | SiblingSlot> = [];
+  const carrierKeyOrder: string[] = [];
+  for (const c of children) {
+    if (c && typeof c === "object" && !Array.isArray(c)) {
+      const e = c as Record<string, unknown>;
+      const tag = entryTag(e);
+      if (tag === "p:par") {
+        const carrier = identifyCarrier(e);
+        if (carrier) {
+          const key = `${carrier.spid}|${carrier.presetClass}|${carrier.presetId}`;
+          slots.push({ kind: "carrier", key });
+          if (!carrierKeyOrder.includes(key)) carrierKeyOrder.push(key);
+          continue;
+        }
+      }
+    }
+    slots.push({ kind: "sibling", node: c });
+  }
+  // No carriers in this list → recurse normally so nested mainSeq
+  // levels still get visited.
+  if (carrierKeyOrder.length === 0) {
+    return rewriteOther(children);
+  }
+  // Bucket typed animations by carrier key so we can decide which
+  // ones belong to THIS childTnLst (vs a nested one). Only typed
+  // animations whose carrier key is also represented in this list
+  // are emitted here; the rest fall through to outer containers /
+  // the leftover-append pass.
+  const keysInThisList = new Set(carrierKeyOrder);
+  const typedHere: ShapeAnimation[] = [];
+  for (const a of animations) {
+    if (consumed.has(a)) continue;
+    const spec = findPreset(a.category, a.preset);
+    if (!spec) continue;
+    const key = `${a.targetCNvPrId}|${spec.presetClass}|${spec.presetId}`;
+    if (!keysInThisList.has(key)) continue;
+    typedHere.push(a);
+    consumed.add(a);
+  }
+  // Emit: anchor the typed-animation block at the position of the
+  // first carrier slot. Subsequent carrier slots collapse (the
+  // typed animations are already laid out at the anchor). Non-
+  // carrier siblings keep their positions.
+  const out: unknown[] = [];
+  let anchored = false;
+  for (const slot of slots) {
+    if (slot.kind === "sibling") {
+      out.push(slot.node);
+      continue;
+    }
+    if (anchored) continue;
+    for (const a of typedHere) {
+      out.push(a.raw ? opaqueToEntry(a.raw) : buildAnimationPar(a));
+    }
+    anchored = true;
+  }
+  return out;
+}
+
+function entryTag(entry: Record<string, unknown>): string | undefined {
+  for (const k of Object.keys(entry)) {
+    if (k === ATTR_KEY) continue;
+    return k;
+  }
+  return undefined;
+}
+
+function rebuildEntry(e: Record<string, unknown>, tag: string, children: unknown[]): Record<string, unknown> {
+  const out: Record<string, unknown> = { [tag]: children };
+  const a = e[ATTR_KEY];
+  if (a !== undefined) out[ATTR_KEY] = a;
+  return out;
+}
+
+function identifyCarrier(
+  par: Record<string, unknown>
+): { spid: number; presetClass: string; presetId: number } | null {
+  const tag = entryTag(par);
+  if (!tag || tag !== "p:par") return null;
+  const children = par[tag] as unknown[] | undefined;
+  if (!Array.isArray(children)) return null;
+  for (const c of children) {
+    if (!c || typeof c !== "object") continue;
+    const ce = c as Record<string, unknown>;
+    if (entryTag(ce) !== "p:cTn") continue;
+    const attrs = ce[ATTR_KEY] as Record<string, string> | undefined;
+    const presetClass = attrs?.[`${ATTR_PREFIX}presetClass`];
+    const presetIdStr = attrs?.[`${ATTR_PREFIX}presetID`];
+    if (!presetClass || !presetIdStr) return null;
+    const presetId = Number(presetIdStr);
+    const spid = findSpTgtSpidEntry(ce);
+    if (spid === null) return null;
+    return { spid, presetClass, presetId };
+  }
+  return null;
+}
+
+function findSpTgtSpidEntry(node: unknown): number | null {
+  if (!node || typeof node !== "object") return null;
+  const e = node as Record<string, unknown>;
+  const tag = entryTag(e);
+  if (!tag) return null;
+  if (tag === "p:spTgt") {
+    const attrs = e[ATTR_KEY] as Record<string, string> | undefined;
+    const v = attrs?.[`${ATTR_PREFIX}spid`];
+    if (v && /^\d+$/.test(v)) return Number(v);
+    return null;
+  }
+  const children = e[tag] as unknown[] | undefined;
+  if (Array.isArray(children)) {
+    for (const c of children) {
+      const r = findSpTgtSpidEntry(c);
+      if (r !== null) return r;
+    }
+  }
+  return null;
+}
+
+/**
+ * Append additional `<p:par>` carriers into the deepest mainSeq's
+ * `<p:childTnLst>`. Returns `{ ok: false }` if no mainSeq was
+ * found, in which case the caller falls back to appending at the
+ * top level.
+ */
+function appendIntoMainSeq(
+  subtree: ReadonlyArray<unknown>,
+  newPars: ReadonlyArray<unknown>
+): { ok: true; subtree: unknown[] } | { ok: false } {
+  let found = false;
+  const visit = (nodes: ReadonlyArray<unknown>): unknown[] => {
+    return nodes.map((node) => {
+      if (!node || typeof node !== "object" || Array.isArray(node)) return node;
+      const e = node as Record<string, unknown>;
+      const tag = entryTag(e);
+      if (!tag) return node;
+      if (tag === "p:cTn") {
+        const attrs = e[ATTR_KEY] as Record<string, string> | undefined;
+        const nodeType = attrs?.[`${ATTR_PREFIX}nodeType`];
+        if (nodeType === "mainSeq") {
+          // Inject into this cTn's `<p:childTnLst>` (last one wins
+          // if multiple — there usually is only one).
+          const children = (e[tag] as unknown[] | undefined) ?? [];
+          const nextChildren: unknown[] = [];
+          let appended = false;
+          for (const c of children) {
+            if (!c || typeof c !== "object") {
+              nextChildren.push(c);
+              continue;
+            }
+            const ce = c as Record<string, unknown>;
+            if (entryTag(ce) === "p:childTnLst" && !appended) {
+              const lst = (ce["p:childTnLst"] as unknown[] | undefined) ?? [];
+              nextChildren.push({ "p:childTnLst": [...lst, ...newPars] });
+              appended = true;
+            } else {
+              nextChildren.push(c);
+            }
+          }
+          if (!appended) {
+            nextChildren.push({ "p:childTnLst": [...newPars] });
+          }
+          found = true;
+          return rebuildEntry(e, tag, nextChildren);
+        }
+      }
+      const children = e[tag] as unknown[] | undefined;
+      if (Array.isArray(children)) {
+        return rebuildEntry(e, tag, visit(children));
+      }
+      return node;
+    });
+  };
+  const out = visit(subtree);
+  return found ? { ok: true, subtree: out } : { ok: false };
+}
+
+/**
+ * Build a single typed animation as a `<p:par>` carrier — the same
+ * shape `timingFromAnimations` would build, but for one animation.
+ * Used by `mergeTimingFromAnimations` to splice a rebuilt carrier
+ * back into the captured tail without rebuilding the whole tree.
+ */
+function buildAnimationPar(a: ShapeAnimation): Record<string, unknown> {
+  let cTnId = 1_000_000; // out of range of typical mainSeq ids; merge is best-effort on uniqueness here
+  const helpers = makeEmitHelpers(() => cTnId++);
+  const spec = findPreset(a.category, a.preset);
+  const body = spec
+    ? spec.emitBody(a, helpers)
+    : helpers.childTnLst([
+        helpers.setAttr(a.targetCNvPrId, "style.visibility", "visible", a.durationMs ?? 1),
+      ]);
+  const presetClass = spec?.presetClass ?? "entr";
+  const presetId = spec?.presetId ?? 1;
+  const subtype = spec ? subtypeFor(spec, a.direction) : 0;
+  const animCTnAttrs: Record<string, string> = {
+    id: String(cTnId++),
+    presetID: String(presetId),
+    presetClass,
+    presetSubtype: String(subtype),
+    fill: "hold",
+    nodeType: triggerNodeType(a.trigger ?? "onClick"),
+  };
+  if (a.durationMs !== undefined) animCTnAttrs.dur = String(a.durationMs);
+  if (a.delayMs !== undefined) animCTnAttrs.delay = String(a.delayMs);
+  return makeEntry("p:par", [makeEntry("p:cTn", [body], animCTnAttrs)]);
+}
+
 /**
  * Build an `EmitHelpers` bag for a single animation. The shared `id`
  * counter is passed in so behaviour-level `<p:cTn>` ids stay unique
@@ -575,6 +928,8 @@ function shapeToEntry(shape: Shape, shapesByCNvPrId: ReadonlyMap<number, Shape>)
       return textShapeToEntry(shape);
     case "pic":
       return pictureToEntry(shape);
+    case "media":
+      return mediaShapeToEntry(shape);
     case "group":
       return groupShapeToEntry(shape, shapesByCNvPrId);
     case "table":

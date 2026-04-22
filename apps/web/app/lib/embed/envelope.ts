@@ -82,14 +82,19 @@ export interface OfficeAIEmbedEnvelope {
 }
 
 /**
- * Truthy when the cross-format embed feature flag is on. The flag
- * is a string `"1"` to avoid the classic `"false"` truthiness foot-
- * gun. We deliberately default to OFF in production builds so the
- * extra clipboard MIME never ships before we've finished QA.
+ * Truthy when the cross-format embed feature flag is on.
+ *
+ * As of the night-shift QA pass (`spec/shared/clipboard.md`
+ * §"Default-on"), the flag now defaults to **on**. To roll back to
+ * the legacy text/HTML-only behaviour, set
+ * `NEXT_PUBLIC_OAI_EMBED=0` (or `"false"`) at build time. We honour
+ * the explicit-off case so a deployment can revert without a code
+ * change if the embed path regresses in the wild.
  */
 export function isEmbedEnabled(): boolean {
-  const flag = (process.env.NEXT_PUBLIC_OAI_EMBED ?? "").trim();
-  return flag === "1" || flag === "true";
+  const flag = (process.env.NEXT_PUBLIC_OAI_EMBED ?? "").trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off") return false;
+  return true;
 }
 
 export function makeEnvelope(

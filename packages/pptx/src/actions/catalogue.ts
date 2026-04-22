@@ -239,6 +239,19 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     hidden: { reason: "Reached via the format pane; CLI exposure is deferred." },
   },
   {
+    id: "pptx.set-shape-geometry",
+    commandType: "pptx:set-shape-geometry",
+    label: "Set shape geometry adjustment",
+    description:
+      "Tune a preset shape's geometry parameter (corner radius, arrow head size, etc.) by writing into a:avLst > a:gd.",
+    section: "Format",
+    surfaces: ["palette"],
+    hidden: {
+      reason:
+        "Driven by on-canvas adjustment handles + the Shape Format properties panel; CLI exposure is deferred until the slider UI ships.",
+    },
+  },
+  {
     id: "pptx.reorder-shape",
     commandType: "pptx:reorder-shape",
     label: "Reorder shape",
@@ -302,6 +315,16 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     section: "Insert",
     surfaces: ["cli", "palette"],
     icon: "Image",
+  },
+  {
+    id: "pptx.insert-media",
+    commandType: "pptx:insert-media",
+    label: "Insert video / audio",
+    description:
+      "Embed a video or audio file on a slide. Writes the binary part under ppt/media/, registers slide rels of type video/audio + a placeholder poster image, and stamps a typed media shape.",
+    section: "Insert",
+    surfaces: ["cli", "palette"],
+    icon: "Video",
   },
   {
     id: "pptx.replace-picture-media",

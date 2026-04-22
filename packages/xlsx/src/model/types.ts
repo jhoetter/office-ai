@@ -74,6 +74,15 @@ export interface XlsxDirtyFlags {
    * references them anymore). Mirrors `removedSheetParts`'s shape.
    */
   removedMediaParts: ReadonlySet<string>;
+  /**
+   * Set when typed pivot edits land (Phase 3+). Phase 1 leaves this
+   * unset / `false` so the serializer re-emits pivot parts
+   * byte-identical from {@link PivotTablePart.raw} /
+   * {@link PivotCachePart.raw}. Optional so existing call sites
+   * that build a `XlsxDirtyFlags` literal don't need to grow a
+   * field for a Phase-3 hook they can't trigger yet.
+   */
+  pivotTables?: boolean;
 }
 
 export interface XlsxWorkbook {
@@ -135,6 +144,83 @@ export interface XlsxWorkbook {
    * Spec: see C12 in the night-shift unification plan.
    */
   readonly definedNames: ReadonlyArray<DefinedName>;
+  /**
+   * Pivot table parts (`xl/pivotTables/pivotTableN.xml`). Phase 1 of
+   * `spec/xlsx/pivot-tables.md` keeps the entire pivot definition
+   * opaque (`raw` carries the verbatim XML); only `name` is lifted
+   * out of the root element so consumers can identify the table by
+   * its display name. Round-trips byte-identical.
+   */
+  readonly pivotTables: ReadonlyArray<PivotTablePart>;
+  /**
+   * Pivot cache parts (`xl/pivotCache/pivotCacheDefinitionN.xml`)
+   * with their matching `pivotCacheRecordsN.xml` bytes attached.
+   * Same opaque-preservation contract as {@link XlsxWorkbook.pivotTables}.
+   */
+  readonly pivotCaches: ReadonlyArray<PivotCachePart>;
+}
+
+/**
+ * Phase 1 typed slot for an XLSX pivot table part. The full
+ * `<pivotTableDefinition>` element travels in {@link PivotTablePart.raw}
+ * verbatim so it round-trips byte-identical even though we don't yet
+ * model the rows / cols / data axes as typed structures. Phase 3
+ * upgrades this to a full `PivotTable` (see
+ * `spec/xlsx/pivot-tables.md`).
+ */
+export interface PivotTablePart {
+  /** Container path, e.g. `xl/pivotTables/pivotTable1.xml`. */
+  readonly partPath: string;
+  /** Pivot table display name (`<pivotTableDefinition name="…">`). */
+  readonly name: string;
+  /**
+   * `cacheId` attribute on the root element when present. Pivot
+   * tables reference their cache by id (the cache also exists in
+   * {@link XlsxWorkbook.pivotCaches}); we lift the id out so callers
+   * can join the two sides without re-parsing the XML.
+   */
+  readonly cacheId?: number;
+  /** Verbatim part XML, ready for byte-identical re-emission. */
+  readonly raw: string;
+  /** Content type from `[Content_Types].xml` when present. */
+  readonly contentType?: string;
+  /**
+   * Verbatim rels-part XML
+   * (`xl/pivotTables/_rels/pivotTableN.xml.rels`), if any. The pivot
+   * table's link to its cache definition lives there.
+   */
+  readonly relsXml?: string;
+}
+
+/**
+ * Phase 1 typed slot for an XLSX pivot cache. Pairs the
+ * `pivotCacheDefinitionN.xml` part (`raw` + `partPath`) with the
+ * sibling `pivotCacheRecordsN.xml` bytes when present. Both blobs
+ * are opaque in Phase 1.
+ */
+export interface PivotCachePart {
+  /** Container path of the cache definition. */
+  readonly partPath: string;
+  /**
+   * Cache id matching the workbook's
+   * `<pivotCaches><pivotCache cacheId="…" r:id="…"/></pivotCaches>`
+   * entry. Lifted from the root element when present; falls back to
+   * the index of the rels relationship when the cache file omits it
+   * (legacy authoring tools occasionally do this).
+   */
+  readonly cacheId: number;
+  /** Verbatim cache-definition XML. */
+  readonly raw: string;
+  readonly contentType?: string;
+  readonly relsXml?: string;
+  /**
+   * Container path of the matching `pivotCacheRecordsN.xml` part
+   * when the cache definition references one via its rels.
+   */
+  readonly recordsPartPath?: string;
+  /** Verbatim records-part XML. */
+  readonly recordsRaw?: string;
+  readonly recordsContentType?: string;
 }
 
 /**
@@ -944,5 +1030,6 @@ export function emptyDirty(): XlsxDirtyFlags {
     drawings: new Set<string>(),
     media: new Set<string>(),
     removedMediaParts: new Set<string>(),
+    pivotTables: false,
   };
 }

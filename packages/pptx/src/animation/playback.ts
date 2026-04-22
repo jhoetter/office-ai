@@ -514,7 +514,18 @@ function buildEntrance(
         postState: post,
       };
     default:
-      return { keyframes: null, options: opts };
+      // Unknown entrance preset: avoid leaving the shape invisible
+      // forever (its baseline visibility was set to hidden by
+      // `prepare()`). A simple fade-in delivers an acceptable preview
+      // until the preset gets a bespoke implementation.
+      return {
+        keyframes: [
+          { visibility: "visible", opacity: 0 },
+          { visibility: "visible", opacity: 1 },
+        ],
+        options: opts,
+        postState: post,
+      };
   }
 }
 
@@ -581,7 +592,14 @@ function buildEmphasis(anim: ShapeAnimation, opts: KeyframeAnimationOptions): Bu
         postState: { filter: "none" },
       };
     default:
-      return { keyframes: null, options: opts };
+      // Unknown emphasis preset: avoid silent gaps in preview by
+      // emitting a brief brightness pulse so users see "something
+      // happened" — same fallback rationale as `colorPulse`.
+      return {
+        keyframes: [{ filter: "brightness(1)" }, { filter: "brightness(1.3)" }, { filter: "brightness(1)" }],
+        options: { ...opts, easing: "ease-in-out" },
+        postState: { filter: "none" },
+      };
   }
 }
 
@@ -692,7 +710,17 @@ function buildExit(
         postState: post,
       };
     default:
-      return { keyframes: null, options: opts };
+      // Unknown exit preset: end with the same hidden post-state as the
+      // explicit cases, but animate via fade so the preview shows a
+      // visible departure rather than a frame-1 disappearance.
+      return {
+        keyframes: [
+          { visibility: "visible", opacity: 1 },
+          { visibility: "visible", opacity: 0 },
+        ],
+        options: opts,
+        postState: post,
+      };
   }
 }
 

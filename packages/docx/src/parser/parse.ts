@@ -9,6 +9,7 @@ import type {
   DocxDocument,
   DocxSnapshot,
   EmbeddedSpreadsheet,
+  FootnoteReferenceLeaf,
   HeaderFooterPart,
   Hyperlink,
   InlineNode,
@@ -25,6 +26,7 @@ import type {
   WrapperMarker,
 } from "../model/types.js";
 import { DocxParseError } from "./errors.js";
+import { parseFootnotesPart } from "./footnotes.js";
 import { discoverHeaderFooterRefs, parseHeaderFooterParts } from "./headers-footers.js";
 import { parseChartParts } from "./charts.js";
 import { parseDrawing } from "./images.js";
@@ -191,6 +193,9 @@ export async function parseDocx(
   const numbering = parseNumberingPart(container);
   const styles = parseStylesPart(container);
   const theme = parseThemePart(container);
+  const footnotesPart = parseFootnotesPart(container, mintNodeId, parseParagraph, (entry, mint) =>
+    parseTableTyped(entry, mint, parseParagraph)
+  );
 
   const root: DocxDocument = {
     id: mintNodeId(),
@@ -204,6 +209,7 @@ export async function parseDocx(
     ...(numbering ? { numbering } : {}),
     ...(styles ? { styles } : {}),
     ...(theme ? { theme } : {}),
+    ...(footnotesPart ? { footnotesPart } : {}),
     documentRootAttrs,
   };
 
@@ -225,6 +231,7 @@ export async function parseDocx(
     styles: false,
     charts: new Set<string>(),
     embeddings: new Set<string>(),
+    footnotes: false,
   };
 
   return {
@@ -873,6 +880,27 @@ function parseRunChild(entry: Record<string, unknown>, mintNodeId: IdMinter): Ru
       const ole = parseEmbeddedSpreadsheet(entry, mintNodeId, currentDocRelResolver);
       if (ole) return ole;
       return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };
+    }
+    case "w:footnoteReference": {
+      // F1 — promote to a typed leaf so command handlers can find /
+      // mutate the reference without re-parsing opaque bytes. The
+      // serializer round-trips it via `serializeRunChild`.
+      const idAttr = attrOf(entry, "w:id");
+      if (idAttr === undefined) {
+        return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };
+      }
+      const footnoteId = Number(idAttr);
+      if (!Number.isFinite(footnoteId)) {
+        return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };
+      }
+      const customMark = attrOf(entry, "w:customMarkFollows");
+      const leaf: FootnoteReferenceLeaf = {
+        kind: "footnote-ref",
+        id: mintNodeId(),
+        footnoteId,
+        ...(customMark === "1" || customMark === "true" ? { customMarkFollows: true } : {}),
+      };
+      return leaf;
     }
     default:
       return { kind: "opaque", id: mintNodeId(), raw: captureOpaque(entry) };

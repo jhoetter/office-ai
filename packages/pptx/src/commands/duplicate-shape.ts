@@ -84,6 +84,8 @@ function cloneShape(shape: Shape, dx: number, dy: number, newCNvPrId: number, ct
       return { ...next, ...offset } as Shape;
     case "ole-spreadsheet":
       return { ...next, ...offset } as Shape;
+    case "media":
+      return { ...next, ...offset } as Shape;
     case "connector": {
       // Connectors derive their bounding box from endpoints, so we
       // shift each endpoint by the offset rather than the bounding

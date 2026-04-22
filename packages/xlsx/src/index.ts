@@ -69,6 +69,8 @@ export {
   type SheetChart,
   type MergedCell,
   type OpaquePart,
+  type PivotCachePart,
+  type PivotTablePart,
   type Sheet,
   type XlsxDirtyFlags,
   type XlsxSnapshot,

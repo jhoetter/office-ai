@@ -1,5 +1,6 @@
 export { parseDocx } from "./parse.js";
 export { DocxParseError } from "./errors.js";
+export { parseFootnotesPart } from "./footnotes.js";
 export {
   captureOpaque,
   opaqueToEntry,

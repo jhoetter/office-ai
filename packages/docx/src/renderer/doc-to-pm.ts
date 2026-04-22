@@ -389,6 +389,15 @@ function pushRunChild(child: RunChild, out: PMNode[], marks: Mark[]): void {
       if (pmNode) out.push(pmNode);
       return;
     }
+    case "footnote-ref": {
+      // F1: render footnote reference as a superscript marker carrying the
+      // target footnote id. Display polish (lane, popover, autonumber) is
+      // tracked for a later phase; for now we emit a short text glyph so
+      // the reference is visible to users in the PM doc.
+      const label = `[${child.footnoteId}]`;
+      out.push(docxSchema.text(label, marks));
+      return;
+    }
     default: {
       const _exhaustive: never = child;
       void _exhaustive;

@@ -45,6 +45,9 @@ export const DOCX_COMMAND_TYPES = [
   "docx:set-chart-type",
   "docx:insert-spreadsheet",
   "docx:update-spreadsheet",
+  "docx:insert-footnote",
+  "docx:set-footnote-body",
+  "docx:delete-footnote",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -476,6 +479,14 @@ export interface SetImagePropertiesPayload {
   altText?: string | null;
   name?: string;
 }
+
+/* ── Footnotes (F1) ──────────────────────────────────────────────────────── */
+
+export type {
+  InsertFootnotePayload,
+  SetFootnoteBodyPayload,
+  DeleteFootnotePayload,
+} from "./footnote-commands.js";
 
 export interface SetPageSetupPayload {
   paragraphIndex: number;

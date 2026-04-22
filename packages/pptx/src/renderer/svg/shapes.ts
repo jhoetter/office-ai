@@ -99,6 +99,8 @@ function shapeBodyToSvg(shape: Shape, ctx: SvgRenderCtx): string {
       return textShapeToSvg(shape, ctx);
     case "pic":
       return pictureToSvg(shape, ctx);
+    case "media":
+      return mediaShapeToSvg(shape);
     case "group":
       return groupShapeToSvg(shape, ctx);
     case "table":
@@ -140,6 +142,52 @@ function oleSpreadsheetToSvg(
   return [
     `<rect x="${x}" y="${y}" width="${cx}" height="${cy}" fill="#f7f7f7" stroke="#107c41" stroke-width="2" stroke-dasharray="6 4"/>`,
     `<text x="${x + cx / 2}" y="${y + cy / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Calibri,sans-serif" font-size="14" fill="#107c41">Excel embed</text>`,
+  ].join("");
+}
+
+/**
+ * Phase-1 media placeholder. Embedded video / audio shapes render as
+ * a dashed rectangle stamped with a play-triangle (video) or speaker
+ * glyph (audio). The actual `<video>` / `<audio>` elements only matter
+ * inside the React-chrome PresentMode overlay; the static SVG snapshot
+ * just needs *something* legible for previews and exports.
+ */
+function mediaShapeToSvg(shape: import("../../model/types.js").MediaShape): string {
+  if (!shape.position || !shape.size) return "";
+  const x = u(shape.position.xEmu);
+  const y = u(shape.position.yEmu);
+  const cx = u(shape.size.cxEmu);
+  const cy = u(shape.size.cyEmu);
+  const isVideo = shape.mediaType === "video";
+  const stroke = isVideo ? "#0f766e" : "#6d28d9";
+  const fill = isVideo ? "#ecfdf5" : "#f5f3ff";
+  const glyph = isVideo
+    ? glyphPlay(x + cx / 2, y + cy / 2, Math.min(cx, cy) * 0.25, stroke)
+    : glyphSpeaker(x + cx / 2, y + cy / 2, Math.min(cx, cy) * 0.25, stroke);
+  return [
+    `<rect x="${x}" y="${y}" width="${cx}" height="${cy}" fill="${fill}" stroke="${stroke}" stroke-width="2" stroke-dasharray="6 4"/>`,
+    glyph,
+  ].join("");
+}
+
+function glyphPlay(cx: number, cy: number, r: number, stroke: string): string {
+  const x0 = cx - r * 0.6;
+  const x1 = cx + r * 0.7;
+  const y0 = cy - r;
+  const y1 = cy + r;
+  return `<polygon points="${x0},${y0} ${x0},${y1} ${x1},${cy}" fill="${stroke}"/>`;
+}
+
+function glyphSpeaker(cx: number, cy: number, r: number, stroke: string): string {
+  const x0 = cx - r * 0.6;
+  const x1 = cx + r * 0.2;
+  const y0 = cy - r * 0.4;
+  const y1 = cy + r * 0.4;
+  const yt0 = cy - r * 0.7;
+  const yt1 = cy + r * 0.7;
+  return [
+    `<rect x="${x0}" y="${y0}" width="${(x1 - x0).toFixed(2)}" height="${(y1 - y0).toFixed(2)}" fill="${stroke}"/>`,
+    `<polygon points="${x1},${yt0} ${x1 + r * 0.6},${yt0} ${x1 + r * 0.6},${yt1} ${x1},${yt1}" fill="${stroke}"/>`,
   ].join("");
 }
 
@@ -408,6 +456,9 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   const fill = readFillFromOpaque(shape.spPrTail, theme);
   const stroke = readStrokeFromOpaque(shape.spPrTail, theme);
   const prst = readPrstGeom(shape.spPrTail);
+  // F-D: typed adjustments from `<a:avLst>` flow into `renderGeometry`
+  // so user-set radii / arrow heads / star spikes render correctly.
+  const adjustments = readPrstAdjustments(shape.spPrTail);
 
   if (prst === "line" && stroke) {
     return [
@@ -428,7 +479,7 @@ function textShapeToSvg(shape: TextShape, ctx: SvgRenderCtx): string {
   // produces a visually distinct shape rather than an undifferentiated
   // rectangle. Falls back to a rect for `prst="rect"` and for any preset
   // we don't yet model — the bounding box is preserved either way.
-  const geometry = renderGeometry(prst, box.cx, box.cy, rectFill, strokeAttrs);
+  const geometry = renderGeometry(prst, box.cx, box.cy, rectFill, strokeAttrs, adjustments);
 
   const out = [groupOpen("text", shape.id, { transform: `translate(${u(box.x)} ${u(box.y)})` }), geometry];
   if (hasText) {
@@ -852,21 +903,96 @@ function readBodyInsets(bodyPr: OpaqueXml | undefined): { l: number; r: number; 
  * plain rect, which is enough to preserve the layout while we wait to
  * port the full preset geometry library from `presetShapeDefinitions`.
  */
+/**
+ * `a:avLst` adjustment values. Each entry is `{ name, value }` where
+ * `name` is `adjN` (1-indexed) and `value` is OOXML's percent-based
+ * fraction (0–100000 represents 0–100%) for most adjustments, or an
+ * angle in 60_000-th-of-a-degree units for rotation adjustments.
+ */
+export interface PresetAdjustment {
+  readonly name: string;
+  readonly value: number;
+}
+
+/**
+ * Pull the ordered list of `<a:gd name=adjN fmla="val 12345"/>`
+ * entries out of a shape's `<a:prstGeom>/<a:avLst>`. Returns `[]`
+ * when no adjustments are present (use preset defaults).
+ */
+export function readPrstAdjustments(children: ReadonlyArray<OpaqueXml>): ReadonlyArray<PresetAdjustment> {
+  for (const c of children) {
+    if (c.tag !== "a:prstGeom") continue;
+    for (const inner of c.subtree) {
+      if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+      const obj = inner as Record<string, unknown>;
+      const keys = Object.keys(obj).filter((k) => k !== ":@");
+      if (keys.length !== 1 || keys[0] !== "a:avLst") continue;
+      const subs = (obj["a:avLst"] as unknown[] | undefined) ?? [];
+      const out: PresetAdjustment[] = [];
+      for (const gd of subs) {
+        if (!gd || typeof gd !== "object" || Array.isArray(gd)) continue;
+        const g = gd as Record<string, unknown>;
+        if (Object.keys(g).filter((k) => k !== ":@")[0] !== "a:gd") continue;
+        const a = (g[":@"] as Record<string, unknown> | undefined) ?? {};
+        const name = typeof a["@_name"] === "string" ? a["@_name"] : undefined;
+        const fmla = typeof a["@_fmla"] === "string" ? a["@_fmla"] : undefined;
+        if (!name || !fmla) continue;
+        // Most adjustments are written as `val N`. We ignore other
+        // formula prefixes (rare, e.g. `+- adj1 0 0`) since the
+        // renderer can only honour a literal value.
+        const m = /^val\s+(-?\d+)/.exec(fmla);
+        if (!m) continue;
+        out.push({ name, value: Number(m[1]) });
+      }
+      return out;
+    }
+  }
+  return [];
+}
+
+/** Look up a single adjustment by name with a default fallback. */
+function adj(adjustments: ReadonlyArray<PresetAdjustment>, name: string, defaultValue: number): number {
+  for (const a of adjustments) if (a.name === name) return a.value;
+  return defaultValue;
+}
+
 function renderGeometry(
   prst: string | null,
   cxEmu: number,
   cyEmu: number,
   fill: string,
-  strokeAttrs: string
+  strokeAttrs: string,
+  adjustments: ReadonlyArray<PresetAdjustment> = []
 ): string {
   const w = u(cxEmu);
   const h = u(cyEmu);
+  const min = Math.min(w, h);
   switch (prst) {
     case "ellipse":
+    case "oval":
       return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="${fill}"${strokeAttrs}/>`;
     case "roundRect": {
-      // ~12% corner radius matches PowerPoint's default `<a:avLst>` value.
-      const r = Math.min(w, h) * 0.12;
+      // OOXML default for `roundRect` is `adj1 = 16667` (16.667% of
+      // the shorter side). PowerPoint's "rounded rectangle" insert
+      // uses this as the starting yellow-handle position.
+      const adjVal = adj(adjustments, "adj", adj(adjustments, "adj1", 16667));
+      const r = (Math.max(0, Math.min(50000, adjVal)) / 100000) * min;
+      return `<rect width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "snip1Rect":
+    case "snipSameSideRect":
+    case "snipDiagRect":
+    case "snipRoundRect":
+    case "round1Rect":
+    case "round2SameRect":
+    case "round2DiagRect": {
+      // For these "snip / round corner rect" variants we approximate
+      // by a uniform rounded rect whose radius matches the first
+      // adjustment. Distinguishing snipped (chamfered) corners from
+      // rounded ones isn't worth a per-corner SVG path until shape
+      // editing's full preset library lands.
+      const adjVal = adj(adjustments, "adj1", adj(adjustments, "adj", 16667));
+      const r = (Math.max(0, Math.min(50000, adjVal)) / 100000) * min;
       return `<rect width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"${strokeAttrs}/>`;
     }
     case "triangle":
@@ -875,13 +1001,141 @@ function renderGeometry(
       return `<polygon points="0,0 0,${h} ${w},${h}" fill="${fill}"${strokeAttrs}/>`;
     case "diamond":
       return `<polygon points="${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}" fill="${fill}"${strokeAttrs}/>`;
-    case "rightArrow": {
-      // Body height = 60% of total; head occupies the right 30% width.
-      const bodyH = h * 0.6;
-      const bodyTop = (h - bodyH) / 2;
-      const bodyBot = bodyTop + bodyH;
-      const headStart = w * 0.7;
-      return `<polygon points="0,${bodyTop} ${headStart},${bodyTop} ${headStart},0 ${w},${h / 2} ${headStart},${h} ${headStart},${bodyBot} 0,${bodyBot}" fill="${fill}"${strokeAttrs}/>`;
+    case "parallelogram": {
+      // adj1 controls the slant. Default ~25% of width.
+      const slant = (adj(adjustments, "adj1", 25000) / 100000) * w;
+      return `<polygon points="${slant},0 ${w},0 ${w - slant},${h} 0,${h}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "trapezoid": {
+      const slant = (adj(adjustments, "adj1", 25000) / 100000) * w;
+      return `<polygon points="${slant},0 ${w - slant},0 ${w},${h} 0,${h}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "pentagon": {
+      // Regular-ish pentagon inscribed in the bounding box.
+      const top = h * 0.0;
+      const apex = w / 2;
+      const upperY = h * 0.38;
+      return `<polygon points="${apex},${top} ${w},${upperY} ${w * 0.81},${h} ${w * 0.19},${h} 0,${upperY}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "hexagon": {
+      // adj1 sets the corner-cut depth, default 25%.
+      const cut = (adj(adjustments, "adj", adj(adjustments, "adj1", 25000)) / 100000) * (w / 2);
+      return `<polygon points="${cut},0 ${w - cut},0 ${w},${h / 2} ${w - cut},${h} ${cut},${h} 0,${h / 2}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "heptagon": {
+      const cx = w / 2;
+      const cy = h / 2;
+      const rx = w / 2;
+      const ry = h / 2;
+      const pts: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const ang = -Math.PI / 2 + (2 * Math.PI * i) / 7;
+        pts.push(`${cx + rx * Math.cos(ang)},${cy + ry * Math.sin(ang)}`);
+      }
+      return `<polygon points="${pts.join(" ")}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "octagon": {
+      const cut = (adj(adjustments, "adj", adj(adjustments, "adj1", 29289)) / 100000) * (w / 2);
+      return `<polygon points="${cut},0 ${w - cut},0 ${w},${cut} ${w},${h - cut} ${w - cut},${h} ${cut},${h} 0,${h - cut} 0,${cut}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "decagon": {
+      const cx = w / 2;
+      const cy = h / 2;
+      const rx = w / 2;
+      const ry = h / 2;
+      const pts: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const ang = -Math.PI / 2 + (2 * Math.PI * i) / 10;
+        pts.push(`${cx + rx * Math.cos(ang)},${cy + ry * Math.sin(ang)}`);
+      }
+      return `<polygon points="${pts.join(" ")}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "rightArrow":
+    case "leftArrow":
+    case "upArrow":
+    case "downArrow": {
+      // adj1 = body thickness (default 50%); adj2 = head length (default 50% of width).
+      const adj1 = Math.max(0, Math.min(100000, adj(adjustments, "adj1", 50000))) / 100000;
+      const adj2 = Math.max(0, Math.min(100000, adj(adjustments, "adj2", 50000))) / 100000;
+      let pts: string;
+      if (prst === "rightArrow") {
+        const bodyH = h * adj1;
+        const bodyTop = (h - bodyH) / 2;
+        const bodyBot = bodyTop + bodyH;
+        const headStart = w * (1 - adj2);
+        pts = `0,${bodyTop} ${headStart},${bodyTop} ${headStart},0 ${w},${h / 2} ${headStart},${h} ${headStart},${bodyBot} 0,${bodyBot}`;
+      } else if (prst === "leftArrow") {
+        const bodyH = h * adj1;
+        const bodyTop = (h - bodyH) / 2;
+        const bodyBot = bodyTop + bodyH;
+        const headEnd = w * adj2;
+        pts = `${w},${bodyTop} ${headEnd},${bodyTop} ${headEnd},0 0,${h / 2} ${headEnd},${h} ${headEnd},${bodyBot} ${w},${bodyBot}`;
+      } else if (prst === "upArrow") {
+        const bodyW = w * adj1;
+        const bodyL = (w - bodyW) / 2;
+        const bodyR = bodyL + bodyW;
+        const headEnd = h * adj2;
+        pts = `${bodyL},${h} ${bodyL},${headEnd} 0,${headEnd} ${w / 2},0 ${w},${headEnd} ${bodyR},${headEnd} ${bodyR},${h}`;
+      } else {
+        const bodyW = w * adj1;
+        const bodyL = (w - bodyW) / 2;
+        const bodyR = bodyL + bodyW;
+        const headStart = h * (1 - adj2);
+        pts = `${bodyL},0 ${bodyL},${headStart} 0,${headStart} ${w / 2},${h} ${w},${headStart} ${bodyR},${headStart} ${bodyR},0`;
+      }
+      return `<polygon points="${pts}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "star4":
+    case "star5":
+    case "star6":
+    case "star8":
+    case "star10":
+    case "star12":
+    case "star16":
+    case "star24":
+    case "star32": {
+      const n = Number(prst.slice(4));
+      // adj = inner-radius fraction (default ~50% of outer for star5).
+      const innerFrac = Math.max(0, Math.min(100000, adj(adjustments, "adj", 50000))) / 100000;
+      const cx = w / 2;
+      const cy = h / 2;
+      const rxOuter = w / 2;
+      const ryOuter = h / 2;
+      const pts: string[] = [];
+      for (let i = 0; i < n * 2; i++) {
+        const isOuter = i % 2 === 0;
+        const r = isOuter ? 1 : innerFrac;
+        const ang = -Math.PI / 2 + (Math.PI * i) / n;
+        pts.push(`${cx + rxOuter * r * Math.cos(ang)},${cy + ryOuter * r * Math.sin(ang)}`);
+      }
+      return `<polygon points="${pts.join(" ")}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "chevron": {
+      const adj1 = (adj(adjustments, "adj", adj(adjustments, "adj1", 50000)) / 100000) * w;
+      return `<polygon points="0,0 ${w - adj1},0 ${w},${h / 2} ${w - adj1},${h} 0,${h} ${adj1},${h / 2}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "plus":
+    case "mathPlus": {
+      const arm = (adj(adjustments, "adj", adj(adjustments, "adj1", 25000)) / 100000) * min;
+      const xMid = w / 2;
+      const yMid = h / 2;
+      const armW = arm;
+      return `<polygon points="${xMid - armW},0 ${xMid + armW},0 ${xMid + armW},${yMid - armW} ${w},${yMid - armW} ${w},${yMid + armW} ${xMid + armW},${yMid + armW} ${xMid + armW},${h} ${xMid - armW},${h} ${xMid - armW},${yMid + armW} 0,${yMid + armW} 0,${yMid - armW} ${xMid - armW},${yMid - armW}" fill="${fill}"${strokeAttrs}/>`;
+    }
+    case "can":
+    case "cylinder": {
+      // Approximate a 3D cylinder with a rect + ellipse cap.
+      const capH = Math.min(h * 0.18, w * 0.5);
+      return [
+        `<rect y="${capH / 2}" width="${w}" height="${h - capH}" fill="${fill}"${strokeAttrs}/>`,
+        `<ellipse cx="${w / 2}" cy="${capH / 2}" rx="${w / 2}" ry="${capH / 2}" fill="${fill}"${strokeAttrs}/>`,
+      ].join("");
+    }
+    case "cloud": {
+      // Approximate the cloud preset with a rounded shape — full
+      // path geometry from `presetShapeDefinitions` is deferred.
+      const r = min * 0.32;
+      return `<rect width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"${strokeAttrs}/>`;
     }
     case "rect":
     case null:

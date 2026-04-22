@@ -310,28 +310,28 @@ function omitTransition(slide: Slide): Slide {
 }
 
 /**
- * After typed-animation edits, the original `<p:timing>` blob is no
- * longer authoritative. The naïve approach drops it entirely and
- * lets the serializer rebuild a synthetic `<p:timing>` from
- * `Slide.animations`. The delta-merge approach used here keeps the
- * tail when the typed animations list is structurally identical
- * (same shapes, same effects, same order) — Office documents that
- * carry rich `<p:timing>` siblings (sound effects, advanced
- * triggers) survive an unrelated edit. When the list actually
- * changed, we still drop the tail because we don't know how to
- * surgically rewrite the `<p:par>` tree.
+ * After typed-animation edits, the original `<p:timing>` blob is
+ * preserved as `timingTailRaw`. The serializer is responsible for
+ * **surgically merging** the typed `animations[]` into the captured
+ * tail tree: matching `<p:par>` carriers are replaced with
+ * rebuilt versions for edited animations, kept verbatim for
+ * preserved ones (`a.raw !== undefined`), and dropped for typed
+ * animations that no longer exist. Anything outside the
+ * typed-animation `<p:par>` set (mainSeq envelope, sound effects,
+ * unmodelled emphasis / exit / motionPath siblings) survives
+ * verbatim.
  *
- * For now the conservative invariant is: only preserve when the
- * typed list matches a recomputed parse of the same tail. The
- * typed model already carries the parsed entries so we compare
- * what `dropTimingTail` would have written to what's there. If
- * any structural difference exists, we drop.
+ * This used to drop `timingTailRaw` entirely on any typed edit —
+ * causing all unmodelled timing content to be silently lost. See
+ * `docs/build-log/pptx.md` "Known issues" for the bug history,
+ * and `serializer/serialize.ts` `mergeTimingFromAnimations` for
+ * the merge implementation.
  */
 function dropTimingTail(slide: Slide): Slide {
-  if (!slide.timingTailRaw) return slide;
-  const { timingTailRaw: _t, ...rest } = slide;
-  void _t;
-  return rest as Slide;
+  // Preserve the captured tail so the serializer can merge typed
+  // edits into it surgically. The previous behaviour stripped
+  // `timingTailRaw` here; that strategy is now incorrect.
+  return slide;
 }
 
 /**

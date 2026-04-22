@@ -169,6 +169,8 @@ function runChildToPlain(child: RunChild): string {
       return "";
     case "embedded-spreadsheet":
       return "";
+    case "footnote-ref":
+      return "";
     default: {
       const _exhaustive: never = child;
       void _exhaustive;

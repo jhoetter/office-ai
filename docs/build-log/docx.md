@@ -2260,3 +2260,105 @@ Pre-existing testids (`comments-sidebar`, `comment-thread`,
 `data-resolved`, `data-comment-id`) survive intact, so the existing
 `apps/web/e2e/comments-sidebar.spec.ts` suite still drives the same
 flows. See `spec/shared/comments.md` for the cross-product contract.
+
+## Session summary (2026-04-22, "F1 — DOCX footnotes (model + commands)")
+
+First slice of `spec/docx/footnotes.md`: the data layer for footnotes.
+The renderer lane, ProseMirror per-footnote editor, header/footer
+focus state machine, toolbar UI, and endnotes are explicitly
+deferred to a follow-up phase.
+
+What landed:
+
+- New typed model in `packages/docx/src/model/types.ts`:
+  - `Footnote { id, type, body: BlockNode[], raw? }` —
+    `type` is `"normal" | "separator" | "continuationSeparator" | "continuationNotice"`.
+    `raw` carries the verbatim XML for entries we never touched, so
+    untouched footnotes round-trip byte-identically.
+  - `FootnotesPart { footnotes, rootAttrs, tail? }` — `tail`
+    captures unknown sibling elements (e.g. vendor extensions) so
+    they survive serialization.
+  - `FootnoteReferenceLeaf { kind: "footnote-ref", footnoteId, customMarkFollows? }`
+    promoted into the `RunChild` discriminated union. The parser
+    now recognises `<w:footnoteReference>` and emits this typed
+    leaf instead of leaving it as an opaque inline.
+  - New dirty bit `DocxDirtyFlags.footnotes: boolean` so the
+    serializer can decide whether to rewrite `word/footnotes.xml`.
+- New parser `packages/docx/src/parser/footnotes.ts`: walks
+  `word/footnotes.xml`, reuses the injected `parseParagraph` /
+  `parseTable` callbacks (same circular-import-avoidance pattern as
+  `parser/headers-footers.ts`), and stores each footnote's source
+  XML on `Footnote.raw` for verbatim re-emission.
+- New serializer `packages/docx/src/serializer/footnotes.ts`: gated
+  on `dirty.footnotes`. Re-emits untouched footnotes from `raw` and
+  regenerates touched / freshly inserted footnotes from typed
+  fields. Also handles the `[Content_Types].xml` override and
+  `word/_rels/document.xml.rels` relationship registration when
+  the part is added to a doc that didn't have one before, and
+  cleans both up if all footnotes are deleted.
+- `parser/parse.ts` and `serializer/serialize.ts` wired to call
+  the new functions; `serializeRunChild` re-emits
+  `<w:footnoteReference w:id="…">` for `footnote-ref` leaves.
+- New commands in `packages/docx/src/commands/footnote-commands.ts`:
+  - `docx:insert-footnote { paragraphId, offset, body? }` —
+    allocates `max(existing.id) + 1` (skipping reserved -1 / 0),
+    splits the targeted run, and splices a one-run paragraph
+    carrying the typed `FootnoteReferenceLeaf`. Default body is a
+    single `FootnoteText`-styled paragraph.
+  - `docx:set-footnote-body { footnoteId, body }` — replaces a
+    footnote's typed body and drops `raw` so the serializer
+    regenerates that footnote (siblings keep round-tripping
+    verbatim from their own `raw`).
+  - `docx:delete-footnote { footnoteId }` — removes the entry and
+    recursively strips matching `FootnoteReferenceLeaf`s from the
+    body and every header/footer part. Empty runs left behind are
+    pruned. Dirty flags are propagated for body and per-part
+    `headersAndFooters` paths.
+- `commands/index.ts`, `commands/payloads.ts`,
+  `commands/registry.ts`, `parser/index.ts`, and
+  `serializer/index.ts` register / re-export the new surface.
+- `renderer/doc-to-pm.ts` now handles the new `footnote-ref` arm
+  of the `RunChild` union with a placeholder `[N]` text glyph so
+  the existing exhaustive switch keeps compiling. Real superscript
+  styling and a footnote lane belong to the renderer phase.
+
+Tests (`packages/docx/src/commands/footnote-commands.test.ts`,
+13 cases, all passing):
+
+- Parser promotes `<w:footnoteReference>` to `FootnoteReferenceLeaf`.
+- Parser builds a `FootnotesPart` with `separator`,
+  `continuationSeparator`, and `normal` entries from a synthetic
+  fixture.
+- Untouched fixture round-trip: `word/footnotes.xml` bytes are
+  byte-identical after parse → serialize.
+- `insert-footnote` mints id 1 in a clean doc, id 2 when one
+  authored normal already exists, validates payload (rejects
+  unknown paragraph + negative offset).
+- `set-footnote-body` replaces the body, clears `raw`, and rejects
+  unknown ids.
+- `delete-footnote` removes the entry, strips body refs, marks the
+  body dirty, removes the part entirely when the last footnote is
+  deleted, and rejects unknown ids.
+- Export round-trip: a freshly inserted footnote survives parse →
+  export → parse, both as a `FootnoteReferenceLeaf` in the body
+  and as a `Footnote` in the part.
+
+Skipped / deferred (called out in the session brief):
+
+- No `fixtures/docx/09-footnotes.docx` artifact was committed.
+  Authoring a real Word fixture from the CLI requires Word or
+  Pages and would have blocked the implementation; the synthetic
+  fixture builder in the test suite covers the same surface
+  (separator + continuationSeparator + normal + body reference)
+  and exercises the same code path. Adding a real artifact slots
+  cleanly into a follow-up phase once the renderer / PM editor
+  lands.
+- Renderer lane (`PageDecorationsPlugin` footnote lane), ProseMirror
+  per-footnote editor, header/footer Word-mode focus, and the
+  toolbar entry point are all deferred per the spec's F1 scope.
+- Endnotes (`word/endnotes.xml`) are deferred. The parser /
+  serializer follow the exact same shape, so the same scaffolding
+  can be cloned when we tackle them.
+
+Verification: `pnpm --filter @officeai/docx test` passes
+(337 / 337) and `pnpm --filter @officeai/docx build` is clean.

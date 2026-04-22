@@ -106,9 +106,22 @@ export interface PptxPresentation {
   readonly slides: ReadonlyArray<Slide>;
   readonly slideSize: SlideSize;
   readonly notesSize?: SlideSize;
-  readonly masters: ReadonlyMap<string, OpaquePart>;
+  /**
+   * Slide masters keyed by part path (`ppt/slideMasters/slideMasterN.xml`).
+   * Promoted from `OpaquePart` to typed `SlideMaster` in F1 — `raw`
+   * preserves the verbatim XML for byte-faithful round-trip while
+   * `masterId`, `themePartPath`, and `layouts` lift the identity that
+   * future master/theme commands need.
+   */
+  readonly masters: ReadonlyMap<string, SlideMaster>;
   readonly layouts: ReadonlyMap<string, SlideLayout>;
-  readonly theme: ReadonlyMap<string, OpaquePart>;
+  /**
+   * Theme parts keyed by part path (`ppt/theme/themeN.xml`). Same
+   * promotion story as `masters`: `raw` is verbatim, `name` lifts the
+   * `<a:theme @name>` for the picker UI. Resolved color scheme still
+   * lives on `themeDefault` for renderer use.
+   */
+  readonly theme: ReadonlyMap<string, Theme>;
   /**
    * Resolved color scheme from the first theme part (`a:clrScheme`). Used
    * by the renderer to draw `<a:schemeClr>` references with the correct
@@ -302,11 +315,86 @@ export interface SlideLayout {
   /** Every placeholder declared on the layout, in document order. */
   readonly placeholders: ReadonlyArray<PlaceholderSpec>;
   /**
+   * F1 master-editing: numeric id from the parent master's
+   * `<p:sldLayoutIdLst><p:sldLayoutId id="..." r:id="..."/></p:sldLayoutIdLst>`.
+   * `0` means the layout wasn't listed (synthetic / built-in not yet
+   * inserted into a master).
+   */
+  readonly layoutId?: number;
+  /**
+   * F1 master-editing: OOXML `<p:sldLayout type="...">` attribute (e.g.
+   * `title`, `obj`, `twoObj`, `tx`, `blank`). Surface for the picker UI
+   * — `kind` is our internal classification; `type` is the raw OOXML
+   * token round-tripped verbatim.
+   */
+  readonly type?: string;
+  /**
+   * F1 master-editing: package path of the parent slide master that
+   * lists this layout in its rels. Lets layout-targeted edits resolve
+   * back to a master without re-walking the rel graph.
+   */
+  readonly masterPartPath?: string;
+  /**
+   * F1 master-editing: verbatim text of the layout's `_rels` file
+   * (`ppt/slideLayouts/_rels/slideLayoutN.xml.rels`) at parse time.
+   * Surface so future commands that mutate the layout's media or
+   * inheritance can diff against the original; `undefined` when the
+   * layout has no rels file (rare — most layouts at minimum point at
+   * a master).
+   */
+  readonly relsXml?: string;
+  /**
    * Verbatim `<p:sldLayout>` blob — used by the serializer to write the
    * part back unchanged when the layout itself wasn't edited. For
    * built-in layouts we synthesise on demand this comes from the
    * builtin-layouts factory.
    */
+  readonly raw: OpaqueXml;
+}
+
+// ─── Slide masters & themes (F1 master-editing) ───────────────────────────
+
+/**
+ * F1: Typed slide master. Promoted from `OpaquePart` so future
+ * master/theme commands have a stable handle without losing the
+ * verbatim bytes — the typed fields (`masterId`, `themePartPath`,
+ * `layouts`) are derived from the master's rels + the parent
+ * presentation's `<p:sldMasterIdLst>`. `raw` carries the full
+ * `<p:sldMaster>` blob so untouched parts round-trip byte-identical
+ * via the serializer, mirroring the layout / notes pattern.
+ */
+export interface SlideMaster {
+  readonly partPath: string;
+  /**
+   * Numeric id from the presentation's `<p:sldMasterIdLst>
+   * <p:sldMasterId id="..." r:id="..."/>`. `0` when the master is
+   * synthetic / not yet listed.
+   */
+  readonly masterId: number;
+  /** Layouts that this master owns, in rel-order. */
+  readonly layouts: ReadonlyArray<SlideLayout>;
+  /**
+   * Resolved theme part path from the master's rels, e.g.
+   * `ppt/theme/theme1.xml`. Most masters have exactly one theme rel.
+   */
+  readonly themePartPath?: string;
+  /** Verbatim master `_rels` XML, when present. */
+  readonly relsXml?: string;
+  /** Verbatim `<p:sldMaster>` blob preserved for round-trip. */
+  readonly raw: OpaqueXml;
+}
+
+/**
+ * F1: Typed theme part. The full color scheme stays available via
+ * `PptxPresentation.themeDefault` (renderer surface); this struct
+ * surfaces the part identity (`partPath`, `name`) so master-view
+ * commands can target a specific theme without index hunting.
+ */
+export interface Theme {
+  readonly partPath: string;
+  /** `<a:theme @name>` if present (e.g. "Office Theme"). */
+  readonly name?: string;
+  /** Verbatim `<a:theme>` blob preserved for round-trip. */
   readonly raw: OpaqueXml;
 }
 
@@ -598,6 +686,7 @@ export type EntranceEffect = "appear" | "fade" | "fly-in" | "wipe";
 export type Shape =
   | TextShape
   | Picture
+  | MediaShape
   | TableShape
   | ChartShape
   | OleSpreadsheetShape
@@ -764,6 +853,38 @@ export interface Picture extends ShapeBase {
   readonly blipFillTail: ReadonlyArray<OpaqueXml>;
   readonly spPrTail: ReadonlyArray<OpaqueXml>;
   readonly styleRaw?: OpaqueXml;
+}
+
+/**
+ * Embedded video / audio promoted from a `<p:pic>` whose `<p:nvPr>`
+ * carries an `<a:videoFile>` / `<a:audioFile>` reference. Phase-1
+ * "stub" model: we surface the typed identity (mediaType, resolved
+ * media + poster part paths, slide-rel ids) so commands and the
+ * renderer can dispatch on `kind === "media"`, but the bulk of the
+ * `<p:pic>` subtree rides verbatim through `raw` for byte-faithful
+ * round-trip. The serializer only re-emits `<p:cNvPr>` (id/name) and
+ * `<a:xfrm>` (position/size/rotation) from the typed fields; every
+ * other captured child — `<p:nvPr><a:videoFile/audioFile/>`,
+ * `<p:blipFill>` (poster), `<p14:media>` extLst, etc. — passes
+ * through unchanged.
+ *
+ * Future phases promote `trigger` / `loop` / `muted` / `showControls`
+ * out of `raw` once they're wired through to typed `<p:timing>`
+ * commands. Today they're inferred but not authoritative.
+ */
+export interface MediaShape extends ShapeBase {
+  readonly kind: "media";
+  readonly mediaType: "video" | "audio";
+  /** Slide-rel id pointing at the binary media part (`a:videoFile r:link`). */
+  readonly mediaRelId: string;
+  /** Resolved package-absolute media part path (e.g. `ppt/media/media1.mp4`). */
+  readonly mediaPath: string;
+  /** Optional slide-rel id for the poster image (`a:blip r:embed`). */
+  readonly posterRelId?: string;
+  /** Resolved package-absolute poster image path, when present. */
+  readonly posterPath?: string;
+  /** Verbatim `<p:pic>` blob (subtree + attrs). Used as the serialization template. */
+  readonly raw: OpaqueXml;
 }
 
 /**
