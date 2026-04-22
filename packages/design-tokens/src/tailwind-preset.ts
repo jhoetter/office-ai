@@ -3,12 +3,12 @@ import { fontFamily } from "./typography";
 import { borderRadius, borderWidth } from "./spacing";
 
 /**
- * officeAI Tailwind CSS Preset
+ * office-ai Tailwind CSS Preset
  *
  * Intended for use with Tailwind v3 configs. With Tailwind v4 (used in
  * apps/web), tokens are emitted via CSS variables in `globals.css`.
  */
-export const officeAIPreset = {
+export const officeAiPreset = {
   theme: {
     extend: {
       colors: {

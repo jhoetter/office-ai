@@ -3,8 +3,8 @@
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 
 /*
- * officeAI Design Tokens
- * Notion-like aesthetic — clean, minimal, with officeAI brand accents
+ * office-ai Design Tokens
+ * Notion-like aesthetic — clean, minimal, with office-ai brand accents
  */
 
 /* ── Semantic CSS variables (light mode) ── */
@@ -307,8 +307,14 @@ textarea::placeholder {
    in the formula bar — this is purely a visual hint that the cell is
    in edit mode and mirrors what's being typed, matching Excel. */
 @keyframes xlsx-cell-caret-blink {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .xlsx-cell-caret {
@@ -937,7 +943,9 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  transition: top 120ms ease, box-shadow 120ms ease;
+  transition:
+    top 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .tracked-change-balloon:hover {
@@ -1105,7 +1113,23 @@ html.dark .prose-pm .ProseMirror > .pm-wrapper-marker {
  * preserved (tables / lists rely on them for indentation). The
  * `:where(...)` selector keeps specificity at 0 so per-element
  * typography rules below still win for any per-style overrides. */
-.prose-pm .ProseMirror > .pm-page-block:is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, .pm-table-placeholder, .pm-opaque-block, .pm-opaque-wrapper-block) {
+.prose-pm
+  .ProseMirror
+  > .pm-page-block:is(
+    p,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    ul,
+    ol,
+    blockquote,
+    .pm-table-placeholder,
+    .pm-opaque-block,
+    .pm-opaque-wrapper-block
+  ) {
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -1232,9 +1256,7 @@ html.dark .prose-pm .ProseMirror > .pm-wrapper-marker {
   margin-bottom: 0;
   margin-left: var(--pm-page-margin-left, 94px);
   margin-right: var(--pm-page-margin-right, 94px);
-  max-width: calc(
-    100% - var(--pm-page-margin-left, 94px) - var(--pm-page-margin-right, 94px)
-  );
+  max-width: calc(100% - var(--pm-page-margin-left, 94px) - var(--pm-page-margin-right, 94px));
   position: relative;
   isolation: isolate;
 }
@@ -1462,7 +1484,9 @@ html.dark .prose-pm .ProseMirror > .pm-page-footer-band[data-band-position="last
   user-select: all;
   cursor: default;
   border: 1px solid transparent;
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease;
 }
 
 .prose-pm .ProseMirror .pm-hf-token:hover,

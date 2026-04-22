@@ -168,7 +168,7 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
   res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("officeAI realtime server\n");
+  res.end("office-ai realtime server\n");
 });
 
 const wss = new WebSocketServer({ server: httpServer });

@@ -571,7 +571,7 @@ function revisionPlainText(rev: RevisionWrapper): string {
   return acc;
 }
 
-/** "Welcome to officeAI" → "Welcome to officeAI" (trim + collapse whitespace). */
+/** "Welcome to office-ai" → "Welcome to office-ai" (trim + collapse whitespace). */
 export function snippet(text: string, max = 64): string {
   const t = text.replace(/\s+/g, " ").trim();
   if (t.length <= max) return t;

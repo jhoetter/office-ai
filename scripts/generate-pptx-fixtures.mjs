@@ -51,8 +51,8 @@ async function write(name, deckBuilder, patchZip) {
   await mkdir(outRoot, { recursive: true });
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE"; // 13.333 x 7.5 in (16:9)
-  pptx.author = "officeAI";
-  pptx.company = "officeAI";
+  pptx.author = "office-ai";
+  pptx.company = "office-ai";
   pptx.title = name;
   await deckBuilder(pptx);
   const raw = Buffer.from(await pptx.write({ outputType: "nodebuffer" }));

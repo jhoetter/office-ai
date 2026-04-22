@@ -42,7 +42,7 @@ function syntheticDocRels(): string {
 
 async function makeAgentWithHeaderFooter(
   headerText = "Acme Corp — Confidential",
-  footerText = "Page footer · officeAI"
+  footerText = "Page footer · office-ai"
 ): Promise<DocxAgent> {
   const buf = await makeSyntheticDocx({
     documentXml: syntheticDocXml(),
@@ -106,7 +106,7 @@ describe("docx headers/footers — parser + commands", () => {
     if (!header || header.body[0].kind !== "paragraph") throw new Error("header shape");
     if (!footer || footer.body[0].kind !== "paragraph") throw new Error("footer shape");
     expect(paragraphPlainText(header.body[0])).toBe("Acme Corp — Confidential");
-    expect(paragraphPlainText(footer.body[0])).toBe("Page footer · officeAI fixture");
+    expect(paragraphPlainText(footer.body[0])).toBe("Page footer · office-ai fixture");
   });
 
   it("set-header-text replaces the targeted paragraph and dirties only that part", async () => {

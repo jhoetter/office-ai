@@ -71,8 +71,8 @@ async function write(name, deckBuilder) {
   await mkdir(outRoot, { recursive: true });
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
-  pptx.author = "officeAI";
-  pptx.company = "officeAI";
+  pptx.author = "office-ai";
+  pptx.company = "office-ai";
   pptx.title = name;
   await deckBuilder(pptx);
   const raw = Buffer.from(await pptx.write({ outputType: "nodebuffer" }));
@@ -94,7 +94,7 @@ async function styledDeck() {
       objects: [
         {
           text: {
-            text: "officeAI · real-world fixture",
+            text: "office-ai · real-world fixture",
             options: {
               x: 0.5,
               y: 7.0,
@@ -120,7 +120,7 @@ async function styledDeck() {
       color: "0F172A",
       align: "center",
     });
-    cover.addText("FY2026 · prepared by officeAI", {
+    cover.addText("FY2026 · prepared by office-ai", {
       x: 0.5,
       y: 4.2,
       w: 12.5,
@@ -129,9 +129,7 @@ async function styledDeck() {
       color: "475569",
       align: "center",
     });
-    cover.addNotes(
-      "Speaker notes for the cover slide. Mention the goal of the review and the audience."
-    );
+    cover.addNotes("Speaker notes for the cover slide. Mention the goal of the review and the audience.");
 
     const agenda = pptx.addSlide({ masterName: "MASTER" });
     agenda.addText("Agenda", {

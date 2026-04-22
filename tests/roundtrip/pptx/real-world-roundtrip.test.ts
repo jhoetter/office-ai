@@ -100,7 +100,7 @@ describe("PPTX real-world fixtures roundtrip", async () => {
         return;
       }
 
-      const editedText = "officeAI roundtrip ✓";
+      const editedText = "office-ai roundtrip ✓";
       const newTextShape: TextShape = {
         ...textShape,
         txBody: {

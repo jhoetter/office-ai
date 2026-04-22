@@ -38,7 +38,7 @@ async function plain() {
   await write(
     "01-plain-paragraphs",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -58,7 +58,7 @@ async function styled() {
   await write(
     "02-styled-runs",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -95,7 +95,7 @@ async function multiSection() {
   await write(
     "03-headings-and-body",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -119,7 +119,7 @@ async function withTable() {
   await write(
     "04-with-table",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -158,9 +158,7 @@ async function withTable() {
 
 async function long() {
   const blocks = [];
-  blocks.push(
-    new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("Long body")] })
-  );
+  blocks.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("Long body")] }));
   for (let i = 0; i < 60; i++) {
     blocks.push(
       new Paragraph({
@@ -174,7 +172,7 @@ async function long() {
   }
   await write(
     "05-long-body",
-    new Document({ creator: "officeAI", sections: [{ properties: {}, children: blocks }] })
+    new Document({ creator: "office-ai", sections: [{ properties: {}, children: blocks }] })
   );
 }
 

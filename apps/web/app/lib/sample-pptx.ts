@@ -84,7 +84,7 @@ const SLIDE_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <p:txBody>
           <a:bodyPr/>
           <a:lstStyle/>
-          <a:p><a:r><a:rPr lang="en-US" sz="4400"/><a:t>Welcome to officeAI</a:t></a:r></a:p>
+          <a:p><a:r><a:rPr lang="en-US" sz="4400"/><a:t>Welcome to office-ai</a:t></a:r></a:p>
         </p:txBody>
       </p:sp>
       <p:sp>

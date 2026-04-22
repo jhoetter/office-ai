@@ -112,7 +112,7 @@ const THEME_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const DOC_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <w:body>
-    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Welcome to officeAI</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Welcome to office-ai</w:t></w:r></w:p>
     <w:p><w:r><w:t xml:space="preserve">This is a tiny synthetic .docx generated in your browser. It serves as a stand-in for "open file" so you can see the editor working without any upload.</w:t></w:r></w:p>
     <w:p><w:r><w:t xml:space="preserve">Type, format, or comment — every change goes through the headless agent's command bus, the same path an AI agent would use.</w:t></w:r></w:p>
     <w:sectPr>

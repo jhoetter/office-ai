@@ -49,7 +49,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
     // the splash can still be in its fade-out frame so we belt-
     // and-braces it.
     await page.waitForSelector('[data-testid="loading-screen"]', { state: "detached" });
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
 
     const boldBtn = page.getByTitle("Bold");
     const strongs = page.locator(".ProseMirror strong");
@@ -62,7 +62,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
     // Re-select the same paragraph (the from-bus projection clamps
     // selection to the previous from/to, but a triple-click is the
     // most faithful "user repeats the gesture" simulation).
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
 
     // Toggle off.
     await page.keyboard.press("ControlOrMeta+b");
@@ -106,7 +106,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
 
   test("Mod+Shift+E centres the paragraph containing the caret", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
 
     await page.keyboard.press("ControlOrMeta+Shift+e");
 
@@ -119,7 +119,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
 
   test("Mod+Shift+L re-aligns left after a centre toggle", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
     await page.keyboard.press("ControlOrMeta+Shift+e");
     await expect(page.getByTitle("Align center")).toHaveAttribute("aria-pressed", "true");
 
@@ -141,7 +141,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
    */
   test("Mod+R alone does NOT right-align (browser keeps the reload chord)", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
 
     // Sanity: paragraph starts left-aligned (the default).
     await expect(page.getByTitle("Align right")).toHaveAttribute("aria-pressed", "false");
@@ -170,7 +170,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
 
   test("Mod+Shift+R right-aligns the paragraph (the new chord)", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
 
     await page.keyboard.press("ControlOrMeta+Shift+r");
 
@@ -179,7 +179,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
 
   test("Mod+M increases the indent readout", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
 
     await page.keyboard.press("ControlOrMeta+m");
 
@@ -190,7 +190,7 @@ test.describe("editor: Word keyboard shortcuts", () => {
 
   test("Mod+Shift+M decreases the indent back to zero", async ({ page }) => {
     await gotoEditor(page);
-    await selectParagraphContaining(page, "Welcome to officeAI");
+    await selectParagraphContaining(page, "Welcome to office-ai");
     await page.keyboard.press("ControlOrMeta+m");
     await expect(page.getByTitle("Left indent")).toContainText('0.25"');
 

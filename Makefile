@@ -1,5 +1,5 @@
 # ============================================
-# officeAI — convenience targets
+# office-ai — convenience targets
 #
 # `make verify` is the canonical quality gate: identical to what CI
 # runs. Pass it locally before pushing.
@@ -54,7 +54,7 @@ RT_PORT ?= 1234
 OAI_RT_REUSE ?= 1
 
 help:
-	@echo "officeAI — available targets (see docs/ci-pipeline.md for the full map)"
+	@echo "office-ai — available targets (see docs/ci-pipeline.md for the full map)"
 	@echo ""
 	@echo "  install        Install all dependencies"
 	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100; coexists with hof-os on 3000)"

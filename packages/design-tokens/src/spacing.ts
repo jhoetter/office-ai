@@ -1,5 +1,5 @@
 /**
- * officeAI Spacing System
+ * office-ai Spacing System
  *
  * 8px base grid system (with 4px half-steps)
  */

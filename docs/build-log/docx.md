@@ -82,7 +82,7 @@ root-caused entirely from the terminal:
    the export, even though `word/document.xml` referenced
    `<w:pStyle w:val="Heading1"/>`. With no styles part, Word and
    LibreOffice silently fall back to the default paragraph style, so
-   "Welcome to officeAI" rendered as plain body text.
+   "Welcome to office-ai" rendered as plain body text.
 3. Cross-checked with a real Word-grade `.docx` produced by the `docx`
    library (which ships a styles.xml): after a `DocxAgent` open → edit →
    export, `word/styles.xml` was present **and byte-identical** to the

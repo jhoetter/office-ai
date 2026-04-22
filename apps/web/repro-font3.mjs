@@ -24,7 +24,7 @@ const DOC_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const DOC_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Welcome to officeAI</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Welcome to office-ai</w:t></w:r></w:p>
     <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t xml:space="preserve">A headless, agent-friendly editor</w:t></w:r></w:p>
     <w:p><w:r><w:t xml:space="preserve">Body text</w:t></w:r></w:p>
     <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>

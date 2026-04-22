@@ -50,8 +50,8 @@ const COMMAND_COUNT = 1000;
 async function buildSyntheticDeckBuffer() {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
-  pptx.author = "officeAI";
-  pptx.company = "officeAI";
+  pptx.author = "office-ai";
+  pptx.company = "office-ai";
   pptx.title = "perf-pptx synthetic deck";
   for (let i = 0; i < SLIDES; i++) {
     const slide = pptx.addSlide();
@@ -166,7 +166,9 @@ async function main() {
     );
   }
   console.log("");
-  console.log(`  output .pptx: ${(out.byteLength / 1024).toFixed(1)} KB; slides: ${snap0.root.slides.length}`);
+  console.log(
+    `  output .pptx: ${(out.byteLength / 1024).toFixed(1)} KB; slides: ${snap0.root.slides.length}`
+  );
 
   if (failures > 0) {
     console.error(

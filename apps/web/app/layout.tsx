@@ -20,10 +20,10 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "officeAI",
-    template: "%s | officeAI",
+    default: "office-ai",
+    template: "%s | office-ai",
   },
-  description: "officeAI — a minimal product scaffold.",
+  description: "office-ai — a minimal product scaffold.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

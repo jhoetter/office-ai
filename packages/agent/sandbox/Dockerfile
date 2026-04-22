@@ -1,4 +1,4 @@
-# Reference Dockerfile for the officeAI flavour of hof-engine's agent
+# Reference Dockerfile for the office-ai flavour of hof-engine's agent
 # terminal sandbox. Layers Node 20 + the published `@officeai/agent`
 # CLI on top of `hof-skill-base` so the LLM agent can call
 # `office-agent docx|xlsx|pptx|pdf …` from the terminal alongside the

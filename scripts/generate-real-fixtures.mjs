@@ -68,7 +68,7 @@ async function styledLetter() {
   await write(
     "01-styled-letter",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       title: "Acme Quarterly Letter",
       sections: [
         {
@@ -85,7 +85,7 @@ async function styledLetter() {
             new Paragraph({
               children: [
                 new TextRun("This quarter we shipped "),
-                new TextRun({ text: "officeAI P0", bold: true }),
+                new TextRun({ text: "office-ai P0", bold: true }),
                 new TextRun(", an "),
                 new TextRun({ text: "AI-native", italics: true }),
                 new TextRun(" DOCX editor. Highlights:"),
@@ -104,7 +104,7 @@ async function styledLetter() {
               children: [
                 new TextRun("Sincerely,"),
                 new TextRun({ break: 1 }),
-                new TextRun({ text: "The officeAI team", italics: true }),
+                new TextRun({ text: "The office-ai team", italics: true }),
               ],
             }),
           ],
@@ -144,7 +144,7 @@ async function reportWithHeadersFooters() {
   await write(
     "02-report-headers-footers",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -163,7 +163,7 @@ async function reportWithHeadersFooters() {
               children: [
                 new Paragraph({
                   alignment: AlignmentType.CENTER,
-                  children: [new TextRun("Page footer · officeAI fixture")],
+                  children: [new TextRun("Page footer · office-ai fixture")],
                 }),
               ],
             }),
@@ -180,7 +180,7 @@ async function numberedList() {
   await write(
     "03-numbered-list",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       numbering: {
         config: [
           {
@@ -240,12 +240,11 @@ async function tableGrid() {
     new TableCell({
       children: [new Paragraph({ children: [new TextRun({ text, bold: true })] })],
     });
-  const cell = (text) =>
-    new TableCell({ children: [new Paragraph({ children: [new TextRun(text)] })] });
+  const cell = (text) => new TableCell({ children: [new Paragraph({ children: [new TextRun(text)] })] });
   await write(
     "04-table-grid",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -289,7 +288,7 @@ async function inlineImage() {
   await write(
     "05-inline-image",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -308,9 +307,7 @@ async function inlineImage() {
             }),
             new Paragraph({
               children: [
-                new TextRun(
-                  "This fixture exercises an inline drawing relationship and a media part."
-                ),
+                new TextRun("This fixture exercises an inline drawing relationship and a media part."),
               ],
             }),
           ],
@@ -325,7 +322,7 @@ async function commentsAndChanges() {
   await write(
     "06-comments-and-changes",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       comments: {
         children: [
           {
@@ -345,7 +342,7 @@ async function commentsAndChanges() {
             new Paragraph({
               children: [
                 new CommentRangeStart(0),
-                new TextRun("This document was prepared as a fixture for officeAI."),
+                new TextRun("This document was prepared as a fixture for office-ai."),
                 new CommentRangeEnd(0),
                 new TextRun({ children: [new CommentReference(0)] }),
               ],
@@ -388,15 +385,13 @@ async function shadedCalloutTable() {
     shading: { fill: "DDEBF7", type: ShadingType.CLEAR, color: "auto" },
     children: [
       new Paragraph({
-        children: [
-          new TextRun({ text: "Theoretical foundation:", bold: true, color: "1B3A5C" }),
-        ],
+        children: [new TextRun({ text: "Theoretical foundation:", bold: true, color: "1B3A5C" })],
       }),
       new Paragraph({
         children: [
           new TextRun(
-            "Design Science Research is a research paradigm that focuses on "
-              + "creating innovative artifacts that solve real-world problems."
+            "Design Science Research is a research paradigm that focuses on " +
+              "creating innovative artifacts that solve real-world problems."
           ),
         ],
       }),
@@ -405,7 +400,7 @@ async function shadedCalloutTable() {
   await write(
     "08-shaded-callout-table",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {},
@@ -418,8 +413,8 @@ async function shadedCalloutTable() {
             new Paragraph({
               children: [
                 new TextRun(
-                  "The callout above is a 1×1 table with cell shading. Word and the DSR "
-                    + "thesis use this pattern for definition / aside boxes."
+                  "The callout above is a 1×1 table with cell shading. Word and the DSR " +
+                    "thesis use this pattern for definition / aside boxes."
                 ),
               ],
             }),
@@ -439,7 +434,7 @@ async function multiColumnSection() {
   await write(
     "09-multi-column-section",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {
@@ -451,24 +446,24 @@ async function multiColumnSection() {
               children: [new TextRun("Newsletter")],
             }),
             para(
-              "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus sit amet "
-                + "quam laoreet, vehicula odio in, viverra elit. Suspendisse potenti."
+              "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus sit amet " +
+                "quam laoreet, vehicula odio in, viverra elit. Suspendisse potenti."
             ),
             para(
-              "Vivamus rutrum tincidunt nibh, vitae ullamcorper magna pharetra eget. Nulla "
-                + "facilisi. Aliquam erat volutpat. Donec quis arcu dapibus nibh."
+              "Vivamus rutrum tincidunt nibh, vitae ullamcorper magna pharetra eget. Nulla " +
+                "facilisi. Aliquam erat volutpat. Donec quis arcu dapibus nibh."
             ),
             para(
-              "Pellentesque habitant morbi tristique senectus et netus et malesuada fames "
-                + "ac turpis egestas. Curabitur vitae ipsum nec turpis tristique."
+              "Pellentesque habitant morbi tristique senectus et netus et malesuada fames " +
+                "ac turpis egestas. Curabitur vitae ipsum nec turpis tristique."
             ),
             para(
-              "Nullam id orci eget mauris malesuada feugiat ut ut leo. Etiam suscipit purus "
-                + "id ipsum aliquet, vitae bibendum risus accumsan."
+              "Nullam id orci eget mauris malesuada feugiat ut ut leo. Etiam suscipit purus " +
+                "id ipsum aliquet, vitae bibendum risus accumsan."
             ),
             para(
-              "Suspendisse potenti. Aenean rhoncus malesuada ipsum, eget viverra justo "
-                + "vehicula nec. Praesent volutpat sapien at quam laoreet eleifend."
+              "Suspendisse potenti. Aenean rhoncus malesuada ipsum, eget viverra justo " +
+                "vehicula nec. Praesent volutpat sapien at quam laoreet eleifend."
             ),
           ],
         },
@@ -486,7 +481,7 @@ async function landscapeSection() {
   await write(
     "10-landscape-section",
     new Document({
-      creator: "officeAI",
+      creator: "office-ai",
       sections: [
         {
           properties: {
@@ -497,7 +492,7 @@ async function landscapeSection() {
               heading: HeadingLevel.HEADING_1,
               children: [new TextRun("Portrait page")],
             }),
-            para("Body content sized for portrait (8.5\" × 11\")."),
+            para('Body content sized for portrait (8.5" × 11").'),
             para("More portrait body content."),
           ],
         },
@@ -510,7 +505,7 @@ async function landscapeSection() {
               heading: HeadingLevel.HEADING_1,
               children: [new TextRun("Landscape page")],
             }),
-            para("Body content sized for landscape (11\" × 8.5\")."),
+            para('Body content sized for landscape (11" × 8.5").'),
             para("Used for wide tables, charts, screenshots."),
           ],
         },

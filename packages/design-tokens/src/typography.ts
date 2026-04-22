@@ -1,5 +1,5 @@
 /**
- * officeAI Typography
+ * office-ai Typography
  *
  * Primary: Inter (UI, all text)
  * Secondary: IBM Plex Mono (Code, technical labels only)

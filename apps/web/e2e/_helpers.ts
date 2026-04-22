@@ -11,7 +11,7 @@ export async function gotoEditor(page: Page): Promise<void> {
   await page.goto("/editor");
   // Wait until the sample document text is visible — that's only true
   // once mountAgent() has finished and the PM doc has been projected.
-  await expect(page.getByText("Welcome to officeAI", { exact: false })).toBeVisible({
+  await expect(page.getByText("Welcome to office-ai", { exact: false })).toBeVisible({
     timeout: 15_000,
   });
 }

@@ -1,4 +1,4 @@
-# officeAI
+# office-ai
 
 Browser-embeddable, AI-native document editors for **DOCX** and **XLSX**
 (PPTX deferred) — built per [`prompt.md`](prompt.md). Every edit (human or

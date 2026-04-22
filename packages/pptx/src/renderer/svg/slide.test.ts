@@ -165,7 +165,7 @@ describe("slideToSvgString", () => {
             runs: [
               {
                 id: "node-3",
-                text: "Welcome to officeAI",
+                text: "Welcome to office-ai",
                 properties: { fontSizeHundredths: 4400 },
               },
             ],

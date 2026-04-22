@@ -1,7 +1,7 @@
 /**
- * officeAI Brand Colors
+ * office-ai Brand Colors
  *
- * Notion-like aesthetic — clean, minimal, with officeAI brand accents.
+ * Notion-like aesthetic — clean, minimal, with office-ai brand accents.
  * Primary palette is neutral; brand colors used as accents.
  */
 
@@ -28,7 +28,7 @@ export const colors = {
   accentDark: "#60A5FA",
   accentLightDark: "#1E2D45",
 
-  /* ── Brand accents (officeAI) ── */
+  /* ── Brand accents (office-ai) ── */
   officeBlue: "#3B82F6",
   officeBlueLight: "#EAF2FE",
   officeBlueMuted: "#3B82F633",
