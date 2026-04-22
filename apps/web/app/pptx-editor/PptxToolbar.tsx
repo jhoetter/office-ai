@@ -26,9 +26,13 @@ import {
   Diamond,
   Grid3x3,
   Group,
+  Eye,
+  EyeOff,
   Image as ImageIcon,
   Layers,
+  Maximize,
   MessageSquarePlus,
+  MonitorPlay,
   Minus,
   MoveDown,
   MoveRight,
@@ -225,6 +229,23 @@ export interface PptxToolbarProps {
    * render the toolbar.
    */
   readonly onOpenRail?: (tab: "comments" | "outline" | "animations" | "master") => void;
+  /**
+   * Open the PowerPoint-style "Slide Size" dialog. Mounted by the
+   * editor; the splitter in the Design tab also offers the two
+   * widescreen / standard presets directly without showing the dialog.
+   */
+  readonly onOpenSlideSize: () => void;
+  /**
+   * Apply one of the standard slide-size presets without opening the
+   * dialog. Mirrors the splitter's "On-screen show" entries.
+   */
+  readonly onApplySlideSizePreset: (preset: "widescreen" | "standard") => void;
+  /** Open the "Set Up Slide Show" dialog (Slideshow tab). */
+  readonly onOpenSetUpShow: () => void;
+  /** Toggle the active slide's `show="0"` flag (Slideshow tab). */
+  readonly onToggleHideSlide: () => void;
+  /** Currently effective hidden state for the active slide. */
+  readonly activeSlideHidden: boolean;
 }
 
 interface ShapeOption {
@@ -610,6 +631,17 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
               />
             ),
           },
+          {
+            id: "customize",
+            label: "Anpassen",
+            render: ({ props }) => (
+              <SlideSizeMenu
+                disabled={disabled || props.slideCount < 1}
+                onApplyPreset={props.onApplySlideSizePreset}
+                onOpenDialog={props.onOpenSlideSize}
+              />
+            ),
+          },
         ],
       },
       {
@@ -666,6 +698,46 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                 disabled={!props.canPresent}
                 testId="pptx-present-from-ribbon"
               />
+            ),
+          },
+          {
+            id: "setup-slideshow",
+            label: "Einrichten",
+            render: ({ props }) => (
+              <ToolbarButton
+                onClick={props.onOpenSetUpShow}
+                icon={<MonitorPlay size={14} />}
+                label="Bildschirmpräsentation einrichten"
+                title="Set up slide show"
+                disabled={disabled}
+                testId="pptx-set-up-show"
+              />
+            ),
+          },
+          {
+            id: "slideshow-options",
+            label: "Einrichten (Folie)",
+            render: ({ props }) => (
+              <button
+                type="button"
+                onClick={props.onToggleHideSlide}
+                disabled={disabled || props.slideCount < 1}
+                aria-pressed={props.activeSlideHidden}
+                title={
+                  props.activeSlideHidden
+                    ? "Folie wieder einblenden"
+                    : "Aktuelle Folie ausblenden"
+                }
+                data-testid="pptx-hide-slide-toggle"
+                className={`inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
+                  props.activeSlideHidden ? "bg-hover ring-1 ring-[var(--accent)]/40" : ""
+                }`}
+              >
+                {props.activeSlideHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                <span className="hidden sm:inline">
+                  {props.activeSlideHidden ? "Folie eingeblendet" : "Folie ausblenden"}
+                </span>
+              </button>
             ),
           },
         ],
@@ -1436,6 +1508,85 @@ function ConnectorMenu({ disabled, onPick, activeType }: ConnectorMenuProps) {
             </button>
           );
         })}
+      </ToolbarMenu>
+    </>
+  );
+}
+
+interface SlideSizeMenuProps {
+  readonly disabled: boolean;
+  readonly onApplyPreset: (preset: "widescreen" | "standard") => void;
+  readonly onOpenDialog: () => void;
+}
+
+/**
+ * Design → Slide Size splitter. Mirrors PowerPoint: two preset
+ * "On-screen show" entries plus "Custom slide size…" which opens
+ * the {@link SlideSizeDialog} with explicit width/height inputs.
+ */
+function SlideSizeMenu({ disabled, onApplyPreset, onOpenDialog }: SlideSizeMenuProps) {
+  const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title="Foliengröße"
+        data-testid="pptx-slide-size-menu-trigger"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Maximize size={14} />
+        <span className="hidden sm:inline">Foliengröße</span>
+        <ChevronDown size={12} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="pptx-slide-size-menu"
+        className="grid w-56 grid-cols-1 gap-0.5 rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="pptx-slide-size-preset-standard"
+          onClick={() => {
+            setOpen(false);
+            onApplyPreset("standard");
+          }}
+          className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
+        >
+          <span>Standard (4:3)</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="pptx-slide-size-preset-widescreen"
+          onClick={() => {
+            setOpen(false);
+            onApplyPreset("widescreen");
+          }}
+          className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
+        >
+          <span>Breitbild (16:9)</span>
+        </button>
+        <div className="my-0.5 h-px bg-divider" role="separator" />
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="pptx-slide-size-custom"
+          onClick={() => {
+            setOpen(false);
+            onOpenDialog();
+          }}
+          className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs text-foreground hover:bg-hover"
+        >
+          <span>Benutzerdefinierte Foliengröße…</span>
+        </button>
       </ToolbarMenu>
     </>
   );

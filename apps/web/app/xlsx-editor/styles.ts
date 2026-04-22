@@ -18,6 +18,7 @@
 import type { CSSProperties } from "react";
 import type { CellValue, EffectiveStyle, StyleBorderSide, StyleColor, StyleTable } from "@officeai/xlsx";
 import { flattenCellXf } from "@officeai/xlsx";
+import { wrapFontFamily } from "@officeai/text-formatting";
 
 export function styleForCell(
   table: StyleTable,
@@ -39,7 +40,16 @@ export function styleForCell(
   // points ↔ `<font><sz val="..."/>`. Both are part of the shared
   // `TextFormat` contract; without these the toolbar's font/size
   // pickers dispatch correctly but the cell never repaints.
-  if (effective.font.name) css.fontFamily = effective.font.name;
+  //
+  // `wrapFontFamily` appends a `system-ui, sans-serif` tail so unknown
+  // families fall through to a sane sans-serif rather than the UA's
+  // default serif. Common Microsoft families (Calibri, Aptos, Cambria,
+  // Times New Roman, Arial, …) are also redefined via `@font-face` in
+  // `apps/web/app/globals.css` so they resolve to bundled metric-equivalent
+  // open-source twins (Carlito / Caladea / Tinos / Arimo / Cousine) on
+  // systems without Office installed.
+  const family = wrapFontFamily(effective.font.name);
+  if (family) css.fontFamily = family;
   if (typeof effective.font.size === "number" && effective.font.size > 0) {
     css.fontSize = `${effective.font.size}pt`;
   }

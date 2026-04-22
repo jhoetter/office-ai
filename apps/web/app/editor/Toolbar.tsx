@@ -25,8 +25,15 @@ import {
   Table2,
   Hash,
   ListOrdered as ListOrderedIcon,
+  Lock,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  PaintBucket,
+  Combine,
   Type,
   Trash2,
+  Minus,
   ArrowUpToLine,
   ArrowDownToLine,
   ArrowLeftToLine,
@@ -156,6 +163,18 @@ export interface ToolbarProps {
   onAcceptAllChanges: () => void;
   onRejectAllChanges: () => void;
   /**
+   * Open the Word-style Restrict Editing dialog (Review → Protect).
+   * Mounted by `DocxEditor` so the toolbar stays presentational.
+   */
+  onOpenProtectDocument: () => void;
+  /**
+   * Whether the document currently has a `<w:documentProtection>`
+   * element that's actively enforcing edits. Used to render the
+   * Protect button's pressed state so users see at a glance that
+   * the document is locked down.
+   */
+  documentProtectionActive: boolean;
+  /**
    * Header/footer focus state. When set, the contextual "Kopf- und
    * Fußzeile" tab auto-activates and exposes its actions (insert
    * page number / page count / image, toggle different-first-page,
@@ -180,6 +199,44 @@ export interface ToolbarProps {
   selectedTableId: string | null;
   onInsertTableRow: (tableId: string, where: "top" | "bottom") => void;
   onInsertTableColumn: (tableId: string, where: "start" | "end") => void;
+  onDeleteTableRow: (tableId: string, row: number) => void;
+  onDeleteTableColumn: (tableId: string, column: number) => void;
+  onDeleteTable: (tableId: string) => void;
+  /**
+   * Currently-targeted cell within the selected table. The Tabellentools
+   * tab uses this to drive row-height / column-width / shading /
+   * alignment commands without forcing the user to drag-select cell
+   * boundaries (DOCX tables render as PM atoms today, so cell-level
+   * caret editing isn't available — Word's own Table Properties
+   * dialog falls back to the same row/column inputs).
+   */
+  activeTableCell: { row: number; column: number };
+  onSetActiveTableCell: (cell: { row: number; column: number }) => void;
+  /** Apply `<w:shd>` to the targeted cell. Pass `null` to clear. */
+  onSetCellShading: (tableId: string, row: number, column: number, fill: string | null) => void;
+  /** Apply `<w:vAlign>` to the targeted cell. Pass `null` to clear. */
+  onSetCellAlignment: (
+    tableId: string,
+    row: number,
+    column: number,
+    vAlign: "top" | "center" | "bottom" | null
+  ) => void;
+  /** Apply `<w:trHeight>` to the targeted row. Pass `null` to clear. */
+  onSetRowHeight: (
+    tableId: string,
+    row: number,
+    heightTwips: number | null,
+    rule?: "auto" | "exact" | "atLeast"
+  ) => void;
+  /** Apply `<w:tcW>` to the targeted column. */
+  onSetColumnWidth: (tableId: string, column: number, widthTwips: number) => void;
+  /** Merge `[fromColumn..toColumn]` in the targeted row. */
+  onMergeCellsHorizontal: (
+    tableId: string,
+    row: number,
+    fromColumn: number,
+    toColumn: number
+  ) => void;
 }
 
 export type EditModeValue = "edit" | "suggest" | "view";
@@ -480,6 +537,25 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
               />
             ),
           },
+          {
+            id: "protect",
+            label: "Schützen",
+            render: (ctx) => (
+              <ToolbarBtn
+                label={
+                  ctx.documentProtectionActive
+                    ? "Bearbeitung einschränken (aktiv)"
+                    : "Bearbeitung einschränken"
+                }
+                onClick={ctx.onOpenProtectDocument}
+                active={ctx.documentProtectionActive}
+                testId="docx-protect-document"
+              >
+                <Lock size={14} />
+                <span className="ml-1 text-xs">Schützen</span>
+              </ToolbarBtn>
+            ),
+          },
         ],
       },
       {
@@ -612,6 +688,136 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                     <ArrowRightToLine size={14} />
                   </ToolbarBtn>
                 </>
+              ) : null,
+          },
+          {
+            id: "delete",
+            label: "Löschen",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <>
+                  <ToolbarBtn
+                    label="Zeile löschen"
+                    testId="docx-delete-row"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onDeleteTableRow(id, ctx.activeTableCell.row);
+                    }}
+                  >
+                    <Minus size={14} />
+                    <span className="ml-1 text-xs">Zeile</span>
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    label="Spalte löschen"
+                    testId="docx-delete-column"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onDeleteTableColumn(id, ctx.activeTableCell.column);
+                    }}
+                  >
+                    <Minus size={14} />
+                    <span className="ml-1 text-xs">Spalte</span>
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    label="Tabelle löschen"
+                    testId="docx-delete-table"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onDeleteTable(id);
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    <span className="ml-1 text-xs">Tabelle</span>
+                  </ToolbarBtn>
+                </>
+              ) : null,
+          },
+          {
+            id: "active-cell",
+            label: "Zielzelle",
+            render: (ctx) => (
+              <ActiveCellPicker
+                row={ctx.activeTableCell.row}
+                column={ctx.activeTableCell.column}
+                onChange={ctx.onSetActiveTableCell}
+              />
+            ),
+          },
+          {
+            id: "cell-size",
+            label: "Größe",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <CellSizeControls
+                  tableId={ctx.selectedTableId}
+                  cell={ctx.activeTableCell}
+                  onSetRowHeight={ctx.onSetRowHeight}
+                  onSetColumnWidth={ctx.onSetColumnWidth}
+                />
+              ) : null,
+          },
+          {
+            id: "cell-align",
+            label: "Ausrichtung",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <>
+                  <ToolbarBtn
+                    label="Vertikal oben"
+                    testId="docx-cell-align-top"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onSetCellAlignment(id, ctx.activeTableCell.row, ctx.activeTableCell.column, "top");
+                    }}
+                  >
+                    <AlignVerticalJustifyStart size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    label="Vertikal mittig"
+                    testId="docx-cell-align-center"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onSetCellAlignment(id, ctx.activeTableCell.row, ctx.activeTableCell.column, "center");
+                    }}
+                  >
+                    <AlignVerticalJustifyCenter size={14} />
+                  </ToolbarBtn>
+                  <ToolbarBtn
+                    label="Vertikal unten"
+                    testId="docx-cell-align-bottom"
+                    onClick={() => {
+                      const id = ctx.selectedTableId;
+                      if (id) ctx.onSetCellAlignment(id, ctx.activeTableCell.row, ctx.activeTableCell.column, "bottom");
+                    }}
+                  >
+                    <AlignVerticalJustifyEnd size={14} />
+                  </ToolbarBtn>
+                </>
+              ) : null,
+          },
+          {
+            id: "cell-design",
+            label: "Entwurf",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <CellShadingPicker
+                  tableId={ctx.selectedTableId}
+                  cell={ctx.activeTableCell}
+                  onSetCellShading={ctx.onSetCellShading}
+                />
+              ) : null,
+          },
+          {
+            id: "cell-merge",
+            label: "Verbinden",
+            render: (ctx) =>
+              ctx.selectedTableId ? (
+                <MergeCellsControl
+                  tableId={ctx.selectedTableId}
+                  row={ctx.activeTableCell.row}
+                  fromColumn={ctx.activeTableCell.column}
+                  onMerge={ctx.onMergeCellsHorizontal}
+                />
               ) : null,
           },
         ],
@@ -1258,4 +1464,224 @@ function toPoints(twips: number | undefined): number | undefined {
 
 function twipsToInches(twips: number): string {
   return (twips / 1440).toFixed(2);
+}
+
+function ActiveCellPicker(props: {
+  row: number;
+  column: number;
+  onChange: (cell: { row: number; column: number }) => void;
+}): ReactNode {
+  return (
+    <div className="flex items-center gap-1 px-1 text-xs text-secondary">
+      <span>Zelle</span>
+      <label className="flex items-center gap-1">
+        <span>Z</span>
+        <input
+          type="number"
+          min={0}
+          value={props.row}
+          onChange={(e) => {
+            const v = Math.max(0, Number(e.target.value) || 0);
+            props.onChange({ row: v, column: props.column });
+          }}
+          className="w-12 rounded border border-borderSubtle bg-background px-1 text-foreground"
+          data-testid="docx-table-active-row"
+        />
+      </label>
+      <label className="flex items-center gap-1">
+        <span>S</span>
+        <input
+          type="number"
+          min={0}
+          value={props.column}
+          onChange={(e) => {
+            const v = Math.max(0, Number(e.target.value) || 0);
+            props.onChange({ row: props.row, column: v });
+          }}
+          className="w-12 rounded border border-borderSubtle bg-background px-1 text-foreground"
+          data-testid="docx-table-active-col"
+        />
+      </label>
+    </div>
+  );
+}
+
+function CellSizeControls(props: {
+  tableId: string;
+  cell: { row: number; column: number };
+  onSetRowHeight: (
+    tableId: string,
+    row: number,
+    heightTwips: number | null,
+    rule?: "auto" | "exact" | "atLeast"
+  ) => void;
+  onSetColumnWidth: (tableId: string, column: number, widthTwips: number) => void;
+}): ReactNode {
+  const [rowCm, setRowCm] = useState<string>("");
+  const [colCm, setColCm] = useState<string>("");
+  const cmToTwips = (cm: number): number => Math.round((cm / 2.54) * 1440);
+  return (
+    <div className="flex items-center gap-1 px-1 text-xs text-secondary">
+      <label className="flex items-center gap-1">
+        <span>Höhe (cm)</span>
+        <input
+          type="number"
+          step="0.1"
+          min={0}
+          value={rowCm}
+          onChange={(e) => setRowCm(e.target.value)}
+          className="w-16 rounded border border-borderSubtle bg-background px-1 text-foreground"
+          data-testid="docx-row-height-input"
+        />
+      </label>
+      <button
+        type="button"
+        onClick={() => {
+          const n = Number(rowCm);
+          if (!Number.isFinite(n) || n <= 0) {
+            props.onSetRowHeight(props.tableId, props.cell.row, null);
+          } else {
+            props.onSetRowHeight(props.tableId, props.cell.row, cmToTwips(n), "atLeast");
+          }
+        }}
+        className="rounded px-1 text-xs hover:bg-hover"
+        data-testid="docx-row-height-apply"
+      >
+        Setzen
+      </button>
+      <label className="flex items-center gap-1">
+        <span>Breite (cm)</span>
+        <input
+          type="number"
+          step="0.1"
+          min={0}
+          value={colCm}
+          onChange={(e) => setColCm(e.target.value)}
+          className="w-16 rounded border border-borderSubtle bg-background px-1 text-foreground"
+          data-testid="docx-col-width-input"
+        />
+      </label>
+      <button
+        type="button"
+        onClick={() => {
+          const n = Number(colCm);
+          if (!Number.isFinite(n) || n <= 0) return;
+          props.onSetColumnWidth(props.tableId, props.cell.column, cmToTwips(n));
+        }}
+        className="rounded px-1 text-xs hover:bg-hover"
+        data-testid="docx-col-width-apply"
+      >
+        Setzen
+      </button>
+    </div>
+  );
+}
+
+const CELL_SHADING_PRESETS: ReadonlyArray<{ label: string; fill: string | null }> = [
+  { label: "Keine", fill: null },
+  { label: "Hellgelb", fill: "FFF2CC" },
+  { label: "Hellblau", fill: "DEEBF7" },
+  { label: "Hellgrün", fill: "E2EFDA" },
+  { label: "Hellrot", fill: "FCE4D6" },
+  { label: "Hellgrau", fill: "EDEDED" },
+  { label: "Mittelgrau", fill: "BFBFBF" },
+];
+
+function CellShadingPicker(props: {
+  tableId: string;
+  cell: { row: number; column: number };
+  onSetCellShading: (tableId: string, row: number, column: number, fill: string | null) => void;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        title="Zellenschattierung"
+        aria-label="Zellenschattierung"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex items-center gap-0.5 rounded-md p-1.5 text-secondary hover:bg-hover hover:text-foreground",
+          open && "bg-hover text-foreground"
+        )}
+        data-testid="docx-cell-shading-trigger"
+      >
+        <PaintBucket size={14} />
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="dialog"
+        className="w-max rounded-md border border-divider bg-surface p-1 shadow-md"
+      >
+        <div className="grid w-44 grid-cols-2 gap-1">
+          {CELL_SHADING_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => {
+                props.onSetCellShading(
+                  props.tableId,
+                  props.cell.row,
+                  props.cell.column,
+                  p.fill
+                );
+                setOpen(false);
+              }}
+              className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-hover"
+            >
+              <span
+                className="inline-block h-3 w-3 rounded border border-divider"
+                style={{ background: p.fill ? `#${p.fill}` : "transparent" }}
+              />
+              <span>{p.label}</span>
+            </button>
+          ))}
+        </div>
+      </ToolbarMenu>
+    </>
+  );
+}
+
+function MergeCellsControl(props: {
+  tableId: string;
+  row: number;
+  fromColumn: number;
+  onMerge: (tableId: string, row: number, fromColumn: number, toColumn: number) => void;
+}): ReactNode {
+  const [toCol, setToCol] = useState<string>("");
+  return (
+    <div className="flex items-center gap-1 px-1 text-xs text-secondary">
+      <label className="flex items-center gap-1">
+        <span>bis Spalte</span>
+        <input
+          type="number"
+          min={props.fromColumn + 1}
+          value={toCol}
+          onChange={(e) => setToCol(e.target.value)}
+          className="w-12 rounded border border-borderSubtle bg-background px-1 text-foreground"
+          data-testid="docx-merge-to-col"
+        />
+      </label>
+      <button
+        type="button"
+        onClick={() => {
+          const n = Number(toCol);
+          if (!Number.isFinite(n) || n <= props.fromColumn) return;
+          props.onMerge(props.tableId, props.row, props.fromColumn, n);
+        }}
+        className="inline-flex items-center gap-1 rounded px-1 text-xs hover:bg-hover"
+        data-testid="docx-merge-horizontal-apply"
+      >
+        <Combine size={14} />
+        <span>Verbinden</span>
+      </button>
+    </div>
+  );
 }

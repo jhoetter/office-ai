@@ -25,3 +25,5 @@ export {
   type ColorSwatch,
   type HighlightSwatch,
 } from "./presets";
+
+export { wrapFontFamily } from "./font-stack";

@@ -87,6 +87,11 @@ import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Too
 import { computeDocxActive, createDocxFormatProvider } from "./docxFormatProvider";
 import { PageRuler } from "./PageRuler";
 import { PageSetupDialog, type PageSetupValues } from "./PageSetupDialog";
+import {
+  ProtectDocumentDialog,
+  type ProtectDocumentSubmit,
+  type ProtectionEdit,
+} from "./ProtectDocumentDialog";
 import { TableContextToolbar } from "./TableContextToolbar";
 import { ImageContextToolbar, type SelectedImageInfo } from "./ImageContextToolbar";
 import { ImageResizeOverlay } from "./ImageResizeOverlay";
@@ -357,6 +362,21 @@ function DocxEditorInner({
   } | null>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
+  const [protectDocumentOpen, setProtectDocumentOpen] = useState(false);
+  /**
+   * Currently-targeted cell within `selectedTableId` for the
+   * Tabellentools contextual tab. DOCX tables render today as
+   * ProseMirror node atoms — there is no caret-level cell editing
+   * yet — so we let the user pick the row/column index explicitly
+   * (PowerPoint's table layout dialog uses the same model). The
+   * picker resets to {0,0} whenever the user selects a different
+   * table, which keeps the dispatch targets coherent with whatever
+   * table the surrounding `selectedTableId` resolves to.
+   */
+  const [activeTableCell, setActiveTableCell] = useState<{ row: number; column: number }>({
+    row: 0,
+    column: 0,
+  });
   const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
   /**
    * Active "Edit Data" modal for double-click on a chart drawing /
@@ -698,6 +718,39 @@ function DocxEditorInner({
             paragraphIndex: idx,
             pgSz: next.pgSz,
             pgMar: next.pgMar,
+          },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  /**
+   * Apply a Restrict-Editing change. The dialog has already hashed
+   * the optional password (Word-style SHA-512 + 100 000 spins) so we
+   * just forward the typed payload onto the `docx:set-protection`
+   * handler. Passing `enabled: false` clears the existing
+   * `<w:documentProtection>` element entirely.
+   */
+  const applyProtection = useCallback(
+    async (payload: ProtectDocumentSubmit) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:set-protection",
+          payload: {
+            enabled: payload.enabled,
+            ...(payload.edit && payload.edit !== "none" ? { edit: payload.edit } : {}),
+            ...(payload.enforce !== undefined ? { enforce: payload.enforce } : {}),
+            ...(payload.formatting !== undefined ? { formatting: payload.formatting } : {}),
+            ...(payload.algorithmName ? { algorithmName: payload.algorithmName } : {}),
+            ...(payload.hashValue ? { hashValue: payload.hashValue } : {}),
+            ...(payload.saltValue ? { saltValue: payload.saltValue } : {}),
+            ...(payload.spinCount !== undefined ? { spinCount: payload.spinCount } : {}),
           },
           source: "human",
         });
@@ -1571,6 +1624,152 @@ function DocxEditorInner({
     [pushToast]
   );
 
+  const handleDeleteTableRow = useCallback(
+    async (tableId: string, row: number) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:delete-row",
+          payload: { tableId, at: row },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleDeleteTableColumn = useCallback(
+    async (tableId: string, column: number) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:delete-column",
+          payload: { tableId, at: column },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleDeleteTable = useCallback(
+    async (tableId: string) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:delete-table",
+          payload: { tableId },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleSetCellShading = useCallback(
+    async (tableId: string, row: number, column: number, fill: string | null) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:set-cell-shading",
+          payload: { tableId, row, column, fill },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleSetCellAlignment = useCallback(
+    async (
+      tableId: string,
+      row: number,
+      column: number,
+      vAlign: "top" | "center" | "bottom" | null
+    ) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:set-cell-alignment",
+          payload: { tableId, row, column, vAlign },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleSetRowHeight = useCallback(
+    async (
+      tableId: string,
+      row: number,
+      heightTwips: number | null,
+      rule?: "auto" | "exact" | "atLeast"
+    ) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:set-row-height",
+          payload: { tableId, row, heightTwips, ...(rule ? { rule } : {}) },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleSetColumnWidth = useCallback(
+    async (tableId: string, column: number, widthTwips: number) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:set-column-width",
+          payload: { tableId, column, widthTwips },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
+  const handleMergeCellsHorizontal = useCallback(
+    async (tableId: string, row: number, fromColumn: number, toColumn: number) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:merge-cells-horizontal",
+          payload: { tableId, row, fromColumn, toColumn },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
   // B6 — image manipulation. Resize commits a single
   // `docx:set-image-properties` with the rounded final dimensions;
   // alt-text edit opens the dialog seeded with the current value;
@@ -1887,12 +2086,23 @@ function DocxEditorInner({
   const activeIndentLeft = computeActiveIndentLeft(snapshot, activeParagraphIndex);
   const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   const trackedChangesCount = countTrackedChanges(snapshot);
+  const protectionState = useMemo(
+    () => readDocumentProtection(snapshot),
+    [snapshot]
+  );
   // Drive the contextual ribbon tabs ("Bildtools", "Tabellentools").
   // We re-derive on every render because `uiTick` already forces one
   // on every selection change, so this is essentially `O(1)` work
   // gated to the same cadence as the rest of the toolbar state.
   const selectedImage = view ? extractSelectedImage(view) : null;
   const selectedTableId = view ? extractSelectedTableId(view) : null;
+  const lastSelectedTableIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastSelectedTableIdRef.current !== selectedTableId) {
+      lastSelectedTableIdRef.current = selectedTableId;
+      setActiveTableCell({ row: 0, column: 0 });
+    }
+  }, [selectedTableId]);
   void commentParagraphIndex;
 
   // The side rail hosts the comments sidebar; tracked changes are no
@@ -2101,6 +2311,78 @@ function DocxEditorInner({
       "docx.set-mode-edit": { run: () => setEditMode("edit"), enabled: editMode !== "edit" },
       "docx.set-mode-suggest": { run: () => setEditMode("suggest"), enabled: editMode !== "suggest" },
       "docx.set-mode-view": { run: () => setEditMode("view"), enabled: editMode !== "view" },
+      "docx.set-protection": { run: () => setProtectDocumentOpen(true) },
+      "docx.set-cell-shading": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleSetCellShading(
+            selectedTableId,
+            activeTableCell.row,
+            activeTableCell.column,
+            "FFF2CC"
+          );
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.set-cell-alignment": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleSetCellAlignment(
+            selectedTableId,
+            activeTableCell.row,
+            activeTableCell.column,
+            "center"
+          );
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.set-row-height": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleSetRowHeight(selectedTableId, activeTableCell.row, 720, "atLeast");
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.set-column-width": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleSetColumnWidth(selectedTableId, activeTableCell.column, 1440);
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.merge-cells-horizontal": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleMergeCellsHorizontal(
+            selectedTableId,
+            activeTableCell.row,
+            activeTableCell.column,
+            activeTableCell.column + 1
+          );
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.delete-row": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleDeleteTableRow(selectedTableId, activeTableCell.row);
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.delete-column": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleDeleteTableColumn(selectedTableId, activeTableCell.column);
+        },
+        enabled: selectedTableId !== null,
+      },
+      "docx.delete-table": {
+        run: () => {
+          if (!selectedTableId) return;
+          void handleDeleteTable(selectedTableId);
+        },
+        enabled: selectedTableId !== null,
+      },
     };
     return buildPaletteFromCatalogue(docxActions, runners, t);
   }, [
@@ -2116,6 +2398,16 @@ function DocxEditorInner({
     openHyperlinkPopover,
     setAlignment,
     toggleList,
+    selectedTableId,
+    activeTableCell,
+    handleSetCellShading,
+    handleSetCellAlignment,
+    handleSetRowHeight,
+    handleSetColumnWidth,
+    handleMergeCellsHorizontal,
+    handleDeleteTableRow,
+    handleDeleteTableColumn,
+    handleDeleteTable,
   ]);
 
   const selectionText = useMemo<string>(() => {
@@ -2304,6 +2596,8 @@ function DocxEditorInner({
             trackedChangesCount={trackedChangesCount}
             onAcceptAllChanges={() => void acceptAllChanges()}
             onRejectAllChanges={() => void rejectAllChanges()}
+            onOpenProtectDocument={() => setProtectDocumentOpen(true)}
+            documentProtectionActive={protectionState.enabled}
             onInsertSectionBreak={(type) => void insertSectionBreak(type)}
             hfFocus={hfZoneFocus}
             onCloseHeaderFooter={closeHeaderFooter}
@@ -2316,6 +2610,16 @@ function DocxEditorInner({
             selectedTableId={selectedTableId}
             onInsertTableRow={(id, where) => void handleTableInsertRow(id, where)}
             onInsertTableColumn={(id, where) => void handleTableInsertColumn(id, where)}
+            onDeleteTableRow={(id, r) => void handleDeleteTableRow(id, r)}
+            onDeleteTableColumn={(id, c) => void handleDeleteTableColumn(id, c)}
+            onDeleteTable={(id) => void handleDeleteTable(id)}
+            activeTableCell={activeTableCell}
+            onSetActiveTableCell={setActiveTableCell}
+            onSetCellShading={(id, r, c, fill) => void handleSetCellShading(id, r, c, fill)}
+            onSetCellAlignment={(id, r, c, v) => void handleSetCellAlignment(id, r, c, v)}
+            onSetRowHeight={(id, r, h, rule) => void handleSetRowHeight(id, r, h, rule)}
+            onSetColumnWidth={(id, c, w) => void handleSetColumnWidth(id, c, w)}
+            onMergeCellsHorizontal={(id, r, f, t) => void handleMergeCellsHorizontal(id, r, f, t)}
           />
         }
         body={
@@ -2489,6 +2793,17 @@ function DocxEditorInner({
         paragraphIndex={view ? currentParagraphIndex(view.state) : 0}
         onClose={() => setPageSetupOpen(false)}
         onSubmit={(next) => void applyPageSetup(next)}
+      />
+      <ProtectDocumentDialog
+        open={protectDocumentOpen}
+        current={{
+          enabled: protectionState.enabled,
+          ...(protectionState.edit ? { edit: protectionState.edit } : {}),
+          ...(protectionState.enforce !== undefined ? { enforce: protectionState.enforce } : {}),
+          ...(protectionState.formatting !== undefined ? { formatting: protectionState.formatting } : {}),
+        }}
+        onClose={() => setProtectDocumentOpen(false)}
+        onSubmit={(payload) => void applyProtection(payload)}
       />
       <AltTextDialog
         open={altTextRequest !== null}
@@ -2697,6 +3012,58 @@ function extractSelectedTableId(view: EditorView): string | null {
   const node = (sel as { node?: { type: { name: string }; attrs: Record<string, unknown> } }).node;
   if (!node || node.type.name !== "table") return null;
   return typeof node.attrs.tableId === "string" ? node.attrs.tableId : null;
+}
+
+interface ProtectionState {
+  readonly enabled: boolean;
+  readonly edit?: ProtectionEdit;
+  readonly enforce?: boolean;
+  readonly formatting?: boolean;
+}
+
+/**
+ * Inspect the verbatim `word/settings.xml` for an active
+ * `<w:documentProtection>` element. We only look at the attributes
+ * — the password hash / salt / spinCount fields are write-only for
+ * the dialog (they're regenerated whenever the user re-applies a
+ * password) so we don't surface them in the UI.
+ *
+ * Treats the element as "active" only when both `w:edit` is set and
+ * `w:enforcement` is explicitly `"1"` (mirrors Word's semantics:
+ * elements with `enforcement="0"` are persisted but not enforced).
+ */
+function readDocumentProtection(snapshot: DocxSnapshot | null): ProtectionState {
+  const empty: ProtectionState = { enabled: false };
+  if (!snapshot) return empty;
+  const xml = snapshot.root.settingsXml;
+  if (!xml) return empty;
+  const m = xml.match(/<w:documentProtection\b([^/>]*)\/?>/);
+  if (!m) return empty;
+  const attrs = m[1] ?? "";
+  const edit = readAttr(attrs, "w:edit");
+  const enforcement = readAttr(attrs, "w:enforcement");
+  const formatting = readAttr(attrs, "w:formatting");
+  if (!edit) return empty;
+  const isProtectionEdit = (v: string): v is ProtectionEdit =>
+    v === "readOnly" ||
+    v === "comments" ||
+    v === "trackedChanges" ||
+    v === "forms" ||
+    v === "none";
+  const editTyped: ProtectionEdit = isProtectionEdit(edit) ? edit : "readOnly";
+  const enforce = enforcement === "1" || enforcement === "true";
+  return {
+    enabled: enforce && editTyped !== "none",
+    edit: editTyped,
+    enforce,
+    formatting: formatting === "1" || formatting === "true",
+  };
+}
+
+function readAttr(attrs: string, name: string): string | null {
+  const re = new RegExp(`${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}="([^"]*)"`);
+  const m = attrs.match(re);
+  return m ? (m[1] ?? null) : null;
 }
 
 function countTrackedChanges(snapshot: DocxSnapshot | null): number {

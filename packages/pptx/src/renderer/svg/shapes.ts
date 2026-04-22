@@ -14,8 +14,10 @@ import type {
   TextRun,
   TextShape,
 } from "../../model/types.js";
+import { wrapFontFamily } from "@officeai/text-formatting";
 import { resolveEndpoint } from "../../model/connector-geometry.js";
 import { DEFAULT_THEME, type ThemeColorScheme } from "../layout/color.js";
+import { resolvePlaceholderTextDefaults } from "../layout/placeholder-defaults.js";
 import { shapeBoundingBox } from "../layout/shape.js";
 import { SVG_UNIT_PER_EMU } from "../layout/slide.js";
 import { escXml } from "./escape.js";
@@ -79,6 +81,16 @@ export interface SvgRenderCtx {
    * suppress (e.g. when rendering an export-style preview).
    */
   readonly renderPlaceholderHints?: boolean;
+  /**
+   * Set of `cNvPrId`s whose wrapping `<g>` should be emitted with
+   * `style="visibility:hidden;opacity:0"` baked into the markup so the
+   * very first paint already hides the shape. Used by Present mode to
+   * pre-hide entrance-animation targets before the playback engine's
+   * `prepare()` effect fires — otherwise the SVG paints once with the
+   * shapes visible and the user sees the animation result before they
+   * click. Editor canvases pass `undefined` so authoring stays WYSIWYG.
+   */
+  readonly hiddenCNvPrIds?: ReadonlySet<number>;
 }
 
 export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
@@ -91,7 +103,10 @@ export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
   // collisions with arbitrary user-defined ids inside shape bodies.
   // `class="anim-target"` lets the playback CSS reset transforms
   // cleanly when an animation finishes.
-  return `<g class="anim-target" data-cnvprid="${shape.cNvPrId}">${rotated}</g>`;
+  const hidden = ctx.hiddenCNvPrIds?.has(shape.cNvPrId)
+    ? ` style="visibility:hidden;opacity:0"`
+    : "";
+  return `<g class="anim-target" data-cnvprid="${shape.cNvPrId}"${hidden}>${rotated}</g>`;
 }
 
 function shapeBodyToSvg(shape: Shape, ctx: SvgRenderCtx): string {
@@ -601,7 +616,13 @@ function placeholderHintStyle(type: string): PlaceholderHintStyle {
   // PowerPoint defaults — Calibri across the board so the hint
   // matches what a freshly-typed run would render as. Colour stays
   // gray-400 (set at the call site) regardless of type.
-  const FAMILY = "Calibri, 'Segoe UI', sans-serif";
+  //
+  // `wrapFontFamily` adds the `system-ui, sans-serif` tail and
+  // composes with the `@font-face` aliases in `apps/web/app/globals.css`
+  // so `Calibri` resolves to a bundled metric-equivalent twin
+  // (Carlito) on systems without Office. Non-null assertion is safe —
+  // `"Calibri"` is a non-empty literal.
+  const FAMILY: string = wrapFontFamily("Calibri")!;
   switch (type) {
     case "ctrTitle":
       // Title-Slide layout: large, fully centered both axes.
@@ -795,17 +816,36 @@ function renderWrappedTextHtml(
 ): string {
   const w = u(cxEmu);
   const h = u(cyEmu);
-  const defaultColor = pickContrastingTextColor(shapeFillHex, theme);
-  const baseFontSizePx = u(estimateFontSizeEmu(shape.txBody.paragraphs[0]));
+  // Resolve placeholder defaults so newly-typed runs (which carry no
+  // explicit fontSize / fontFamily / weight) inherit the placeholder
+  // type's typography — title placeholders render at 36pt instead of
+  // the 18pt fallback that previously made user-typed titles look
+  // like body copy.
+  //
+  // We pass `undefined` for layout: the renderer doesn't currently
+  // walk the master/layout chain, but `resolvePlaceholderTextDefaults`
+  // already returns sensible per-type defaults from its built-in table
+  // when layout is missing. The same resolver drives the React edit
+  // overlay, so the SVG and overlay agree on default size/family.
+  const phDefaults = resolvePlaceholderTextDefaults(shape, undefined);
+  const defaultColor = phDefaults.fillHex ?? pickContrastingTextColor(shapeFillHex, theme);
+  const baseFontSizePt = estimateFontSizePt(shape);
   const anchor = readBodyAnchor(shape.txBody.bodyPrRaw);
   const insets = readBodyInsets(shape.txBody.bodyPrRaw);
   // `wrap="none"` (rare) means "let the text overflow". Default in
   // PowerPoint's `<a:bodyPr>` is "square" → wrap.
   const wrapMode = readBodyWrap(shape.txBody.bodyPrRaw);
 
-  const justifyContent = anchor === "ctr" ? "center" : anchor === "b" ? "flex-end" : "flex-start";
+  const anchorJustify =
+    phDefaults.anchor === "middle" || anchor === "ctr"
+      ? "center"
+      : phDefaults.anchor === "bottom" || anchor === "b"
+        ? "flex-end"
+        : "flex-start";
 
-  const paragraphs = shape.txBody.paragraphs.map((p) => paragraphToHtml(p, theme)).join("");
+  const paragraphs = shape.txBody.paragraphs
+    .map((p) => paragraphToHtml(p, theme, phDefaults))
+    .join("");
 
   // foreignObject sits inside an SVG that's itself inside a `<g>` with
   // the shape's `translate(x y)` already applied — so we anchor at
@@ -815,12 +855,13 @@ function renderWrappedTextHtml(
     "height:100%",
     "display:flex",
     "flex-direction:column",
-    `justify-content:${justifyContent}`,
+    `justify-content:${anchorJustify}`,
     `padding:${u(insets.t)}px ${u(insets.r)}px ${u(insets.b)}px ${u(insets.l)}px`,
     "box-sizing:border-box",
     `color:#${defaultColor}`,
-    "font-family:sans-serif",
-    `font-size:${baseFontSizePx}px`,
+    `font-family:${phDefaults.fontFamily}`,
+    `font-size:${(baseFontSizePt * 96) / 72}px`,
+    `font-weight:${phDefaults.fontWeight}`,
     "line-height:1.2",
     wrapMode === "none" ? "white-space:pre" : "white-space:pre-wrap",
     "word-wrap:break-word",
@@ -835,7 +876,11 @@ function renderWrappedTextHtml(
   ].join("");
 }
 
-function paragraphToHtml(p: TextParagraph, theme: ThemeColorScheme): string {
+function paragraphToHtml(
+  p: TextParagraph,
+  theme: ThemeColorScheme,
+  phDefaults?: { readonly align: "left" | "center" | "right" }
+): string {
   const align =
     p.properties.alignment === "center"
       ? "center"
@@ -843,11 +888,9 @@ function paragraphToHtml(p: TextParagraph, theme: ThemeColorScheme): string {
         ? "right"
         : p.properties.alignment === "justify"
           ? "justify"
-          : "left";
+          : (phDefaults?.align ?? "left");
   const flatLen = p.runs.reduce((acc, r) => acc + (r.isLineBreak ? 0 : r.text.length), 0);
   if (flatLen === 0) {
-    // Empty paragraph — emit a non-breaking space so the line takes up
-    // a row (matching how PowerPoint renders blank paragraphs).
     return `<div style="text-align:${align}">&#160;</div>`;
   }
   const runs = p.runs.map((r) => runToHtml(r, theme)).join("");
@@ -863,8 +906,24 @@ function runToHtml(r: TextRun, theme: ThemeColorScheme): string {
   if (r.properties.underline) decorations.push("underline");
   if (r.properties.strike) decorations.push("line-through");
   if (decorations.length > 0) styles.push(`text-decoration:${decorations.join(" ")}`);
-  if (r.properties.fontFamily) styles.push(`font-family:${escXml(r.properties.fontFamily)}`);
-  styles.push(`color:#${resolveRunFill(r, theme)}`);
+  // `wrapFontFamily` appends a `system-ui, sans-serif` tail so an
+  // unknown family falls through to a sane sans-serif rather than the
+  // UA's default serif. Common Microsoft families (Calibri, Aptos,
+  // Cambria, Times New Roman, Arial, …) are also redefined via
+  // `@font-face` in `apps/web/app/globals.css` so they resolve to
+  // bundled metric-equivalent open-source twins on systems without
+  // Office installed.
+  const fontFamilyValue = wrapFontFamily(r.properties.fontFamily);
+  if (fontFamilyValue) styles.push(`font-family:${escXml(fontFamilyValue)}`);
+  // Only emit an explicit colour when the run actually carries a fill
+  // (literal `r:solidFill` or opaque `<a:solidFill>` child) — otherwise
+  // we inherit the foreignObject's default colour, which is now the
+  // placeholder-resolved fill so empty placeholders keep their styled
+  // colour as the user types instead of dropping back to `theme.tx1`.
+  const hasExplicitFill =
+    r.properties.color !== undefined ||
+    (r.properties.opaqueChildren?.some((c) => c.tag === "a:solidFill") ?? false);
+  if (hasExplicitFill) styles.push(`color:#${resolveRunFill(r, theme)}`);
   if (r.properties.fontSizeHundredths !== undefined) {
     const pt = r.properties.fontSizeHundredths / 100;
     styles.push(`font-size:${pt}pt`);
@@ -1325,6 +1384,25 @@ function estimateFontSizeEmu(p: TextParagraph | undefined): number {
     return (r.properties.fontSizeHundredths / 100) * 12700;
   }
   return 18 * 12700;
+}
+
+/**
+ * Effective default font size for a text shape, honouring the
+ * placeholder-defaults inheritance chain when the first run has no
+ * explicit `fontSizeHundredths`. Returns points (NOT EMU) so callers
+ * can convert to pixels with the standard `pt * 96 / 72` factor and
+ * stay independent of the SVG renderer's EMU↔px conversion.
+ */
+function estimateFontSizePt(shape: TextShape): number {
+  const r = shape.txBody.paragraphs[0]?.runs.find((x) => !x.isLineBreak);
+  if (r?.properties.fontSizeHundredths !== undefined) {
+    return r.properties.fontSizeHundredths / 100;
+  }
+  // Layout walk isn't currently wired into the SVG renderer; the
+  // built-in type-defaults table inside `resolvePlaceholderTextDefaults`
+  // gives the right per-type fallback (title 36pt, ctrTitle 40pt,
+  // body 18pt, …) which matches what the React edit overlay shows.
+  return resolvePlaceholderTextDefaults(shape, undefined).fontSizePt;
 }
 
 function pictureToSvg(shape: Picture, ctx: SvgRenderCtx): string {

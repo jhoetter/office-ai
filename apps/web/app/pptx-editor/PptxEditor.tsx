@@ -34,6 +34,8 @@ import {
 } from "@officeai/pptx";
 import { buildBlankPptx, buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
+import { SlideSizeDialog, type SlideSizePreset } from "./SlideSizeDialog";
+import { SetUpShowDialog, type SetUpShowValues } from "./SetUpShowDialog";
 import { ConnectorContextBar, type ConnectorAction, type ConnectorStylePatch } from "./ConnectorContextBar";
 import { ShapeGeometryContextBar, shapeHasAdjustableGeometry } from "./ShapeGeometryContextBar";
 import { PresentMode } from "./PresentMode";
@@ -442,6 +444,9 @@ function PptxEditorInner({
     []
   );
   const [xlsxPickerOpen, setXlsxPickerOpen] = useState<XlsxEmbedMode | null>(null);
+  // Dialog visibility for the Design / Slideshow ribbon entries.
+  const [slideSizeDialogOpen, setSlideSizeDialogOpen] = useState(false);
+  const [setUpShowDialogOpen, setSetUpShowDialogOpen] = useState(false);
   // Imperative request to open the shared right rail to a specific
   // tab (consumed by `EditorShell` via `requestRailTab`). Bumping the
   // nonce re-fires the effect even when the same tab is requested
@@ -1210,6 +1215,28 @@ function PptxEditorInner({
     if (selectedShape.kind !== "text" && selectedShape.kind !== "pic") return null;
     return readShapeFill(selectedShape);
   }, [selectedShape]);
+
+  /**
+   * `<p:sld show="0">` lives in `slideRootAttrs` (preserved verbatim
+   * by the parser; no typed model field). The Slideshow ribbon
+   * Hide-Slide toggle reads that flag here so its pressed state
+   * tracks the document, even when the slide was hidden via the
+   * sidebar context-menu.
+   */
+  const activeSlideHidden = useMemo<boolean>(() => {
+    if (!slide) return false;
+    return slide.slideRootAttrs.show === "0";
+  }, [slide]);
+
+  /**
+   * Parse the deck's `<p:showPr>` element (if any) out of
+   * `presentationOpaqueTail` so the {@link SetUpShowDialog} opens
+   * with the values from the document. PowerPoint defaults are
+   * applied for missing flags, matching the dialog's own defaults.
+   */
+  const currentShowOptions = useMemo<SetUpShowValues>(() => {
+    return readShowOptions(snap);
+  }, [snap]);
 
   const currentSlideBackground = useMemo<FillSpec | null>(() => {
     const s = slides[activeIndex];
@@ -2254,6 +2281,98 @@ function PptxEditorInner({
     [activeIndex, onError]
   );
 
+  /**
+   * Apply a slide-size change. The {@link SlideSizeDialog} produces
+   * either a preset (widescreen / standard / a4 / letter) or an
+   * explicit width × height in EMU; both flows route through this
+   * single helper so the splitter's preset shortcuts and the dialog
+   * end up at the same handler.
+   */
+  const applySlideSize = useCallback(
+    async (payload: { preset: SlideSizePreset; cxEmu?: number; cyEmu?: number }) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-slide-size",
+          payload: {
+            preset: payload.preset,
+            ...(payload.cxEmu !== undefined ? { cxEmu: payload.cxEmu } : {}),
+            ...(payload.cyEmu !== undefined ? { cyEmu: payload.cyEmu } : {}),
+          },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError]
+  );
+
+  /**
+   * Apply slideshow-wide options (Slideshow → Set Up Slide Show).
+   * Dispatches the `pptx:set-show-options` handler, which serialises
+   * the values into a `<p:showPr>` element on `presentation.xml`.
+   */
+  const applyShowOptions = useCallback(
+    async (values: SetUpShowValues) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-show-options",
+          payload: {
+            showType: values.showType,
+            loop: values.loop,
+            showNarration: values.showNarration,
+            showAnimation: values.showAnimation,
+            useTimings: values.useTimings,
+          },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError]
+  );
+
+  const clearShowOptions = useCallback(async () => {
+    const a = agentRef.current;
+    if (!a) return;
+    try {
+      await a.applyCommand({
+        type: "pptx:set-show-options",
+        payload: { clear: true },
+        source: "human",
+      });
+    } catch (err) {
+      onError(err);
+    }
+  }, [onError]);
+
+  /**
+   * Toggle the active slide's `show="0"` flag. Mirrors PowerPoint's
+   * Slideshow ▸ Hide Slide button.
+   */
+  const toggleHideActiveSlide = useCallback(async () => {
+    const a = agentRef.current;
+    if (!a) return;
+    const snap0 = a.getSnapshot();
+    const slide0 = snap0.root.slides[activeIndex];
+    if (!slide0) return;
+    const currentlyHidden = slide0.slideRootAttrs.show === "0";
+    try {
+      await a.applyCommand({
+        type: "pptx:set-slide-hidden",
+        payload: { slideIndex: activeIndex, hidden: !currentlyHidden },
+        source: "human",
+      });
+    } catch (err) {
+      onError(err);
+    }
+  }, [activeIndex, onError]);
+
   const addShapeAnimation = useCallback(
     async (params: import("./AnimationsPanel").AddAnimationParams) => {
       const a = agentRef.current;
@@ -2822,6 +2941,18 @@ function PptxEditorInner({
         run: () => requestRail("animations"),
         enabled: ready && slides.length > 0,
       },
+      "pptx.set-slide-size": {
+        run: () => setSlideSizeDialogOpen(true),
+        enabled: ready,
+      },
+      "pptx.set-show-options": {
+        run: () => setSetUpShowDialogOpen(true),
+        enabled: ready,
+      },
+      "pptx.set-slide-hidden": {
+        run: () => void toggleHideActiveSlide(),
+        enabled: ready && slides.length > 0,
+      },
       "pptx.add-shape-animation": {
         run: () => requestRail("animations"),
         enabled: ready && slides.length > 0,
@@ -2855,6 +2986,7 @@ function PptxEditorInner({
     slide?.animations.length,
     slides.length,
     startPresenting,
+    toggleHideActiveSlide,
     ungroupSelectedShape,
   ]);
 
@@ -3090,6 +3222,13 @@ function PptxEditorInner({
             currentTransitionSpeed={slides[activeIndex]?.transition?.speed ?? null}
             onSetSlideTransition={(kind, speed) => void setSlideTransition(kind, speed)}
             onOpenRail={(tab) => requestRail(tab)}
+            onOpenSlideSize={() => setSlideSizeDialogOpen(true)}
+            onApplySlideSizePreset={(preset) =>
+              void applySlideSize({ preset })
+            }
+            onOpenSetUpShow={() => setSetUpShowDialogOpen(true)}
+            onToggleHideSlide={() => void toggleHideActiveSlide()}
+            activeSlideHidden={activeSlideHidden}
           />
         }
         statusBarLeft={
@@ -3249,6 +3388,26 @@ function PptxEditorInner({
         onCancel={() => setXlsxPickerOpen(null)}
         onSubmit={(result) => void handleXlsxPickerSubmit(result)}
       />
+      <SlideSizeDialog
+        open={slideSizeDialogOpen}
+        currentCxEmu={slideSize.cxEmu}
+        currentCyEmu={slideSize.cyEmu}
+        onClose={() => setSlideSizeDialogOpen(false)}
+        onSubmit={(payload) =>
+          void applySlideSize({
+            preset: payload.preset,
+            cxEmu: payload.cxEmu,
+            cyEmu: payload.cyEmu,
+          })
+        }
+      />
+      <SetUpShowDialog
+        open={setUpShowDialogOpen}
+        current={currentShowOptions}
+        onClose={() => setSetUpShowDialogOpen(false)}
+        onSubmit={(values) => void applyShowOptions(values)}
+        onClear={() => void clearShowOptions()}
+      />
       <EmbeddedXlsxModal
         open={editingEmbed !== null}
         bytes={editingEmbed?.bytes ?? null}
@@ -3271,6 +3430,46 @@ function PptxEditorInner({
       ) : null}
     </>
   );
+}
+
+/**
+ * Walk `presentationOpaqueTail` looking for the verbatim `<p:showPr>`
+ * element so the SetUpShow dialog opens with the deck's current
+ * settings. PowerPoint defaults are applied when the element is
+ * missing, the deck never specified the flag, or `snap` is null
+ * (early-mount path before the first agent snapshot exists).
+ */
+function readShowOptions(snap: PptxSnapshot | null): SetUpShowValues {
+  const defaults: SetUpShowValues = {
+    showType: "presenter",
+    loop: false,
+    showNarration: true,
+    showAnimation: true,
+    useTimings: true,
+  };
+  if (!snap) return defaults;
+  const tail = snap.root.presentationOpaqueTail;
+  for (const el of tail) {
+    if (el.tag === "p:showPr") {
+      const attrs = el.attrs;
+      let showType: SetUpShowValues["showType"] = "presenter";
+      for (const child of el.subtree) {
+        if (typeof child !== "object" || child === null) continue;
+        for (const key of Object.keys(child as Record<string, unknown>)) {
+          if (key === "p:browse") showType = "browse";
+          else if (key === "p:kiosk") showType = "kiosk";
+        }
+      }
+      return {
+        showType,
+        loop: attrs.loop === "1" || attrs.loop === "true",
+        showNarration: attrs.showNarration !== "0" && attrs.showNarration !== "false",
+        showAnimation: attrs.showAnimation !== "0" && attrs.showAnimation !== "false",
+        useTimings: attrs.useTimings !== "0" && attrs.useTimings !== "false",
+      };
+    }
+  }
+  return defaults;
 }
 
 function readNotesText(snap: PptxSnapshot, slideIndex: number): string {

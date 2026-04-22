@@ -23,6 +23,18 @@ import {
   BarChart3,
   Sigma,
   Pencil,
+  FileText,
+  Frame,
+  Printer,
+  PrinterCheck,
+  Repeat,
+  Calculator,
+  Eye,
+  EyeOff,
+  Lock,
+  ZoomIn,
+  Ruler,
+  Tag,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { TextFormatBar, cn } from "@officeai/ui";
@@ -150,6 +162,66 @@ export interface ToolbarProps {
    * Open the chart editor for the currently selected chart.
    */
   readonly onEditSelectedChart: () => void;
+
+  // ── Page Layout tab ──────────────────────────────────────────────
+  /** Open the Excel-style Page Setup dialog (initial tab optional). */
+  readonly onOpenPageSetup: (tab?: "page" | "margins" | "sheet") => void;
+  /** Apply a margins preset directly (Page Layout → Margins splitter). */
+  readonly onApplyMarginsPreset: (preset: "normal" | "wide" | "narrow") => void;
+  /** Apply an orientation preset directly (Page Layout → Orientation splitter). */
+  readonly onApplyOrientation: (orientation: "portrait" | "landscape") => void;
+  /** Apply a paper-size preset directly (Page Layout → Size splitter). */
+  readonly onApplyPaperSize: (paperSize: number) => void;
+  /** Set / clear / extend the worksheet print area. */
+  readonly onPrintArea: (mode: "set" | "clear" | "add") => void;
+  /** Toggle "Print gridlines" / "Print headings" — mirrors the Sheet Options group. */
+  readonly onTogglePrintFlag: (flag: "gridLines" | "headings", value: boolean) => void;
+  /** Live read-throughs of the print options, so the toggle UIs reflect truth. */
+  readonly printGridLines: boolean;
+  readonly printHeadings: boolean;
+
+  // ── Formulas tab ─────────────────────────────────────────────────
+  /** Open the Name Manager dialog. */
+  readonly onOpenNameManager: () => void;
+  /** Set Excel's calculation mode. */
+  readonly onSetCalcMode: (mode: "auto" | "autoNoTable" | "manual") => void;
+  /** Toggle "Calculate before saving". */
+  readonly onSetCalcOnSave: (value: boolean) => void;
+  /** Toggle "Show formulas" on the active sheet. */
+  readonly onToggleShowFormulas: () => void;
+  /** Live calc mode read-through. */
+  readonly calcMode: "auto" | "autoNoTable" | "manual";
+  readonly calcOnSave: boolean;
+  /** Whether the active sheet currently has Show Formulas enabled. */
+  readonly showFormulas: boolean;
+
+  // ── Review tab ───────────────────────────────────────────────────
+  /** Open the Protect Sheet dialog. */
+  readonly onOpenProtectSheet: () => void;
+  /** Open the Protect Workbook dialog. */
+  readonly onOpenProtectWorkbook: () => void;
+  /** Whether the active sheet currently has any protection. */
+  readonly sheetProtected: boolean;
+  /** Whether the workbook currently has any protection. */
+  readonly workbookProtected: boolean;
+
+  // ── View tab (extended) ──────────────────────────────────────────
+  /** Set the worksheet view mode. */
+  readonly onSetSheetView: (view: "normal" | "pageBreakPreview" | "pageLayout") => void;
+  /** Toggle one of the boolean flags in the View tab. */
+  readonly onToggleViewFlag: (
+    flag: "showGridLines" | "showRowColHeaders" | "showRuler" | "rightToLeft",
+    value: boolean
+  ) => void;
+  /** Open the Zoom dialog. */
+  readonly onOpenZoom: () => void;
+  /** Live read-throughs for view toggles, so the buttons reflect truth. */
+  readonly viewMode: "normal" | "pageBreakPreview" | "pageLayout";
+  readonly showGridLinesView: boolean;
+  readonly showRowColHeadersView: boolean;
+  readonly showRulerView: boolean;
+  readonly rightToLeft: boolean;
+  readonly zoomScale: number;
 }
 
 /**
@@ -506,9 +578,241 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
         ],
       },
       {
+        id: "page-layout",
+        label: "Seitenlayout",
+        groups: [
+          {
+            id: "page-setup",
+            label: "Seite einrichten",
+            render: ({ props }) => (
+              <>
+                <MarginsMenu
+                  disabled={disabled}
+                  onApplyPreset={props.onApplyMarginsPreset}
+                  onOpenCustom={() => props.onOpenPageSetup("margins")}
+                />
+                <OrientationMenu
+                  disabled={disabled}
+                  onApply={props.onApplyOrientation}
+                  onOpenMore={() => props.onOpenPageSetup("page")}
+                />
+                <PaperSizeMenu
+                  disabled={disabled}
+                  onApply={props.onApplyPaperSize}
+                  onOpenMore={() => props.onOpenPageSetup("page")}
+                />
+                <ActionBtn
+                  icon={<FileText size={14} />}
+                  label="Page Setup…"
+                  testId="action-page-setup"
+                  disabled={disabled}
+                  onClick={() => props.onOpenPageSetup()}
+                />
+              </>
+            ),
+          },
+          {
+            id: "print-area",
+            label: "Drucken",
+            render: ({ props }) => (
+              <>
+                <PrintAreaMenu
+                  disabled={disabled}
+                  onSet={() => props.onPrintArea("set")}
+                  onClear={() => props.onPrintArea("clear")}
+                  onAdd={() => props.onPrintArea("add")}
+                />
+                <ActionBtn
+                  icon={<Repeat size={14} />}
+                  label="Print Titles…"
+                  testId="action-print-titles"
+                  disabled={disabled}
+                  onClick={() => props.onOpenPageSetup("sheet")}
+                />
+              </>
+            ),
+          },
+          {
+            id: "sheet-options",
+            label: "Blattoptionen",
+            render: ({ props }) => (
+              <>
+                <ToggleBtn
+                  icon={<Printer size={14} />}
+                  label="Print gridlines"
+                  testId="action-print-gridlines"
+                  active={props.printGridLines}
+                  disabled={disabled}
+                  onClick={() => props.onTogglePrintFlag("gridLines", !props.printGridLines)}
+                />
+                <ToggleBtn
+                  icon={<PrinterCheck size={14} />}
+                  label="Print headings"
+                  testId="action-print-headings"
+                  active={props.printHeadings}
+                  disabled={disabled}
+                  onClick={() => props.onTogglePrintFlag("headings", !props.printHeadings)}
+                />
+              </>
+            ),
+          },
+        ],
+      },
+      {
+        id: "formulas",
+        label: "Formeln",
+        groups: [
+          {
+            id: "named-cells",
+            label: "Definierte Namen",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<Tag size={14} />}
+                label="Name Manager"
+                testId="action-name-manager"
+                disabled={disabled}
+                onClick={props.onOpenNameManager}
+              />
+            ),
+          },
+          {
+            id: "formula-auditing",
+            label: "Formelüberwachung",
+            render: ({ props }) => (
+              <ToggleBtn
+                icon={props.showFormulas ? <EyeOff size={14} /> : <Eye size={14} />}
+                label={props.showFormulas ? "Hide formulas" : "Show formulas"}
+                testId="action-show-formulas"
+                active={props.showFormulas}
+                disabled={disabled}
+                onClick={props.onToggleShowFormulas}
+              />
+            ),
+          },
+          {
+            id: "calculation",
+            label: "Berechnung",
+            render: ({ props }) => (
+              <CalcModeMenu
+                disabled={disabled}
+                mode={props.calcMode}
+                calcOnSave={props.calcOnSave}
+                onSetMode={props.onSetCalcMode}
+                onSetCalcOnSave={props.onSetCalcOnSave}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        id: "review",
+        label: "Überprüfen",
+        groups: [
+          {
+            id: "comments-review",
+            label: "Kommentare",
+            render: ({ props }) => (
+              <ActionBtn
+                icon={<MessageSquarePlus size={14} />}
+                label="Add comment"
+                testId="action-add-comment-review"
+                disabled={disabled || !props.selection}
+                onClick={props.onAddComment}
+              />
+            ),
+          },
+          {
+            id: "protect",
+            label: "Schützen",
+            render: ({ props }) => (
+              <>
+                <ToggleBtn
+                  icon={<Lock size={14} />}
+                  label={props.sheetProtected ? "Unprotect Sheet" : "Protect Sheet"}
+                  testId="action-protect-sheet"
+                  active={props.sheetProtected}
+                  disabled={disabled}
+                  onClick={props.onOpenProtectSheet}
+                />
+                <ToggleBtn
+                  icon={<Lock size={14} />}
+                  label={props.workbookProtected ? "Unprotect Workbook" : "Protect Workbook"}
+                  testId="action-protect-workbook"
+                  active={props.workbookProtected}
+                  disabled={disabled}
+                  onClick={props.onOpenProtectWorkbook}
+                />
+              </>
+            ),
+          },
+        ],
+      },
+      {
         id: "view",
         label: "Ansicht",
         groups: [
+          {
+            id: "view-modes",
+            label: "Arbeitsmappenansichten",
+            render: ({ props }) => (
+              <ViewModeMenu
+                disabled={disabled}
+                mode={props.viewMode}
+                onSet={props.onSetSheetView}
+              />
+            ),
+          },
+          {
+            id: "view-show",
+            label: "Anzeigen",
+            render: ({ props }) => (
+              <>
+                <ToggleBtn
+                  icon={<Ruler size={14} />}
+                  label={props.showRulerView ? "Hide ruler" : "Show ruler"}
+                  testId="action-view-ruler"
+                  active={props.showRulerView}
+                  disabled={disabled}
+                  onClick={() => props.onToggleViewFlag("showRuler", !props.showRulerView)}
+                />
+                <ToggleBtn
+                  icon={<Grid3x3 size={14} />}
+                  label={props.showGridLinesView ? "Hide gridlines" : "Show gridlines"}
+                  testId="action-view-gridlines"
+                  active={props.showGridLinesView}
+                  disabled={disabled}
+                  onClick={() => props.onToggleViewFlag("showGridLines", !props.showGridLinesView)}
+                />
+                <ToggleBtn
+                  icon={<TableProperties size={14} />}
+                  label={props.showRowColHeadersView ? "Hide headings" : "Show headings"}
+                  testId="action-view-headings"
+                  active={props.showRowColHeadersView}
+                  disabled={disabled}
+                  onClick={() => props.onToggleViewFlag("showRowColHeaders", !props.showRowColHeadersView)}
+                />
+              </>
+            ),
+          },
+          {
+            id: "view-zoom",
+            label: "Zoom",
+            render: ({ props }) => (
+              <button
+                type="button"
+                data-testid="action-zoom"
+                title={`Zoom (${props.zoomScale}%)`}
+                aria-label="Zoom"
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={props.onOpenZoom}
+                className="inline-flex h-7 items-center gap-1 rounded px-2 text-xs text-foreground hover:bg-hover disabled:opacity-50"
+              >
+                <ZoomIn size={14} />
+                <span className="tabular-nums">{props.zoomScale}%</span>
+              </button>
+            ),
+          },
           {
             id: "window",
             label: "Fenster",
@@ -943,5 +1247,463 @@ function BordersMenuItem(props: BordersMenuItemProps): ReactNode {
     >
       <span>{BORDER_PRESET_LABEL[preset]}</span>
     </button>
+  );
+}
+
+interface SimpleMenuItemProps {
+  readonly label: string;
+  readonly checked?: boolean;
+  readonly disabled?: boolean;
+  readonly testId?: string;
+  readonly onClick: () => void;
+}
+
+function SimpleMenuItem(props: SimpleMenuItemProps): ReactNode {
+  const { label, checked, disabled, testId, onClick } = props;
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      data-testid={testId}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground hover:bg-hover disabled:opacity-40",
+        checked && "bg-[var(--ai-violet-light)]"
+      )}
+    >
+      <span className="inline-block w-3 text-center">{checked ? "✓" : ""}</span>
+      <span className="flex-1">{label}</span>
+    </button>
+  );
+}
+
+interface MarginsMenuProps {
+  readonly disabled: boolean;
+  readonly onApplyPreset: (preset: "normal" | "wide" | "narrow") => void;
+  readonly onOpenCustom: () => void;
+}
+
+function MarginsMenu(props: MarginsMenuProps): ReactNode {
+  const { disabled, onApplyPreset, onOpenCustom } = props;
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-margins"
+        title="Margins"
+        aria-label="Margins"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-0.5 rounded px-1 text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <Frame size={14} />
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="margins-menu"
+        className="min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <SimpleMenuItem
+          label="Normal"
+          testId="margins-menu-normal"
+          onClick={() => {
+            setOpen(false);
+            onApplyPreset("normal");
+          }}
+        />
+        <SimpleMenuItem
+          label="Wide"
+          testId="margins-menu-wide"
+          onClick={() => {
+            setOpen(false);
+            onApplyPreset("wide");
+          }}
+        />
+        <SimpleMenuItem
+          label="Narrow"
+          testId="margins-menu-narrow"
+          onClick={() => {
+            setOpen(false);
+            onApplyPreset("narrow");
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <SimpleMenuItem
+          label="Custom margins…"
+          testId="margins-menu-custom"
+          onClick={() => {
+            setOpen(false);
+            onOpenCustom();
+          }}
+        />
+      </ToolbarMenu>
+    </span>
+  );
+}
+
+interface OrientationMenuProps {
+  readonly disabled: boolean;
+  readonly onApply: (orientation: "portrait" | "landscape") => void;
+  readonly onOpenMore: () => void;
+}
+
+function OrientationMenu(props: OrientationMenuProps): ReactNode {
+  const { disabled, onApply, onOpenMore } = props;
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-orientation"
+        title="Orientation"
+        aria-label="Orientation"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-0.5 rounded px-1 text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <FileText size={14} />
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="orientation-menu"
+        className="min-w-[180px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <SimpleMenuItem
+          label="Portrait"
+          testId="orientation-menu-portrait"
+          onClick={() => {
+            setOpen(false);
+            onApply("portrait");
+          }}
+        />
+        <SimpleMenuItem
+          label="Landscape"
+          testId="orientation-menu-landscape"
+          onClick={() => {
+            setOpen(false);
+            onApply("landscape");
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <SimpleMenuItem
+          label="More…"
+          testId="orientation-menu-more"
+          onClick={() => {
+            setOpen(false);
+            onOpenMore();
+          }}
+        />
+      </ToolbarMenu>
+    </span>
+  );
+}
+
+interface PaperSizeMenuProps {
+  readonly disabled: boolean;
+  readonly onApply: (paperSize: number) => void;
+  readonly onOpenMore: () => void;
+}
+
+const PAPER_QUICK = [
+  { id: 1, label: 'Letter (8.5" × 11")' },
+  { id: 5, label: 'Legal (8.5" × 14")' },
+  { id: 9, label: "A4 (21 × 29.7 cm)" },
+  { id: 8, label: "A3 (29.7 × 42 cm)" },
+];
+
+function PaperSizeMenu(props: PaperSizeMenuProps): ReactNode {
+  const { disabled, onApply, onOpenMore } = props;
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-paper-size"
+        title="Paper size"
+        aria-label="Paper size"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-0.5 rounded px-1 text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <Square size={14} />
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="paper-size-menu"
+        className="min-w-[260px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        {PAPER_QUICK.map((p) => (
+          <SimpleMenuItem
+            key={p.id}
+            label={p.label}
+            testId={`paper-size-menu-${p.id}`}
+            onClick={() => {
+              setOpen(false);
+              onApply(p.id);
+            }}
+          />
+        ))}
+        <div className="my-1 h-px bg-divider" />
+        <SimpleMenuItem
+          label="More paper sizes…"
+          testId="paper-size-menu-more"
+          onClick={() => {
+            setOpen(false);
+            onOpenMore();
+          }}
+        />
+      </ToolbarMenu>
+    </span>
+  );
+}
+
+interface PrintAreaMenuProps {
+  readonly disabled: boolean;
+  readonly onSet: () => void;
+  readonly onClear: () => void;
+  readonly onAdd: () => void;
+}
+
+function PrintAreaMenu(props: PrintAreaMenuProps): ReactNode {
+  const { disabled, onSet, onClear, onAdd } = props;
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-print-area"
+        title="Print Area"
+        aria-label="Print Area"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-0.5 rounded px-1 text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <PrinterCheck size={14} />
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="print-area-menu"
+        className="min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <SimpleMenuItem
+          label="Set print area"
+          testId="print-area-menu-set"
+          onClick={() => {
+            setOpen(false);
+            onSet();
+          }}
+        />
+        <SimpleMenuItem
+          label="Clear print area"
+          testId="print-area-menu-clear"
+          onClick={() => {
+            setOpen(false);
+            onClear();
+          }}
+        />
+        <SimpleMenuItem
+          label="Add to print area"
+          testId="print-area-menu-add"
+          onClick={() => {
+            setOpen(false);
+            onAdd();
+          }}
+        />
+      </ToolbarMenu>
+    </span>
+  );
+}
+
+interface CalcModeMenuProps {
+  readonly disabled: boolean;
+  readonly mode: "auto" | "autoNoTable" | "manual";
+  readonly calcOnSave: boolean;
+  readonly onSetMode: (mode: "auto" | "autoNoTable" | "manual") => void;
+  readonly onSetCalcOnSave: (value: boolean) => void;
+}
+
+function CalcModeMenu(props: CalcModeMenuProps): ReactNode {
+  const { disabled, mode, calcOnSave, onSetMode, onSetCalcOnSave } = props;
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-calc-mode"
+        title="Calculation Options"
+        aria-label="Calculation Options"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-0.5 rounded px-1 text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <Calculator size={14} />
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="calc-mode-menu"
+        className="min-w-[260px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <SimpleMenuItem
+          label="Automatic"
+          testId="calc-mode-menu-auto"
+          checked={mode === "auto"}
+          onClick={() => {
+            setOpen(false);
+            onSetMode("auto");
+          }}
+        />
+        <SimpleMenuItem
+          label="Automatic except for data tables"
+          testId="calc-mode-menu-auto-no-table"
+          checked={mode === "autoNoTable"}
+          onClick={() => {
+            setOpen(false);
+            onSetMode("autoNoTable");
+          }}
+        />
+        <SimpleMenuItem
+          label="Manual"
+          testId="calc-mode-menu-manual"
+          checked={mode === "manual"}
+          onClick={() => {
+            setOpen(false);
+            onSetMode("manual");
+          }}
+        />
+        <div className="my-1 h-px bg-divider" />
+        <SimpleMenuItem
+          label="Recalculate before saving"
+          testId="calc-mode-menu-on-save"
+          checked={calcOnSave}
+          onClick={() => {
+            setOpen(false);
+            onSetCalcOnSave(!calcOnSave);
+          }}
+        />
+      </ToolbarMenu>
+    </span>
+  );
+}
+
+interface ViewModeMenuProps {
+  readonly disabled: boolean;
+  readonly mode: "normal" | "pageBreakPreview" | "pageLayout";
+  readonly onSet: (mode: "normal" | "pageBreakPreview" | "pageLayout") => void;
+}
+
+const VIEW_MODE_LABEL: Readonly<Record<"normal" | "pageBreakPreview" | "pageLayout", string>> = {
+  normal: "Normal",
+  pageBreakPreview: "Page Break Preview",
+  pageLayout: "Page Layout",
+};
+
+function ViewModeMenu(props: ViewModeMenuProps): ReactNode {
+  const { disabled, mode, onSet } = props;
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-view-mode"
+        title={`View: ${VIEW_MODE_LABEL[mode]}`}
+        aria-label="View mode"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-1 rounded px-2 text-xs text-foreground hover:bg-hover disabled:opacity-50"
+      >
+        <Eye size={14} />
+        <span>{VIEW_MODE_LABEL[mode]}</span>
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="view-mode-menu"
+        className="min-w-[220px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <SimpleMenuItem
+          label="Normal"
+          testId="view-mode-menu-normal"
+          checked={mode === "normal"}
+          onClick={() => {
+            setOpen(false);
+            onSet("normal");
+          }}
+        />
+        <SimpleMenuItem
+          label="Page Break Preview"
+          testId="view-mode-menu-page-break-preview"
+          checked={mode === "pageBreakPreview"}
+          onClick={() => {
+            setOpen(false);
+            onSet("pageBreakPreview");
+          }}
+        />
+        <SimpleMenuItem
+          label="Page Layout"
+          testId="view-mode-menu-page-layout"
+          checked={mode === "pageLayout"}
+          onClick={() => {
+            setOpen(false);
+            onSet("pageLayout");
+          }}
+        />
+      </ToolbarMenu>
+    </span>
   );
 }

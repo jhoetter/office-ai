@@ -228,6 +228,47 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
                 onClick={() => onSelect(i)}
                 label={`Slide ${i + 1}`}
               />
+              {/* Transition indicator — small badge in the lower-right
+                  corner of the thumbnail when this slide carries an
+                  entrance transition (matches PowerPoint's slide-rail
+                  star icon). Hidden for `none`/`unsupported` so the
+                  user only sees it when something will actually play
+                  on slide enter. Tooltip names the transition kind so
+                  it's discoverable without leaving the sidebar. */}
+              {s.transition && s.transition.kind !== "none" && s.transition.kind !== "unsupported" ? (
+                <div
+                  data-testid={`pptx-slide-transition-${i}`}
+                  data-transition-kind={s.transition.kind}
+                  title={`Transition: ${s.transition.kind}${s.transition.speed ? ` (${s.transition.speed})` : ""}`}
+                  aria-label={`Slide ${i + 1} has a ${s.transition.kind} transition`}
+                  style={{
+                    position: "absolute",
+                    top: 4,
+                    right: 4,
+                    width: 18,
+                    height: 18,
+                    borderRadius: "50%",
+                    backgroundColor: "var(--officeai-accent, #2563eb)",
+                    color: "#fff",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 11,
+                    boxShadow: "0 0 0 2px #fff, 0 1px 3px rgba(0,0,0,0.25)",
+                    pointerEvents: "none",
+                    fontFamily: "system-ui, sans-serif",
+                  }}
+                >
+                  {/* Five-pointed star — same affordance PowerPoint
+                      uses on its sidebar rail to flag a transition. */}
+                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                    <polygon
+                      points="5,0.5 6.3,3.6 9.5,3.8 7,5.9 7.9,9.1 5,7.3 2.1,9.1 3,5.9 0.5,3.8 3.7,3.6"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </div>
+              ) : null}
               {(() => {
                 const dots = peersBySlide.get(s.partPath);
                 if (!dots || dots.length === 0) return null;

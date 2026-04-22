@@ -369,6 +369,105 @@ describe("slideToSvgString", () => {
     expect(svg).toContain(' 419.95 0"');
   });
 
+  it("uses placeholder-typed font size in the foreignObject when runs carry no explicit size", () => {
+    // Synthesise a title placeholder with a single user-typed run that
+    // has neither `fontSizeHundredths` nor `fontFamily` set — exactly
+    // what `set-shape-text` produces when the user clicks an empty
+    // title placeholder and types "test". Before the placeholder-
+    // defaults wiring this rendered at the 18pt fallback, so a freshly
+    // typed title looked like body copy.
+    const title: TextShape = {
+      id: "txt-title",
+      kind: "text",
+      cNvPrId: 7,
+      name: "Title 1",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 4_000_000, cyEmu: 1_000_000 },
+      placeholder: { type: "title" },
+      spPrTail: [],
+      txBody: {
+        bodyPrRaw: undefined,
+        paragraphs: [
+          {
+            properties: {},
+            runs: [{ text: "test", isLineBreak: false, properties: {} }],
+          },
+        ],
+      },
+    } as unknown as TextShape;
+    const svg = shapeToSvg(title, { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 } });
+    // 36pt → 36 * 96/72 = 48 px. The shorthand string is what the
+    // foreignObject inline style emits; assert the px value rather
+    // than parsing the style declaration so the test stays portable
+    // even if the property order changes.
+    expect(svg).toContain("font-size:48px");
+    // The placeholder font family is now wrapped via `wrapFontFamily`
+    // so `Calibri` composes with the `@font-face` aliases in
+    // `apps/web/app/globals.css` (which redefine `Calibri` → bundled
+    // Carlito). The trailing `system-ui, sans-serif` is the
+    // unknown-font fallback contract from the helper.
+    expect(svg).toContain("font-family:Calibri, system-ui, sans-serif");
+  });
+
+  it("subtitle placeholder defaults to 24pt centered text in the foreignObject", () => {
+    const sub: TextShape = {
+      id: "txt-sub",
+      kind: "text",
+      cNvPrId: 8,
+      name: "Subtitle 1",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 4_000_000, cyEmu: 1_000_000 },
+      placeholder: { type: "subTitle" },
+      spPrTail: [],
+      txBody: {
+        bodyPrRaw: undefined,
+        paragraphs: [
+          {
+            properties: {},
+            runs: [{ text: "hello", isLineBreak: false, properties: {} }],
+          },
+        ],
+      },
+    } as unknown as TextShape;
+    const svg = shapeToSvg(sub, { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 } });
+    expect(svg).toContain("font-size:32px"); // 24 * 96/72
+    expect(svg).toContain("text-align:center");
+  });
+
+  it("hides entrance-animation targets in the markup when ctx.hiddenCNvPrIds includes them", () => {
+    const shape: TextShape = {
+      id: "txt-anim",
+      kind: "text",
+      cNvPrId: 99,
+      name: "Title 1",
+      position: { xEmu: 0, yEmu: 0 },
+      size: { cxEmu: 4_000_000, cyEmu: 1_000_000 },
+      placeholder: { type: "title" },
+      spPrTail: [],
+      txBody: {
+        bodyPrRaw: undefined,
+        paragraphs: [
+          { properties: {}, runs: [{ text: "x", isLineBreak: false, properties: {} }] },
+        ],
+      },
+    } as unknown as TextShape;
+    const svg = shapeToSvg(shape, {
+      slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 },
+      hiddenCNvPrIds: new Set([99]),
+    });
+    // The wrapping <g> should carry visibility:hidden so the very first
+    // paint already conceals the shape — otherwise present mode flashes
+    // the entrance target before `prepare()` runs in a useEffect.
+    expect(svg).toMatch(/<g class="anim-target" data-cnvprid="99" style="visibility:hidden;opacity:0">/);
+    // Sibling shapes that aren't entrance targets still render with
+    // the bare wrapper — no inline style.
+    const otherSvg = shapeToSvg(
+      { ...shape, cNvPrId: 100 } as unknown as TextShape,
+      { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 }, hiddenCNvPrIds: new Set([99]) }
+    );
+    expect(otherSvg).toMatch(/<g class="anim-target" data-cnvprid="100">/);
+  });
+
   it("emits the four connector end-shape markers in <defs> exactly once per slide", async () => {
     const snap = await load("01-blank.pptx");
     const slide = snap.root.slides[0];

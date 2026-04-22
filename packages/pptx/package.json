@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@officeai/core": "workspace:*",
+    "@officeai/text-formatting": "workspace:*",
     "@officeai/xlsx": "workspace:*"
   },
   "peerDependencies": {

@@ -157,6 +157,430 @@ html.dark {
   --radius-2xl: 1rem;
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Office font aliases.
+ *
+ * The XLSX / DOCX / PPTX renderers emit `font-family` strings copied
+ * verbatim from the OOXML on disk — typically `Calibri`, `Aptos`,
+ * `Cambria`, `Times New Roman`, etc. Those families ship with
+ * Microsoft Office and are NOT installed on macOS or Linux, so a
+ * naive `font-family: Calibri` would resolve to the user-agent default
+ * (a Times-style serif on Chromium / WebKit) — completely wrong, and
+ * directly contradicting what the toolbar's font picker says.
+ *
+ * Each block below redefines the Microsoft family name. The `src`
+ * chain checks for the locally installed Microsoft font first
+ * (`local("Calibri")` — Windows + Office user gets the real thing),
+ * then for the metric-equivalent open-source twin if it happens to be
+ * installed (`local("Carlito")`), then finally falls back to the
+ * self-hosted woff2 we ship under `/public/fonts/`. `font-display: swap`
+ * makes the text paint immediately with the system fallback while the
+ * woff2 streams in.
+ *
+ * Family → twin mapping:
+ *   - Calibri / Calibri Light / Aptos / Aptos Display → Carlito (Łukasz Dziedzic, OFL)
+ *   - Cambria                                         → Caladea (Andrés Torresi, OFL)
+ *   - Times New Roman                                 → Tinos (Steve Matteson, Apache 2.0)
+ *   - Arial / Segoe UI                                → Arimo (Steve Matteson, Apache 2.0)
+ *   - Courier New / Consolas                          → Cousine (Steve Matteson, Apache 2.0)
+ *
+ * License files for the bundled twins live alongside the woff2 files
+ * in `apps/web/public/fonts/` (OFL-Carlito.txt, OFL-Caladea.txt,
+ * Apache-2.0-{Tinos,Arimo,Cousine}.txt).
+ * ────────────────────────────────────────────────────────────── */
+
+/* Calibri → Carlito */
+@font-face {
+  font-family: "Calibri";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Calibri"),
+    local("Carlito"),
+    url("/fonts/carlito-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Calibri";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Calibri Italic"),
+    local("Carlito Italic"),
+    url("/fonts/carlito-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Calibri";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Calibri Bold"),
+    local("Carlito Bold"),
+    url("/fonts/carlito-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Calibri";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Calibri Bold Italic"),
+    local("Carlito Bold Italic"),
+    url("/fonts/carlito-700-italic.woff2") format("woff2");
+}
+
+/* Calibri Light — single 300 weight (Carlito has no true light, but
+ * 400 reads acceptably at the size headings use it). */
+@font-face {
+  font-family: "Calibri Light";
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Calibri Light"),
+    local("Carlito"),
+    url("/fonts/carlito-400-normal.woff2") format("woff2");
+}
+
+/* Aptos → Carlito (Microsoft's newer default; closest open twin we ship). */
+@font-face {
+  font-family: "Aptos";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Aptos"),
+    local("Carlito"),
+    url("/fonts/carlito-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Aptos";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Aptos Italic"),
+    local("Carlito Italic"),
+    url("/fonts/carlito-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Aptos";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Aptos Bold"),
+    local("Carlito Bold"),
+    url("/fonts/carlito-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Aptos";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Aptos Bold Italic"),
+    local("Carlito Bold Italic"),
+    url("/fonts/carlito-700-italic.woff2") format("woff2");
+}
+
+/* Aptos Display → Carlito */
+@font-face {
+  font-family: "Aptos Display";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Aptos Display"),
+    local("Carlito"),
+    url("/fonts/carlito-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Aptos Display";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Aptos Display Italic"),
+    local("Carlito Italic"),
+    url("/fonts/carlito-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Aptos Display";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Aptos Display Bold"),
+    local("Carlito Bold"),
+    url("/fonts/carlito-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Aptos Display";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Aptos Display Bold Italic"),
+    local("Carlito Bold Italic"),
+    url("/fonts/carlito-700-italic.woff2") format("woff2");
+}
+
+/* Cambria → Caladea */
+@font-face {
+  font-family: "Cambria";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Cambria"),
+    local("Caladea"),
+    url("/fonts/caladea-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Cambria";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Cambria Italic"),
+    local("Caladea Italic"),
+    url("/fonts/caladea-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Cambria";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Cambria Bold"),
+    local("Caladea Bold"),
+    url("/fonts/caladea-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Cambria";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Cambria Bold Italic"),
+    local("Caladea Bold Italic"),
+    url("/fonts/caladea-700-italic.woff2") format("woff2");
+}
+
+/* Times New Roman → Tinos */
+@font-face {
+  font-family: "Times New Roman";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Times New Roman"),
+    local("Tinos"),
+    url("/fonts/tinos-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Times New Roman";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Times New Roman Italic"),
+    local("Tinos Italic"),
+    url("/fonts/tinos-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Times New Roman";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Times New Roman Bold"),
+    local("Tinos Bold"),
+    url("/fonts/tinos-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Times New Roman";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Times New Roman Bold Italic"),
+    local("Tinos Bold Italic"),
+    url("/fonts/tinos-700-italic.woff2") format("woff2");
+}
+
+/* Arial → Arimo */
+@font-face {
+  font-family: "Arial";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Arial"),
+    local("Arimo"),
+    url("/fonts/arimo-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Arial";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Arial Italic"),
+    local("Arimo Italic"),
+    url("/fonts/arimo-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Arial";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Arial Bold"),
+    local("Arimo Bold"),
+    url("/fonts/arimo-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Arial";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Arial Bold Italic"),
+    local("Arimo Bold Italic"),
+    url("/fonts/arimo-700-italic.woff2") format("woff2");
+}
+
+/* Segoe UI → Arimo (close humanist sans, similar metrics) */
+@font-face {
+  font-family: "Segoe UI";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Segoe UI"),
+    local("Arimo"),
+    url("/fonts/arimo-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Segoe UI";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Segoe UI Italic"),
+    local("Arimo Italic"),
+    url("/fonts/arimo-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Segoe UI";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Segoe UI Bold"),
+    local("Arimo Bold"),
+    url("/fonts/arimo-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Segoe UI";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Segoe UI Bold Italic"),
+    local("Arimo Bold Italic"),
+    url("/fonts/arimo-700-italic.woff2") format("woff2");
+}
+
+/* Courier New → Cousine */
+@font-face {
+  font-family: "Courier New";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Courier New"),
+    local("Cousine"),
+    url("/fonts/cousine-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Courier New";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Courier New Italic"),
+    local("Cousine Italic"),
+    url("/fonts/cousine-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Courier New";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Courier New Bold"),
+    local("Cousine Bold"),
+    url("/fonts/cousine-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Courier New";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Courier New Bold Italic"),
+    local("Cousine Bold Italic"),
+    url("/fonts/cousine-700-italic.woff2") format("woff2");
+}
+
+/* Consolas → Cousine (mono fallback; not metric-perfect but the
+ * closest free mono we already ship). */
+@font-face {
+  font-family: "Consolas";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Consolas"),
+    local("Cousine"),
+    url("/fonts/cousine-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Consolas";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Consolas Italic"),
+    local("Cousine Italic"),
+    url("/fonts/cousine-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Consolas";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src:
+    local("Consolas Bold"),
+    local("Cousine Bold"),
+    url("/fonts/cousine-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Consolas";
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src:
+    local("Consolas Bold Italic"),
+    local("Cousine Bold Italic"),
+    url("/fonts/cousine-700-italic.woff2") format("woff2");
+}
+
 /* ── Base styles ── */
 html {
   height: 100%;

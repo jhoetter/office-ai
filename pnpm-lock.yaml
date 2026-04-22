@@ -303,6 +303,9 @@ importers:
       '@officeai/core':
         specifier: workspace:*
         version: link:../core
+      '@officeai/text-formatting':
+        specifier: workspace:*
+        version: link:../text-formatting
       '@officeai/xlsx':
         specifier: workspace:*
         version: link:../xlsx
@@ -466,6 +469,9 @@ importers:
       '@officeai/core':
         specifier: workspace:*
         version: link:../core
+      '@officeai/text-formatting':
+        specifier: workspace:*
+        version: link:../text-formatting
       '@officeai/xlsx':
         specifier: workspace:*
         version: link:../xlsx

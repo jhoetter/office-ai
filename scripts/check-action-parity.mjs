@@ -45,21 +45,43 @@ const FORMATS = [
     name: "docx",
     handlerDirs: ["packages/docx/src/commands"],
     cataloguePath: "packages/docx/src/actions/catalogue.ts",
+    /**
+     * Editor source roots scanned for ribbon/palette wiring of
+     * `toolbar`-surfaced catalogue entries. The toolbar parity check
+     * looks for `type: "<format>:..."` literals inside `applyCommand`
+     * callsites here as a proxy for "this action is wired into the
+     * UI". Direct opens of dialogs that ultimately dispatch the
+     * command count too — the literal still appears once in the
+     * editor source.
+     */
+    uiDirs: [
+      "apps/web/app/editor",
+      // Shared helpers that dispatch DOCX commands from outside the
+      // ribbon code path (image insertion via drop/paste, page-break
+      // keymap, etc.). The toolbar coverage check only cares that
+      // *some* UI surface dispatches the command; these helpers are
+      // mounted by the editor on every render.
+      "apps/web/app/lib/image-insert.ts",
+      "apps/web/app/lib/page-keymap.ts",
+    ],
   },
   {
     name: "xlsx",
     handlerDirs: ["packages/xlsx/src/commands"],
     cataloguePath: "packages/xlsx/src/actions/catalogue.ts",
+    uiDirs: ["apps/web/app/xlsx-editor"],
   },
   {
     name: "pptx",
     handlerDirs: ["packages/pptx/src/commands"],
     cataloguePath: "packages/pptx/src/actions/catalogue.ts",
+    uiDirs: ["apps/web/app/pptx-editor"],
   },
   {
     name: "pdf",
     handlerDirs: ["packages/pdf/src/commands"],
     cataloguePath: "packages/pdf/src/actions/catalogue.ts",
+    uiDirs: ["apps/web/app/pdf-editor"],
   },
 ];
 
@@ -161,6 +183,71 @@ function walkTsFiles(dir, visit) {
   }
 }
 
+/**
+ * Scan `dirs` recursively for any UI source file (`.tsx`, `.ts`)
+ * that mentions a `type: "<format>:..."` literal — i.e. dispatches
+ * the command via `applyCommand`. Returns the set of distinct
+ * `<format>:...` types found.
+ */
+function extractUiDispatchedTypes(format, uiDirs) {
+  const types = new Set();
+  // Two patterns count: the canonical `type: "<format>:..."`
+  // discriminator (used by `applyCommand({ type: ..., payload: ... })`),
+  // and the loose first-arg form `"<format>:..."` that helpers like
+  // `dispatchAny(...)` and palette runners pass through. Together
+  // they cover every UI dispatch path we currently use.
+  const reType = new RegExp(`\\btype:\\s*"(${format}:[a-z][a-z0-9-]*)"`, "g");
+  const reLoose = new RegExp(`"(${format}:[a-z][a-z0-9-]*)"`, "g");
+  const visit = (file, contents) => {
+    if (file.endsWith(".test.ts") || file.endsWith(".test.tsx")) return;
+    let m;
+    while ((m = reType.exec(contents)) !== null) {
+      types.add(m[1]);
+    }
+    while ((m = reLoose.exec(contents)) !== null) {
+      types.add(m[1]);
+    }
+  };
+  for (const dir of uiDirs) {
+    const abs = join(ROOT, dir);
+    let st;
+    try {
+      st = statSync(abs);
+    } catch {
+      continue;
+    }
+    if (st.isFile()) {
+      visit(abs, readFileSync(abs, "utf8"));
+    } else if (st.isDirectory()) {
+      walkUiFiles(abs, visit);
+    }
+  }
+  return types;
+}
+
+function walkUiFiles(dir, visit) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      walkUiFiles(full, visit);
+    } else if (st.isFile() && (full.endsWith(".ts") || full.endsWith(".tsx"))) {
+      visit(full, readFileSync(full, "utf8"));
+    }
+  }
+}
+
 /* ── Parity rules ───────────────────────────────────────────────── */
 
 /**
@@ -182,7 +269,7 @@ function walkTsFiles(dir, visit) {
  *     gate's job here is structural: the catalogue declares the
  *     intent.
  */
-function checkFormat(format, handlerTypes, entries, i18nKeys) {
+function checkFormat(format, handlerTypes, entries, i18nKeys, uiDispatchedTypes) {
   const violations = [];
 
   const seenIds = new Set();
@@ -255,8 +342,54 @@ function checkFormat(format, handlerTypes, entries, i18nKeys) {
     }
   }
 
+  // Toolbar coverage: every catalogue entry whose `surfaces`
+  // include "toolbar" and that has a `commandType` should appear
+  // somewhere in the matching format's editor source — otherwise
+  // the catalogue claims a ribbon affordance that the UI does not
+  // actually expose. We use `applyCommand({ type: "<format>:..." })`
+  // literals as the proxy: every dispatched command in the editor
+  // (whether from a button, a splitter menu item, a dialog submit,
+  // or a palette runner) carries this literal in source.
+  //
+  // Allowlisted exceptions live in `TOOLBAR_COVERAGE_ALLOWLIST`
+  // below for entries that intentionally surface only via menus
+  // built up indirectly (e.g. a splitter that fans out to a
+  // sub-action whose dispatch happens in a shared helper). New
+  // catalogue entries should not be added here without a comment
+  // explaining why the heuristic doesn't apply.
+  for (const e of entries) {
+    if (e.hidden) continue;
+    if (!e.surfaces.includes("toolbar")) continue;
+    if (!e.commandType) continue;
+    if (TOOLBAR_COVERAGE_ALLOWLIST.has(e.id)) continue;
+    if (!uiDispatchedTypes.has(e.commandType)) {
+      violations.push({
+        format,
+        kind: "missing-toolbar-wiring",
+        message: `catalogue action "${e.id}" declares surfaces:["toolbar"] but no UI source under apps/web/app/${format}-editor/ (or apps/web/app/editor for docx) dispatches "${e.commandType}" — add a ribbon button/menu, or remove "toolbar" from surfaces, or allowlist in scripts/check-action-parity.mjs`,
+      });
+    }
+  }
+
   return violations;
 }
+
+/**
+ * Catalogue ids whose `toolbar` surface is wired indirectly (via a
+ * shared helper that doesn't carry the `type: "..."` literal in the
+ * editor source). Keep this list short and well-commented; if it
+ * starts growing, refactor the helper to dispatch directly so the
+ * coverage check stays honest.
+ */
+const TOOLBAR_COVERAGE_ALLOWLIST = new Set([
+  // Text-formatting commands flow through `TextFormatProvider` /
+  // `format-range` from `@officeai/text-formatting`; the literal
+  // lives in the package, not in the editor source. The format-bar
+  // is the only consumer and ships with every editor.
+  "docx.format-range",
+  "xlsx.format-range",
+  "pptx.format-range",
+]);
 
 /**
  * Flatten the messages JSON tree into a Set of dotted keys so the
@@ -294,11 +427,13 @@ function main() {
   for (const f of FORMATS) {
     const handlerTypes = extractHandlerTypes(f.name, f.handlerDirs);
     const entries = extractCatalogueEntries(f.cataloguePath);
-    const violations = checkFormat(f.name, handlerTypes, entries, i18nKeys);
+    const uiDispatchedTypes = extractUiDispatchedTypes(f.name, f.uiDirs);
+    const violations = checkFormat(f.name, handlerTypes, entries, i18nKeys, uiDispatchedTypes);
     summary.push({
       format: f.name,
       handlers: handlerTypes.size,
       catalogue: entries.length,
+      uiDispatched: uiDispatchedTypes.size,
       violations: violations.length,
     });
     allViolations.push(...violations);
@@ -308,7 +443,7 @@ function main() {
   console.log("───────────────────");
   for (const s of summary) {
     console.log(
-      `  ${s.format.padEnd(6)} handlers=${String(s.handlers).padStart(3)}  catalogue=${String(s.catalogue).padStart(3)}  violations=${String(s.violations).padStart(3)}`
+      `  ${s.format.padEnd(6)} handlers=${String(s.handlers).padStart(3)}  catalogue=${String(s.catalogue).padStart(3)}  ui-dispatched=${String(s.uiDispatched).padStart(3)}  violations=${String(s.violations).padStart(3)}`
     );
   }
   console.log("");

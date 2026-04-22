@@ -308,6 +308,44 @@ PDF catalogue is unchanged this session. 47 entries, 14 handlers, all green.
 | XLSX show toggles (gridlines / headings / formula bar) | 🚧 |
 | PPTX color / grayscale / B&W preview | 🚧 |
 
+## UI wiring landed this session
+
+The catalogue entries below now have **ribbon buttons + Cmd+K palette
+runners + dialogs** in the web app, in addition to their pre-existing
+CLI/MCP exposure. Every dialog mirrors its Office counterpart (Page
+Setup, Set Up Show, Protect Document, etc.) and reads current state
+from the snapshot's opaque XML so toggles reflect document truth.
+
+| Format | Catalogue id | Ribbon location | Dialog (if any) |
+| ------ | ------------ | --------------- | --------------- |
+| xlsx | `xlsx.set-page-setup` | Seitenlayout → Seite einrichten | `XlsxPageSetupDialog` |
+| xlsx | `xlsx.set-page-margins` | Seitenlayout → Ränder splitter | shares `XlsxPageSetupDialog` (Margins tab) |
+| xlsx | `xlsx.set-print-options` | Seitenlayout → Blattoptionen toggles | `XlsxPageSetupDialog` (Sheet tab) |
+| xlsx | `xlsx.set-print-area` | Seitenlayout → Drucken splitter | — |
+| xlsx | `xlsx.set-print-titles` | Seitenlayout → Drucken | `XlsxPageSetupDialog` (Sheet tab) |
+| xlsx | `xlsx.set-calc-mode` | Formeln → Berechnung splitter | — |
+| xlsx | `xlsx.set-show-formulas` | Formeln → Formelüberwachung toggle | — |
+| xlsx | `xlsx.set-sheet-protection` | Überprüfen → Schützen | `ProtectSheetDialog` |
+| xlsx | `xlsx.set-workbook-protection` | Überprüfen → Schützen | `ProtectWorkbookDialog` |
+| xlsx | `xlsx.set-sheet-view` | Ansicht → Anzeigen / Zoom | `ZoomDialog` |
+| pptx | `pptx.set-slide-size` | Entwurf → Anpassen splitter | `SlideSizeDialog` |
+| pptx | `pptx.set-show-options` | Bildschirmpräsentation → Einrichten | `SetUpShowDialog` |
+| pptx | `pptx.set-slide-hidden` | Bildschirmpräsentation → Folie ausblenden toggle | — |
+| pptx | `pptx.set-slide-transition` | Übergänge → Effekt-Galerie | — |
+| docx | `docx.set-protection` | Überprüfen → Schützen | `ProtectDocumentDialog` |
+| docx | `docx.set-cell-shading` | Tabellentools → Entwurf splitter | inline preset menu |
+| docx | `docx.set-cell-alignment` | Tabellentools → Ausrichtung trio | — |
+| docx | `docx.set-row-height` | Tabellentools → Größe (cm input) | — |
+| docx | `docx.set-column-width` | Tabellentools → Größe (cm input) | — |
+| docx | `docx.merge-cells-horizontal` | Tabellentools → Verbinden (to-column input) | — |
+
+DOCX table-cell commands target the `{row, column}` pair surfaced by
+the contextual tab's "Zielzelle" picker — DOCX tables render today as
+ProseMirror node atoms, so cell-level caret editing is not yet
+available; the explicit row/column inputs are the same fallback Word's
+Table Properties dialog uses when invoked from the menu rather than a
+cell selection.
+
 ## Cross-phase chores still to do
 
 - Add `data-testid="{f}-{tab}-{action}"` to every new ribbon button as it lands.

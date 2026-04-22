@@ -1,4 +1,5 @@
 import { Schema, type MarkSpec, type NodeSpec } from "prosemirror-model";
+import { wrapFontFamily } from "@officeai/text-formatting";
 
 /**
  * ProseMirror schema for the DOCX renderer. Mirrors `DocxSnapshot` 1:1
@@ -358,11 +359,17 @@ const marks: Record<string, MarkSpec> = {
   strikethrough: { toDOM: () => ["s", 0], parseDOM: [{ tag: "s" }, { tag: "strike" }] },
   font_family: {
     attrs: { family: { default: "" } },
-    toDOM: (mark) => [
-      "span",
-      { class: "pm-font-family", style: `font-family: ${String(mark.attrs.family)}` },
-      0,
-    ],
+    toDOM: (mark) => {
+      // `wrapFontFamily` appends a `system-ui, sans-serif` tail so an
+      // unknown family falls through to a sane sans-serif rather than
+      // the UA's default serif. Common Microsoft families (Calibri,
+      // Aptos, Cambria, Times New Roman, Arial, …) are also redefined
+      // via `@font-face` in `apps/web/app/globals.css` so they resolve
+      // to bundled metric-equivalent open-source twins on systems
+      // without Office installed.
+      const fam = wrapFontFamily(String(mark.attrs.family));
+      return ["span", { class: "pm-font-family", ...(fam ? { style: `font-family: ${fam}` } : {}) }, 0];
+    },
   },
   font_size: {
     attrs: { halfPoints: { default: 22 } },
@@ -737,7 +744,15 @@ function cellStyleString(
 
 function runToDom(run: RenderableTableRun): unknown {
   const styleParts: string[] = [];
-  if (run.fontFamily) styleParts.push(`font-family: ${run.fontFamily}`);
+  // `wrapFontFamily` appends a `system-ui, sans-serif` tail so an
+  // unknown family falls through to a sane sans-serif rather than the
+  // UA's default serif. Common Microsoft families (Calibri, Aptos,
+  // Cambria, Times New Roman, Arial, …) are also redefined via
+  // `@font-face` in `apps/web/app/globals.css` so they resolve to
+  // bundled metric-equivalent open-source twins on systems without
+  // Office installed.
+  const fam = wrapFontFamily(run.fontFamily);
+  if (fam) styleParts.push(`font-family: ${fam}`);
   if (run.fontSize !== undefined) styleParts.push(`font-size: ${run.fontSize / 2}pt`);
   if (run.color && run.color !== "auto") styleParts.push(`color: #${run.color}`);
 

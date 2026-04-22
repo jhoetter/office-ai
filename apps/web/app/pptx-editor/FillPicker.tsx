@@ -538,15 +538,21 @@ function hexToRgb(hex: string): string {
 
 function useStripeStyle(value: FillSpec | null): React.CSSProperties {
   return React.useMemo(() => {
-    if (!value) return { background: "transparent", backgroundImage: checkerImage() };
+    // We never combine the `background` shorthand with `backgroundImage`
+    // here — React warns about shorthand/longhand mixing because the
+    // shorthand resets the longhand on rerender. For alpha previews we
+    // therefore set `backgroundColor` (longhand) alongside the checker
+    // `backgroundImage`. For full-opacity solids and gradients a single
+    // shorthand is fine.
+    if (!value) return { backgroundColor: "transparent", backgroundImage: checkerImage() };
     switch (value.type) {
       case "none":
-        return { background: "transparent", backgroundImage: checkerImage() };
+        return { backgroundColor: "transparent", backgroundImage: checkerImage() };
       case "solid": {
         const opacity = value.alpha ?? 1;
         if (opacity >= 1) return { background: `#${value.color}` };
         return {
-          background: `rgba(${hexToRgb(value.color)}, ${opacity})`,
+          backgroundColor: `rgba(${hexToRgb(value.color)}, ${opacity})`,
           backgroundImage: checkerImage(),
           backgroundBlendMode: "normal",
         };

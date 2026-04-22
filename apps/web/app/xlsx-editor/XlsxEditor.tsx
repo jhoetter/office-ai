@@ -90,6 +90,14 @@ import { DataValidationDialog } from "./DataValidationDialog";
 import { NameBox } from "./NameBox";
 import { NameManagerDialog } from "./NameManagerDialog";
 import { ChartDialog, InsertChartDialog } from "./InsertChartDialog";
+import {
+  PageSetupDialog,
+  type PageSetupSubmit,
+  type PageSetupTab,
+} from "./PageSetupDialog";
+import { ZoomDialog } from "./ZoomDialog";
+import { ProtectSheetDialog, type ProtectSheetValues } from "./ProtectSheetDialog";
+import { ProtectWorkbookDialog, type ProtectWorkbookValues } from "./ProtectWorkbookDialog";
 import { InsertPivotTableDialog, type PivotDialogSubmit } from "./InsertPivotTableDialog";
 import type { ChartKind, ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
@@ -283,6 +291,102 @@ function isFormControlTarget(t: EventTarget | null): boolean {
 }
 
 /**
+ * Lift the truthy state out of a worksheet's opaque `<printOptions>`
+ * element so the Page Layout toggle buttons can mirror reality.
+ */
+interface PageState {
+  readonly printGridLines: boolean;
+  readonly printHeadings: boolean;
+}
+
+function readPageState(sheet: Sheet | null): PageState {
+  if (!sheet?.printOptionsXml) return { printGridLines: false, printHeadings: false };
+  const truthy = (xml: string, attr: string): boolean => {
+    const m = xml.match(new RegExp(`\\b${attr}\\s*=\\s*"(1|true)"`));
+    return !!m;
+  };
+  return {
+    printGridLines: truthy(sheet.printOptionsXml, "gridLines"),
+    printHeadings: truthy(sheet.printOptionsXml, "headings"),
+  };
+}
+
+interface CalcState {
+  readonly mode: "auto" | "autoNoTable" | "manual";
+  readonly calcOnSave: boolean;
+}
+
+function readCalcState(snapshot: XlsxSnapshot | null): CalcState {
+  const xml = snapshot?.root.calcPrXml;
+  if (!xml) return { mode: "auto", calcOnSave: true };
+  const m = xml.match(/\bcalcMode\s*=\s*"([^"]*)"/);
+  const modeStr = m?.[1];
+  const mode: CalcState["mode"] =
+    modeStr === "manual" || modeStr === "autoNoTable" ? modeStr : "auto";
+  const calcOnSaveAttr = xml.match(/\bcalcOnSave\s*=\s*"([^"]*)"/);
+  const calcOnSave = calcOnSaveAttr ? calcOnSaveAttr[1] !== "0" && calcOnSaveAttr[1] !== "false" : true;
+  return { mode, calcOnSave };
+}
+
+interface SheetViewState {
+  readonly view: "normal" | "pageBreakPreview" | "pageLayout";
+  readonly showGridLines: boolean;
+  readonly showRowColHeaders: boolean;
+  readonly showRuler: boolean;
+  readonly rightToLeft: boolean;
+  readonly zoomScale: number;
+  readonly showFormulas: boolean;
+}
+
+function readSheetViewState(sheet: Sheet | null): SheetViewState {
+  const xml = sheet?.sheetViewsXml ?? "";
+  const m = xml.match(/<sheetView\b[^>]*>/i);
+  const tag = m?.[0] ?? "";
+  const truthy = (attr: string, dflt: boolean): boolean => {
+    const a = tag.match(new RegExp(`\\b${attr}\\s*=\\s*"([^"]*)"`));
+    if (!a) return dflt;
+    const v = a[1];
+    return v !== "0" && v !== "false";
+  };
+  const num = (attr: string, dflt: number): number => {
+    const a = tag.match(new RegExp(`\\b${attr}\\s*=\\s*"([^"]*)"`));
+    const n = a ? Number(a[1]) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : dflt;
+  };
+  const viewAttr = tag.match(/\bview\s*=\s*"([^"]*)"/);
+  const view: SheetViewState["view"] =
+    viewAttr?.[1] === "pageBreakPreview" || viewAttr?.[1] === "pageLayout"
+      ? viewAttr[1]
+      : "normal";
+  return {
+    view,
+    showGridLines: truthy("showGridLines", true),
+    showRowColHeaders: truthy("showRowColHeaders", true),
+    showRuler: truthy("showRuler", true),
+    rightToLeft: truthy("rightToLeft", false),
+    zoomScale: num("zoomScale", 100),
+    showFormulas: truthy("showFormulas", false),
+  };
+}
+
+/**
+ * Strip a sheet name + absolute markers from the OOXML `refersTo`
+ * text of a defined name, leaving the bare A1 range list. Used by
+ * the Print Area "Add to print area" path so we can union with the
+ * existing area text.
+ */
+function stripSheetPrefixUtil(refersTo: string, sheetName: string): string {
+  const escaped = sheetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?:^|,)\\s*(?:'?${escaped}'?!)([^,]+)`, "g");
+  const parts: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(refersTo)) !== null) {
+    if (m[1]) parts.push(m[1].replace(/\$/g, ""));
+  }
+  return parts.length ? parts.join(",") : refersTo;
+}
+
+/**
  * Top-level XLSX editor surface for /xlsx-editor.
  *
  * Lifecycle (mirrors `DocxEditor`):
@@ -392,6 +496,11 @@ function XlsxEditorInner({
   const [selectedChartId, setSelectedChartId] = useState<string | null>(null);
   const [insertChartOpen, setInsertChartOpen] = useState(false);
   const [insertPivotOpen, setInsertPivotOpen] = useState(false);
+  // Page Layout / Review / View dialogs.
+  const [pageSetupOpen, setPageSetupOpen] = useState<{ tab?: PageSetupTab } | null>(null);
+  const [protectSheetOpen, setProtectSheetOpen] = useState(false);
+  const [protectWorkbookOpen, setProtectWorkbookOpen] = useState(false);
+  const [zoomDialogOpen, setZoomDialogOpen] = useState(false);
   /**
    * `editChartId !== null` opens the Edit-chart dialog pre-filled
    * from `activeSheet.charts.find(...)`. We keep an id (not the
@@ -2321,6 +2430,27 @@ function XlsxEditorInner({
   );
 
   /**
+   * Lower-friction dispatcher for the recently-landed Page Layout /
+   * Formulas / Review / View commands. The strict union in
+   * `dispatchOrToast` predates them; rather than enumerate every
+   * variant we accept a raw type string here. Errors still flow into
+   * the toast surface.
+   */
+  const dispatchAny = useCallback(
+    (type: string, payload: Record<string, unknown>): Promise<void> => {
+      const a = agentRef.current;
+      if (!a) return Promise.resolve();
+      return a
+        .applyCommand({ type, payload, source: "human" } as Parameters<typeof a.applyCommand>[0])
+        .then(() => undefined)
+        .catch((err: unknown) => {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        });
+    },
+    [pushToast]
+  );
+
+  /**
    * Quick chart-type switch from the chart toolbar. Goes through
    * `xlsx:update-chart` so undo/redo + diff tracking pick it up the
    * same way as data-range edits made via the dialog.
@@ -2363,6 +2493,222 @@ function XlsxEditorInner({
     );
   }, [activeSheet, selection]);
   const canUnmerge = !!matchedMerge;
+
+  // ── Page Layout / Formulas / Review / View derived state ────────
+  // All four toolbar tabs lift opaque XML attributes off the typed
+  // workbook/sheet projection so the buttons can mirror truth (e.g.
+  // a green "Show formulas" toggle when the active sheet has it on).
+  const pageState = useMemo(() => readPageState(activeSheet), [activeSheet]);
+  const calcState = useMemo(() => readCalcState(snapshot), [snapshot]);
+  const sheetView = useMemo(() => readSheetViewState(activeSheet), [activeSheet]);
+  const sheetProtected = !!activeSheet?.sheetProtectionXml;
+  const workbookProtected = !!snapshot?.root.workbookProtectionXml;
+
+  const onOpenPageSetup = useCallback((tab?: PageSetupTab) => {
+    setPageSetupOpen({ tab });
+  }, []);
+
+  const onApplyMarginsPreset = useCallback(
+    (preset: "normal" | "wide" | "narrow") => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-page-margins", { sheet: activeSheet.name, preset });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onApplyOrientation = useCallback(
+    (orientation: "portrait" | "landscape") => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-page-setup", { sheet: activeSheet.name, orientation });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onApplyPaperSize = useCallback(
+    (paperSize: number) => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-page-setup", { sheet: activeSheet.name, paperSize });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onPrintArea = useCallback(
+    (mode: "set" | "clear" | "add") => {
+      if (!activeSheet) return;
+      if (mode === "clear") {
+        void dispatchAny("xlsx:set-print-area", { sheet: activeSheet.name, clear: true });
+        return;
+      }
+      if (!selection) {
+        pushToast("error", "Select a range first.");
+        return;
+      }
+      const newRange = formatSelection(selection);
+      if (mode === "set") {
+        void dispatchAny("xlsx:set-print-area", { sheet: activeSheet.name, range: newRange });
+        return;
+      }
+      // mode === "add": union with the existing print area, if any.
+      const existing = snapshot?.root.definedNames.find(
+        (n) => n.name === "_xlnm.Print_Area" && n.scope === activeSheet.name
+      );
+      const existingClean = existing
+        ? stripSheetPrefixUtil(existing.refersTo, activeSheet.name)
+        : "";
+      const merged = existingClean ? `${existingClean},${newRange}` : newRange;
+      void dispatchAny("xlsx:set-print-area", { sheet: activeSheet.name, range: merged });
+    },
+    [activeSheet, selection, snapshot, dispatchAny, pushToast]
+  );
+
+  const onTogglePrintFlag = useCallback(
+    (flag: "gridLines" | "headings", value: boolean) => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-print-options", {
+        sheet: activeSheet.name,
+        [flag]: value,
+      });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onSetCalcMode = useCallback(
+    (mode: "auto" | "autoNoTable" | "manual") => {
+      void dispatchAny("xlsx:set-calc-mode", { calcMode: mode });
+    },
+    [dispatchAny]
+  );
+
+  const onSetCalcOnSave = useCallback(
+    (value: boolean) => {
+      void dispatchAny("xlsx:set-calc-mode", { calcOnSave: value });
+    },
+    [dispatchAny]
+  );
+
+  const onToggleShowFormulas = useCallback(() => {
+    if (!activeSheet) return;
+    void dispatchAny("xlsx:set-show-formulas", {
+      sheet: activeSheet.name,
+      show: !sheetView.showFormulas,
+    });
+  }, [activeSheet, dispatchAny, sheetView.showFormulas]);
+
+  const onSetSheetView = useCallback(
+    (view: "normal" | "pageBreakPreview" | "pageLayout") => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-sheet-view", { sheet: activeSheet.name, view });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onToggleViewFlag = useCallback(
+    (flag: "showGridLines" | "showRowColHeaders" | "showRuler" | "rightToLeft", value: boolean) => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-sheet-view", {
+        sheet: activeSheet.name,
+        [flag]: value,
+      });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onSetZoom = useCallback(
+    (zoom: number) => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-sheet-view", { sheet: activeSheet.name, zoomScale: zoom });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onSubmitPageSetup = useCallback(
+    (submit: PageSetupSubmit) => {
+      if (!activeSheet) return;
+      const sheet = activeSheet.name;
+      if (submit.setup) {
+        const s = submit.setup;
+        const payload: Record<string, unknown> = { sheet, orientation: s.orientation, paperSize: s.paperSize };
+        if (s.fitToWidth !== null || s.fitToHeight !== null) {
+          payload.fitToWidth = s.fitToWidth ?? 1;
+          payload.fitToHeight = s.fitToHeight ?? 1;
+        } else if (s.scale !== null) {
+          payload.scale = s.scale;
+        }
+        payload.blackAndWhite = s.blackAndWhite;
+        payload.draft = s.draft;
+        void dispatchAny("xlsx:set-page-setup", payload);
+      }
+      if (submit.margins) {
+        const m = submit.margins;
+        if (m.preset === "custom") {
+          void dispatchAny("xlsx:set-page-margins", {
+            sheet,
+            leftIn: m.leftIn,
+            rightIn: m.rightIn,
+            topIn: m.topIn,
+            bottomIn: m.bottomIn,
+            headerIn: m.headerIn,
+            footerIn: m.footerIn,
+          });
+        } else {
+          void dispatchAny("xlsx:set-page-margins", { sheet, preset: m.preset });
+        }
+      }
+      if (submit.printOptions) {
+        void dispatchAny("xlsx:set-print-options", { sheet, ...submit.printOptions });
+      }
+      if (submit.printArea) {
+        if (submit.printArea.range === null) {
+          void dispatchAny("xlsx:set-print-area", { sheet, clear: true });
+        } else {
+          void dispatchAny("xlsx:set-print-area", { sheet, range: submit.printArea.range });
+        }
+      }
+      if (submit.printTitles) {
+        const { rows, cols } = submit.printTitles;
+        if (rows === null && cols === null) {
+          void dispatchAny("xlsx:set-print-titles", { sheet, clear: true });
+        } else {
+          const payload: Record<string, unknown> = { sheet };
+          if (rows !== null) payload.rows = rows;
+          if (cols !== null) payload.cols = cols;
+          void dispatchAny("xlsx:set-print-titles", payload);
+        }
+      }
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onProtectSheetSubmit = useCallback(
+    (values: ProtectSheetValues) => {
+      if (!activeSheet) return;
+      void dispatchAny("xlsx:set-sheet-protection", {
+        sheet: activeSheet.name,
+        enabled: true,
+        ...values,
+      });
+    },
+    [activeSheet, dispatchAny]
+  );
+
+  const onProtectSheetClear = useCallback(() => {
+    if (!activeSheet) return;
+    void dispatchAny("xlsx:set-sheet-protection", { sheet: activeSheet.name, enabled: false });
+  }, [activeSheet, dispatchAny]);
+
+  const onProtectWorkbookSubmit = useCallback(
+    (values: ProtectWorkbookValues) => {
+      void dispatchAny("xlsx:set-workbook-protection", {
+        enabled: true,
+        ...values,
+      });
+    },
+    [dispatchAny]
+  );
+
+  const onProtectWorkbookClear = useCallback(() => {
+    void dispatchAny("xlsx:set-workbook-protection", { enabled: false });
+  }, [dispatchAny]);
 
   const onMerge = useCallback(() => {
     if (!activeSheet || !selection) return;
@@ -3942,6 +4288,27 @@ function XlsxEditorInner({
         enabled: Boolean(activeSheet && selectedChartId),
       },
       "xlsx.add-comment": { run: () => focusCommentComposer(), enabled: Boolean(selection) },
+
+      // ── Page Layout / Formulas / Review / View (UI parity) ──────────
+      "xlsx.set-page-setup": { run: () => onOpenPageSetup("page"), enabled: Boolean(activeSheet) },
+      "xlsx.set-page-margins": { run: () => onOpenPageSetup("margins"), enabled: Boolean(activeSheet) },
+      "xlsx.set-print-options": { run: () => onOpenPageSetup("sheet"), enabled: Boolean(activeSheet) },
+      "xlsx.set-print-area": { run: () => onPrintArea("set"), enabled: Boolean(activeSheet && selection) },
+      "xlsx.set-print-titles": { run: () => onOpenPageSetup("sheet"), enabled: Boolean(activeSheet) },
+      "xlsx.set-calc-mode": {
+        run: () => onSetCalcMode(calcState.mode === "auto" ? "manual" : "auto"),
+        enabled: Boolean(snapshot),
+      },
+      "xlsx.set-show-formulas": { run: () => onToggleShowFormulas(), enabled: Boolean(activeSheet) },
+      "xlsx.set-sheet-protection": {
+        run: () => setProtectSheetOpen(true),
+        enabled: Boolean(activeSheet),
+      },
+      "xlsx.set-workbook-protection": {
+        run: () => setProtectWorkbookOpen(true),
+        enabled: Boolean(snapshot),
+      },
+      "xlsx.set-sheet-view": { run: () => setZoomDialogOpen(true), enabled: Boolean(activeSheet) },
     };
     return buildPaletteFromCatalogue(xlsxActions, runners, t);
   }, [
@@ -3968,6 +4335,12 @@ function XlsxEditorInner({
     onClearConditionalFormats,
     onClearDataValidations,
     dispatchOrToast,
+    onOpenPageSetup,
+    onPrintArea,
+    onSetCalcMode,
+    calcState.mode,
+    onToggleShowFormulas,
+    selectedChartId,
   ]);
 
   const tabFallback = useStableTabId("xlsx");
@@ -4122,6 +4495,34 @@ function XlsxEditorInner({
               onEditSelectedChart={() => {
                 if (selectedChartId !== null) setEditChartId(selectedChartId);
               }}
+              onOpenPageSetup={onOpenPageSetup}
+              onApplyMarginsPreset={onApplyMarginsPreset}
+              onApplyOrientation={onApplyOrientation}
+              onApplyPaperSize={onApplyPaperSize}
+              onPrintArea={onPrintArea}
+              onTogglePrintFlag={onTogglePrintFlag}
+              printGridLines={pageState.printGridLines}
+              printHeadings={pageState.printHeadings}
+              onOpenNameManager={() => setNameManagerOpen(true)}
+              onSetCalcMode={onSetCalcMode}
+              onSetCalcOnSave={onSetCalcOnSave}
+              onToggleShowFormulas={onToggleShowFormulas}
+              calcMode={calcState.mode}
+              calcOnSave={calcState.calcOnSave}
+              showFormulas={sheetView.showFormulas}
+              onOpenProtectSheet={() => setProtectSheetOpen(true)}
+              onOpenProtectWorkbook={() => setProtectWorkbookOpen(true)}
+              sheetProtected={sheetProtected}
+              workbookProtected={workbookProtected}
+              onSetSheetView={onSetSheetView}
+              onToggleViewFlag={onToggleViewFlag}
+              onOpenZoom={() => setZoomDialogOpen(true)}
+              viewMode={sheetView.view}
+              showGridLinesView={sheetView.showGridLines}
+              showRowColHeadersView={sheetView.showRowColHeaders}
+              showRulerView={sheetView.showRuler}
+              rightToLeft={sheetView.rightToLeft}
+              zoomScale={sheetView.zoomScale}
             />
           ) : (
             // Placeholder before the workbook loads so opening the
@@ -4253,6 +4654,39 @@ function XlsxEditorInner({
                   onAdd={onAddDefinedName}
                   onUpdate={onUpdateDefinedName}
                   onRemove={onRemoveDefinedName}
+                />
+
+                <PageSetupDialog
+                  open={pageSetupOpen !== null}
+                  initialTab={pageSetupOpen?.tab}
+                  snapshot={snapshot}
+                  sheetName={activeSheet?.name ?? null}
+                  onClose={() => setPageSetupOpen(null)}
+                  onSubmit={onSubmitPageSetup}
+                />
+
+                <ProtectSheetDialog
+                  open={protectSheetOpen}
+                  sheetName={activeSheet?.name ?? null}
+                  currentlyProtected={sheetProtected}
+                  onClose={() => setProtectSheetOpen(false)}
+                  onProtect={onProtectSheetSubmit}
+                  onUnprotect={onProtectSheetClear}
+                />
+
+                <ProtectWorkbookDialog
+                  open={protectWorkbookOpen}
+                  currentlyProtected={workbookProtected}
+                  onClose={() => setProtectWorkbookOpen(false)}
+                  onProtect={onProtectWorkbookSubmit}
+                  onUnprotect={onProtectWorkbookClear}
+                />
+
+                <ZoomDialog
+                  open={zoomDialogOpen}
+                  currentZoom={sheetView.zoomScale}
+                  onClose={() => setZoomDialogOpen(false)}
+                  onSubmit={onSetZoom}
                 />
 
                 <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">

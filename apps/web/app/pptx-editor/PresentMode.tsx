@@ -473,6 +473,20 @@ interface SlideStageProps {
 }
 
 function SlideStage(props: SlideStageProps): React.ReactElement {
+  // Pre-compute the set of entrance-animation targets so the renderer
+  // bakes `visibility:hidden` into the very first paint. Without this
+  // there's a 1–2 frame flash where the shape is visible BEFORE the
+  // playback effect's `prepare()` runs — the user sees the rectangle,
+  // clicks, the engine hides it, then immediately reveals it via the
+  // entrance animation, which reads as "the appear effect doesn't
+  // work".
+  const hiddenCNvPrIds = React.useMemo(() => {
+    const set = new Set<number>();
+    for (const a of props.slide.animations) {
+      if (a.category === "entrance") set.add(a.targetCNvPrId);
+    }
+    return set;
+  }, [props.slide.animations]);
   const svg = React.useMemo(
     () =>
       slideToSvgString(props.slide, {
@@ -480,8 +494,9 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
         ...(props.mediaUrls ? { mediaUrls: props.mediaUrls } : {}),
         ...(props.theme ? { theme: props.theme } : {}),
         ...(props.charts ? { charts: props.charts } : {}),
+        ...(hiddenCNvPrIds.size > 0 ? { hiddenCNvPrIds } : {}),
       }),
-    [props.slide, props.slideSize, props.mediaUrls, props.theme, props.charts]
+    [props.slide, props.slideSize, props.mediaUrls, props.theme, props.charts, hiddenCNvPrIds]
   );
   const slideHostRef = React.useRef<HTMLDivElement | null>(null);
   // Same `size` measurement that gates the host element below — we

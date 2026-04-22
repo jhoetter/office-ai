@@ -91,6 +91,37 @@ function encodeCommand<TPayload>(envelope: CommandEnvelope<TPayload>): CommandEn
 const DEFAULT_AGENT_COLOR = "#F4A51C";
 const DEFAULT_AGENT_NAME = "Office Agent";
 
+/**
+ * Streaming defaults for the "watching a coworker edit" feel.
+ *
+ * A single Yjs transaction containing N envelopes flushes as one
+ * delta event on every peer — the editor then applies all N commands
+ * in a tight microtask loop, so a 100-edit `apply` looks like an
+ * instantaneous "begin → end" jump (the very thing realtime was
+ * supposed to fix).
+ *
+ * Splitting the publish into small chunks separated by a short delay
+ * lets the editor render after each chunk, giving the natural typing
+ * cadence users expect. Override per-invocation via env or flag when
+ * batch size / pacing needs tuning (e.g. very large XLSX rebuilds).
+ */
+const DEFAULT_STREAM_BATCH_SIZE = 4;
+const DEFAULT_STREAM_BATCH_DELAY_MS = 60;
+const ENV_BATCH_SIZE = "OAI_REALTIME_BATCH_SIZE";
+const ENV_BATCH_DELAY_MS = "OAI_REALTIME_BATCH_DELAY_MS";
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function parseNonNegativeInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export interface RealtimeFlags {
   readonly room?: string;
   readonly realtimeUrl?: string;
@@ -98,6 +129,10 @@ export interface RealtimeFlags {
   readonly agentColor?: string;
   readonly agentCursor?: string;
   readonly clearRoomAfter?: boolean;
+  /** Override `OAI_REALTIME_BATCH_SIZE`. Commands per Yjs transaction during streaming publish. */
+  readonly realtimeBatchSize?: string;
+  /** Override `OAI_REALTIME_BATCH_DELAY_MS`. Pause between consecutive batches. */
+  readonly realtimeBatchDelayMs?: string;
 }
 
 export interface RealtimePublishOptions extends RealtimeFlags {
@@ -153,6 +188,16 @@ export function attachRealtimeFlags(cmd: Command): Command {
         "file save has already baked every published command into the canonical artifact " +
         "(see hof-os office sub-agent).",
       false
+    )
+    .option(
+      "--realtime-batch-size <n>",
+      `Commands per Yjs transaction when streaming. Smaller = smoother "live typing" feel, ` +
+        `larger = faster total publish. Default ${DEFAULT_STREAM_BATCH_SIZE} (env ${ENV_BATCH_SIZE}).`
+    )
+    .option(
+      "--realtime-batch-delay-ms <ms>",
+      `Pause between consecutive batches in milliseconds. Set to 0 to push everything in ` +
+        `one shot (legacy behaviour). Default ${DEFAULT_STREAM_BATCH_DELAY_MS} (env ${ENV_BATCH_DELAY_MS}).`
     );
 }
 
@@ -253,14 +298,46 @@ export async function publishCommandsToRealtime(
       return encodeCommand(envelope);
     });
 
-    doc.transact(() => {
-      log.push(envelopes);
-    }, peerId);
+    // Stream the publish in micro-batches so peers see commands
+    // trickle in as separate Yjs delta events. Each
+    // `doc.transact(...)` block flushes to subscribers as one update;
+    // separating them with `delay()` yields the browser to repaint
+    // before the next chunk arrives, producing the "live typing"
+    // cadence described in the module header.
+    //
+    // When delay is 0 we keep the single-transaction fast path so the
+    // legacy behaviour (and tests pinning it) stay intact.
+    const batchSize = parsePositiveInt(
+      opts.realtimeBatchSize ?? process.env[ENV_BATCH_SIZE],
+      DEFAULT_STREAM_BATCH_SIZE
+    );
+    const batchDelay = parseNonNegativeInt(
+      opts.realtimeBatchDelayMs ?? process.env[ENV_BATCH_DELAY_MS],
+      DEFAULT_STREAM_BATCH_DELAY_MS
+    );
 
-    // Give the provider a tick to flush over the wire — `push` is
-    // synchronous against the local Yjs structure, but the underlying
-    // websocket frame is queued on the next macrotask.
-    await delay(150);
+    if (batchDelay === 0 || envelopes.length <= batchSize) {
+      doc.transact(() => {
+        log.push(envelopes);
+      }, peerId);
+      // Single websocket flush tick; matches the original 150ms
+      // grace so we don't tear down the provider before the frame
+      // leaves the local send queue.
+      await delay(150);
+    } else {
+      for (let i = 0; i < envelopes.length; i += batchSize) {
+        const chunk = envelopes.slice(i, i + batchSize);
+        doc.transact(() => {
+          log.push(chunk);
+        }, peerId);
+        // Always wait between chunks so the websocket frame for this
+        // batch leaves the queue before the next push enlarges the
+        // outbound update — otherwise the provider can coalesce
+        // adjacent transactions and we lose the streaming effect we
+        // just spent two paragraphs justifying.
+        await delay(batchDelay);
+      }
+    }
 
     let cleared = false;
     if (opts.clearRoomAfter) {

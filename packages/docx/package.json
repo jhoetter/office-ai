@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@officeai/core": "workspace:*",
+    "@officeai/text-formatting": "workspace:*",
     "@officeai/xlsx": "workspace:*",
     "docx": "^9.1.0",
     "jszip": "^3.10.1",

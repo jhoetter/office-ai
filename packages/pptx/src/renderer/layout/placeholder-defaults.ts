@@ -1,3 +1,4 @@
+import { wrapFontFamily } from "@officeai/text-formatting";
 import type { PlaceholderSpec, Shape, SlideLayout, TextShape } from "../../model/types.js";
 import type { BoundingBox } from "./shape.js";
 
@@ -34,8 +35,15 @@ export interface PlaceholderTextDefaults {
  * Default font family for every placeholder type. Matches the SVG
  * placeholder hint renderer (`packages/pptx/src/renderer/svg/shapes.ts`)
  * so the SVG hint and the edit overlay use the same family.
+ *
+ * `wrapFontFamily` appends a `system-ui, sans-serif` tail; the
+ * `@font-face` aliases in `apps/web/app/globals.css` redefine
+ * `Calibri` itself to resolve to a bundled metric-equivalent
+ * open-source twin (Carlito) on systems without Office, so the
+ * placeholder hint visually matches what PowerPoint would render.
+ * Non-null assertion is safe — `"Calibri"` is a non-empty literal.
  */
-const DEFAULT_PLACEHOLDER_FAMILY = "Calibri, 'Segoe UI', sans-serif";
+const DEFAULT_PLACEHOLDER_FAMILY: string = wrapFontFamily("Calibri")!;
 
 /**
  * Type-based defaults that approximate PowerPoint's built-in
@@ -140,9 +148,10 @@ export function resolvePlaceholderTextDefaults(
   const fallback = typeDefaults(shape.placeholder?.type);
   const firstRun = shape.txBody.paragraphs[0]?.runs.find((r) => !r.isLineBreak);
   const firstPara = shape.txBody.paragraphs[0];
-  const fontFamily = firstRun?.properties.fontFamily
-    ? `${firstRun.properties.fontFamily}, ${DEFAULT_PLACEHOLDER_FAMILY}`
-    : fallback.fontFamily;
+  // `wrapFontFamily` adds the trailing `system-ui, sans-serif` tail.
+  // When the run has no font of its own we use the placeholder
+  // fallback (already wrapped) verbatim.
+  const fontFamily = wrapFontFamily(firstRun?.properties.fontFamily) ?? fallback.fontFamily;
   const fontSizePt =
     firstRun?.properties.fontSizeHundredths !== undefined
       ? firstRun.properties.fontSizeHundredths / 100
