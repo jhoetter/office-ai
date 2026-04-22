@@ -1050,6 +1050,14 @@
         "label": "Insert image",
         "description": "Insert an inline image at a position selector. Reads image bytes from --image."
       },
+      "insert-bookmark": {
+        "label": "Insert bookmark",
+        "description": "Insert a named bookmark at the current selection (paragraph + flat-text offsets)."
+      },
+      "delete-bookmark": {
+        "label": "Delete bookmark",
+        "description": "Remove a named bookmark from the document."
+      },
       "insert-chart": {
         "label": "Insert chart",
         "description": "Insert an inline chart at a position selector. Embeds a backing .xlsx workbook so 'Edit Data' works in Word."
@@ -1503,6 +1511,10 @@
       "sort-range": {
         "label": "Sort range",
         "description": "Sort the rows inside a range (excluding the header) by a single column."
+      },
+      "remove-duplicates": {
+        "label": "Remove duplicates",
+        "description": "Remove duplicate rows from a range based on selected key columns (header row preserved)."
       },
       "set-wrap-text": {
         "label": "Toggle wrap text",

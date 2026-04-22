@@ -2136,4 +2136,65 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
       return out;
     },
   },
+
+  // ── Phase 9d — References tab: bookmarks ─────────────────────────
+  {
+    id: "docx.insert-bookmark",
+    commandType: "docx:insert-bookmark",
+    label: "Insert bookmark",
+    description:
+      "Word's References > Bookmark dialog. Anchors a <w:bookmarkStart>/<w:bookmarkEnd> pair at flat-text byte offsets inside the named paragraph. `name` must match Word's identifier rules ([A-Za-z_][\\w]*). Pass equal start/end offsets for a zero-length anchor.",
+    section: "References",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "Bookmark",
+    args: [
+      { name: "name", flag: "--name <id>", kind: "string", required: true, description: "Bookmark name (identifier)." },
+      {
+        name: "paragraphId",
+        flag: "--paragraph-id <id>",
+        kind: "string",
+        required: true,
+        description: "Body paragraph that will host the anchor pair.",
+      },
+      {
+        name: "startOffset",
+        flag: "--start-offset <n>",
+        kind: "number",
+        required: true,
+        description: "Flat-text byte offset where the bookmark starts.",
+      },
+      {
+        name: "endOffset",
+        flag: "--end-offset <n>",
+        kind: "number",
+        required: true,
+        description: "Flat-text byte offset where the bookmark ends (>= start).",
+      },
+    ],
+    buildPayload: (parsed) => ({
+      name: String(parsed.name),
+      paragraphId: String(parsed.paragraphId),
+      startOffset: Number(parsed.startOffset),
+      endOffset: Number(parsed.endOffset),
+    }),
+  },
+  {
+    id: "docx.delete-bookmark",
+    commandType: "docx:delete-bookmark",
+    label: "Delete bookmark",
+    description: "Strip every <w:bookmarkStart>/<w:bookmarkEnd> anchor pair carrying the given name. Idempotent.",
+    section: "References",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "Trash2",
+    args: [
+      {
+        name: "name",
+        flag: "--name <id>",
+        kind: "string",
+        required: true,
+        description: "Bookmark name to remove.",
+      },
+    ],
+    buildPayload: (parsed) => ({ name: String(parsed.name) }),
+  },
 ];

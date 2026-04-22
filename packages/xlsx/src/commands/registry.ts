@@ -72,6 +72,7 @@ import { setPrintOptionsHandler } from "./set-print-options.js";
 import { setPrintAreaHandler, setPrintTitlesHandler } from "./set-print-area.js";
 import { setSheetViewHandler } from "./set-sheet-view.js";
 import { sortRangeHandler } from "./sort-range.js";
+import { removeDuplicatesHandler } from "./remove-duplicates.js";
 import { textToColumnsHandler } from "./text-to-columns.js";
 import { unmergeCellsHandler } from "./unmerge-cells.js";
 
@@ -133,6 +134,7 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   setFilterColumnHandler as CommandHandler<unknown, XlsxSnapshot>,
   clearFilterColumnHandler as CommandHandler<unknown, XlsxSnapshot>,
   sortRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
+  removeDuplicatesHandler as CommandHandler<unknown, XlsxSnapshot>,
   addImageHandler as CommandHandler<unknown, XlsxSnapshot>,
   moveImageHandler as CommandHandler<unknown, XlsxSnapshot>,
   resizeImageHandler as CommandHandler<unknown, XlsxSnapshot>,

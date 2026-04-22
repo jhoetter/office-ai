@@ -250,6 +250,14 @@ export interface ToolbarProps {
   readonly onSort: (direction: "asc" | "desc") => void;
   readonly canSort: boolean;
   /**
+   * Open the "Remove Duplicates" dialog (Data ▸ Remove Duplicates).
+   * The dialog inspects the active selection and lets the user pick
+   * key columns before dispatching `xlsx:remove-duplicates`.
+   * Disabled when no selection exists.
+   */
+  readonly onOpenRemoveDuplicates: () => void;
+  readonly canRemoveDuplicates: boolean;
+  /**
    * Hide / unhide the row(s) or column(s) covered by the active
    * selection — Excel-parity quick-actions composing
    * `xlsx:set-row-height` (height=0 hides) and the column equivalent.
@@ -685,21 +693,21 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
               <>
                 <ActionBtn
                   icon={<TrendingUp size={14} />}
-                  label="Sparkline (coming soon — use CLI in the meantime)"
+                  label="Sparkline — tracked for the next milestone (needs xlsx:add-sparkline)."
                   testId="xlsx-add-sparkline-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<Heading size={14} />}
-                  label="Header / footer (coming soon — use CLI in the meantime)"
+                  label="Header / footer — tracked for the next milestone (needs <headerFooter> typed model)."
                   testId="xlsx-set-page-header-footer-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<Lightbulb size={14} />}
-                  label="Recommended charts (coming soon — use CLI in the meantime)"
+                  label="Recommended charts — tracked for the next milestone (needs heuristics over selection)."
                   testId="xlsx-recommended-charts-coming-soon"
                   disabled
                   onClick={() => {}}
@@ -759,65 +767,65 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
           {
             // Phase 9c §4e — Data depth.
             //
-            // Remove-duplicates / group-rows / ungroup-rows /
-            // group-columns / ungroup-columns / add-subtotal /
-            // goal-seek / flash-fill / advanced-filter all need new
-            // backend handlers (typed model fields for outline levels,
-            // a bisection runtime for goal-seek, a string-interpolation
-            // heuristic for flash-fill). Surfacing the planned ribbon
-            // group with disabled triggers — matching the §4d pattern
-            // above and the §3b/§3c DOCX pattern — keeps the gap
-            // visible and lets a follow-up plan flip `disabled` and
-            // wire `onClick` once the backends land.
+            // Remove-duplicates is fully wired (backend handler +
+            // dialog). Group-rows / ungroup-rows / group-columns /
+            // ungroup-columns / add-subtotal / goal-seek / flash-fill
+            // / advanced-filter still need new backend handlers
+            // (typed model fields for outline levels, a bisection
+            // runtime for goal-seek, a string-interpolation heuristic
+            // for flash-fill). Surfacing the planned ribbon group
+            // with disabled triggers keeps the gap visible and lets
+            // a follow-up plan flip `disabled` and wire `onClick`
+            // once the backends land.
             id: "data-depth-coming-soon",
             label: "Datenwerkzeuge",
-            render: () => (
+            render: ({ props }) => (
               <>
                 <ActionBtn
                   icon={<CopyMinus size={14} />}
-                  label="Remove duplicates (coming soon — use CLI in the meantime)"
-                  testId="xlsx-remove-duplicates-coming-soon"
-                  disabled
-                  onClick={() => {}}
+                  label="Duplikate entfernen"
+                  testId="xlsx-remove-duplicates"
+                  disabled={disabled || !props.canRemoveDuplicates}
+                  onClick={props.onOpenRemoveDuplicates}
                 />
                 <ActionBtn
                   icon={<Group size={14} />}
-                  label="Group rows / columns (coming soon — use CLI in the meantime)"
+                  label="Group rows / columns — tracked for the next milestone (needs row/col outlineLevel typed model)."
                   testId="xlsx-group-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<Ungroup size={14} />}
-                  label="Ungroup rows / columns (coming soon — use CLI in the meantime)"
+                  label="Ungroup rows / columns — tracked for the next milestone (needs row/col outlineLevel typed model)."
                   testId="xlsx-ungroup-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<SigmaIcon size={14} />}
-                  label="Subtotal (coming soon — use CLI in the meantime)"
+                  label="Subtotal — tracked for the next milestone (needs SUBTOTAL formula synthesis at group breaks)."
                   testId="xlsx-subtotal-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<Target size={14} />}
-                  label="Goal seek (coming soon — use CLI in the meantime)"
+                  label="Goal seek — tracked for the next milestone (needs bisection runtime over recalc)."
                   testId="xlsx-goal-seek-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<Wand2 size={14} />}
-                  label="Flash fill (coming soon — use CLI in the meantime)"
+                  label="Flash fill — tracked for the next milestone (needs string-interpolation heuristic)."
                   testId="xlsx-flash-fill-coming-soon"
                   disabled
                   onClick={() => {}}
                 />
                 <ActionBtn
                   icon={<FilterIcon size={14} />}
-                  label="Advanced filter (coming soon — use CLI in the meantime)"
+                  label="Advanced filter — tracked for the next milestone (needs criteria-range evaluator)."
                   testId="xlsx-advanced-filter-coming-soon"
                   disabled
                   onClick={() => {}}

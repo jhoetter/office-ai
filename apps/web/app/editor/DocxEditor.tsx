@@ -35,6 +35,7 @@ import {
   chunkIntoPages,
   documentPageGeometry,
   documentMaxPageGeometry,
+  listBookmarks,
   mountDocxEditor,
   resolveEffectivePpr,
 } from "@officeai/docx";
@@ -84,6 +85,7 @@ import {
   pmSelectionToRange,
 } from "@/lib/format-helpers";
 import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
+import { BookmarkDialog, type BookmarkRow } from "./BookmarkDialog";
 import { FootnotesPanel } from "./FootnotesPanel";
 import { computeDocxActive, createDocxFormatProvider } from "./docxFormatProvider";
 import { PageRuler } from "./PageRuler";
@@ -364,6 +366,7 @@ function DocxEditorInner({
   const [zoom, setZoom] = useState<number>(1);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [protectDocumentOpen, setProtectDocumentOpen] = useState(false);
+  const [bookmarkDialogOpen, setBookmarkDialogOpen] = useState(false);
   /**
    * Currently-targeted cell within `selectedTableId` for the
    * Tabellentools contextual tab. DOCX tables render today as
@@ -1453,6 +1456,310 @@ function DocxEditorInner({
     imageInputRef.current?.click();
   }, []);
 
+  // ── References tab — Bookmarks ──────────────────────────────────────────
+  //
+  // Word's References > Bookmark dialog. We dispatch the typed
+  // `docx:insert-bookmark` / `docx:delete-bookmark` commands behind a
+  // small modal that lists the existing bookmarks and validates the
+  // identifier rules. The "Go to" affordance moves the caret to the
+  // bookmark's start offset (translated from flat-text into PM
+  // positions via the same walk used by Find & Replace). The dialog
+  // itself is presentational — `BookmarkDialog.tsx`.
+  const bookmarkRows: ReadonlyArray<BookmarkRow> = useMemo(() => {
+    void uiTick;
+    const a = agent;
+    if (!a) return [];
+    const list = listBookmarks(a.getSnapshot().root);
+    return list.map((b) => ({
+      name: b.name,
+      paragraphId: b.paragraphId,
+      startOffset: b.startOffset,
+      endOffset: b.endOffset,
+    }));
+  }, [agent, uiTick]);
+
+  const handleAddBookmark = useCallback(
+    async (name: string) => {
+      const a = agentRef.current;
+      const m = mountRef.current;
+      if (!a || !m) return;
+      const paragraphId = currentParagraphId(m.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a body paragraph first.");
+        return;
+      }
+      // Selection range, clamped to the active paragraph. Cross-paragraph
+      // bookmarks aren't supported in v1 — see the handler docstring.
+      const range = pmSelectionToRange(m.view.state);
+      let startOffset = 0;
+      let endOffset = 0;
+      if (range.start.paragraph === range.end.paragraph) {
+        startOffset = Math.min(range.start.offset, range.end.offset);
+        endOffset = Math.max(range.start.offset, range.end.offset);
+      } else {
+        // Selection spans multiple paragraphs — anchor at the caret in
+        // the focused paragraph as a zero-length bookmark, matching
+        // Word's fallback when "Insert > Bookmark" is invoked with a
+        // multi-paragraph selection.
+        const here = pmPositionToDocx(m.view.state, m.view.state.selection.from);
+        startOffset = here.offset;
+        endOffset = here.offset;
+      }
+      try {
+        await a.applyCommand({
+          type: "docx:insert-bookmark",
+          payload: { name, paragraphId, startOffset, endOffset },
+          source: "human",
+        });
+        pushToast("success", `Bookmark "${name}" added.`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast],
+  );
+
+  const handleDeleteBookmark = useCallback(
+    async (name: string) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "docx:delete-bookmark",
+          payload: { name },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast],
+  );
+
+  const handleGoToBookmark = useCallback(
+    (b: BookmarkRow) => {
+      const m = mountRef.current;
+      if (!m) return;
+      const v = m.view;
+      let foundPos: number | null = null;
+      v.state.doc.descendants((node, nodePos) => {
+        if (foundPos !== null) return false;
+        if (node.type.name === "paragraph" && node.attrs.paragraphId === b.paragraphId) {
+          // PM positions are 1-based inside the paragraph; the start
+          // marker sits at `nodePos`, the first text position at
+          // `nodePos + 1`. The bookmark's flat offset matches the
+          // same flat-text walk PM uses for `currentParagraphIndex`.
+          foundPos = nodePos + 1 + b.startOffset;
+          return false;
+        }
+        return true;
+      });
+      if (foundPos === null) return;
+      const pos = Math.min(Math.max(foundPos, 1), v.state.doc.content.size - 1);
+      const tr = v.state.tr.setSelection(TextSelection.create(v.state.doc, pos, pos));
+      v.dispatch(tr.scrollIntoView());
+      v.focus();
+    },
+    [],
+  );
+
+  const handleOpenBookmarkDialog = useCallback(() => {
+    setBookmarkDialogOpen(true);
+  }, []);
+
+  // ── References tab — Table of contents ──────────────────────────────────
+  //
+  // Word's TOC field is a single `<w:fldSimple instr=" TOC \\o \"1-3\" "/>`
+  // whose cached body is a sequence of TOC1/TOC2/… styled paragraphs
+  // pointing at every heading. Implementing the field-cache plumbing is
+  // multi-week work; we ship a pragmatic alternative now that mirrors
+  // Word's *result* (a list of styled heading references) so users get
+  // a working button today and the field-code upgrade slots in later.
+  //
+  // Strategy:
+  //   - Walk the body for paragraphs whose style id starts with
+  //     `Heading` (Heading1..Heading9). Numeric suffix → TOC level.
+  //   - Synthesize one paragraph per heading, prefixed with the
+  //     heading's full text. Paragraph style is `TOCN` so Word picks
+  //     up the matching style from styles.xml when reopening.
+  //   - "insert" splices the new paragraphs above the caret;
+  //     "update" rebuilds the existing block, identified by a magic
+  //     marker paragraph (`<TOC_PLACEHOLDER>` styled `TOCHeading`).
+  //
+  // Caveat surfaced in the inventory: round-trip preserves the
+  // synthesized paragraphs but does NOT yet produce a real TOC field;
+  // re-opening in Word treats them as static text.
+  const handleInsertOrUpdateToc = useCallback(
+    async (mode: "insert" | "update") => {
+      const a = agentRef.current;
+      const m = mountRef.current;
+      if (!a || !m) return;
+      const snap = a.getSnapshot();
+      const headings = collectTocHeadings(snap);
+      if (headings.length === 0) {
+        pushToast("info", "No Heading 1-9 paragraphs found. Add headings to populate a TOC.");
+        return;
+      }
+      try {
+        if (mode === "update") {
+          await rebuildTocBlock(a, snap, headings);
+        } else {
+          const insertAt = currentParagraphIndex(m.view.state);
+          await insertTocBlock(a, insertAt, headings);
+        }
+        pushToast("success", `Table of contents ${mode === "update" ? "updated" : "inserted"} (${headings.length} entries).`);
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast],
+  );
+
+  // ── References tab — Caption ────────────────────────────────────────────
+  //
+  // Word's Insert > Caption dialog inserts a new paragraph styled
+  // `Caption` and seeds it with a label + autonumber + free text. We
+  // open a tiny `window.prompt` for the label so the button works
+  // today; the dialog upgrade lands behind a follow-up plan.
+  const handleInsertCaption = useCallback(async () => {
+    const a = agentRef.current;
+    const m = mountRef.current;
+    if (!a || !m) return;
+    const text = window.prompt("Caption text", "Figure 1: ");
+    if (text === null) return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return;
+    const insertAt = currentParagraphIndex(m.view.state) + 1;
+    try {
+      await a.applyCommand({
+        type: "docx:insert-paragraph",
+        payload: { at: { paragraph: insertAt }, text: trimmed, styleId: "Caption" },
+        source: "human",
+      });
+    } catch (err) {
+      pushToast("error", err instanceof Error ? err.message : String(err));
+    }
+  }, [pushToast]);
+
+  // ── References tab — Cross-reference ────────────────────────────────────
+  //
+  // Word's Insert > Cross-reference dialog wraps `<w:fldSimple
+  // instr=" REF Bookmark1 \\h "/>` around the bookmark's resolved
+  // text. Without the field-cache plumbing we produce plain text in
+  // the form `→ {name}` so the visual link is at least obvious; the
+  // bookmark itself is preserved for the future field upgrade.
+  const handleInsertCrossReference = useCallback(async () => {
+    const a = agentRef.current;
+    const m = mountRef.current;
+    if (!a || !m) return;
+    const list = listBookmarks(a.getSnapshot().root);
+    if (list.length === 0) {
+      pushToast("info", "Insert a bookmark first via References > Bookmark.");
+      return;
+    }
+    const names = list.map((b) => b.name);
+    const picked = window.prompt(
+      `Cross-reference to which bookmark?\n\nAvailable: ${names.join(", ")}`,
+      names[0] ?? ""
+    );
+    if (!picked) return;
+    const trimmed = picked.trim();
+    if (!names.includes(trimmed)) {
+      pushToast("warn", `No bookmark "${trimmed}" — insert one first.`);
+      return;
+    }
+    const here = pmPositionToDocx(m.view.state, m.view.state.selection.from);
+    try {
+      await a.applyCommand({
+        type: "docx:insert-text",
+        payload: { at: here, text: ` → ${trimmed}` },
+        source: "human",
+      });
+    } catch (err) {
+      pushToast("error", err instanceof Error ? err.message : String(err));
+    }
+  }, [pushToast]);
+
+  // ── Design tab — Session-scoped visual properties ───────────────────────
+  //
+  // Page color, borders, and watermark all need typed model fields and
+  // serializer plumbing to round-trip into OOXML. Until those land we
+  // expose them as **session-only visual effects** on the editor card
+  // via CSS variables. The buttons work, the effect is visible, and
+  // the inventory clearly labels the scope. A `null` value clears.
+  const handleOpenPageColorPicker = useCallback(() => {
+    const next = window.prompt("Page color (hex, e.g. FFF2CC). Empty clears.", "");
+    if (next === null) return;
+    const v = next.trim().replace(/^#/, "");
+    const root = scrollEl;
+    if (!root) return;
+    if (v.length === 0) {
+      root.style.removeProperty("--pm-page-fill");
+      pushToast("info", "Page color cleared.");
+    } else if (/^[0-9A-Fa-f]{6}$/.test(v)) {
+      root.style.setProperty("--pm-page-fill", `#${v.toUpperCase()}`);
+      pushToast("success", `Page color set to #${v.toUpperCase()} (visual only — round-trip pending).`);
+    } else {
+      pushToast("warn", "Color must be 6 hex digits.");
+    }
+  }, [scrollEl, pushToast]);
+
+  const handleOpenPageBordersDialog = useCallback(() => {
+    const root = scrollEl;
+    if (!root) return;
+    const current = root.style.getPropertyValue("--pm-page-border") || "none";
+    const next = window.prompt(
+      "Page borders. Use a CSS shorthand like '1px solid #000', or 'none' to clear.",
+      current === "none" ? "1px solid #999" : current,
+    );
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (trimmed.length === 0 || trimmed === "none") {
+      root.style.removeProperty("--pm-page-border");
+      pushToast("info", "Page borders cleared.");
+    } else {
+      root.style.setProperty("--pm-page-border", trimmed);
+      pushToast("success", "Page borders applied (visual only — round-trip pending).");
+    }
+  }, [scrollEl, pushToast]);
+
+  const handleOpenWatermarkDialog = useCallback(() => {
+    const root = scrollEl;
+    if (!root) return;
+    const text = window.prompt("Watermark text. Empty clears.", "DRAFT");
+    if (text === null) return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      root.style.removeProperty("--pm-page-watermark");
+      pushToast("info", "Watermark cleared.");
+    } else {
+      root.style.setProperty("--pm-page-watermark", `"${trimmed.replace(/"/g, '\\"')}"`);
+      pushToast("success", `Watermark set to "${trimmed}" (visual only — round-trip pending).`);
+    }
+  }, [scrollEl, pushToast]);
+
+  const handleOpenThemePicker = useCallback(() => {
+    const root = scrollEl;
+    if (!root) return;
+    const themes: Record<string, { fill: string; accent: string }> = {
+      Default: { fill: "#FFFFFF", accent: "#1F4E79" },
+      Slate: { fill: "#F4F6F8", accent: "#334155" },
+      Warmth: { fill: "#FFF8F0", accent: "#9A3412" },
+      Forest: { fill: "#F1F8F2", accent: "#166534" },
+    };
+    const names = Object.keys(themes);
+    const picked = window.prompt(`Document theme. One of: ${names.join(", ")}.`, "Default");
+    if (!picked) return;
+    const t = themes[picked];
+    if (!t) {
+      pushToast("warn", `Unknown theme "${picked}".`);
+      return;
+    }
+    root.style.setProperty("--pm-page-fill", t.fill);
+    root.style.setProperty("--pm-theme-accent", t.accent);
+    pushToast("success", `Theme "${picked}" applied (visual only — round-trip pending).`);
+  }, [scrollEl, pushToast]);
+
   /**
    * Open the {@link EmbeddedXlsxModal} for the embedded workbook
    * referenced by the supplied PM image attribute envelope. The
@@ -2457,6 +2764,24 @@ function DocxEditorInner({
       "docx.set-mode-suggest": { run: () => setEditMode("suggest"), enabled: editMode !== "suggest" },
       "docx.set-mode-view": { run: () => setEditMode("view"), enabled: editMode !== "view" },
       "docx.set-protection": { run: () => setProtectDocumentOpen(true) },
+      "docx.insert-bookmark": { run: () => setBookmarkDialogOpen(true) },
+      "docx.delete-bookmark": {
+        run: () => {
+          const a = agentRef.current;
+          if (!a) return;
+          const list = listBookmarks(a.getSnapshot().root);
+          if (list.length === 0) {
+            pushToast("info", "No bookmarks to delete.");
+            return;
+          }
+          const names = list.map((b) => b.name);
+          const picked = window.prompt(
+            `Delete which bookmark? Available: ${names.join(", ")}`,
+            names[0] ?? ""
+          );
+          if (picked) void handleDeleteBookmark(picked.trim());
+        },
+      },
       "docx.set-cell-shading": {
         run: () => {
           if (!selectedTableId) return;
@@ -2772,6 +3097,14 @@ function DocxEditorInner({
             onSetRowHeight={(id, r, h, rule) => void handleSetRowHeight(id, r, h, rule)}
             onSetColumnWidth={(id, c, w) => void handleSetColumnWidth(id, c, w)}
             onMergeCellsHorizontal={(id, r, f, t) => void handleMergeCellsHorizontal(id, r, f, t)}
+            onOpenBookmarkDialog={handleOpenBookmarkDialog}
+            onInsertOrUpdateToc={(mode) => void handleInsertOrUpdateToc(mode)}
+            onInsertCaption={() => void handleInsertCaption()}
+            onInsertCrossReference={() => void handleInsertCrossReference()}
+            onOpenPageColorPicker={() => void handleOpenPageColorPicker()}
+            onOpenPageBordersDialog={() => void handleOpenPageBordersDialog()}
+            onOpenWatermarkDialog={() => void handleOpenWatermarkDialog()}
+            onOpenThemePicker={() => void handleOpenThemePicker()}
           />
         }
         body={
@@ -2956,6 +3289,23 @@ function DocxEditorInner({
         }}
         onClose={() => setProtectDocumentOpen(false)}
         onSubmit={(payload) => void applyProtection(payload)}
+      />
+      <BookmarkDialog
+        open={bookmarkDialogOpen}
+        bookmarks={bookmarkRows}
+        hasSelection={(() => {
+          const v = mountRef.current?.view;
+          if (!v) return false;
+          const { from, to } = v.state.selection;
+          return from !== to;
+        })()}
+        onClose={() => setBookmarkDialogOpen(false)}
+        onAdd={(name) => void handleAddBookmark(name)}
+        onDelete={(name) => void handleDeleteBookmark(name)}
+        onGoTo={(b) => {
+          handleGoToBookmark(b);
+          setBookmarkDialogOpen(false);
+        }}
       />
       <AltTextDialog
         open={altTextRequest !== null}
@@ -3308,6 +3658,167 @@ function mapFlatOffsetsToPmPositions(
   });
   return out
     .filter((p): p is { start: number; end: number } => p !== null && p.start >= 0 && p.end >= 0 && p.end >= p.start);
+}
+
+/**
+ * Walk the body for `Heading1..Heading9` styled paragraphs and collect
+ * them as TOC entries. Used by the References > TOC button to
+ * synthesize a Word-style table of contents — see the docstring on
+ * `handleInsertOrUpdateToc` for the full strategy + caveats.
+ *
+ * Returned entries are in document order with the same flat text Word
+ * would render. Tables are walked too so headings inside table cells
+ * still appear in the TOC, matching Word's default `\\u` switch.
+ */
+interface TocHeading {
+  readonly text: string;
+  readonly level: number;
+  readonly paragraphId: string;
+}
+
+function collectTocHeadings(snapshot: DocxSnapshot): ReadonlyArray<TocHeading> {
+  const out: TocHeading[] = [];
+  const visit = (blocks: readonly BlockNode[]): void => {
+    for (const block of blocks) {
+      if (block.kind === "paragraph") {
+        const styleId = block.properties.styleId;
+        if (styleId && /^Heading[1-9]$/.test(styleId)) {
+          const level = Number.parseInt(styleId.replace("Heading", ""), 10);
+          const text = paragraphFlatText(block).trim();
+          if (text.length > 0) {
+            out.push({ text, level, paragraphId: block.id });
+          }
+        }
+      } else if (block.kind === "table") {
+        for (const row of block.rows) {
+          for (const cell of row.cells) visit(cell.body);
+        }
+      }
+    }
+  };
+  visit(snapshot.root.body);
+  return out;
+}
+
+function paragraphFlatText(p: { children: ReadonlyArray<InlineNode> }): string {
+  let buf = "";
+  for (const child of p.children) {
+    if (child.kind === "run") {
+      for (const c of child.children) {
+        if (c.kind === "text") buf += c.text;
+      }
+    }
+  }
+  return buf;
+}
+
+/**
+ * Splice a fresh TOC block above `insertAt`. The block opens with a
+ * heading paragraph styled `TOCHeading` (Word's standard) and adds one
+ * `TOCN` paragraph per heading. The heading paragraph carries the
+ * sentinel text "Inhaltsverzeichnis" so the "update" path can find it
+ * later without a bespoke marker attribute.
+ *
+ * Each command is dispatched independently through the existing
+ * insert-paragraph + set-paragraph-style commands, which means undo is
+ * one tick per paragraph; bundling these into one mutation is a
+ * follow-up optimisation.
+ */
+async function insertTocBlock(
+  agent: DocxAgent,
+  insertAt: number,
+  headings: ReadonlyArray<TocHeading>
+): Promise<void> {
+  // Heading + entries in reverse, splicing each one at `insertAt` so
+  // positions stay stable as we work upwards through the inserted
+  // block. The serializer respects `at.paragraph` as an index in the
+  // body, so no PM walk is needed here.
+  const lines: Array<{ text: string; styleId: string }> = [];
+  lines.push({ text: TOC_TITLE_TEXT, styleId: "TOCHeading" });
+  for (const h of headings) {
+    lines.push({ text: h.text, styleId: `TOC${Math.max(1, Math.min(9, h.level))}` });
+  }
+  // Insert from last to first so each new paragraph lands at `insertAt`.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    await agent.applyCommand({
+      type: "docx:insert-paragraph",
+      payload: { at: { paragraph: insertAt }, text: line.text, styleId: line.styleId },
+      source: "human",
+    });
+  }
+}
+
+const TOC_TITLE_TEXT = "Inhaltsverzeichnis";
+
+/**
+ * Find an existing TOC block — heuristically defined as a paragraph
+ * styled `TOCHeading` whose plain text matches the sentinel — and
+ * rebuild every TOC entry beneath it. Stops at the first paragraph
+ * whose style isn't a TOC entry. When no block is found we fall back
+ * to inserting a new one at the top of the body.
+ */
+async function rebuildTocBlock(
+  agent: DocxAgent,
+  snapshot: DocxSnapshot,
+  headings: ReadonlyArray<TocHeading>
+): Promise<void> {
+  let headingIdx = -1;
+  for (let i = 0; i < snapshot.root.body.length; i++) {
+    const b = snapshot.root.body[i];
+    if (
+      b &&
+      b.kind === "paragraph" &&
+      b.properties.styleId === "TOCHeading" &&
+      paragraphFlatText(b).trim() === TOC_TITLE_TEXT
+    ) {
+      headingIdx = i;
+      break;
+    }
+  }
+  if (headingIdx < 0) {
+    await insertTocBlock(agent, 0, headings);
+    return;
+  }
+  // Find the trailing extent of the existing TOC entries.
+  let endIdx = headingIdx + 1;
+  while (endIdx < snapshot.root.body.length) {
+    const b = snapshot.root.body[endIdx];
+    if (!b || b.kind !== "paragraph") break;
+    const sty = b.properties.styleId ?? "";
+    if (!/^TOC[1-9]$/.test(sty)) break;
+    endIdx++;
+  }
+  // Replace by deleting the block (excluding the heading) bottom-up so
+  // indices stay stable, then re-inserting fresh entries. We keep the
+  // heading paragraph in place so the user's positioning is preserved.
+  for (let i = endIdx - 1; i > headingIdx; i--) {
+    await agent.applyCommand({
+      type: "docx:delete-range",
+      payload: {
+        range: {
+          start: { paragraph: i, run: 0, offset: 0 },
+          end: { paragraph: i + 1, run: 0, offset: 0 },
+        },
+      },
+      source: "human",
+    });
+  }
+  // Insert new entries after the heading.
+  for (let i = headings.length - 1; i >= 0; i--) {
+    const h = headings[i];
+    if (!h) continue;
+    await agent.applyCommand({
+      type: "docx:insert-paragraph",
+      payload: {
+        at: { paragraph: headingIdx + 1 },
+        text: h.text,
+        styleId: `TOC${Math.max(1, Math.min(9, h.level))}`,
+      },
+      source: "human",
+    });
+  }
 }
 
 function countTrackedChanges(snapshot: DocxSnapshot | null): number {

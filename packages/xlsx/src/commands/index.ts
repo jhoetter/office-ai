@@ -65,6 +65,7 @@ export { setAutoFilterHandler } from "./set-auto-filter.js";
 export { setFilterColumnHandler } from "./set-filter-column.js";
 export { clearFilterColumnHandler } from "./clear-filter-column.js";
 export { sortRangeHandler } from "./sort-range.js";
+export { removeDuplicatesHandler } from "./remove-duplicates.js";
 export { setSheetProtectionHandler } from "./set-sheet-protection.js";
 export { setWorkbookProtectionHandler } from "./set-workbook-protection.js";
 export { setCalcModeHandler } from "./set-calc-mode.js";

@@ -246,6 +246,47 @@ export interface ToolbarProps {
     column: number,
     vAlign: "top" | "center" | "bottom" | null
   ) => void;
+  /**
+   * Open the Word-style Bookmark dialog (References → Bookmark). The
+   * dialog itself owns its modal state in {@link DocxEditor}; the
+   * toolbar callback only flips it open. This pattern matches the
+   * Restrict Editing dialog so the toolbar stays presentational.
+   */
+  onOpenBookmarkDialog: () => void;
+  /**
+   * Synthesize / refresh a Table of Contents (References → TOC).
+   * Composed via the existing `docx:insert-paragraph` /
+   * `docx:set-paragraph-style` commands — see
+   * `handleInsertOrUpdateToc` in {@link DocxEditor}. `mode === "update"`
+   * regenerates an existing TOC block in place; `"insert"` adds a
+   * fresh one above the caret.
+   */
+  onInsertOrUpdateToc: (mode: "insert" | "update") => void;
+  /**
+   * Insert a Word-style "Caption" paragraph (e.g. "Figure 1: Diagram").
+   * Composed via `docx:insert-paragraph` + `docx:set-paragraph-style`
+   * with the `Caption` style id; the editor opens a small inline
+   * prompt for the caption label so the user picks "Figure" /
+   * "Table" / "Equation" + free text.
+   */
+  onInsertCaption: () => void;
+  /**
+   * Insert a cross-reference to an existing bookmark. The dialog
+   * surfaces every bookmark currently in the document; "Insert"
+   * splices a `→ {name}` reference text at the caret (an MVP that
+   * resolves to a real `<w:fldSimple instr=" REF … "/>` in a future
+   * pass — for now the text is plain so the link is at least
+   * visually obvious).
+   */
+  onInsertCrossReference: () => void;
+  /** Open the page-color picker (Design tab). */
+  onOpenPageColorPicker: () => void;
+  /** Open the page-borders dialog (Design tab). */
+  onOpenPageBordersDialog: () => void;
+  /** Open the watermark composer (Design tab). */
+  onOpenWatermarkDialog: () => void;
+  /** Open the document-theme picker (Design tab). */
+  onOpenThemePicker: () => void;
   /** Apply `<w:trHeight>` to the targeted row. Pass `null` to clear. */
   onSetRowHeight: (
     tableId: string,
@@ -562,12 +603,11 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
           {
             id: "themes",
             label: "Designs",
-            render: () => (
+            render: (ctx) => (
               <ToolbarBtn
-                label="Coming soon — use CLI in the meantime"
-                onClick={() => {}}
-                disabled
-                testId="docx-set-document-theme-coming-soon"
+                label="Document theme"
+                onClick={ctx.onOpenThemePicker}
+                testId="docx-set-document-theme"
               >
                 <Palette size={14} />
                 <span className="ml-1 text-xs">Designs</span>
@@ -577,31 +617,28 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
           {
             id: "page-background",
             label: "Seitenhintergrund",
-            render: () => (
+            render: (ctx) => (
               <>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-set-page-color-coming-soon"
+                  label="Page color"
+                  onClick={ctx.onOpenPageColorPicker}
+                  testId="docx-set-page-color"
                 >
                   <PaintBucket size={14} />
                   <span className="ml-1 text-xs">Seitenfarbe</span>
                 </ToolbarBtn>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-set-page-borders-coming-soon"
+                  label="Page borders"
+                  onClick={ctx.onOpenPageBordersDialog}
+                  testId="docx-set-page-borders"
                 >
                   <Square size={14} />
                   <span className="ml-1 text-xs">Seitenränder</span>
                 </ToolbarBtn>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-set-page-watermark-coming-soon"
+                  label="Watermark"
+                  onClick={ctx.onOpenWatermarkDialog}
+                  testId="docx-set-page-watermark"
                 >
                   <Brush size={14} />
                   <span className="ml-1 text-xs">Wasserzeichen</span>
@@ -627,12 +664,11 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
           {
             id: "bookmarks",
             label: "Lesezeichen",
-            render: () => (
+            render: (ctx) => (
               <ToolbarBtn
-                label="Coming soon — use CLI in the meantime"
-                onClick={() => {}}
-                disabled
-                testId="docx-insert-bookmark-coming-soon"
+                label="Insert bookmark"
+                onClick={ctx.onOpenBookmarkDialog}
+                testId="docx-insert-bookmark"
               >
                 <Bookmark size={14} />
                 <span className="ml-1 text-xs">Lesezeichen</span>
@@ -642,22 +678,20 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
           {
             id: "toc",
             label: "Inhaltsverzeichnis",
-            render: () => (
+            render: (ctx) => (
               <>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-insert-toc-coming-soon"
+                  label="Insert table of contents"
+                  onClick={() => ctx.onInsertOrUpdateToc("insert")}
+                  testId="docx-insert-toc"
                 >
                   <ListTree size={14} />
                   <span className="ml-1 text-xs">TOC</span>
                 </ToolbarBtn>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-update-toc-coming-soon"
+                  label="Update existing TOC"
+                  onClick={() => ctx.onInsertOrUpdateToc("update")}
+                  testId="docx-update-toc"
                 >
                   <FileText size={14} />
                   <span className="ml-1 text-xs">Aktualisieren</span>
@@ -668,22 +702,20 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
           {
             id: "captions",
             label: "Beschriftungen",
-            render: () => (
+            render: (ctx) => (
               <>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-insert-caption-coming-soon"
+                  label="Insert caption"
+                  onClick={ctx.onInsertCaption}
+                  testId="docx-insert-caption"
                 >
                   <Quote size={14} />
                   <span className="ml-1 text-xs">Beschriftung</span>
                 </ToolbarBtn>
                 <ToolbarBtn
-                  label="Coming soon — use CLI in the meantime"
-                  onClick={() => {}}
-                  disabled
-                  testId="docx-insert-cross-reference-coming-soon"
+                  label="Insert cross-reference"
+                  onClick={ctx.onInsertCrossReference}
+                  testId="docx-insert-cross-reference"
                 >
                   <Link2 size={14} />
                   <span className="ml-1 text-xs">Querverweis</span>

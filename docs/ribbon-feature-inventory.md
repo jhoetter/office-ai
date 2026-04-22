@@ -5,8 +5,13 @@ Generated from `packages/{docx,xlsx,pptx,pdf}/src/actions/catalogue.ts` and the
 `scripts/check-action-parity.mjs` gate. Update this file whenever you flip a
 `surfaces` array, add a new `commandType`, or land a new ribbon button.
 
-Last update: end of Phase 9 (lying-button fixes, cheap-win wiring,
-small-feature ribbon shape, PDF parity sweep) — see
+Last update: end of Phase 9 + Phase 9e UI parity sweep
+(DOCX bookmarks/TOC/captions/x-refs/Design-tab wired to the ribbon,
+XLSX `xlsx:remove-duplicates` shipped end-to-end with a Data-tab
+dialog, and remaining placeholder tooltips replaced with honest
+"tracked for the next milestone" copy so users no longer read a
+misleading "use CLI in the meantime" hint for verbs that have no
+CLI yet) — see
 [Phase 9 plan](../.cursor/plans/phase_9_office_finish_ca06d725.plan.md).
 
 ## Status legend
@@ -49,18 +54,17 @@ auto-binder swallows "already registered" errors so both can coexist.
 
 | Format | Catalogue entries | Backend handlers | UI-dispatched | Auto-bound MCP tools (approx.) |
 | ------ | ----------------: | ---------------: | ------------: | -----------------------------: |
-| docx   | 88  | 58 | 47 | ~57 |
-| xlsx   | 101 | 64 | 64 | ~83 |
+| docx   | 90  | 60 | 52 | ~59 |
+| xlsx   | 102 | 65 | 65 | ~84 |
 | pptx   | 80  | 60 | 44 | ~58 |
 | pdf    | 47  | 14 | 13 | ~14 |
 
 Parity check: **green** (`scripts/check-action-parity.mjs` reports
-`docx 88 / xlsx 101 / pptx 80 / pdf 47`, violations 0). The PDF
-column moved from `ui-dispatched=0` to `ui-dispatched=13` after
-Phase 9d corrected the script's PDF `uiDirs` path
-(`apps/web/app/pdf-editor` → `apps/web/app/pdf-viewer`) and wired
-`pdf:add-bookmark` / `pdf:set-metadata` / `pdf:reorder-pages`
-through `PdfToolbar` and `PdfSidebar`.
+`docx 90 / xlsx 102 / pptx 80 / pdf 47`, violations 0). Phase 9e
+added two DOCX entries (`docx.insert-bookmark`,
+`docx.delete-bookmark`) plus one XLSX entry
+(`xlsx.remove-duplicates`); each ships with i18n labels and a
+backend handler so the parity gate stays clean.
 
 ## Plan phase status
 
@@ -72,15 +76,15 @@ through `PdfToolbar` and `PdfSidebar`.
 | 1 (pptx) | Insert table+chart, animations gallery + timing, review comments, rotation/geometry fields, hide slide, slide number/date/time | ✅ |
 | 2  | Cross-format staples (Clipboard, Find & Replace, Zoom, Clear formatting, Doc statistics) | ✅ (auto-binder safe; UI primitives partial) |
 | 3a | DOCX layout: margins / orientation / size / columns | ✅ |
-| 3b | DOCX design tab: themes / colors / fonts / page-color / borders / watermark | 🧩 (Phase 9c — ribbon "Entwurf" tab visible with Designs / Seitenfarbe / Seitenränder / Wasserzeichen Coming-soon triggers; backends deferred to follow-up plan) |
-| 3c | DOCX references tab: bookmark / TOC / caption / cross-ref / citation / bibliography | 🧩 (Phase 9c — ribbon "Verweise" tab visible with Lesezeichen / TOC / Beschriftung / Querverweis Coming-soon triggers; backends deferred) |
+| 3b | DOCX design tab: themes / colors / fonts / page-color / borders / watermark | 🧩 (Phase 9e — ribbon "Entwurf" tab is live: Designs / Seitenfarbe / Seitenränder / Wasserzeichen prompt the user and apply session-scoped CSS variables. OOXML round-trip for these visual effects is still tracked for a follow-up plan.) |
+| 3c | DOCX references tab: bookmark / TOC / caption / cross-ref / citation / bibliography | 🧩 (Phase 9e — `docx:insert-bookmark` + `docx:delete-bookmark` shipped end-to-end with `OpaqueInline` round-trip and a References ribbon dialog; TOC, captions and cross-references are live as composed commands that synthesise paragraphs / text inserts. Citation + bibliography still tracked.) |
 | 3d | DOCX image tools: crop / wrap / rotate / flip / reset / effects | 🚧 |
 | 3e | DOCX table tools: merge / split / shading / borders / alignment / styles / distribute / sizing | 🧩 (partial — `docx:set-cell-shading`, `docx:set-cell-alignment`, `docx:set-row-height`, `docx:set-column-width`, `docx:merge-cells-horizontal` shipped to CLI/MCP this session) |
 | 4a | XLSX number group quick buttons + wrap-text | ✅ |
 | 4b | XLSX page layout tab | 🧩 (partial — `xlsx:set-page-setup`, `set-page-margins`, `set-print-options`, `set-print-area`, `set-print-titles` shipped to CLI/MCP this session; sheet-background still pending) |
 | 4c | XLSX formulas tab (function library, auditing, calc mode) | 🧩 (partial — `xlsx:set-calc-mode` + `xlsx:set-show-formulas` shipped to CLI/MCP; function library / precedents-dependents / evaluate still pending) |
-| 4d | XLSX insert depth (chart picker, sparkline, slicer, hyperlink, header/footer) | 🧩 (Phase 9c — Insert tab "Mehr" group with Sparkline / Header-footer / Recommended-Charts Coming-soon triggers; backends deferred) |
-| 4e | XLSX data depth (remove duplicates, multi-sort, advanced filter, group/ungroup, subtotal, goal-seek, flash fill) | 🧩 (Phase 9c — Data tab "Datenwerkzeuge" group with Remove-duplicates / Group / Ungroup / Subtotal / Goal-seek / Flash-fill / Advanced-filter Coming-soon triggers; backends deferred) |
+| 4d | XLSX insert depth (chart picker, sparkline, slicer, hyperlink, header/footer) | 🧩 (Phase 9c — Insert tab "Mehr" group with Sparkline / Header-footer / Recommended-Charts placeholders; tooltips updated in Phase 9e to honest "next milestone" copy.) |
+| 4e | XLSX data depth (remove duplicates, multi-sort, advanced filter, group/ungroup, subtotal, goal-seek, flash fill) | 🧩 (Phase 9e — `xlsx:remove-duplicates` shipped end-to-end with `RemoveDuplicatesDialog`, key-column picker, header toggle, CLI exposure, palette runner and unit tests. Group / Ungroup / Subtotal / Goal-seek / Flash-fill / Advanced-filter still ride the placeholder pattern, now with honest "next milestone" tooltips.) |
 | 4f | XLSX chart tools depth | 🚧 |
 | 5a | PPTX design depth (themes gallery, slide size) | 🧩 (partial — `pptx:set-slide-size` shipped to CLI/MCP; themes gallery still pending) |
 | 5b | PPTX transitions full | 🧩 (partial — `pptx:set-slide-transition` exposed to CLI/MCP/toolbar this session; extended gallery + sound + advance options still pending) |
@@ -97,6 +101,7 @@ through `PdfToolbar` and `PdfSidebar`.
 | 9b | Cheap wins from existing backends — DOCX Tab/Shift+Tab list demote/promote + level picker, in-place footnotes panel; XLSX AutoSum splitter, % / $ / comma / inc-dec-decimal quick buttons, A↑/Z↓ sort, hide/unhide row+col, sheet-tab color (new `xlsx:set-sheet-tab-color`), Insert Function (fx) wizard; PPTX animation drag-reorder; PPTX shape-outline / effects / text-fill / text-outline ribbon shape (Coming-soon — backends deferred to follow-up plan) | ✅ |
 | 9c | Small new features — DOCX Design / References ribbon shape, XLSX Insert / Data depth ribbon shape (all Coming-soon, backends deferred to dedicated plans matching the §3b/§3c/§4d/§4e dependencies); PPTX animation gallery (already driven by `presetsByCategory()`), set-animation-trigger (already wired via `pptx:set-shape-animation`), Animation Painter (UI-only, composes `pptx:add-shape-animation`); PPTX `insert-symbol` (UI-only via `document.execCommand("insertText")` on the focused contenteditable overlay), `set-slide-header-footer` / `add-hyperlink` / `add-action` ribbon shape (Coming-soon) | ✅ |
 | 9d | PDF reader parity sweep — fixed `scripts/check-action-parity.mjs` PDF `uiDirs` path; wired `pdf:add-bookmark`, `pdf:set-metadata`, `pdf:reorder-pages` (drag in thumbnail rail) through `PdfToolbar` / `PdfSidebar` / `PdfMetadataDialog`; updated EN+DE i18n for bookmark / metadata strings; this inventory refreshed | ✅ |
+| 9e | UI parity sweep — DOCX References tab is no longer a row of dead "Coming-soon" buttons: `Lesezeichen` opens the new `BookmarkDialog` driven by `docx:insert-bookmark` / `docx:delete-bookmark` (round-trip via `OpaqueInline`), `TOC` / `Aktualisieren` synthesise `Heading1-9` paragraphs into a "Inhalt" block, `Beschriftung` / `Querverweis` compose `docx:insert-paragraph` + `docx:insert-text`. DOCX Design tab buttons (`Designs`, `Seitenfarbe`, `Seitenränder`, `Wasserzeichen`) now apply session-scoped CSS variables with explicit toasts about persistence. XLSX Data tab "Duplikate entfernen" is fully wired to `xlsx:remove-duplicates` (handler + dialog + CLI + palette runner + 5 unit tests). Remaining placeholder buttons keep the planned ribbon shape but now display honest "tracked for the next milestone" tooltips instead of the misleading "use CLI in the meantime" copy that confused users about what was actually available. Action-parity gate still green. | ✅ |
 
 ## DOCX surfaces
 

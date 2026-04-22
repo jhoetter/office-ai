@@ -60,6 +60,8 @@ export const DOCX_COMMAND_TYPES = [
   "docx:set-row-height",
   "docx:set-column-width",
   "docx:merge-cells-horizontal",
+  "docx:insert-bookmark",
+  "docx:delete-bookmark",
 ] as const;
 
 export type DocxCommandType = (typeof DOCX_COMMAND_TYPES)[number];
@@ -636,4 +638,34 @@ export interface SetProtectionPayload {
   readonly saltValue?: string;
   readonly hashValue?: string;
   readonly spinCount?: number;
+}
+
+/* ── Bookmarks (References tab) ──────────────────────────────────────────── */
+
+/**
+ * `docx:insert-bookmark` — insert a `<w:bookmarkStart>` /
+ * `<w:bookmarkEnd>` pair anchored at flat-text byte offsets inside a
+ * single body paragraph. `name` must satisfy Word's identifier rules
+ * (`[A-Za-z_][\w]*`); duplicate names overwrite the existing anchor.
+ *
+ * Cross-paragraph bookmarks are out of scope for v1 — pass the same
+ * paragraph for both ends and use `endOffset === startOffset` for a
+ * zero-length anchor (Word's "Insert > Bookmark" default when no text
+ * is selected).
+ */
+export interface InsertBookmarkPayload {
+  readonly name: string;
+  readonly paragraphId: string;
+  readonly startOffset: number;
+  readonly endOffset: number;
+}
+
+/**
+ * `docx:delete-bookmark` — strip every `<w:bookmarkStart>` /
+ * `<w:bookmarkEnd>` pair carrying the given `name` from the body. No-op
+ * when the bookmark doesn't exist (idempotent so callers can wire it
+ * to a "remove" affordance without pre-checking).
+ */
+export interface DeleteBookmarkPayload {
+  readonly name: string;
 }

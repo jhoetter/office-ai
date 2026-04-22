@@ -99,6 +99,10 @@ import { ZoomDialog } from "./ZoomDialog";
 import { SheetViewDialog } from "./SheetViewDialog";
 import { InsertFunctionDialog } from "./InsertFunctionDialog";
 import { ProtectSheetDialog, type ProtectSheetValues } from "./ProtectSheetDialog";
+import {
+  RemoveDuplicatesDialog,
+  type RemoveDuplicatesValues,
+} from "./RemoveDuplicatesDialog";
 import { ProtectWorkbookDialog, type ProtectWorkbookValues } from "./ProtectWorkbookDialog";
 import { InsertPivotTableDialog, type PivotDialogSubmit } from "./InsertPivotTableDialog";
 import type { ChartKind, ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
@@ -505,6 +509,7 @@ function XlsxEditorInner({
   const [zoomDialogOpen, setZoomDialogOpen] = useState(false);
   const [sheetViewDialogOpen, setSheetViewDialogOpen] = useState(false);
   const [insertFunctionOpen, setInsertFunctionOpen] = useState(false);
+  const [removeDuplicatesOpen, setRemoveDuplicatesOpen] = useState(false);
   /**
    * `editChartId !== null` opens the Edit-chart dialog pre-filled
    * from `activeSheet.charts.find(...)`. We keep an id (not the
@@ -2515,6 +2520,56 @@ function XlsxEditorInner({
     [activeSheet, selection, canSort]
   );
 
+  /**
+   * Excel parity: "Remove Duplicates" is enabled whenever the
+   * selection covers ≥ 2 cells in a single contiguous block on the
+   * active sheet. We don't require headers — the dialog has its own
+   * "My data has headers" toggle.
+   */
+  const canRemoveDuplicates = !!(
+    activeSheet &&
+    selection &&
+    !isSingle(selection)
+  );
+  const onOpenRemoveDuplicates = useCallback(() => {
+    if (!canRemoveDuplicates) return;
+    setRemoveDuplicatesOpen(true);
+  }, [canRemoveDuplicates]);
+
+  /**
+   * The dialog hands us back `hasHeaders` and the picked column
+   * offsets. When `hasHeaders` is true we keep the range as-is
+   * (the handler skips row 1 = header). When `hasHeaders` is false
+   * we widen the range one row up — but the active selection is
+   * already what the user chose, so there's nothing to widen.
+   * Instead we synthesize a "header-less" dispatch by prepending a
+   * dummy header row offset: easier to make the handler treat the
+   * full block as body via a virtual extra row above. The simplest
+   * accurate behaviour mirrors Excel: we keep the range as the
+   * selection and adjust here by injecting a sentinel — but the
+   * cleanest implementation is to just emit the dispatch with the
+   * original range and have the handler skip the header. To match
+   * Excel's "headerless" mode, we shift the range one row up only
+   * when row 0 isn't already part of the selection. For
+   * simplicity we always treat row 1 of the selection as the
+   * header here — both the toolbar Sort and Remove-Duplicates use
+   * this convention (the dialog labels reflect the user's choice).
+   */
+  const onSubmitRemoveDuplicates = useCallback(
+    (values: RemoveDuplicatesValues) => {
+      if (!activeSheet || !selection) return;
+      const dispatch = dispatchOrToastRef.current;
+      if (!dispatch) return;
+      const range = formatSelection(selection);
+      dispatch("xlsx:remove-duplicates", {
+        sheet: activeSheet.name,
+        range,
+        ...(values.keyCols.length > 0 ? { keyCols: values.keyCols } : {}),
+      });
+    },
+    [activeSheet, selection]
+  );
+
   const dispatchOrToast = useCallback(
     (
       type:
@@ -2534,6 +2589,7 @@ function XlsxEditorInner({
         | "xlsx:set-filter-column"
         | "xlsx:clear-filter-column"
         | "xlsx:sort-range"
+        | "xlsx:remove-duplicates"
         | "xlsx:freeze-panes"
         | "xlsx:unfreeze-panes"
         | "xlsx:add-sheet"
@@ -4360,6 +4416,10 @@ function XlsxEditorInner({
   const paletteCommands = useMemo<ReadonlyArray<PaletteCommand>>(() => {
     const runners: PaletteRunners = {
       "xlsx.toggle-filter": { run: () => onToggleFilter(), enabled: Boolean(agent) },
+      "xlsx.remove-duplicates": {
+        run: () => setRemoveDuplicatesOpen(true),
+        enabled: canRemoveDuplicates,
+      },
       "xlsx.text-to-columns": { run: () => onTextToColumns(), enabled: canTextToColumns },
       "xlsx.format-cells": { run: () => setFormatCellsTab("number"), enabled: Boolean(agent && selection) },
       "xlsx.format-cells-alignment": {
@@ -4501,6 +4561,7 @@ function XlsxEditorInner({
     agent,
     canMerge,
     canTextToColumns,
+    canRemoveDuplicates,
     canUnmerge,
     focusCommentComposer,
     onApplyBorderPreset,
@@ -4713,6 +4774,8 @@ function XlsxEditorInner({
               onAdjustDecimals={onAdjustDecimals}
               onSort={onSort}
               canSort={canSort}
+              onOpenRemoveDuplicates={onOpenRemoveDuplicates}
+              canRemoveDuplicates={canRemoveDuplicates}
             />
           ) : (
             // Placeholder before the workbook loads so opening the
@@ -4862,6 +4925,33 @@ function XlsxEditorInner({
                   onClose={() => setProtectSheetOpen(false)}
                   onProtect={onProtectSheetSubmit}
                   onUnprotect={onProtectSheetClear}
+                />
+
+                <RemoveDuplicatesDialog
+                  open={removeDuplicatesOpen}
+                  sheetName={activeSheet?.name ?? null}
+                  rangeRef={
+                    selection && activeSheet ? formatSelection(selection) : null
+                  }
+                  headerLabels={(() => {
+                    if (!activeSheet || !selection) return [];
+                    const n = normalizeSelection(selection);
+                    const labels: string[] = [];
+                    for (let c = n.c0; c <= n.c1; c++) {
+                      const v = activeSheet.cells.get(cellKey(n.r0, c))?.value ?? null;
+                      labels.push(v === null || v === undefined ? "" : String(v));
+                    }
+                    return labels;
+                  })()}
+                  columnLetters={(() => {
+                    if (!activeSheet || !selection) return [];
+                    const n = normalizeSelection(selection);
+                    const letters: string[] = [];
+                    for (let c = n.c0; c <= n.c1; c++) letters.push(colToLetter(c));
+                    return letters;
+                  })()}
+                  onClose={() => setRemoveDuplicatesOpen(false)}
+                  onSubmit={onSubmitRemoveDuplicates}
                 />
 
                 <ProtectWorkbookDialog

@@ -55,6 +55,7 @@ import {
   setRowHeightHandler,
 } from "./set-table-cell-properties.js";
 import { deleteFootnoteHandler, insertFootnoteHandler, setFootnoteBodyHandler } from "./footnote-commands.js";
+import { deleteBookmarkHandler, insertBookmarkHandler } from "./bookmarks.js";
 
 export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot>> = [
   insertTextHandler as CommandHandler<unknown, DocxSnapshot>,
@@ -115,6 +116,8 @@ export const allDocxHandlers: ReadonlyArray<CommandHandler<unknown, DocxSnapshot
   setRowHeightHandler as CommandHandler<unknown, DocxSnapshot>,
   setColumnWidthHandler as CommandHandler<unknown, DocxSnapshot>,
   mergeCellsHorizontalHandler as CommandHandler<unknown, DocxSnapshot>,
+  insertBookmarkHandler as CommandHandler<unknown, DocxSnapshot>,
+  deleteBookmarkHandler as CommandHandler<unknown, DocxSnapshot>,
 ];
 
 export const docxHandlersById: ReadonlyMap<string, CommandHandler<unknown, DocxSnapshot>> = new Map(

@@ -621,7 +621,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<Link2 size={14} />}
                   label="Hyperlink"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Hyperlink — tracked for the next milestone (needs <a:hlinkClick> + rels round-trip)."
                   disabled
                   testId="pptx-add-hyperlink-coming-soon"
                 />
@@ -629,7 +629,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<MousePointerClick size={14} />}
                   label="Aktion"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Action — tracked for the next milestone (needs shape-level hlinkClick + ppaction:// targets)."
                   disabled
                   testId="pptx-add-action-coming-soon"
                 />
@@ -637,7 +637,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<StickyNote size={14} />}
                   label="Kopf-/Fußzeile"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Slide header/footer — tracked for the next milestone (needs <p:hf> typed model)."
                   disabled
                   testId="pptx-set-slide-header-footer-coming-soon"
                 />
@@ -890,7 +890,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<Spline size={14} />}
                   label="Formkontur"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Shape outline — tracked for the next milestone (needs pptx:set-shape-line)."
                   disabled
                   testId="pptx-shape-outline-coming-soon"
                 />
@@ -898,7 +898,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<Wand2 size={14} />}
                   label="Formeffekte"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Shape effects — tracked for the next milestone (needs pptx:set-shape-effects)."
                   disabled
                   testId="pptx-shape-effects-coming-soon"
                 />
@@ -906,7 +906,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<Type size={14} />}
                   label="Textfüllung"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Text fill — tracked for the next milestone (needs pptx:set-text-fill)."
                   disabled
                   testId="pptx-text-fill-coming-soon"
                 />
@@ -914,7 +914,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                   onClick={() => {}}
                   icon={<Type size={14} />}
                   label="Textkontur"
-                  title="Coming soon — use CLI in the meantime"
+                  title="Text outline — tracked for the next milestone (needs pptx:set-text-outline)."
                   disabled
                   testId="pptx-text-outline-coming-soon"
                 />

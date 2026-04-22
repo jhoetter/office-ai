@@ -1050,6 +1050,14 @@
         "label": "Bild einfügen",
         "description": "Fügt ein Inline-Bild an einer Position ein. Liest die Bilddaten aus --image."
       },
+      "insert-bookmark": {
+        "label": "Lesezeichen einfügen",
+        "description": "Fügt ein benanntes Lesezeichen an der aktuellen Auswahl ein (Absatz + Flachtext-Offsets)."
+      },
+      "delete-bookmark": {
+        "label": "Lesezeichen löschen",
+        "description": "Entfernt ein benanntes Lesezeichen aus dem Dokument."
+      },
       "insert-chart": {
         "label": "Diagramm einfügen",
         "description": "Fügt ein Inline-Diagramm an einer Position ein. Bettet eine .xlsx-Arbeitsmappe ein, damit „Daten bearbeiten“ in Word funktioniert."
@@ -1503,6 +1511,10 @@
       "sort-range": {
         "label": "Bereich sortieren",
         "description": "Sortiert die Zeilen eines Bereichs (ohne Kopfzeile) nach einer einzelnen Spalte."
+      },
+      "remove-duplicates": {
+        "label": "Duplikate entfernen",
+        "description": "Entfernt doppelte Zeilen aus einem Bereich basierend auf den ausgewählten Schlüsselspalten (Kopfzeile bleibt erhalten)."
       },
       "set-wrap-text": {
         "label": "Zeilenumbruch umschalten",

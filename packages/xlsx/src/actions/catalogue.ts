@@ -842,6 +842,34 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     }),
   },
   {
+    id: "xlsx.remove-duplicates",
+    commandType: "xlsx:remove-duplicates",
+    label: "Remove duplicates",
+    description: "Remove duplicate rows from a range based on selected key columns (header row preserved).",
+    section: "Data",
+    surfaces: ["cli", "palette", "toolbar"],
+    icon: "CopyMinus",
+    args: [
+      { name: "sheet", flag: "--sheet <name>", kind: "string", required: true, description: "Target sheet name" },
+      { name: "range", flag: "--range <a1>", kind: "string", required: true, description: 'A1 range; the first row is treated as the header (e.g. "A1:E25")' },
+      { name: "keyCols", flag: "--key-cols <list>", kind: "string", required: false, description: "Comma-separated 0-based column offsets to compare (default: all columns)" },
+    ],
+    buildPayload: ({ sheet, range, keyCols }) => {
+      const rawKeys = typeof keyCols === "string" ? keyCols : "";
+      const parsedKeys = rawKeys
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n));
+      return {
+        sheet: String(sheet),
+        range: String(range),
+        ...(parsedKeys.length > 0 ? { keyCols: parsedKeys } : {}),
+      };
+    },
+  },
+  {
     id: "xlsx.paste-range",
     commandType: "xlsx:paste-range",
     label: "Paste range",

@@ -68,3 +68,9 @@ export {
   type SetFootnoteBodyPayload,
   type DeleteFootnotePayload,
 } from "./footnote-commands.js";
+export {
+  insertBookmarkHandler,
+  deleteBookmarkHandler,
+  listBookmarks,
+  type BookmarkAnchor,
+} from "./bookmarks.js";

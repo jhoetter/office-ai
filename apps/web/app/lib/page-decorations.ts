@@ -269,6 +269,30 @@ function remeasureAndForce(
   view.dispatch(tr);
 }
 
+/**
+ * Per-process counter assigning each {@link HeaderFooterPart} object a
+ * stable numeric id. We use it to stamp PM widget keys for the
+ * header/footer bands so PM busts its widget DOM cache when the
+ * snapshot's part identity changes (mint, body update, target swap).
+ *
+ * Without this, the bands keep their old `key` (`page-header-band-1`)
+ * after a `docx:create-header-footer-part` mint, PM treats the
+ * decoration as identical, never re-runs `renderHeaderBand`, and the
+ * "no part" zone never swaps for the freshly editable one — Word's
+ * "double-click-the-header" affordance silently no-ops.
+ */
+const PART_ID_CACHE = new WeakMap<HeaderFooterPart, number>();
+let nextPartId = 1;
+function partKey(part: HeaderFooterPart | undefined): string {
+  if (!part) return "none";
+  let id = PART_ID_CACHE.get(part);
+  if (id === undefined) {
+    id = nextPartId++;
+    PART_ID_CACHE.set(part, id);
+  }
+  return `${part.partPath}#${id}`;
+}
+
 function buildDecorations(
   snapshot: DocxSnapshot,
   chunks: ReadonlyArray<PageChunk>,
@@ -359,12 +383,15 @@ function buildDecorations(
     // the footnote lane (until per-page footnote distribution
     // lands).
 
-    // Header band for THIS chunk.
+    // Header band for THIS chunk. The key embeds the resolved part's
+    // identity so PM busts the widget DOM cache when the part is
+    // minted / swapped / replaced — see {@link partKey}.
+    const headerKey = `page-header-band-${chunk.pageNumber}-${partKey(headerPart)}`;
     if (i === 0) {
       decos.push(
         Decoration.widget(0, () => renderHeaderBand(chunk, headerPart, "first"), {
           side: -1,
-          key: `page-header-band-${chunk.pageNumber}`,
+          key: headerKey,
         })
       );
     } else {
@@ -373,7 +400,7 @@ function buildDecorations(
         decos.push(
           Decoration.widget(insertAt, () => renderHeaderBand(chunk, headerPart, "mid"), {
             side: 0,
-            key: `page-header-band-${chunk.pageNumber}`,
+            key: headerKey,
           })
         );
       }
@@ -420,7 +447,7 @@ function buildDecorations(
         () => renderFooterBand(chunk, footerPart, isLastChunk ? "last" : "mid", laneFootnotes),
         {
           side: -2,
-          key: `page-footer-band-${chunk.pageNumber}-fn:${laneKey}`,
+          key: `page-footer-band-${chunk.pageNumber}-fn:${laneKey}-${partKey(footerPart)}`,
         }
       )
     );

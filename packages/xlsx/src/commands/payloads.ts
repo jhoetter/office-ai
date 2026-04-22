@@ -531,6 +531,27 @@ export interface SortRangePayload {
   };
 }
 
+/**
+ * `xlsx:remove-duplicates` — Excel's "Data ▸ Remove Duplicates"
+ * command. Walks the body rows of `range` (skipping the header row)
+ * and collapses rows whose values across `keyCols` match a
+ * previously-seen row. Survivors are repacked into the top of the
+ * range; trailing rows are cleared.
+ *
+ * `keyCols` are 0-based offsets from the range's first column. When
+ * empty / omitted, every column inside the range is used (Excel's
+ * "Select All" default).
+ *
+ * String comparison is case-insensitive (matches Excel); numbers,
+ * booleans and errors compare strictly; blanks collapse together.
+ */
+export interface RemoveDuplicatesPayload {
+  readonly sheet: string;
+  readonly range: string;
+  readonly keyCols?: ReadonlyArray<number>;
+}
+
+
 /* ── Images (raster, free-floating overlays) ─────────────────────────────
  * v1 only authors `editAs="oneCell"` — images move with cells but do
  * not size with cells. Anchor + dimensions live in CSS pixels in the
