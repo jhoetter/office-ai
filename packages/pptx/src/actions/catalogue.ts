@@ -246,10 +246,6 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
       "Tune a preset shape's geometry parameter (corner radius, arrow head size, etc.) by writing into a:avLst > a:gd.",
     section: "Format",
     surfaces: ["palette"],
-    hidden: {
-      reason:
-        "Driven by on-canvas adjustment handles + the Shape Format properties panel; CLI exposure is deferred until the slider UI ships.",
-    },
   },
   {
     id: "pptx.reorder-shape",
@@ -268,6 +264,15 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     section: "Edit",
     surfaces: ["palette"],
     hidden: { reason: "Reached via the shape context menu / Cmd+D." },
+  },
+  {
+    id: "pptx.paste-shapes",
+    commandType: "pptx:paste-shapes",
+    label: "Paste shapes",
+    description: "Paste shapes copied from another slide or deck onto the current slide.",
+    section: "Edit",
+    surfaces: ["palette"],
+    hidden: { reason: "Reached via Cmd+V on the slide canvas." },
   },
   {
     id: "pptx.group-shapes",

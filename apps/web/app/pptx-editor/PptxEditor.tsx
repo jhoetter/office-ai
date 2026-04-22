@@ -30,8 +30,10 @@ import {
 import { buildBlankPptx, buildSamplePptx } from "@/lib/sample-pptx";
 import { PptxToolbar } from "./PptxToolbar";
 import { ConnectorContextBar, type ConnectorAction, type ConnectorStylePatch } from "./ConnectorContextBar";
+import { ShapeGeometryContextBar, shapeHasAdjustableGeometry } from "./ShapeGeometryContextBar";
 import { PresentMode } from "./PresentMode";
 import { AnimationsPanel } from "./AnimationsPanel";
+import { MasterPanel } from "./MasterPanel";
 import { computePptxActive, createPptxFormatProvider } from "./pptxFormatProvider";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { handleUndoRedo, isFormField } from "@/lib/undo-redo";
@@ -73,7 +75,13 @@ import {
   snapshotToSlideSvg,
   snapshotToSvgZip,
 } from "./lib/export-images";
-import { EMBED_MIME, isEmbedEnabled, parseEnvelope } from "@/lib/embed/envelope";
+import {
+  EMBED_MIME,
+  isEmbedEnabled,
+  makeEnvelope,
+  parseEnvelope,
+  serializeEnvelope,
+} from "@/lib/embed/envelope";
 import { applyXlsxRangeToPptx } from "@/lib/embed/applyXlsxRangeToPptx";
 import { applyXlsxEmbed } from "@/lib/embed/xlsxEmbedShared";
 import type { XlsxEmbedMode } from "@/lib/embed/xlsxEmbedShared";
@@ -286,6 +294,18 @@ const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
   "image/bmp",
   "image/webp",
   "image/svg+xml",
+]);
+
+// MIME allowlists kept in sync with `pptx:insert-media`'s VIDEO_MIME /
+// AUDIO_MIME tables (packages/pptx/src/commands/insert-media.ts). The
+// command would reject unsupported types anyway; gating client-side
+// gives us a friendlier toast than the raw "invalid-payload" error.
+const SUPPORTED_VIDEO_MIME: ReadonlySet<string> = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const SUPPORTED_AUDIO_MIME: ReadonlySet<string> = new Set([
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/ogg",
 ]);
 
 export interface PptxEditorProps {
@@ -623,11 +643,23 @@ function PptxEditorInner({
     return () => window.removeEventListener("keydown", onKey);
   }, [activeIndex, selectedShapeIds]);
 
-  // Cross-format embed paste (XLSX → PPTX text box). Gated on the
-  // NEXT_PUBLIC_OAI_EMBED flag. Lives on `window` rather than a
-  // canvas-scoped element because the slide canvas itself doesn't
-  // own a tab-focusable host (selection is mouse-driven), and the
-  // paste shortcut should land on whichever slide is active.
+  // Clipboard handlers for the PPTX canvas — both intra-deck shape
+  // copy/cut/paste and the existing cross-format XLSX → PPTX paste.
+  // Bound to the `window` rather than a canvas-scoped element because
+  // the slide surface doesn't own a tab-focusable host (selection is
+  // mouse-driven) and the shortcut should always land on whichever
+  // slide is currently active.
+  //
+  // Copy / cut: when one or more shapes are selected and the user is
+  // *not* editing text inside a contenteditable / form field, we
+  // serialise the selected shapes onto the clipboard via our embed
+  // envelope (`pptx-shapes` payload). The browser's default text-
+  // copy behaviour is preserved when text is selected inside an
+  // editable region — we explicitly bail out in that case.
+  //
+  // Paste: dispatched against the embed envelope first; falls back to
+  // ignoring the event so the browser's native handlers (image
+  // paste, plain text into a focused text box) keep working.
   useEffect(() => {
     if (!isEmbedEnabled()) return;
     const isFormField = (target: EventTarget | null): boolean => {
@@ -637,44 +669,323 @@ function PptxEditorInner({
       if (target.isContentEditable) return true;
       return false;
     };
-    const onPaste = (e: ClipboardEvent) => {
-      if (isFormField(e.target)) return;
-      const raw = e.clipboardData?.getData(EMBED_MIME);
-      const env = parseEnvelope(raw);
-      if (!env || env.payload.kind !== "xlsx-range") return;
-      const agent = agentRef.current;
-      if (!agent) return;
-      e.preventDefault();
-      e.stopPropagation();
+
+    // Shape kinds we know how to round-trip through the clipboard
+    // today. See `paste-shapes.ts` for the matching whitelist on the
+    // command side. Pictures / charts / OLE / media require part
+    // copying which we deliberately don't do here — same-deck
+    // duplication of those is available via Cmd+D.
+    const isCopyable = (s: Shape): boolean => {
+      switch (s.kind) {
+        case "text":
+        case "table":
+        case "connector":
+          return true;
+        case "group":
+          return s.children.every(isCopyable);
+        case "pic":
+        case "chart":
+        case "ole-spreadsheet":
+        case "media":
+        case "opaque":
+          return false;
+      }
+    };
+
+    const collectSelectedShapes = (): {
+      shapes: Shape[];
+      skipped: number;
+      slideIndex: number;
+    } | null => {
+      const a = agentRef.current;
+      if (!a) return null;
       const slideIndex = slideIndexRef.current;
-      const payload = env.payload;
-      // Alt held → embed as a live OLE Excel object instead of a
-      // materialised table. Mirrors PowerPoint's "Paste Special →
-      // Microsoft Excel Worksheet Object" shortcut so power users
-      // can opt-in without round-tripping through a dialog. Alt
-      // state is tracked separately because `ClipboardEvent`
-      // doesn't expose modifier keys directly.
-      const mode = isAltKeyPressed() ? "live" : "materialized";
+      const slide = a.getSnapshot().root.slides[slideIndex];
+      if (!slide) return null;
+      const ids = selectedShapeIds;
+      if (ids.length === 0) return null;
+      const shapes: Shape[] = [];
+      let skipped = 0;
+      for (const id of ids) {
+        const s = findShape(slide.shapes, id);
+        if (!s) continue;
+        if (isCopyable(s)) shapes.push(s);
+        else skipped++;
+      }
+      if (shapes.length === 0) return null;
+      return { shapes, skipped, slideIndex };
+    };
+
+    const writeShapesToClipboard = (
+      e: ClipboardEvent,
+      collected: { shapes: Shape[]; skipped: number; slideIndex: number }
+    ): boolean => {
+      if (!e.clipboardData) return false;
+      const env = makeEnvelope("pptx", {
+        kind: "pptx-shapes",
+        shapes: collected.shapes,
+        originLabel: `Slide ${collected.slideIndex + 1}`,
+      });
+      try {
+        e.clipboardData.setData(EMBED_MIME, serializeEnvelope(env));
+        // Also paint a plain-text fallback so external apps (email,
+        // notes) get something readable. We collapse text shapes to
+        // their concatenated paragraphs and skip non-text shapes.
+        const fallback = collected.shapes
+          .map((s) => (s.kind === "text" ? textShapePlain(s) : ""))
+          .filter((t) => t.length > 0)
+          .join("\n");
+        if (fallback) e.clipboardData.setData("text/plain", fallback);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Sidebar-targeted copy/paste promotes the operation from
+    // shape-level to slide-level. We only need to know that the event
+    // landed inside the sidebar because that's where Word / PowerPoint
+    // route their "duplicate slide" Cmd+C/Cmd+V chord. The marker is a
+    // `data-testid="pptx-sidebar"` on the aside; checking
+    // `closest()` is enough because every sidebar element bubbles
+    // through it. Returns the source slide INDEX in the sidebar's
+    // current list (which, by construction, equals the model index).
+    const sidebarSlideIndexFromEvent = (target: EventTarget | null): number | null => {
+      if (!(target instanceof HTMLElement)) return null;
+      const aside = target.closest('[data-testid="pptx-sidebar"]');
+      if (!aside) return null;
+      // Prefer the explicit slide marker if the user clicked a
+      // thumbnail; otherwise fall back to the active slide so a
+      // sidebar-scoped Cmd+C with no thumbnail focus still copies the
+      // currently-displayed slide.
+      const thumb = target.closest<HTMLElement>("[data-slide-index]");
+      if (thumb) {
+        const v = Number.parseInt(thumb.dataset.slideIndex ?? "", 10);
+        if (Number.isFinite(v) && v >= 0) return v;
+      }
+      return slideIndexRef.current;
+    };
+
+    const writeSlideToClipboard = (e: ClipboardEvent, slideIndex: number): boolean => {
+      if (!e.clipboardData) return false;
+      const a = agentRef.current;
+      if (!a) return false;
+      const slide = a.getSnapshot().root.slides[slideIndex];
+      if (!slide) return false;
+      const env = makeEnvelope("pptx", {
+        kind: "pptx-slide-ref",
+        slideIndex,
+        sessionId: a.sessionId ?? "unknown",
+        originLabel: `Slide ${slideIndex + 1}`,
+      });
+      try {
+        e.clipboardData.setData(EMBED_MIME, serializeEnvelope(env));
+        e.clipboardData.setData("text/plain", `Slide ${slideIndex + 1}`);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const onCopy = (e: ClipboardEvent) => {
+      if (isFormField(e.target)) return;
+      const sidebarSlide = sidebarSlideIndexFromEvent(e.target);
+      if (sidebarSlide !== null) {
+        if (!writeSlideToClipboard(e, sidebarSlide)) return;
+        e.preventDefault();
+        pushToast("info", `Copied slide ${sidebarSlide + 1}`);
+        return;
+      }
+      const collected = collectSelectedShapes();
+      if (!collected) return;
+      if (!writeShapesToClipboard(e, collected)) return;
+      e.preventDefault();
+      const n = collected.shapes.length;
+      const skippedNote =
+        collected.skipped > 0
+          ? ` (${collected.skipped} unsupported shape${collected.skipped === 1 ? "" : "s"} skipped)`
+          : "";
+      pushToast("info", `Copied ${n} shape${n === 1 ? "" : "s"}${skippedNote}`);
+    };
+
+    const onCut = (e: ClipboardEvent) => {
+      if (isFormField(e.target)) return;
+      const sidebarSlide = sidebarSlideIndexFromEvent(e.target);
+      if (sidebarSlide !== null) {
+        // Cut on a slide thumbnail = copy + delete. Refuse to delete
+        // the only slide so the deck stays valid.
+        const a = agentRef.current;
+        if (!a) return;
+        const slides = a.getSnapshot().root.slides;
+        if (slides.length <= 1) {
+          pushToast("error", "Can't cut the only slide");
+          return;
+        }
+        if (!writeSlideToClipboard(e, sidebarSlide)) return;
+        e.preventDefault();
+        void (async () => {
+          try {
+            await a.applyCommand({
+              type: "pptx:delete-slide",
+              payload: { slideIndex: sidebarSlide },
+              source: "human",
+            });
+            pushToast("info", `Cut slide ${sidebarSlide + 1}`);
+          } catch (err) {
+            pushToast("error", err instanceof Error ? err.message : String(err));
+          }
+        })();
+        return;
+      }
+      const collected = collectSelectedShapes();
+      if (!collected) return;
+      if (!writeShapesToClipboard(e, collected)) return;
+      e.preventDefault();
+      const a = agentRef.current;
+      if (!a) return;
+      const slideIndex = collected.slideIndex;
+      const ids = collected.shapes.map((s) => s.id);
       void (async () => {
         try {
-          await applyXlsxRangeToPptx({
-            agent,
-            snapshot: payload.snapshot,
-            slideIndex,
-            mode,
-          });
+          for (const id of ids) {
+            await a.applyCommand({
+              type: "pptx:delete-shape",
+              payload: { slideIndex, shapeId: id },
+              source: "human",
+            });
+          }
+          setSelectedShapeIds([]);
+          const n = ids.length;
+          pushToast("info", `Cut ${n} shape${n === 1 ? "" : "s"}`);
         } catch (err) {
           pushToast("error", err instanceof Error ? err.message : String(err));
         }
       })();
     };
+
+    const onPaste = (e: ClipboardEvent) => {
+      if (isFormField(e.target)) return;
+      const raw = e.clipboardData?.getData(EMBED_MIME);
+      const env = parseEnvelope(raw);
+      if (!env) return;
+      const agent = agentRef.current;
+      if (!agent) return;
+      const slideIndex = slideIndexRef.current;
+      const payload = env.payload;
+      switch (payload.kind) {
+        case "xlsx-range": {
+          e.preventDefault();
+          e.stopPropagation();
+          // Alt held → embed as a live OLE Excel object instead of a
+          // materialised table. Mirrors PowerPoint's "Paste Special →
+          // Microsoft Excel Worksheet Object" shortcut so power users
+          // can opt-in without round-tripping through a dialog.
+          const mode = isAltKeyPressed() ? "live" : "materialized";
+          void (async () => {
+            try {
+              await applyXlsxRangeToPptx({
+                agent,
+                snapshot: payload.snapshot,
+                slideIndex,
+                mode,
+              });
+            } catch (err) {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            }
+          })();
+          return;
+        }
+        case "pptx-shapes": {
+          e.preventDefault();
+          e.stopPropagation();
+          void (async () => {
+            try {
+              const before = agent.getSnapshot().root.slides[slideIndex]?.shapes.length ?? 0;
+              await agent.applyCommand({
+                type: "pptx:paste-shapes",
+                payload: { slideIndex, shapes: payload.shapes },
+                source: "human",
+              });
+              const slide = agent.getSnapshot().root.slides[slideIndex];
+              if (slide) {
+                const newIds = slide.shapes.slice(before).map((s) => s.id);
+                if (newIds.length > 0) setSelectedShapeIds(newIds);
+              }
+              const n = payload.shapes.length;
+              pushToast("info", `Pasted ${n} shape${n === 1 ? "" : "s"}`);
+            } catch (err) {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            }
+          })();
+          return;
+        }
+        case "xlsx-chart-image": {
+          // Charts paste as PNG; the image-insert path already handles
+          // generic image clipboard data, so we let the existing
+          // window paste handler pick it up rather than duplicating
+          // the insert-image flow here.
+          return;
+        }
+        case "pptx-slide-ref": {
+          // Same-session slide paste: route through the typed
+          // `pptx:duplicate-slide` command so all the slide-level
+          // bookkeeping (rels, content types, idGen) stays under one
+          // codepath. Cross-session paste (different agent / different
+          // browser tab) is intentionally a no-op for now — moving a
+          // full slide across documents requires copying media + chart
+          // parts which is its own workstream.
+          if (payload.sessionId !== (agent.sessionId ?? "unknown")) {
+            pushToast(
+              "info",
+              "Cross-document slide paste isn't supported yet — open both decks in the same session."
+            );
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          void (async () => {
+            try {
+              await agent.applyCommand({
+                type: "pptx:duplicate-slide",
+                payload: { slideIndex: payload.slideIndex },
+                source: "human",
+              });
+              // duplicate-slide inserts the clone right after the
+              // source. Move it to sit immediately after the *active*
+              // slide so paste lands where the user is looking — that
+              // matches PowerPoint's behaviour and the deck stays in a
+              // predictable order even if the source was elsewhere.
+              const after = payload.slideIndex + 1;
+              const target = slideIndexRef.current + 1;
+              if (after !== target) {
+                await agent.applyCommand({
+                  type: "pptx:move-slide",
+                  payload: { from: after, to: target },
+                  source: "human",
+                });
+              }
+              setActiveIndex(Math.min(target, agent.getSnapshot().root.slides.length - 1));
+              pushToast("info", `Pasted slide ${payload.slideIndex + 1}`);
+            } catch (err) {
+              pushToast("error", err instanceof Error ? err.message : String(err));
+            }
+          })();
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("copy", onCopy);
+    window.addEventListener("cut", onCut);
     window.addEventListener("paste", onPaste);
     const uninstallAlt = installAltKeyTracker();
     return () => {
+      window.removeEventListener("copy", onCopy);
+      window.removeEventListener("cut", onCut);
       window.removeEventListener("paste", onPaste);
       uninstallAlt();
     };
-  }, [pushToast]);
+  }, [pushToast, selectedShapeIds]);
 
   const handleFile = useCallback(
     async (file: File, handle?: FileSystemFileHandle) => {
@@ -908,16 +1219,25 @@ function PptxEditorInner({
     return null;
   }, [activeTextShape]);
 
+  // Default layout for new slides — driven by the Master panel.
+  // `null` keeps PowerPoint-equivalent "auto" behaviour (the
+  // `pptx:add-slide` command picks based on what the deck has). When
+  // the user explicitly opts into a layout from the Master panel,
+  // every subsequent New-slide click respects that choice until they
+  // reset back to auto.
+  const [defaultLayoutKind, setDefaultLayoutKind] = useState<LayoutKindPayload | null>(null);
+
   const addSlide = useCallback(async () => {
     const a = agentRef.current;
     if (!a) return;
     try {
-      await a.applyCommand({ type: "pptx:add-slide", payload: {}, source: "human" });
+      const payload = defaultLayoutKind ? { layoutKind: defaultLayoutKind } : {};
+      await a.applyCommand({ type: "pptx:add-slide", payload, source: "human" });
       setActiveIndex(a.getSnapshot().root.slides.length - 1);
     } catch (err) {
       onError(err);
     }
-  }, [onError]);
+  }, [defaultLayoutKind, onError]);
 
   const addSlideWithLayout = useCallback(
     async (kind: LayoutKindPayload) => {
@@ -1467,6 +1787,66 @@ function PptxEditorInner({
   );
 
   /**
+   * Insert an embedded video / audio file on the active slide via
+   * `pptx:insert-media`. Mirrors `insertImage`: validate the MIME
+   * client-side (the command rejects unsupported types anyway, but a
+   * toast reads better than an "invalid-payload" trace), centre the
+   * default-sized box on the slide, and select the freshly-stamped
+   * `MediaShape` so the user can immediately drag/move it.
+   */
+  const insertMedia = useCallback(
+    async (file: File) => {
+      const a = agentRef.current;
+      if (!a) return;
+      const mime = (file.type || "").toLowerCase();
+      let mediaType: "video" | "audio";
+      if (SUPPORTED_VIDEO_MIME.has(mime)) {
+        mediaType = "video";
+      } else if (SUPPORTED_AUDIO_MIME.has(mime)) {
+        mediaType = "audio";
+      } else if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+        pushToast(
+          "error",
+          `Unsupported media type "${mime}". Use MP4, WebM, MOV (video) or MP3, M4A, WAV, OGG (audio).`
+        );
+        return;
+      } else {
+        pushToast("error", `"${file.name}" isn't a video or audio file.`);
+        return;
+      }
+      try {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        // Default sizes per spec: 4 inch wide for video (16:9), 2 inch
+        // wide for audio (rendered as a small bar). 1 in = 914400 EMU.
+        const widthEmu = mediaType === "video" ? 4 * 914_400 : 2 * 914_400;
+        const heightEmu = mediaType === "video" ? Math.round((widthEmu * 9) / 16) : Math.round(0.6 * 914_400);
+        const xEmu = Math.max(0, Math.round((slideSize.cxEmu - widthEmu) / 2));
+        const yEmu = Math.max(0, Math.round((slideSize.cyEmu - heightEmu) / 2));
+        await a.applyCommand({
+          type: "pptx:insert-media",
+          payload: {
+            slideIndex: activeIndex,
+            mediaType,
+            contentType: mime,
+            bytes,
+            position: { xEmu, yEmu },
+            size: { cxEmu: widthEmu, cyEmu: heightEmu },
+            name: file.name,
+          },
+          source: "human",
+        });
+        const s = a.getSnapshot().root.slides[activeIndex];
+        const last = s?.shapes[s.shapes.length - 1];
+        if (last) setSelectedShapeIds([last.id]);
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError, pushToast, slideSize.cxEmu, slideSize.cyEmu]
+  );
+
+  /**
    * D9 — replace the bitmap behind the currently selected `Picture`
    * with a user-picked file. Position, size, alt-text, and any
    * `spPrTail` styling are preserved by `pptx:replace-picture-media`.
@@ -1991,6 +2371,27 @@ function PptxEditorInner({
     [activeIndex, onError, selectedShapeId]
   );
 
+  // Dispatcher behind the floating geometry bar's `<input type="range">`.
+  // One command per adjustment (mirrors PowerPoint's yellow-handle drag
+  // committing a single `<a:gd>` write at mouseup) so the undo stack
+  // stays one-entry-per-tweak.
+  const setShapeGeometry = useCallback(
+    async (shapeId: string, adjName: string, value: number) => {
+      const a = agentRef.current;
+      if (!a) return;
+      try {
+        await a.applyCommand({
+          type: "pptx:set-shape-geometry",
+          payload: { slideIndex: activeIndex, shapeId, adjName, value },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [activeIndex, onError]
+  );
+
   const setTextAlignment = useCallback(
     async (alignment: "left" | "center" | "right" | "justify" | null) => {
       const a = agentRef.current;
@@ -2453,11 +2854,21 @@ function PptxEditorInner({
             />
           )
         : undefined,
+      renderMasterPanel: snap
+        ? () => (
+            <MasterPanel
+              snapshot={snap}
+              defaultLayoutKind={defaultLayoutKind}
+              onChangeDefaultLayout={setDefaultLayoutKind}
+            />
+          )
+        : undefined,
       onAddComment: focusCommentComposer,
     }),
     [
       activeIndex,
       addShapeAnimation,
+      defaultLayoutKind,
       docName,
       focusCommentComposer,
       handleExport,
@@ -2537,6 +2948,7 @@ function PptxEditorInner({
             onAddConnector={(t) => startConnectorTool(t)}
             connectorToolType={connectorTool?.type ?? null}
             onInsertImage={(f) => void insertImage(f)}
+            onInsertMedia={(f) => void insertMedia(f)}
             onInsertFromXlsx={() => setXlsxPickerOpen("materialized")}
             onReplacePicture={(f) => void replaceSelectedPicture(f)}
             selectedIsPicture={selectedShape?.kind === "pic"}
@@ -2560,6 +2972,9 @@ function PptxEditorInner({
             canPresent={ready && slides.length > 0}
             onToggleNotes={() => setNotesOpen((v) => !v)}
             notesOpen={notesOpen}
+            currentTransitionKind={slides[activeIndex]?.transition?.kind ?? "none"}
+            currentTransitionSpeed={slides[activeIndex]?.transition?.speed ?? null}
+            onSetSlideTransition={(kind, speed) => void setSlideTransition(kind, speed)}
           />
         }
         statusBarLeft={
@@ -2668,6 +3083,19 @@ function PptxEditorInner({
                             connector={selectedShape}
                             onPatch={(patch) => void applyConnectorStylePatch(selectedShape.id, patch)}
                             onAction={(action) => void applyConnectorAction(selectedShape.id, action)}
+                          />
+                        </div>
+                      ) : null}
+                      {selectedShape &&
+                      selectedShape.kind === "text" &&
+                      selectedShapeIds.length === 1 &&
+                      shapeHasAdjustableGeometry(selectedShape) ? (
+                        <div className="pointer-events-auto absolute left-1/2 top-2 z-20 -translate-x-1/2">
+                          <ShapeGeometryContextBar
+                            shape={selectedShape}
+                            onChange={(adjName, value) =>
+                              void setShapeGeometry(selectedShape.id, adjName, value)
+                            }
                           />
                         </div>
                       ) : null}
@@ -2789,6 +3217,16 @@ function NotesPanel(props: NotesPanelProps): React.ReactNode {
       />
     </section>
   );
+}
+
+function textShapePlain(shape: Shape): string {
+  if (shape.kind !== "text") return "";
+  const lines: string[] = [];
+  for (const p of shape.txBody.paragraphs) {
+    const text = p.runs.map((r) => r.text).join("");
+    lines.push(text);
+  }
+  return lines.join("\n");
 }
 
 function findShape(shapes: ReadonlyArray<Shape>, id: string): Shape | null {

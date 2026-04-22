@@ -42,6 +42,7 @@ import {
   parseA1,
   parseRange,
   tokenizeForDisplay,
+  type Cell,
   type CellFormatPatch,
   type CellValue,
   type DisplayToken,
@@ -89,6 +90,7 @@ import { DataValidationDialog } from "./DataValidationDialog";
 import { NameBox } from "./NameBox";
 import { NameManagerDialog } from "./NameManagerDialog";
 import { ChartDialog, InsertChartDialog } from "./InsertChartDialog";
+import { InsertPivotTableDialog, type PivotDialogSubmit } from "./InsertPivotTableDialog";
 import type { ChartKind, ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
 import { useShortcutsDialog } from "@/lib/shortcuts/useShortcutsDialog";
 import { KeyboardShortcutsDialog } from "@/lib/shortcuts/KeyboardShortcutsDialog";
@@ -389,6 +391,7 @@ function XlsxEditorInner({
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [selectedChartId, setSelectedChartId] = useState<string | null>(null);
   const [insertChartOpen, setInsertChartOpen] = useState(false);
+  const [insertPivotOpen, setInsertPivotOpen] = useState(false);
   /**
    * `editChartId !== null` opens the Edit-chart dialog pre-filled
    * from `activeSheet.charts.find(...)`. We keep an id (not the
@@ -651,6 +654,22 @@ function XlsxEditorInner({
     if (!snapshot || !activeSheetName) return null;
     return snapshot.root.sheets.find((s) => s.name === activeSheetName) ?? null;
   }, [snapshot, activeSheetName]);
+
+  // Pivot tables anchored on the active sheet. Phase 1 of the pivot
+  // work treats them as read-only — `Grid` paints a tinted rectangle
+  // + dashed outline + name badge over each pivot's `location.ref`
+  // so the user can see pivot output as something other than a
+  // static range, even though the underlying cells already carry the
+  // cached values Excel wrote. We filter by `sheetId` (set at parse
+  // time from the rels graph) rather than name so renaming a sheet
+  // wouldn't break the linkage.
+  const pivotsForActiveSheet = useMemo(() => {
+    if (!snapshot || !activeSheet) return undefined;
+    const all = snapshot.root.pivotTables;
+    if (!all || all.length === 0) return undefined;
+    const filtered = all.filter((p) => p.sheetId === activeSheet.sheetId && p.location !== undefined);
+    return filtered.length > 0 ? filtered : undefined;
+  }, [snapshot, activeSheet]);
 
   // Mirror bootstrap-ready up to the page-level splash so it can
   // fade out and unveil either the grid or the EmptyState. Owning
@@ -2251,7 +2270,8 @@ function XlsxEditorInner({
         | "xlsx:remove-chart"
         | "xlsx:move-chart"
         | "xlsx:resize-chart"
-        | "xlsx:update-chart",
+        | "xlsx:update-chart"
+        | "xlsx:set-range-values",
       payload: Record<string, unknown>
     ) => {
       const a = agentRef.current;
@@ -3876,6 +3896,10 @@ function XlsxEditorInner({
         run: () => setInsertChartOpen(true),
         enabled: Boolean(activeSheet && selection),
       },
+      "xlsx.insert-pivot-table": {
+        run: () => setInsertPivotOpen(true),
+        enabled: Boolean(activeSheet && selection),
+      },
       "xlsx.edit-chart": {
         run: () => {
           if (selectedChartId !== null) setEditChartId(selectedChartId);
@@ -4391,6 +4415,8 @@ function XlsxEditorInner({
                         onChangeChartKind={onChangeChartKind}
                         onRequestEditChart={(id) => setEditChartId(id)}
                         remotePeers={realtimeRoom.remotePeers}
+                        pivotsForSheet={pivotsForActiveSheet}
+                        pivotBadgeTooltip={t("xlsx.pivot.readOnlyTooltip")}
                       />
                     ) : null}
                   </div>
@@ -4450,6 +4476,37 @@ function XlsxEditorInner({
         product="xlsx"
         open={shortcutsDialog.open}
         onClose={() => shortcutsDialog.setOpen(false)}
+      />
+      <InsertPivotTableDialog
+        open={insertPivotOpen}
+        defaultSourceRange={selection ? formatSelection(selection) : "A1:C10"}
+        defaultDestination={pivotDestinationDefault(selection)}
+        headerLabels={pivotHeaderLabelsFromSelection(activeSheet, selection)}
+        onCancel={() => setInsertPivotOpen(false)}
+        onSubmit={(args) => {
+          if (!activeSheet) return;
+          const result = computePivotSummary(activeSheet, args);
+          if (!result) {
+            pushToast("error", "Couldn't read the source range — check the cells exist.");
+            setInsertPivotOpen(false);
+            return;
+          }
+          const dest = parseA1(args.destinationTopLeftA1);
+          const range = formatRange({
+            start: { row: dest.row, col: dest.col },
+            end: { row: dest.row + result.rows.length - 1, col: dest.col + 1 },
+          });
+          dispatchOrToast("xlsx:set-range-values", {
+            sheet: activeSheet.name,
+            range,
+            values: result.rows,
+          });
+          setInsertPivotOpen(false);
+          pushToast(
+            "info",
+            `Inserted pivot summary at ${args.destinationTopLeftA1} (${result.rows.length - 1} rows)`
+          );
+        }}
       />
       <InsertChartDialog
         open={insertChartOpen}
@@ -4588,4 +4645,130 @@ function excelDateSerial(d: Date): number {
 function excelTimeSerial(d: Date): number {
   const seconds = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
   return seconds / 86400;
+}
+
+// ─── Quick-pivot helpers ──────────────────────────────────────────────
+//
+// Phase-1 "values-only pivot" (see `InsertPivotTableDialog.tsx` for the
+// scope rationale). We don't write OOXML pivot parts — instead the
+// dialog hands us a (sourceRange, group-col, value-col, agg) tuple and
+// we compute the result client-side, returning a 2-column matrix that
+// the caller writes back via `xlsx:set-range-values`.
+
+function pivotDestinationDefault(selection: Selection | null): string {
+  if (!selection) return "E1";
+  const n = normalizeSelection(selection);
+  return formatA1({ row: n.r0, col: n.c1 + 2 });
+}
+
+function pivotHeaderLabelsFromSelection(
+  sheet: Sheet | null,
+  selection: Selection | null
+): ReadonlyArray<string> {
+  if (!sheet || !selection) return [];
+  const n = normalizeSelection(selection);
+  const labels: string[] = [];
+  for (let c = n.c0; c <= n.c1; c++) {
+    const cell = sheet.cells.get(cellKey(n.r0, c));
+    labels.push(cellTextValue(cell));
+  }
+  return labels;
+}
+
+interface PivotComputation {
+  readonly rows: ReadonlyArray<ReadonlyArray<string | number>>;
+}
+
+function computePivotSummary(sheet: Sheet, args: PivotDialogSubmit): PivotComputation | null {
+  let range;
+  try {
+    range = parseRange(args.sourceRange);
+  } catch {
+    return null;
+  }
+  const r0 = range.start.row;
+  const r1 = range.end.row;
+  const c0 = range.start.col;
+  const c1 = range.end.col;
+  const colCount = c1 - c0 + 1;
+  if (args.groupColumnIndex < 0 || args.groupColumnIndex >= colCount) return null;
+  if (args.valueColumnIndex < 0 || args.valueColumnIndex >= colCount) return null;
+
+  const dataStart = args.hasHeaderRow ? r0 + 1 : r0;
+  const groupCol = c0 + args.groupColumnIndex;
+  const valueCol = c0 + args.valueColumnIndex;
+
+  const buckets = new Map<string, number[]>();
+  // Preserve first-seen insertion order so the summary lines up with
+  // the data the user is looking at; Map already does that for us.
+  for (let r = dataStart; r <= r1; r++) {
+    const groupCell = sheet.cells.get(cellKey(r, groupCol));
+    const valueCell = sheet.cells.get(cellKey(r, valueCol));
+    const groupKey = cellTextValue(groupCell);
+    if (groupKey.length === 0) continue;
+    const num = cellNumericValue(valueCell);
+    const bucket = buckets.get(groupKey);
+    if (bucket) {
+      bucket.push(num);
+    } else {
+      buckets.set(groupKey, [num]);
+    }
+  }
+
+  const headerLabels = pivotHeaderLabelsFromSelection(sheet, {
+    anchor: { row: r0, col: c0 },
+    focus: { row: r1, col: c1 },
+  });
+  const groupHeader =
+    args.hasHeaderRow && headerLabels[args.groupColumnIndex]?.length
+      ? headerLabels[args.groupColumnIndex]!
+      : `Column ${args.groupColumnIndex + 1}`;
+  const valueHeader =
+    args.hasHeaderRow && headerLabels[args.valueColumnIndex]?.length
+      ? headerLabels[args.valueColumnIndex]!
+      : `Column ${args.valueColumnIndex + 1}`;
+  const aggLabel =
+    args.aggregation === "count"
+      ? `Count of ${valueHeader}`
+      : `${args.aggregation[0]!.toUpperCase()}${args.aggregation.slice(1)} of ${valueHeader}`;
+
+  const rows: Array<Array<string | number>> = [[groupHeader, aggLabel]];
+  for (const [key, values] of buckets) {
+    rows.push([key, aggregate(values, args.aggregation)]);
+  }
+  return { rows };
+}
+
+function aggregate(values: ReadonlyArray<number>, kind: PivotDialogSubmit["aggregation"]): number {
+  if (values.length === 0) return 0;
+  switch (kind) {
+    case "sum":
+      return values.reduce((a, b) => a + b, 0);
+    case "count":
+      return values.length;
+    case "average":
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    case "min":
+      return values.reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
+    case "max":
+      return values.reduce((a, b) => Math.max(a, b), Number.NEGATIVE_INFINITY);
+  }
+}
+
+function cellTextValue(cell: Cell | undefined): string {
+  if (!cell) return "";
+  const v = cell.value;
+  if (v === undefined || v === null) return "";
+  return typeof v === "string" ? v : String(v);
+}
+
+function cellNumericValue(cell: Cell | undefined): number {
+  if (!cell) return 0;
+  const v = cell.value;
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
 }

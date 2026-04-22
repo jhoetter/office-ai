@@ -10,6 +10,7 @@ import { setShapeFillHandler } from "./set-shape-fill.js";
 import { setShapeGeometryHandler } from "./set-shape-geometry.js";
 import { reorderShapeHandler } from "./reorder-shape.js";
 import { duplicateShapeHandler } from "./duplicate-shape.js";
+import { pasteShapesHandler } from "./paste-shapes.js";
 import { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 import { duplicateSlideHandler } from "./duplicate-slide.js";
 import { formatTextHandler } from "./format-text.js";
@@ -71,6 +72,7 @@ export { setShapeGeometryHandler } from "./set-shape-geometry.js";
 export type { SetShapeGeometryPayload } from "./set-shape-geometry.js";
 export { reorderShapeHandler } from "./reorder-shape.js";
 export { duplicateShapeHandler } from "./duplicate-shape.js";
+export { pasteShapesHandler } from "./paste-shapes.js";
 export { groupShapesHandler, ungroupShapeHandler } from "./group-shapes.js";
 export { duplicateSlideHandler } from "./duplicate-slide.js";
 export { formatTextHandler } from "./format-text.js";
@@ -146,6 +148,7 @@ export const allPptxHandlers: ReadonlyArray<CommandHandler<unknown, PptxSnapshot
   setShapeGeometryHandler,
   reorderShapeHandler,
   duplicateShapeHandler,
+  pasteShapesHandler,
   groupShapesHandler,
   ungroupShapeHandler,
   alignShapesHandler,

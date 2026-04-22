@@ -885,11 +885,7 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     label: "Insert footnote",
     description: "Insert a footnote reference at the caret and add an empty footnote body.",
     section: "Insert",
-    surfaces: ["palette"],
-    hidden: {
-      reason:
-        "Footnote model + commands shipped in F1; UI surfaces (insert button + bottom-of-page lane) land in a follow-up phase.",
-    },
+    surfaces: ["palette", "toolbar"],
   },
   {
     id: "docx.set-footnote-body",

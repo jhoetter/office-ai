@@ -1,6 +1,6 @@
 {
   "name": "@officeai/agent",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "office-agent CLI + programmatic API. DOCX, XLSX and PPTX wired through the same headless agents.",
   "type": "module",
   "main": "./dist/index.js",
@@ -35,15 +35,21 @@
     "@officeai/pptx": "workspace:*",
     "@officeai/xlsx": "workspace:*",
     "commander": "^12.1.0",
+    "ws": "^8.18.0",
+    "y-websocket": "^2.0.4",
+    "yjs": "^13.6.20",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22",
+    "@types/ws": "^8.5.13",
     "docx": "^9.1.0",
     "jszip": "^3.10.1",
+    "lib0": "^0.2.117",
     "pdf-lib": "^1.17.1",
     "typescript": "^5",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "y-protocols": "^1.0.6"
   },
   "license": "MIT",
   "repository": {

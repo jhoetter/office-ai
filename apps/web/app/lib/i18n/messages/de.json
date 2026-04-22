@@ -196,6 +196,8 @@
       "insertHyperlink": "Hyperlink einfügen",
       "insertComment": "Kommentar einfügen",
       "addComment": "Kommentar hinzufügen",
+      "insertFootnote": "Fußnote einfügen",
+      "insertFootnoteTooltip": "Fußnote an der aktuellen Cursorposition einfügen",
       "insertPageBreak": "Seitenumbruch einfügen",
       "insertSectionBreak": "Abschnittsumbruch einfügen",
       "insertHeader": "Kopfzeile einfügen",
@@ -453,6 +455,9 @@
       "freezeFirstColumn": "Erste Spalte fixieren",
       "freezeAtSelection": "Fenster an Auswahl fixieren",
       "unfreeze": "Fixierung aufheben"
+    },
+    "pivot": {
+      "readOnlyTooltip": "Pivot-Tabelle – in diesem Build schreibgeschützt. Die Bearbeitung von Pivots ist geplant."
     },
     "insertChart": {
       "title": "Diagramm einfügen",
@@ -725,6 +730,12 @@
       "slideLayout": "Folienlayout",
       "insertText": "Textfeld einfügen",
       "insertImage": "Bild einfügen",
+      "insertMedia": {
+        "label": "Medien einfügen",
+        "tooltip": "Video oder Audio einfügen",
+        "unsupportedType": "Nicht unterstützter Medientyp \"{mime}\". Verwenden Sie MP4, WebM, MOV (Video) oder MP3, M4A, WAV, OGG (Audio).",
+        "notMedia": "\"{name}\" ist keine Video- oder Audiodatei."
+      },
       "insertShape": "Form einfügen",
       "insertTable": "Tabelle einfügen",
       "insertChart": "Diagramm einfügen",
@@ -777,6 +788,11 @@
       "resetRouting": "Verlauf zurücksetzen",
       "reverseDirection": "Richtung umkehren",
       "detach": "Von Formen lösen"
+    },
+    "geometry": {
+      "title": "Geometrie",
+      "cornerRadius": "Eckenradius",
+      "adjustment": "Justierung {n}"
     },
     "animations": {
       "noSlide": "Keine Folie ausgewählt.",
@@ -1004,6 +1020,10 @@
       "insert-hyperlink": {
         "label": "Hyperlink einfügen",
         "description": "Versieht einen Textbereich mit einem Hyperlink."
+      },
+      "insert-footnote": {
+        "label": "Fußnote einfügen",
+        "description": "Fügt einen Fußnotenverweis an der Cursorposition ein und legt einen leeren Fußnotentext an."
       },
       "bullet-list": {
         "label": "Aufzählungsliste",
@@ -1235,6 +1255,10 @@
         "label": "Diagramm einfügen…",
         "description": "Öffnet den Diagramm-Dialog für die aktuelle Auswahl."
       },
+      "insert-pivot-table": {
+        "label": "Pivot-Tabelle einfügen…",
+        "description": "Fasst die aktuelle Auswahl zusammen, gruppiert nach einer Spalte und aggregiert eine andere."
+      },
       "edit-chart": {
         "label": "Diagramm bearbeiten…",
         "description": "Bearbeitet den Datenbereich, Typ und Titel des aktuell ausgewählten Diagramms."
@@ -1282,6 +1306,10 @@
       "insert-media": {
         "label": "Medien einfügen",
         "description": "Fügt ein Video oder Audio auf einer Folie ein. Bettet die Binärdatei als Media-Part mit Posterbild und passendem <p:pic>-Verweis ein."
+      },
+      "set-shape-geometry": {
+        "label": "Formgeometrie anpassen",
+        "description": "Passt einen Geometrie-Parameter einer Preset-Form (Eckradius, Pfeilspitzengröße usw.) an, indem in a:avLst > a:gd geschrieben wird."
       },
       "insert-chart": {
         "label": "Diagramm einfügen",

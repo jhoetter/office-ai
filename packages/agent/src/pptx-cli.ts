@@ -33,6 +33,7 @@ import {
   useDeterministicIds,
   type EmuUnit,
 } from "./cli-shared.js";
+import { attachRealtimeFlags, publishCommandsToRealtime, type RealtimeFlags } from "./cli-realtime.js";
 
 // ── IO stream type re-export so cli.ts can pass through its own ────────
 export interface IO {
@@ -1353,35 +1354,38 @@ export function registerPptxSubcommands(pptx: CommanderCommand, io: IO): void {
       io.stdout.write("\n");
     });
 
-  pptx
-    .command("apply")
-    .description(
-      "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive)."
-    )
-    .requiredOption("--file <path>", "Path to a .pptx file")
-    .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
-    .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
-    .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
-    .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: {
+  attachRealtimeFlags(
+    pptx
+      .command("apply")
+      .description(
+        "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive). When --room and --realtime-url (or OAI_ROOM_ID + OAI_REALTIME_URL env) are set, publishes each command to a shared Yjs room so live editor peers update in-place without remounting."
+      )
+      .requiredOption("--file <path>", "Path to a .pptx file")
+      .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+      .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
+      .option("--out <path>", "Path to write the resulting .pptx file (defaults to --file)")
+      .option("--pretty", "Pretty-print JSON output", false)
+  ).action(
+    async (
+      opts: {
         file: string;
         commands?: string;
         fromStdin: boolean;
         out?: string;
         pretty: boolean;
-      }) => {
-        if (opts.fromStdin === Boolean(opts.commands)) {
-          throw new CliError(64, "pptx apply: pass exactly one of -c/--commands <path> or --from-stdin");
-        }
-        const raw = opts.fromStdin
-          ? await readStdinToString()
-          : await readFile(resolve(opts.commands as string), "utf8");
-        const data: unknown = JSON.parse(raw);
-        const cmds = normalizeCommands(data);
-        await dispatchAndWrite(opts, io, cmds);
+      } & RealtimeFlags
+    ) => {
+      if (opts.fromStdin === Boolean(opts.commands)) {
+        throw new CliError(64, "pptx apply: pass exactly one of -c/--commands <path> or --from-stdin");
       }
-    );
+      const raw = opts.fromStdin
+        ? await readStdinToString()
+        : await readFile(resolve(opts.commands as string), "utf8");
+      const data: unknown = JSON.parse(raw);
+      const cmds = normalizeCommands(data);
+      await dispatchAndWrite(opts, io, cmds, opts);
+    }
+  );
 
   pptx
     .command("diff")
@@ -1988,12 +1992,30 @@ function parseChartData(v: unknown): {
 async function dispatchAndWrite(
   opts: { file: string; out?: string; pretty: boolean },
   io: IO,
-  commands: ReadonlyArray<BusCommand | CommandLite>
+  commands: ReadonlyArray<BusCommand | CommandLite>,
+  realtime?: RealtimeFlags
 ): Promise<void> {
   const agent = await loadAgent(opts.file);
   const muts = await agent.applyCommands(commands);
   const ids = agent.getPendingMutations().map((m) => m.id);
   for (const id of ids) agent.approveMutation(id);
+
+  // See cli.ts docx-apply rationale: publish to Yjs first so editor
+  // peers see the morph BEFORE any S3-backed iframe could possibly
+  // refresh. Only the explicit `pptx apply` surface threads
+  // realtime opts in; per-command typed writes leave realtime off.
+  const approved = muts
+    .filter((m) => m.status !== "rejected")
+    .map((m) => ({
+      type: m.command.type,
+      payload: m.command.payload,
+      source: "agent" as const,
+      agentId: "office-agent-cli",
+    }));
+  const realtimeResult = realtime
+    ? await publishCommandsToRealtime({ ...realtime, product: "pptx", agentId: "office-agent-cli" }, approved)
+    : null;
+
   const target = opts.out ?? opts.file;
   await writeFile(resolve(target), Buffer.from(await agent.exportFile()));
   const post = agent.getSnapshot();
@@ -2002,6 +2024,7 @@ async function dispatchAndWrite(
       {
         wrote: target,
         mutations: muts.map((m) => pptxMutationSummary(m, post, true)),
+        ...(realtimeResult ? { realtime: realtimeResult } : {}),
       },
       opts.pretty
     ) + "\n"

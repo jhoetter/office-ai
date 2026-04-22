@@ -465,6 +465,36 @@ export interface DuplicateShapePayload {
   readonly dyEmu?: number;
 }
 
+/**
+ * Paste shapes onto a slide. Companion to `pptx:duplicate-shape` for
+ * use by the editor's clipboard handler — accepts an externally-
+ * supplied list of shape objects (typically deserialised from
+ * `application/x-officeai-embed+json`) rather than a shape id resolved
+ * against the snapshot. Each pasted shape gets a freshly minted
+ * `NodeId` and `cNvPrId` so they can co-exist with the source if the
+ * paste happens on the same slide.
+ *
+ * Phase-1: only `text` / `table` / `connector` / `group` (with all
+ * descendants supported) are accepted; pictures / charts / OLE /
+ * media are refused because they reference container-side parts that
+ * would have to be copied alongside the shape JSON. Same-deck paste
+ * of those types should keep using `pptx:duplicate-shape`.
+ */
+export interface PasteShapesPayload {
+  readonly slideIndex: number;
+  /**
+   * Shapes to paste, in the order they should be appended to the
+   * slide's top-level shape array. Each entry is an already-typed
+   * `Shape` object (not raw OOXML); the handler re-mints `id` and
+   * `cNvPrId` recursively.
+   */
+  readonly shapes: ReadonlyArray<import("../model/types.js").Shape>;
+  /** Default 228_600 (¼ inch). */
+  readonly dxEmu?: number;
+  /** Default 228_600 (¼ inch). */
+  readonly dyEmu?: number;
+}
+
 // ─── F2 (Tables) payloads ─────────────────────────────────────────────────
 
 export interface TableSetCellTextPayload {
@@ -732,6 +762,7 @@ export const PPTX_COMMAND_TYPES = {
   setShapeFill: "pptx:set-shape-fill",
   reorderShape: "pptx:reorder-shape",
   duplicateShape: "pptx:duplicate-shape",
+  pasteShapes: "pptx:paste-shapes",
   groupShapes: "pptx:group-shapes",
   ungroupShape: "pptx:ungroup-shape",
   alignShapes: "pptx:align-shapes",

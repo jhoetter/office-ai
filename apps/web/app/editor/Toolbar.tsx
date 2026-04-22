@@ -21,6 +21,7 @@ import {
   X,
   ScrollText,
   SeparatorHorizontal,
+  StickyNote,
   Table2,
 } from "lucide-react";
 import { TextFormatBar, cn } from "@officeai/ui";
@@ -78,6 +79,13 @@ export interface ToolbarProps {
   /** Style picker contents derived from the loaded document. */
   styleOptions: ReadonlyArray<ToolbarStyleOption>;
   onInsertImage: () => void;
+  /**
+   * Insert a footnote reference at the current caret position via
+   * `docx:insert-footnote`. Disabled when the caret is not in a body /
+   * header / footer paragraph (the command's own rejection handler
+   * surfaces the friendlier toast either way).
+   */
+  onInsertFootnote: () => void;
   onInsertTable: (rows: number, cols: number) => void;
   /**
    * Open the XlsxRangePicker dialog so the user can pick a .xlsx
@@ -160,6 +168,7 @@ export function Toolbar(props: ToolbarProps): ReactNode {
   // mislabelled button) so adding/renaming an action only happens in
   // one place — packages/docx/src/actions/catalogue.ts.
   const insertImageAction = useAction(docxActions, "docx.insert-image");
+  const insertFootnoteAction = useAction(docxActions, "docx.insert-footnote");
   const addCommentAction = useAction(docxActions, "docx.add-comment");
 
   return (
@@ -301,6 +310,13 @@ export function Toolbar(props: ToolbarProps): ReactNode {
 
       {/* Section break — Word-style submenu (B11). */}
       <SectionBreakMenu disabled={!props.agentReady} onInsert={props.onInsertSectionBreak} />
+
+      {/* Footnote — inserts a reference at the caret + appends an
+          empty footnote body. Phase 1 ships the insert affordance;
+          editing the body in place is deferred. */}
+      <ToolbarBtn label={insertFootnoteAction.label} onClick={props.onInsertFootnote}>
+        <StickyNote size={14} />
+      </ToolbarBtn>
 
       {/* Comment */}
       <ToolbarBtn label={addCommentAction.label} onClick={props.onAddComment}>

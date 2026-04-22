@@ -162,6 +162,7 @@ export function SlidesSidebar(props: SlidesSidebarProps): React.ReactElement {
             key={s.id}
             data-testid={`pptx-slide-row-${i}`}
             data-active={isActive ? "true" : undefined}
+            data-slide-index={i}
             draggable={draggable}
             onDragStart={(e) => {
               if (!draggable) return;

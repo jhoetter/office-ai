@@ -767,6 +767,15 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["palette"],
   },
   {
+    id: "xlsx.insert-pivot-table",
+    commandType: null,
+    label: "Insert pivot table…",
+    description:
+      "Summarise the current selection by grouping a column and aggregating another. Result writes as plain values (full OOXML pivot round-trip lands in a follow-up).",
+    section: "Insert",
+    surfaces: ["palette"],
+  },
+  {
     id: "xlsx.edit-chart",
     commandType: null,
     label: "Edit chart…",

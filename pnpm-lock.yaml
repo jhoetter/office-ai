@@ -214,6 +214,15 @@ importers:
       commander:
         specifier: ^12.1.0
         version: 12.1.0
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+      y-websocket:
+        specifier: ^2.0.4
+        version: 2.1.0(yjs@13.6.30)
+      yjs:
+        specifier: ^13.6.20
+        version: 13.6.30
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -221,12 +230,18 @@ importers:
       '@types/node':
         specifier: ^22
         version: 22.19.17
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
       docx:
         specifier: ^9.1.0
         version: 9.6.1
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      lib0:
+        specifier: ^0.2.117
+        version: 0.2.117
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
@@ -236,6 +251,9 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.17)(jsdom@29.0.2)(lightningcss@1.32.0)
+      y-protocols:
+        specifier: ^1.0.6
+        version: 1.0.7(yjs@13.6.30)
 
   packages/comments:
     devDependencies:

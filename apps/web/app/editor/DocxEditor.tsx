@@ -45,7 +45,9 @@ import {
   pageDecorationsPlugin,
   pageNumberForPos,
   PAGE_ZONE_COMMIT_EVENT,
+  PAGE_ZONE_FOCUS_EVENT,
   type PageZoneCommitDetail,
+  type PageZoneFocusDetail,
 } from "@/lib/page-decorations";
 import { GOTO_PAGE_EVENT, pageKeymapPlugin } from "@/lib/page-keymap";
 import {
@@ -76,6 +78,7 @@ import {
   currentParagraphIndex,
   paragraphStyle,
   paragraphStyleOptions,
+  pmPositionToDocx,
   pmSelectionToRange,
 } from "@/lib/format-helpers";
 import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
@@ -915,6 +918,50 @@ function DocxEditorInner({
     return () => hostEl.removeEventListener(PAGE_ZONE_COMMIT_EVENT, onZoneCommit as EventListener);
   }, [hostEl, pushToast]);
 
+  // Track which header/footer zone is focused so the toolbar can
+  // surface the contextual "Header & Footer" button cluster (Word's
+  // "Close header and footer" affordance + per-section toggles).
+  const [hfZoneFocus, setHfZoneFocus] = useState<PageZoneFocusDetail | null>(null);
+  useEffect(() => {
+    if (!hostEl) return;
+    const onZoneFocus = (event: Event) => {
+      const ce = event as CustomEvent<PageZoneFocusDetail>;
+      const detail = ce.detail;
+      if (!detail || !detail.slot) {
+        setHfZoneFocus(null);
+        return;
+      }
+      setHfZoneFocus(detail);
+    };
+    hostEl.addEventListener(PAGE_ZONE_FOCUS_EVENT, onZoneFocus as EventListener);
+    return () => hostEl.removeEventListener(PAGE_ZONE_FOCUS_EVENT, onZoneFocus as EventListener);
+  }, [hostEl]);
+
+  const closeHeaderFooter = useCallback(() => {
+    if (!hostEl) return;
+    const focused = hostEl.querySelector<HTMLElement>(".pm-page-zone-focused [contenteditable='true']");
+    if (focused) focused.blur();
+    if (view) view.focus();
+    setHfZoneFocus(null);
+  }, [hostEl, view]);
+
+  const toggleSectionDifferentFirst = useCallback(
+    async (enabled: boolean) => {
+      const agent = agentRef.current;
+      if (!agent) return;
+      try {
+        await agent.applyCommand({
+          type: "docx:set-section-different-first",
+          payload: { paragraphIndex: 0, enabled },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast]
+  );
+
   const submitHyperlink = useCallback(
     async (next: { url: string; text: string }) => {
       const agent = agentRef.current;
@@ -1005,6 +1052,35 @@ function DocxEditorInner({
     },
     [pushToast]
   );
+
+  /**
+   * F1-UI — toolbar entry point for `docx:insert-footnote`. Splices a
+   * `FootnoteReferenceLeaf` at the caret's flat-text offset inside the
+   * paragraph that owns the selection and appends the matching
+   * `<w:footnote>` to `footnotesPart`. The caret stays where it is —
+   * editing the footnote body in place is deferred until the bottom-of-
+   * page lane lands a contenteditable surface.
+   */
+  const insertFootnote = useCallback(async () => {
+    const agent = agentRef.current;
+    const mount = mountRef.current;
+    if (!agent || !mount) return;
+    const paragraphId = currentParagraphId(mount.view.state);
+    if (!paragraphId) {
+      pushToast("info", "Place the caret in a paragraph first.");
+      return;
+    }
+    const caret = pmPositionToDocx(mount.view.state, mount.view.state.selection.from);
+    try {
+      await agent.applyCommand({
+        type: "docx:insert-footnote",
+        payload: { paragraphId, offset: caret.offset },
+        source: "human",
+      });
+    } catch (err) {
+      pushToast("error", err instanceof Error ? err.message : String(err));
+    }
+  }, [pushToast]);
 
   const adjustIndent = useCallback(
     async (deltaTwips: number) => {
@@ -1811,6 +1887,7 @@ function DocxEditorInner({
       "docx.add-comment": { run: () => openCommentComposer() },
       "docx.page-setup": { run: () => setPageSetupOpen(true) },
       "docx.insert-image": { run: insertImageFromFile },
+      "docx.insert-footnote": { run: () => void insertFootnote() },
       "docx.insert-table-3x3": { run: () => void insertTable(3, 3) },
       "docx.insert-table-2x2": { run: () => void insertTable(2, 2) },
       "docx.insert-table-from-xlsx": { run: () => setXlsxPickerOpen("materialized") },
@@ -1838,6 +1915,7 @@ function DocxEditorInner({
     adjustIndent,
     editMode,
     handleToggleFormattingMarks,
+    insertFootnote,
     insertImageFromFile,
     insertSectionBreak,
     insertTable,
@@ -2016,6 +2094,7 @@ function DocxEditorInner({
             activeIndentLeft={activeIndentLeft}
             styleOptions={styleOptions}
             onInsertImage={insertImageFromFile}
+            onInsertFootnote={() => void insertFootnote()}
             onInsertTable={(r, c) => void insertTable(r, c)}
             onInsertFromXlsx={() => setXlsxPickerOpen("materialized")}
             onSetParagraphStyle={(s) => void setParagraphStyle(s)}
@@ -2037,6 +2116,47 @@ function DocxEditorInner({
         }
         body={
           <div className="docx-editor flex min-h-0 flex-1 flex-col gap-3 p-3">
+            {hfZoneFocus ? (
+              <div
+                role="toolbar"
+                aria-label={`${hfZoneFocus.slot === "header" ? "Header" : "Footer"} tools`}
+                data-testid="docx-hf-context-bar"
+                className="flex items-center gap-3 rounded-md border border-divider bg-surface px-3 py-1.5 text-xs text-secondary"
+              >
+                <span className="flex items-center gap-1.5 font-medium text-foreground">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
+                  {hfZoneFocus.slot === "header" ? "Header" : "Footer"}
+                  {hfZoneFocus.target && hfZoneFocus.target !== "default" ? (
+                    <span className="rounded bg-divider/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-secondary">
+                      {hfZoneFocus.target}
+                    </span>
+                  ) : null}
+                  {hfZoneFocus.pageNumber ? (
+                    <span className="font-normal text-secondary">· page {hfZoneFocus.pageNumber}</span>
+                  ) : null}
+                </span>
+                <label className="inline-flex items-center gap-1.5 hover:text-foreground">
+                  <input
+                    type="checkbox"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onChange={(e) => void toggleSectionDifferentFirst(e.target.checked)}
+                    data-testid="docx-hf-toggle-different-first"
+                    className="h-3 w-3 accent-[var(--accent)]"
+                  />
+                  Different first page
+                </label>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={closeHeaderFooter}
+                  data-testid="docx-hf-close"
+                  className="rounded px-2 py-1 text-[11px] font-medium text-foreground hover:bg-hover"
+                >
+                  Close header &amp; footer
+                </button>
+              </div>
+            ) : null}
             <input
               ref={imageInputRef}
               data-testid="image-file-input"

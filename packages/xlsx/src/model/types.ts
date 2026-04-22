@@ -180,6 +180,26 @@ export interface PivotTablePart {
    * can join the two sides without re-parsing the XML.
    */
   readonly cacheId?: number;
+  /**
+   * Stable OOXML id of the sheet that anchors this pivot
+   * (matches {@link Sheet.sheetId}). Lifted at parse time from the
+   * sheet whose rels reference this part — the pivot definition
+   * itself never names its own anchor sheet, so the rels graph is
+   * the only source of truth. `undefined` when the table is
+   * defined in the package but not referenced from any worksheet
+   * (rare, but legal in OOXML).
+   */
+  readonly sheetId?: string;
+  /**
+   * Geometry of the pivot's output rectangle on the anchor sheet,
+   * lifted from `<location ref="A8:B12" firstHeaderRow="…" …/>`.
+   * Phase 1 surfaces this so the grid can paint the pivot bounds
+   * read-only without round-walking the raw XML on every render.
+   * `undefined` when the part lacks a `<location>` element (a defect
+   * in OOXML terms — Excel always writes one — but we degrade
+   * gracefully rather than refusing to load).
+   */
+  readonly location?: PivotTableLocation;
   /** Verbatim part XML, ready for byte-identical re-emission. */
   readonly raw: string;
   /** Content type from `[Content_Types].xml` when present. */
@@ -190,6 +210,42 @@ export interface PivotTablePart {
    * table's link to its cache definition lives there.
    */
   readonly relsXml?: string;
+}
+
+/**
+ * Read-only geometry of a pivot table's output rectangle on its
+ * anchor sheet. Mirrors the attributes Excel writes on
+ * `<pivotTableDefinition><location/>`. All indices are 0-based and
+ * inclusive at both ends, matching {@link Sheet.cells} keys.
+ */
+export interface PivotTableLocation {
+  /** Original A1 string from `<location ref="A8:B12"/>`. */
+  readonly ref: string;
+  /** Inclusive 0-based bounds derived from `ref`. */
+  readonly r1: number;
+  readonly c1: number;
+  readonly r2: number;
+  readonly c2: number;
+  /** Total rows / cols spanned (= r2-r1+1, c2-c1+1). */
+  readonly rowCount: number;
+  readonly colCount: number;
+  /**
+   * Row offset of the first header row, relative to `r1`. Almost
+   * always `0` in Excel-emitted pivots. Lifted directly from the
+   * `firstHeaderRow` attribute when present; defaults to `0`.
+   */
+  readonly firstHeaderRow: number;
+  /**
+   * Row offset of the first data row (i.e. first non-header row)
+   * relative to `r1`. Lifted from `firstDataRow`.
+   */
+  readonly firstDataRow: number;
+  /**
+   * Column offset of the first data column relative to `c1`.
+   * Lifted from `firstDataCol`. Row-label columns sit to the left
+   * of this offset.
+   */
+  readonly firstDataCol: number;
 }
 
 /**

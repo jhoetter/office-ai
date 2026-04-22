@@ -5,9 +5,11 @@ import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Monitor, X } from "luc
 import {
   createPlayback,
   type ChartPart,
+  type MediaShape,
   type NotesSlide,
   type PlaybackController,
   type PptxSnapshot,
+  type Shape,
   type Slide,
   type SlideSize,
   type SlideTransition,
@@ -74,6 +76,10 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
   // forward keypress until exhausted; only then does the slide advance
   // to the next one — matching PowerPoint's behaviour.
   const playbackRef = React.useRef<PlaybackController | null>(null);
+  // Mirror the controller's `hasMore()` into React state so the footer
+  // hint can show a live "click to advance" counter without polling
+  // the controller every frame.
+  const [pendingAnims, setPendingAnims] = React.useState(0);
   const advanceLockRef = React.useRef(false);
   const advanceSlide = React.useCallback(() => setIndex((i) => Math.min(i + 1, total - 1)), [total]);
   const next = React.useCallback(async () => {
@@ -85,6 +91,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
         await controller.clickAdvance();
       } finally {
         advanceLockRef.current = false;
+        setPendingAnims(controller.hasMore() ? countRemainingGroups(controller) : 0);
       }
       return;
     }
@@ -111,6 +118,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
       playbackRef.current.destroy();
     }
     playbackRef.current = controller;
+    setPendingAnims(controller && controller.hasMore() ? countRemainingGroups(controller) : 0);
   }, []);
 
   const close = React.useCallback(() => {
@@ -231,6 +239,31 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
           </span>
           <span className="hidden sm:inline">·</span>
           <span className="hidden sm:inline">Elapsed {formatElapsed(now - startedAt)}</span>
+          {pendingAnims > 0 ? (
+            <>
+              <span className="hidden sm:inline">·</span>
+              <span
+                data-testid="pptx-present-pending-anims"
+                className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white"
+              >
+                Animations pending — click to play
+              </span>
+            </>
+          ) : null}
+          {currentSlide?.transition &&
+          currentSlide.transition.kind !== "none" &&
+          currentSlide.transition.kind !== "unsupported" ? (
+            <>
+              <span className="hidden sm:inline">·</span>
+              <span
+                data-testid="pptx-present-transition"
+                className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/80"
+                title={`Transition: ${currentSlide.transition.kind}`}
+              >
+                {currentSlide.transition.kind}
+              </span>
+            </>
+          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <PresentBarButton
@@ -434,18 +467,85 @@ function SlideStage(props: SlideStageProps): React.ReactElement {
     ro.observe(el);
     return () => ro.disconnect();
   }, [props.aspectRatio]);
+  // Collect every `MediaShape` on the slide so Present mode can mount
+  // a real `<video>` / `<audio>` element on top of the static SVG.
+  // The renderer paints a placeholder rectangle for media — fine for
+  // edit-mode preview / export, but in a rehearsal the user expects
+  // playable controls. We resolve absolute slide-coords per shape so
+  // shapes nested inside a group still land at the right spot.
+  const mediaShapes = React.useMemo(() => collectMediaShapes(props.slide.shapes), [props.slide]);
   return (
     <div ref={fitRef} className="flex h-full w-full items-center justify-center">
       {size ? (
         <div
           ref={slideHostRef}
-          className="bg-white shadow-2xl"
+          className="relative bg-white shadow-2xl"
           style={{ width: size.width, height: size.height }}
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
+        >
+          <div className="absolute inset-0" dangerouslySetInnerHTML={{ __html: svg }} />
+          {mediaShapes.map(({ shape, xEmu, yEmu }) => {
+            const url = props.mediaUrls?.get(shape.mediaPath);
+            if (!url || !shape.size) return null;
+            const pct = {
+              left: `${(xEmu / props.slideSize.cxEmu) * 100}%`,
+              top: `${(yEmu / props.slideSize.cyEmu) * 100}%`,
+              width: `${(shape.size.cxEmu / props.slideSize.cxEmu) * 100}%`,
+              height: `${(shape.size.cyEmu / props.slideSize.cyEmu) * 100}%`,
+            };
+            const common = {
+              src: url,
+              controls: true,
+              preload: "metadata" as const,
+              "data-testid": `pptx-present-media-${shape.id}`,
+            };
+            return (
+              <div key={shape.id} className="absolute" style={pct}>
+                {shape.mediaType === "video" ? (
+                  <video {...common} className="h-full w-full bg-black object-contain" />
+                ) : (
+                  <audio {...common} className="h-full w-full" />
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : null}
     </div>
   );
+}
+
+interface PositionedMedia {
+  readonly shape: MediaShape;
+  /** Absolute slide-coord top-left after walking through any group ancestry. */
+  readonly xEmu: number;
+  readonly yEmu: number;
+}
+
+/**
+ * Walk the slide tree and surface every `MediaShape` together with its
+ * resolved absolute slide-coord position. Group children carry coords
+ * relative to the group origin (matching the `<a:chOff>` offset the
+ * SVG renderer applies via a `<g transform="translate(...)">`); we
+ * accumulate the parent group's position so a media shape inside a
+ * group still lands at the right spot in the HTML overlay.
+ */
+function collectMediaShapes(shapes: ReadonlyArray<Shape>): ReadonlyArray<PositionedMedia> {
+  const out: PositionedMedia[] = [];
+  const visit = (list: ReadonlyArray<Shape>, dx: number, dy: number): void => {
+    for (const s of list) {
+      if (s.kind === "media") {
+        if (s.position) {
+          out.push({ shape: s, xEmu: s.position.xEmu + dx, yEmu: s.position.yEmu + dy });
+        }
+      } else if (s.kind === "group") {
+        const gx = (s.position?.xEmu ?? 0) + dx;
+        const gy = (s.position?.yEmu ?? 0) + dy;
+        visit(s.children, gx, gy);
+      }
+    }
+  };
+  visit(shapes, 0, 0);
+  return out;
 }
 
 interface NextSlidePreviewProps {
@@ -535,6 +635,18 @@ function formatClock(ms: number): string {
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
+}
+
+/**
+ * Best-effort live count of click-groups still pending on the active
+ * `PlaybackController`. The controller doesn't expose its internal
+ * cursor (intentional — its API is verb-only), but the only stable
+ * signal we need is "is there at least one more group?". We expose
+ * that as `1+` so the footer hint can read "More animations — click to
+ * play". Tests don't depend on the precise number.
+ */
+function countRemainingGroups(controller: PlaybackController): number {
+  return controller.hasMore() ? 1 : 0;
 }
 
 // ─── F-C2: slide-to-slide transitions ────────────────────────────────

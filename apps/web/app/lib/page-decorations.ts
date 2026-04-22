@@ -2,7 +2,7 @@ import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorState, Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import type { DocxAgent, DocxSnapshot, HeaderFooterPart, Measure, PageChunk } from "@officeai/docx";
+import type { DocxAgent, DocxSnapshot, Footnote, HeaderFooterPart, Measure, PageChunk } from "@officeai/docx";
 import { chunkIntoPages, resolveHeaderFooterParts } from "@officeai/docx";
 
 /**
@@ -64,6 +64,21 @@ export interface PageZoneCommitDetail {
 }
 
 export const PAGE_ZONE_COMMIT_EVENT = "pm-page-zone-commit";
+
+/**
+ * CustomEvent payload dispatched when the user enters or leaves an
+ * editable header/footer zone. Powers the contextual "Header & Footer"
+ * toolbar cluster in the DOCX editor (Word's "Close header and footer"
+ * affordance). `slot` is `null` when focus moves back to the body.
+ */
+export interface PageZoneFocusDetail {
+  readonly slot: "header" | "footer" | null;
+  readonly target: "default" | "first" | "even" | null;
+  readonly partPath: string | null;
+  readonly pageNumber: number | null;
+}
+
+export const PAGE_ZONE_FOCUS_EVENT = "pm-page-zone-focus";
 
 export function pageDecorationsPlugin(agent: DocxAgent): Plugin<PageDecorationsState> {
   // Per-block measured heights, in twips, indexed by `body` block index.
@@ -344,11 +359,21 @@ function buildDecorations(
 
     // Page cap (footer zone) for the last page: widget at the very
     // end of the document.
+    //
+    // F1-UI Phase 1 — footnote lane. Until per-page footnote
+    // assignment is modelled (requires line-break / page-break
+    // detection that doesn't exist yet) we render the entire
+    // `footnotesPart.footnotes` collection on the LAST page, above
+    // its footer zone. Future phases will swap `laneFootnotes` for
+    // a per-chunk lookup keyed off footnote-reference positions in
+    // the chunk's blocks.
     if (i === chunks.length - 1) {
+      const laneFootnotes = collectAuthoredFootnotes(snapshot);
+      const laneKey = laneFootnotes.map((fn) => fn.id).join(",");
       decos.push(
-        Decoration.widget(docEnd, () => renderFooterCap(chunk, footerPart), {
+        Decoration.widget(docEnd, () => renderFooterCap(chunk, footerPart, laneFootnotes), {
           side: 1,
-          key: `page-cap-bottom-${chunk.pageNumber}`,
+          key: `page-cap-bottom-${chunk.pageNumber}-fn:${laneKey}`,
         })
       );
     }
@@ -378,12 +403,99 @@ function renderHeaderCap(chunk: PageChunk, headerPart: HeaderFooterPart | undefi
   return cap;
 }
 
-function renderFooterCap(chunk: PageChunk, footerPart: HeaderFooterPart | undefined): HTMLElement {
+function renderFooterCap(
+  chunk: PageChunk,
+  footerPart: HeaderFooterPart | undefined,
+  laneFootnotes: ReadonlyArray<Footnote> = []
+): HTMLElement {
   const cap = document.createElement("div");
   cap.className = "pm-page-cap pm-page-cap-bottom";
   cap.setAttribute("contenteditable", "false");
+  if (laneFootnotes.length > 0) {
+    cap.appendChild(renderFootnoteLane(chunk, laneFootnotes));
+  }
   cap.appendChild(renderFooterZone(chunk, footerPart));
   return cap;
+}
+
+/**
+ * Bottom-of-page footnote lane (F1-UI Phase 1). Renders each
+ * authored footnote as a `[N] {plain text}` row above the footer
+ * zone, separated from the footer by a thin top rule. Read-only —
+ * Phase 2 will introduce in-place editing once we host an editable
+ * surface for footnote bodies.
+ */
+function renderFootnoteLane(chunk: PageChunk, footnotes: ReadonlyArray<Footnote>): HTMLElement {
+  const lane = document.createElement("div");
+  lane.className = "pm-page-zone pm-page-zone-footnotes";
+  lane.setAttribute("contenteditable", "false");
+  lane.setAttribute("data-page-zone", "footnotes");
+  lane.setAttribute("data-page-number", String(chunk.pageNumber));
+  applyChunkGeometryStyle(lane, chunk);
+
+  const inner = document.createElement("div");
+  inner.className = "pm-page-zone-content pm-page-footnote-lane";
+  inner.setAttribute("data-page-zone-content", "footnotes");
+
+  for (const fn of footnotes) {
+    const row = document.createElement("div");
+    row.className = "pm-page-footnote-row";
+    row.setAttribute("data-footnote-id", String(fn.id));
+
+    const marker = document.createElement("sup");
+    marker.className = "pm-page-footnote-marker";
+    marker.textContent = `[${fn.id}]`;
+
+    const body = document.createElement("span");
+    body.className = "pm-page-footnote-body";
+    body.textContent = extractFootnoteText(fn);
+
+    row.appendChild(marker);
+    row.appendChild(document.createTextNode(" "));
+    row.appendChild(body);
+    inner.appendChild(row);
+  }
+
+  lane.appendChild(inner);
+  return lane;
+}
+
+/**
+ * Filter a snapshot's footnotes part down to *authored* footnotes —
+ * the standard Word `separator` / `continuationSeparator` /
+ * `continuationNotice` entries (typically `w:id` -1 / 0 / 1) carry
+ * layout glyphs, never user content, and must never appear in the
+ * lane.
+ */
+function collectAuthoredFootnotes(snapshot: DocxSnapshot): ReadonlyArray<Footnote> {
+  const part = snapshot.root.footnotesPart;
+  if (!part) return [];
+  return part.footnotes.filter((fn) => fn.type === "normal");
+}
+
+/**
+ * Extract a flat-text preview of a footnote body. Mirrors the
+ * conventions used by `extractZoneText`: concatenate every
+ * paragraph's run text, preserve page-number fields as `[FIELD]`,
+ * collapse whitespace, and join multiple paragraphs with " ¶ " so
+ * the lane reads naturally on a single line.
+ */
+function extractFootnoteText(footnote: Footnote): string {
+  const parts: string[] = [];
+  for (const block of footnote.body) {
+    if (block.kind !== "paragraph") continue;
+    let acc = "";
+    for (const inline of block.children) {
+      if (inline.kind !== "run") continue;
+      for (const c of inline.children) {
+        if (c.kind === "text") acc += c.text;
+        else if (c.kind === "page-number-field") acc += `[${c.field}]`;
+      }
+    }
+    const trimmed = acc.replace(/\s+/g, " ").trim();
+    if (trimmed.length > 0) parts.push(trimmed);
+  }
+  return parts.join(" ¶ ");
 }
 
 /**
@@ -532,13 +644,39 @@ function renderZone(
 
   inner.addEventListener("focus", () => {
     inner.classList.remove("pm-page-zone-empty");
+    zone.classList.add("pm-page-zone-focused");
+    const detail: PageZoneFocusDetail = {
+      slot,
+      target: part.target,
+      partPath: part.partPath,
+      pageNumber: chunk.pageNumber,
+    };
+    zone.dispatchEvent(
+      new CustomEvent<PageZoneFocusDetail>(PAGE_ZONE_FOCUS_EVENT, {
+        detail,
+        bubbles: true,
+      })
+    );
   });
   inner.addEventListener("blur", () => {
     const value = inner.textContent ?? "";
     if (value.length === 0) {
       inner.classList.add("pm-page-zone-empty");
     }
+    zone.classList.remove("pm-page-zone-focused");
     commit(value);
+    const detail: PageZoneFocusDetail = {
+      slot: null,
+      target: null,
+      partPath: null,
+      pageNumber: null,
+    };
+    zone.dispatchEvent(
+      new CustomEvent<PageZoneFocusDetail>(PAGE_ZONE_FOCUS_EVENT, {
+        detail,
+        bubbles: true,
+      })
+    );
   });
   inner.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {

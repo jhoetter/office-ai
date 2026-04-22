@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { cellKey, colToLetter, type Sheet, type StyleTable } from "@officeai/xlsx";
+import { cellKey, colToLetter, type PivotTablePart, type Sheet, type StyleTable } from "@officeai/xlsx";
 import { ImageOverlay, type AnchorFromPx } from "./ImageOverlay";
 import { ChartOverlay } from "./ChartOverlay";
 import type { ChartKind } from "@officeai/xlsx";
@@ -214,6 +214,22 @@ export interface GridProps {
    * shows them via colored dots instead).
    */
   readonly remotePeers?: ReadonlyArray<RemoteXlsxPeer>;
+  /**
+   * Pivot tables anchored on the active sheet. The Grid paints a
+   * subtle background tint + dashed outline around each pivot's
+   * `location.ref` rectangle and a small "▼ {name}" badge at the
+   * top-left so the user can tell pivot output apart from a static
+   * range. Read-only in this build — the parent owns the badge tooltip
+   * copy via the `pivotBadgeTooltip` prop so the i18n catalogue
+   * doesn't have to bleed into the Grid.
+   */
+  readonly pivotsForSheet?: ReadonlyArray<PivotTablePart>;
+  /**
+   * Localized tooltip shown when the user hovers / clicks the pivot
+   * badge. Lives on the parent so the Grid stays presentational and
+   * doesn't have to import the i18n hook.
+   */
+  readonly pivotBadgeTooltip?: string;
 }
 
 export interface CommentMarker {
@@ -293,6 +309,8 @@ export function Grid(props: GridProps): ReactNode {
     onChangeChartKind,
     onRequestEditChart,
     remotePeers,
+    pivotsForSheet,
+    pivotBadgeTooltip,
   } = props;
   const extras: ReadonlyArray<Selection> = extraAreas ?? [];
 
@@ -1304,6 +1322,112 @@ export function Grid(props: GridProps): ReactNode {
     }
   }
 
+  // Pivot-table overlays. Phase 1 of the pivot work is read-only —
+  // the underlying cells inside `location.ref` already carry the
+  // cached values Excel wrote (regular sheet parsing populates
+  // them), so we only need to (a) tint the pivot rectangle so the
+  // user can spot it as something other than a static range, and
+  // (b) plant a small "▼ {name}" badge at the anchor corner with a
+  // tooltip explaining the read-only constraint. Editing pivots is
+  // intentionally not wired — that's a future phase. The overlays
+  // are pointer-events:none so cell selection inside the rectangle
+  // still works exactly as it does for any other range; only the
+  // badge button accepts pointer events.
+  const pivotOverlays: ReactNode[] = [];
+  if (pivotsForSheet && pivotsForSheet.length > 0) {
+    for (let i = 0; i < pivotsForSheet.length; i++) {
+      const pivot = pivotsForSheet[i]!;
+      const loc = pivot.location;
+      if (!loc) continue;
+      const r0 = Math.max(0, Math.min(loc.r1, loc.r2));
+      const r1 = Math.min(TOTAL_ROWS - 1, Math.max(loc.r1, loc.r2));
+      const c0 = Math.max(0, Math.min(loc.c1, loc.c2));
+      const c1 = Math.min(TOTAL_COLS - 1, Math.max(loc.c1, loc.c2));
+      if (r0 > r1 || c0 > c1) continue;
+      // Guard against an out-of-window axis lookup. The lazy axis
+      // proxies return `undefined` past their materialised range; the
+      // grid's other overlays bail the same way.
+      const top0 = rowYs[r0];
+      const left0 = colXs[c0];
+      const rightEdge = colXs[c1 + 1];
+      const bottomEdge = rowYs[r1 + 1];
+      if (top0 === undefined || left0 === undefined || rightEdge === undefined || bottomEdge === undefined) {
+        continue;
+      }
+      const top = HEADER_ROW_HEIGHT + top0;
+      const left = HEADER_COL_WIDTH + left0;
+      const width = rightEdge - left0;
+      const height = bottomEdge - top0;
+      pivotOverlays.push(
+        <div
+          key={`pivot-rect-${pivot.partPath}`}
+          data-testid={`grid-pivot-rect-${pivot.name}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            top,
+            left,
+            width,
+            height,
+            background: "color-mix(in srgb, var(--ai-violet) 8%, transparent)",
+            border: "1px dashed var(--ai-violet)",
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 1,
+          }}
+        />
+      );
+      const anchorTop0 = rowYs[r0];
+      const anchorLeft0 = colXs[c0];
+      if (anchorTop0 === undefined || anchorLeft0 === undefined) continue;
+      pivotOverlays.push(
+        <button
+          key={`pivot-badge-${pivot.partPath}`}
+          type="button"
+          data-testid={`grid-pivot-badge-${pivot.name}`}
+          aria-label={pivotBadgeTooltip ?? pivot.name}
+          title={pivotBadgeTooltip ?? pivot.name}
+          onMouseDown={(e) => {
+            // Don't steal the cell's mousedown — clicking the badge
+            // should pop the tooltip without dropping the user's
+            // current selection. The native title attribute does the
+            // popup; we just need to keep the click from propagating.
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+          style={{
+            position: "absolute",
+            top: HEADER_ROW_HEIGHT + anchorTop0 + 2,
+            left: HEADER_COL_WIDTH + anchorLeft0 + 2,
+            maxWidth: Math.max(60, width - 4),
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "1px 6px",
+            background: "var(--ai-violet)",
+            color: "white",
+            border: "1px solid var(--ai-violet)",
+            borderRadius: 3,
+            fontSize: 10,
+            lineHeight: "14px",
+            fontWeight: 600,
+            cursor: "help",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            zIndex: 6,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+          }}
+        >
+          <span aria-hidden>▼</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{pivot.name}</span>
+        </button>
+      );
+    }
+  }
+
   // C13 — Extra disjoint areas (Ctrl-click). Same look as the active
   // marquee minus the fill handle; a slightly thinner border keeps the
   // active area visually dominant so the user knows where the next
@@ -1817,6 +1941,7 @@ export function Grid(props: GridProps): ReactNode {
         {antsOverlay}
         {fillPreviewOverlay}
         {tableOverlays}
+        {pivotOverlays}
         {extraAreaOverlays}
         {remotePeers && remotePeers.length > 0 ? (
           <XlsxRemoteSelectionLayer

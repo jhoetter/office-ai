@@ -43,6 +43,8 @@ import {
   Triangle,
   Type,
   Ungroup,
+  Video,
+  Wand2,
 } from "lucide-react";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
@@ -77,6 +79,29 @@ export interface PptxToolbarProps {
    */
   readonly connectorToolType: "straight" | "elbow" | "curved" | null;
   readonly onInsertImage: (file: File) => void;
+  /**
+   * Embed a video / audio file on the active slide. Mirrors
+   * `onInsertImage` but accepts `video/*` or `audio/*` and dispatches
+   * `pptx:insert-media` (which writes the binary part, registers
+   * slide-rels, and stamps a typed `MediaShape`).
+   */
+  readonly onInsertMedia: (file: File) => void;
+  /**
+   * Slide transition assigned to the active slide. Used by the
+   * `TransitionMenu` to highlight the current selection. `null` means
+   * the transition is unknown / unsupported.
+   */
+  readonly currentTransitionKind?: import("@officeai/pptx").TransitionKind | null;
+  readonly currentTransitionSpeed?: import("@officeai/pptx").TransitionSpeed | null;
+  /**
+   * Apply a transition to the active slide. The toolbar menu lets the
+   * user pick a kind directly; pass `null` for `speed` to keep the
+   * current speed (Word/PowerPoint default is "medium").
+   */
+  readonly onSetSlideTransition: (
+    kind: import("@officeai/pptx").TransitionKind,
+    speed: import("@officeai/pptx").TransitionSpeed | null
+  ) => void;
   /**
    * Open the XlsxRangePicker dialog so the user can pick a .xlsx
    * file + sheet + range and decide whether to insert it as a
@@ -170,6 +195,7 @@ export function PptxToolbar(props: PptxToolbarProps) {
   const canAlign = !disabled && selectionCount >= minAlignSelection;
   const canDistribute = !disabled && selectionCount >= 3;
   const imageInputRef = React.useRef<HTMLInputElement | null>(null);
+  const mediaInputRef = React.useRef<HTMLInputElement | null>(null);
   return (
     <ToolbarRow
       ariaLabel="Slide toolbar"
@@ -228,6 +254,12 @@ export function PptxToolbar(props: PptxToolbarProps) {
         onSetLayout={props.onSetSlideLayout}
         canSetLayout={props.slideCount > 0}
       />
+      <TransitionMenu
+        disabled={disabled || props.slideCount < 1}
+        currentKind={props.currentTransitionKind ?? "none"}
+        currentSpeed={props.currentTransitionSpeed ?? null}
+        onSetTransition={props.onSetSlideTransition}
+      />
       <Sep />
       <ToolbarButton
         onClick={props.onAddTextBox}
@@ -257,6 +289,25 @@ export function PptxToolbar(props: PptxToolbarProps) {
       <PictureReplaceButton
         onReplace={props.onReplacePicture}
         disabled={disabled || !props.selectedIsPicture}
+      />
+      <ToolbarButton
+        onClick={() => mediaInputRef.current?.click()}
+        icon={<Video size={14} />}
+        label="Media"
+        title="Insert video or audio"
+        disabled={disabled}
+        testId="pptx-insert-media"
+      />
+      <input
+        ref={mediaInputRef}
+        type="file"
+        accept="video/*,audio/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) props.onInsertMedia(f);
+          e.target.value = "";
+        }}
       />
       <ToolbarButton
         onClick={props.onInsertFromXlsx}
@@ -758,6 +809,121 @@ function LayoutMenu({ disabled, canSetLayout, onAddWithLayout, onSetLayout }: La
               </span>
             </button>
           ))}
+        </div>
+      </ToolbarMenu>
+    </>
+  );
+}
+
+interface TransitionMenuProps {
+  readonly disabled: boolean;
+  readonly currentKind: import("@officeai/pptx").TransitionKind;
+  readonly currentSpeed: import("@officeai/pptx").TransitionSpeed | null;
+  readonly onSetTransition: (
+    kind: import("@officeai/pptx").TransitionKind,
+    speed: import("@officeai/pptx").TransitionSpeed | null
+  ) => void;
+}
+
+const TRANSITION_OPTIONS: ReadonlyArray<{
+  readonly kind: import("@officeai/pptx").TransitionKind;
+  readonly label: string;
+  readonly hint: string;
+}> = [
+  { kind: "none", label: "None", hint: "Hard cut, no animation" },
+  { kind: "fade", label: "Fade", hint: "Cross-fade between slides" },
+  { kind: "push", label: "Push", hint: "New slide pushes the old one off" },
+  { kind: "wipe", label: "Wipe", hint: "Wipe across the slide" },
+  { kind: "split", label: "Split", hint: "Split open from the centre" },
+  { kind: "cut", label: "Cut", hint: "Instant cut" },
+];
+
+const TRANSITION_SPEED_OPTIONS: ReadonlyArray<{
+  readonly value: import("@officeai/pptx").TransitionSpeed;
+  readonly label: string;
+}> = [
+  { value: "slow", label: "Slow" },
+  { value: "med", label: "Medium" },
+  { value: "fast", label: "Fast" },
+];
+
+function TransitionMenu({ disabled, currentKind, currentSpeed, onSetTransition }: TransitionMenuProps) {
+  const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const activeLabel =
+    currentKind === "unsupported"
+      ? "Custom"
+      : (TRANSITION_OPTIONS.find((o) => o.kind === currentKind)?.label ?? "None");
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title={`Slide transition (currently ${activeLabel})`}
+        data-testid="pptx-transition-menu-trigger"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Wand2 size={14} />
+        <span className="hidden sm:inline">Transition</span>
+        {currentKind !== "none" && currentKind !== "unsupported" ? (
+          <span className="hidden text-[10px] text-secondary md:inline">· {activeLabel}</span>
+        ) : null}
+        <ChevronDown size={12} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="pptx-transition-menu"
+        className="w-[16rem] rounded-md border border-divider bg-surface p-2 shadow-lg"
+      >
+        <div className="mb-2 px-1 text-[10px] uppercase tracking-wide text-secondary">Effect</div>
+        <div className="mb-2 grid grid-cols-2 gap-1.5">
+          {TRANSITION_OPTIONS.map((opt) => {
+            const isActive = opt.kind === currentKind;
+            return (
+              <button
+                key={opt.kind}
+                type="button"
+                role="menuitem"
+                data-testid={`pptx-transition-${opt.kind}`}
+                onClick={() => {
+                  setOpen(false);
+                  onSetTransition(opt.kind, currentSpeed ?? "med");
+                }}
+                title={opt.hint}
+                className={`group flex flex-col items-start gap-0.5 rounded border px-2 py-1.5 text-left ${
+                  isActive
+                    ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]"
+                    : "border-divider/60 bg-transparent hover:border-divider hover:bg-hover"
+                }`}
+              >
+                <span className="text-[11px] font-medium text-foreground">{opt.label}</span>
+                <span className="truncate text-[10px] leading-tight text-secondary">{opt.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-secondary">Speed</div>
+        <div className="inline-flex w-full overflow-hidden rounded border border-divider text-[10px]">
+          {TRANSITION_SPEED_OPTIONS.map((s) => {
+            const isActive = (currentSpeed ?? "med") === s.value;
+            return (
+              <button
+                key={s.value}
+                type="button"
+                disabled={currentKind === "none" || currentKind === "unsupported"}
+                onClick={() => onSetTransition(currentKind, s.value)}
+                className={`flex-1 px-2 py-1 disabled:opacity-40 ${isActive ? "bg-hover" : ""}`}
+                data-testid={`pptx-transition-speed-${s.value}`}
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </div>
       </ToolbarMenu>
     </>

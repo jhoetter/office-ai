@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@officeai/ui";
-import { ListTree, MessageSquare, Search, Sparkles, X } from "lucide-react";
+import { LayoutTemplate, ListTree, MessageSquare, Search, Sparkles, X } from "lucide-react";
 import type { OutlineEntry, ProductAdapter } from "./types";
 
-export type RightRailTab = "comments" | "outline" | "animations";
+export type RightRailTab = "comments" | "outline" | "animations" | "master";
 
 export interface RightRailProps {
   readonly adapter: ProductAdapter;
@@ -31,6 +31,7 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
   if (!open) return null;
   const hasOutline = (adapter.outline?.length ?? 0) > 0 || adapter.product === "docx";
   const hasAnimations = adapter.renderAnimationsPanel != null;
+  const hasMaster = adapter.renderMasterPanel != null;
   return (
     <aside
       className="flex h-full w-[320px] flex-col border-l border-divider bg-background"
@@ -63,6 +64,15 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
               onClick={() => onTabChange("animations")}
               icon={<Sparkles size={13} />}
               testId="rail-tab-animations"
+            />
+          ) : null}
+          {hasMaster ? (
+            <RailTab
+              label="Master"
+              active={tab === "master"}
+              onClick={() => onTabChange("master")}
+              icon={<LayoutTemplate size={13} />}
+              testId="rail-tab-master"
             />
           ) : null}
         </div>
@@ -102,6 +112,12 @@ function renderRailBody(tab: RightRailTab, adapter: ProductAdapter): ReactNode {
         adapter.renderAnimationsPanel()
       ) : (
         <div className="p-4 text-sm text-secondary">No animations provider.</div>
+      );
+    case "master":
+      return adapter.renderMasterPanel ? (
+        adapter.renderMasterPanel()
+      ) : (
+        <div className="p-4 text-sm text-secondary">No master provider.</div>
       );
     default: {
       const exhaustive: never = tab;

@@ -1,4 +1,5 @@
 import type { XlsxClipboardSnapshot } from "@officeai/xlsx";
+import type { Shape as PptxShape } from "@officeai/pptx";
 
 /**
  * Cross-format embed envelope — the structured handoff we paint
@@ -37,7 +38,48 @@ export const EMBED_VERSION = 1;
  * Keep the variant names short and stable; they're persisted on
  * the system clipboard which can outlive the user's session.
  */
-export type OfficeAIEmbedPayload = XlsxRangeEmbed | XlsxChartImageEmbed;
+export type OfficeAIEmbedPayload = XlsxRangeEmbed | XlsxChartImageEmbed | PptxShapesEmbed | PptxSlideRefEmbed;
+
+/**
+ * Same-session reference to a slide in the source agent. Carries no
+ * shape data: the receiver re-reads the slide from the live agent
+ * (matched by `sessionId`) and dispatches `pptx:duplicate-slide` so
+ * shape parts, charts, media, and rels all clone correctly. Cross-
+ * session paste is rejected with a toast — moving a slide across
+ * different agents requires bundling media binaries into the envelope
+ * which is its own workstream.
+ */
+export interface PptxSlideRefEmbed {
+  readonly kind: "pptx-slide-ref";
+  readonly slideIndex: number;
+  /** `agent.sessionId` of the source. Receiver compares against its own. */
+  readonly sessionId: string;
+  readonly originLabel: string;
+}
+
+/**
+ * One or more PPTX shapes copied from a slide. The shapes are
+ * captured as already-typed model objects (positions / sizes /
+ * text-runs / connector endpoints / etc.) and re-stamped on paste
+ * via `pptx:paste-shapes`, which re-mints `NodeId`s and `cNvPrId`s
+ * so the clones can co-exist with the source.
+ *
+ * Phase-1 supports text shapes, simple prst shapes, tables,
+ * connectors, and groups thereof. Pictures, charts, OLE workbooks,
+ * and media are filtered out at copy time because their part
+ * references can't survive the clipboard hop without packaging the
+ * referenced bytes alongside the JSON. Same-deck duplication of
+ * those shape kinds remains available via `Cmd+D`.
+ */
+export interface PptxShapesEmbed {
+  readonly kind: "pptx-shapes";
+  /** Already-typed shape model objects (will be JSON-serialised). */
+  readonly shapes: ReadonlyArray<PptxShape>;
+  /** Source slide dimensions (EMU) — informational, used for log/toast labels. */
+  readonly sourceSlideSize?: { readonly cxEmu: number; readonly cyEmu: number };
+  /** Human-readable origin (e.g. `"Slide 3"`). For toasts only. */
+  readonly originLabel: string;
+}
 
 /**
  * A copied XLSX range. The raw `XlsxClipboardSnapshot` is preserved
@@ -142,6 +184,8 @@ function isEnvelope(v: unknown): v is OfficeAIEmbedEnvelope {
   const p = o.payload;
   if (!p || typeof p !== "object") return false;
   const pk = (p as { kind?: unknown }).kind;
-  if (pk !== "xlsx-range" && pk !== "xlsx-chart-image") return false;
+  if (pk !== "xlsx-range" && pk !== "xlsx-chart-image" && pk !== "pptx-shapes" && pk !== "pptx-slide-ref") {
+    return false;
+  }
   return true;
 }

@@ -243,6 +243,14 @@ export interface ProductAdapter {
    * specifics into the shared shell.
    */
   readonly renderAnimationsPanel?: () => ReactNode;
+  /**
+   * Optional Master / Theme panel renderer (PPTX only). Surfaces the
+   * deck's slide masters, layouts and theme so the user can inspect
+   * the design system that drives new slides. Phase-1 is read-only
+   * with a "default layout for new slides" picker; full master
+   * editing lands in a follow-up phase.
+   */
+  readonly renderMasterPanel?: () => ReactNode;
   /** Optional: produce a programmatic "open the comment composer"
    * trigger that the shell can fire from the top-bar comments icon. */
   readonly onAddComment?: () => void;

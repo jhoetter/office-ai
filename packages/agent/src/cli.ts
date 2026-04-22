@@ -19,6 +19,7 @@ import {
 import { registerXlsxSubcommands } from "./cli-xlsx.js";
 import { registerPdfSubcommands } from "./pdf-cli.js";
 import { registerPptxSubcommands } from "./pptx-cli.js";
+import { attachRealtimeFlags, publishCommandsToRealtime, type RealtimeFlags } from "./cli-realtime.js";
 import { deterministicIdMinter } from "@officeai/core";
 import { docxActions } from "@officeai/docx";
 import { pptxActions } from "@officeai/pptx";
@@ -918,56 +919,79 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
       io.stdout.write(stringifyJson({ pending: agent.getPendingMutations().length }, opts.pretty) + "\n");
     });
 
-  docx
-    .command("apply")
-    .description(
-      "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive)."
-    )
-    .requiredOption("--file <path>", "Path to a .docx file")
-    .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
-    .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
-    .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
-    .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: {
+  attachRealtimeFlags(
+    docx
+      .command("apply")
+      .description(
+        "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive). When --room and --realtime-url (or OAI_ROOM_ID + OAI_REALTIME_URL env) are set, publishes each command to a shared Yjs room so live editor peers update in-place without remounting."
+      )
+      .requiredOption("--file <path>", "Path to a .docx file")
+      .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+      .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
+      .option("--out <path>", "Path to write the resulting .docx file (defaults to --file, in place)")
+      .option("--pretty", "Pretty-print JSON output", false)
+  ).action(
+    async (
+      opts: {
         file: string;
         commands?: string;
         fromStdin: boolean;
         out?: string;
         pretty: boolean;
-      }) => {
-        if (opts.fromStdin === Boolean(opts.commands)) {
-          throw new CliError(64, "docx apply: pass exactly one of -c/--commands <path> or --from-stdin");
-        }
-        const agent = await loadAgent(opts.file);
-        const raw = opts.fromStdin
-          ? await readStdinToString()
-          : await readFile(resolve(opts.commands as string), "utf8");
-        const data: unknown = JSON.parse(raw);
-        const cmds = normalizeCommands(data);
-        const muts = await agent.applyCommands(cmds);
-        const ids = agent.getPendingMutations().map((m) => m.id);
-        for (const id of ids) agent.approveMutation(id);
-        const out = opts.out ?? opts.file;
-        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-        io.stdout.write(
-          stringifyJson(
-            {
-              wrote: out,
-              mutations: muts.map((m) => mutationLineSummary(m)),
-            },
-            opts.pretty
-          ) + "\n"
-        );
-        const rejected = muts.filter((m) => m.status === "rejected");
-        if (rejected.length > 0) {
-          throw new CliError(
-            2,
-            `docx apply: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
-          );
-        }
+      } & RealtimeFlags
+    ) => {
+      if (opts.fromStdin === Boolean(opts.commands)) {
+        throw new CliError(64, "docx apply: pass exactly one of -c/--commands <path> or --from-stdin");
       }
-    );
+      const agent = await loadAgent(opts.file);
+      const raw = opts.fromStdin
+        ? await readStdinToString()
+        : await readFile(resolve(opts.commands as string), "utf8");
+      const data: unknown = JSON.parse(raw);
+      const cmds = normalizeCommands(data);
+      const muts = await agent.applyCommands(cmds);
+      const ids = agent.getPendingMutations().map((m) => m.id);
+      for (const id of ids) agent.approveMutation(id);
+
+      // Publish to Yjs BEFORE writing the file so editor peers see
+      // live updates a few hundred ms before any S3-backed iframe
+      // could refresh — that's the entire point of the room. Failures
+      // here never block the file write (publishCommandsToRealtime
+      // swallows + reports its own errors).
+      const approved = muts
+        .filter((m) => m.status !== "rejected")
+        .map((m) => ({
+          type: m.command.type,
+          payload: m.command.payload,
+          source: "agent" as const,
+          agentId: "office-agent-cli",
+        }));
+      const realtime = await publishCommandsToRealtime(
+        { ...opts, product: "docx", agentId: "office-agent-cli" },
+        approved
+      );
+
+      const out = opts.out ?? opts.file;
+      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+      io.stdout.write(
+        stringifyJson(
+          {
+            wrote: out,
+            mutations: muts.map((m) => mutationLineSummary(m)),
+            ...(realtime ? { realtime } : {}),
+          },
+          opts.pretty
+        ) + "\n"
+      );
+      const rejected = muts.filter((m) => m.status === "rejected");
+      if (rejected.length > 0) {
+        throw new CliError(
+          2,
+          `docx apply: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
+        );
+      }
+    }
+  );
 
   docx
     .command("diff")

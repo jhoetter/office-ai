@@ -70,6 +70,7 @@ export {
   type MergedCell,
   type OpaquePart,
   type PivotCachePart,
+  type PivotTableLocation,
   type PivotTablePart,
   type Sheet,
   type XlsxDirtyFlags,

@@ -196,6 +196,8 @@
       "insertHyperlink": "Insert hyperlink",
       "insertComment": "Insert comment",
       "addComment": "Add comment",
+      "insertFootnote": "Insert footnote",
+      "insertFootnoteTooltip": "Insert a footnote at the current caret position",
       "insertPageBreak": "Insert page break",
       "insertSectionBreak": "Insert section break",
       "insertHeader": "Insert header",
@@ -453,6 +455,9 @@
       "freezeFirstColumn": "Freeze first column",
       "freezeAtSelection": "Freeze panes at selection",
       "unfreeze": "Unfreeze panes"
+    },
+    "pivot": {
+      "readOnlyTooltip": "Pivot table — read-only in this build. Editing pivots is on the roadmap."
     },
     "insertChart": {
       "title": "Insert chart",
@@ -725,6 +730,12 @@
       "slideLayout": "Slide layout",
       "insertText": "Insert text box",
       "insertImage": "Insert image",
+      "insertMedia": {
+        "label": "Insert media",
+        "tooltip": "Insert video or audio",
+        "unsupportedType": "Unsupported media type \"{mime}\". Use MP4, WebM, MOV (video) or MP3, M4A, WAV, OGG (audio).",
+        "notMedia": "\"{name}\" isn't a video or audio file."
+      },
       "insertShape": "Insert shape",
       "insertTable": "Insert table",
       "insertChart": "Insert chart",
@@ -777,6 +788,11 @@
       "resetRouting": "Reset routing",
       "reverseDirection": "Reverse direction",
       "detach": "Detach from shapes"
+    },
+    "geometry": {
+      "title": "Geometry",
+      "cornerRadius": "Corner radius",
+      "adjustment": "Adjustment {n}"
     },
     "animations": {
       "noSlide": "No slide selected.",
@@ -1004,6 +1020,10 @@
       "insert-hyperlink": {
         "label": "Insert hyperlink",
         "description": "Wrap a flat-text range in a paragraph with a hyperlink."
+      },
+      "insert-footnote": {
+        "label": "Insert footnote",
+        "description": "Insert a footnote reference at the caret and add an empty footnote body."
       },
       "bullet-list": {
         "label": "Bullet list",
@@ -1235,6 +1255,10 @@
         "label": "Insert chart…",
         "description": "Open the Insert Chart dialog for the current selection."
       },
+      "insert-pivot-table": {
+        "label": "Insert pivot table…",
+        "description": "Summarise the current selection by grouping a column and aggregating another."
+      },
       "edit-chart": {
         "label": "Edit chart…",
         "description": "Edit the currently selected chart's data range, type, and title."
@@ -1282,6 +1306,10 @@
       "insert-media": {
         "label": "Insert media",
         "description": "Insert a video or audio clip on a slide. Embeds the binary as a media part with a poster image and the appropriate <p:pic> reference."
+      },
+      "set-shape-geometry": {
+        "label": "Set shape geometry adjustment",
+        "description": "Tune a preset shape's geometry parameter (corner radius, arrow head size, etc.) by writing into a:avLst > a:gd."
       },
       "insert-chart": {
         "label": "Insert chart",

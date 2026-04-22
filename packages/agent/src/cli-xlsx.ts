@@ -30,6 +30,7 @@ import {
   useDeterministicIds,
   type IO,
 } from "./cli-shared.js";
+import { attachRealtimeFlags, publishCommandsToRealtime, type RealtimeFlags } from "./cli-realtime.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Agent loading + structural projections
@@ -849,79 +850,100 @@ export function registerXlsxSubcommands(xlsx: Command, io: IO): void {
   });
 
   // ── Apply commands JSON file (matches `docx apply -c <path>`) ─────────
-  xlsx
-    .command("apply-file")
-    .description(
-      "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive)."
-    )
-    .requiredOption("--file <path>", "Path to a .xlsx file")
-    .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
-    .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
-    .option("--out <path>", "Path to write the resulting .xlsx file (defaults to --file, in place)")
-    .option(
-      "--undo <n>",
-      "After applying, peel back the last N approved mutations via the bus's undo stack. Useful for batch-then-revert workflows.",
-      parseIntOpt
-    )
-    .option("--pretty", "Pretty-print JSON output", false)
-    .action(
-      async (opts: {
+  attachRealtimeFlags(
+    xlsx
+      .command("apply-file")
+      .description(
+        "Apply a JSON command file (single command or { commands: [...] }) and write the result. Pass -c/--commands to read from disk or --from-stdin to read JSON piped on stdin (mutually exclusive). When --room and --realtime-url (or OAI_ROOM_ID + OAI_REALTIME_URL env) are set, publishes each command to a shared Yjs room so live editor peers update in-place without remounting."
+      )
+      .requiredOption("--file <path>", "Path to a .xlsx file")
+      .option("-c, --commands <path>", "Path to a JSON file containing one or more commands")
+      .option("--from-stdin", "Read the JSON command body from stdin instead of -c <path>", false)
+      .option("--out <path>", "Path to write the resulting .xlsx file (defaults to --file, in place)")
+      .option(
+        "--undo <n>",
+        "After applying, peel back the last N approved mutations via the bus's undo stack. Useful for batch-then-revert workflows.",
+        parseIntOpt
+      )
+      .option("--pretty", "Pretty-print JSON output", false)
+  ).action(
+    async (
+      opts: {
         file: string;
         commands?: string;
         fromStdin: boolean;
         out?: string;
         undo?: number;
         pretty: boolean;
-      }) => {
-        if (opts.fromStdin === Boolean(opts.commands)) {
-          throw new CliError(64, "xlsx apply-file: pass exactly one of -c/--commands <path> or --from-stdin");
+      } & RealtimeFlags
+    ) => {
+      if (opts.fromStdin === Boolean(opts.commands)) {
+        throw new CliError(64, "xlsx apply-file: pass exactly one of -c/--commands <path> or --from-stdin");
+      }
+      const agent = await loadXlsxAgent(opts.file);
+      const raw = opts.fromStdin
+        ? await readStdinToString()
+        : await readFile(resolve(opts.commands as string), "utf8");
+      const data: unknown = JSON.parse(raw);
+      const cmds = normalizeCommands(data);
+      const muts = await agent.applyCommands(cmds);
+      const ids = agent.getPendingMutations().map((m) => m.id);
+      for (const id of ids) agent.approveMutation(id);
+      let undone = 0;
+      if (opts.undo !== undefined) {
+        if (opts.undo < 0) {
+          throw new CliError(64, "xlsx apply-file: --undo must be non-negative");
         }
-        const agent = await loadXlsxAgent(opts.file);
-        const raw = opts.fromStdin
-          ? await readStdinToString()
-          : await readFile(resolve(opts.commands as string), "utf8");
-        const data: unknown = JSON.parse(raw);
-        const cmds = normalizeCommands(data);
-        const muts = await agent.applyCommands(cmds);
-        const ids = agent.getPendingMutations().map((m) => m.id);
-        for (const id of ids) agent.approveMutation(id);
-        let undone = 0;
-        if (opts.undo !== undefined) {
-          if (opts.undo < 0) {
-            throw new CliError(64, "xlsx apply-file: --undo must be non-negative");
-          }
-          for (let i = 0; i < opts.undo; i++) {
-            if (!agent.canUndo()) break;
-            agent.undo();
-            undone++;
-          }
-        }
-        const out = opts.out ?? opts.file;
-        await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
-        io.stdout.write(
-          stringifyJson(
-            {
-              wrote: out,
-              mutations: muts.map((m) => ({
-                id: m.id,
-                type: m.command.type,
-                status: m.status === "rejected" ? "rejected" : "approved",
-                ...(m.rejection ? { rejection: m.rejection } : {}),
-              })),
-              ...(opts.undo !== undefined ? { undone } : {}),
-            },
-            opts.pretty
-          ) + "\n"
-        );
-        const rejected = muts.filter((m) => m.status === "rejected");
-        if (rejected.length > 0) {
-          throw new CliError(
-            2,
-            `xlsx apply-file: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
-          );
+        for (let i = 0; i < opts.undo; i++) {
+          if (!agent.canUndo()) break;
+          agent.undo();
+          undone++;
         }
       }
-    );
+
+      // Publish to Yjs after the (optional) undo so the room
+      // matches the bytes we're about to persist. See cli.ts
+      // docx-apply for the full rationale.
+      const approved = muts
+        .filter((m) => m.status !== "rejected")
+        .map((m) => ({
+          type: m.command.type,
+          payload: m.command.payload,
+          source: "agent" as const,
+          agentId: "office-agent-cli",
+        }));
+      const realtime = await publishCommandsToRealtime(
+        { ...opts, product: "xlsx", agentId: "office-agent-cli" },
+        approved
+      );
+
+      const out = opts.out ?? opts.file;
+      await writeFile(resolve(out), Buffer.from(await agent.exportFile()));
+      io.stdout.write(
+        stringifyJson(
+          {
+            wrote: out,
+            mutations: muts.map((m) => ({
+              id: m.id,
+              type: m.command.type,
+              status: m.status === "rejected" ? "rejected" : "approved",
+              ...(m.rejection ? { rejection: m.rejection } : {}),
+            })),
+            ...(opts.undo !== undefined ? { undone } : {}),
+            ...(realtime ? { realtime } : {}),
+          },
+          opts.pretty
+        ) + "\n"
+      );
+      const rejected = muts.filter((m) => m.status === "rejected");
+      if (rejected.length > 0) {
+        throw new CliError(
+          2,
+          `xlsx apply-file: ${rejected.length}/${muts.length} mutation(s) rejected; first failure: ${rejected[0].command.type} → ${rejected[0].rejection?.code ?? "unknown"} (${rejected[0].rejection?.message ?? "no message"})`
+        );
+      }
+    }
+  );
 
   xlsx
     .command("diff")

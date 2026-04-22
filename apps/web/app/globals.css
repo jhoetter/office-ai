@@ -1471,6 +1471,44 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
   margin-top: 8px;
 }
 
+/* Footnote lane (F1-UI Phase 1). Sits above the footer zone inside
+ * `.pm-page-cap-bottom` and stays read-only until per-page assignment
+ * + in-place editing land. The thin top rule mirrors Word's footnote
+ * separator; the bottom margin keeps the lane visually distinct from
+ * the dashed footer divider. */
+.prose-pm .ProseMirror .pm-page-zone-footnotes {
+  border-top: 1px solid var(--divider);
+  padding-top: 6px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--secondary, var(--foreground));
+}
+
+.prose-pm .ProseMirror .pm-page-footnote-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prose-pm .ProseMirror .pm-page-footnote-row {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.prose-pm .ProseMirror .pm-page-footnote-marker {
+  font-size: 9px;
+  color: var(--tertiary, var(--secondary));
+  flex: 0 0 auto;
+}
+
+.prose-pm .ProseMirror .pm-page-footnote-body {
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+}
+
 /* Empty header/footer zones — whether the section has no part at all
  * (`pm-page-zone-no-part`) or has a part with no text yet
  * (`pm-page-zone-empty`) — collapse their dashed separator + extra
@@ -1570,10 +1608,15 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
 }
 
 .pm-page-zone:focus-within .pm-page-zone-content {
-  background-color: color-mix(in srgb, var(--accent-light) 80%, transparent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  background-color: color-mix(in srgb, var(--accent-light) 35%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
   color: var(--foreground);
   border-radius: 2px;
+  outline: none;
+}
+
+.pm-page-zone-content[contenteditable="true"]:focus {
+  outline: none;
 }
 
 .pm-page-zone:focus-within::before {
@@ -1581,13 +1624,24 @@ html.dark .prose-pm .ProseMirror .pm-page-edge .pm-page-gap {
   background: var(--accent);
 }
 
-/* Empty placeholder hint — uses ::after on contenteditable empty
- * elements so it disappears the moment the user starts typing. */
+/* Empty placeholder hint — Word only paints "Click to add header
+ * text" once the user is actively interacting with the zone. We mirror
+ * that: keep the placeholder hidden by default so a fresh sheet of
+ * paper looks like a fresh sheet of paper, and only fade it in on
+ * hover or focus. The `::after` placeholder still disappears the
+ * moment the user starts typing because `:empty` flips false. */
 .pm-page-zone-content.pm-page-zone-empty[contenteditable="true"]:empty::before {
   content: attr(data-placeholder);
   color: var(--tertiary);
   font-style: italic;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.pm-page-zone:hover .pm-page-zone-content.pm-page-zone-empty[contenteditable="true"]:empty::before,
+.pm-page-zone:focus-within .pm-page-zone-content.pm-page-zone-empty[contenteditable="true"]:empty::before {
+  opacity: 1;
 }
 
 /* When the section has no header/footer part at all, keep the zone

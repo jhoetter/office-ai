@@ -1,5 +1,6 @@
 import { ooxml } from "@officeai/core";
-import type { PivotCachePart, PivotTablePart, Sheet } from "../model/types.js";
+import type { PivotCachePart, PivotTableLocation, PivotTablePart, Sheet } from "../model/types.js";
+import { parseRange } from "../model/refs.js";
 import { resolveTargetPath } from "./parse.js";
 
 /**
@@ -174,6 +175,7 @@ function discoverPivotTables(
       const raw = container.readText(partPath);
       const name = extractRootStringAttribute(raw, "pivotTableDefinition", "name") ?? partPath;
       const cacheId = extractRootIntAttribute(raw, "pivotTableDefinition", "cacheId");
+      const location = extractPivotLocation(raw);
 
       modeledPaths.add(partPath);
       const relsPath = ooxml.RelationshipGraph.relsPathFor(partPath);
@@ -184,6 +186,8 @@ function discoverPivotTables(
         partPath,
         name,
         ...(cacheId !== undefined ? { cacheId } : {}),
+        sheetId: sheet.sheetId,
+        ...(location !== undefined ? { location } : {}),
         raw,
         ...(contentTypes.get(partPath) ? { contentType: contentTypes.get(partPath)! } : {}),
         ...(relsXml !== undefined ? { relsXml } : {}),
@@ -191,6 +195,55 @@ function discoverPivotTables(
     }
   }
   return out;
+}
+
+/**
+ * Pull the `<location ref="…" firstHeaderRow="…" firstDataRow="…"
+ * firstDataCol="…"/>` element out of a pivot definition. We only
+ * need the rectangle (for grid overlays) and the data-band offsets
+ * (for downstream renderers that may want to differentiate header
+ * cells from data cells); everything else stays in `raw`.
+ *
+ * Uses a regex for the same reason as the other extractors here —
+ * the XML body never has to be walked structurally in Phase 1.
+ */
+export function extractPivotLocation(xml: string): PivotTableLocation | undefined {
+  const tagMatch = /<(?:[A-Za-z_][\w.-]*:)?location\b([^>]*?)\/?>/.exec(xml);
+  if (!tagMatch) return undefined;
+  const attrs = tagMatch[1] ?? "";
+  const ref = readAttr(attrs, "ref");
+  if (!ref) return undefined;
+  let r1: number;
+  let c1: number;
+  let r2: number;
+  let c2: number;
+  try {
+    const range = parseRange(ref);
+    r1 = range.start.row;
+    c1 = range.start.col;
+    r2 = range.end.row;
+    c2 = range.end.col;
+  } catch {
+    return undefined;
+  }
+  const rowCount = r2 - r1 + 1;
+  const colCount = c2 - c1 + 1;
+  const firstHeaderRow = readIntAttr(attrs, "firstHeaderRow") ?? 0;
+  const firstDataRow = readIntAttr(attrs, "firstDataRow") ?? 0;
+  const firstDataCol = readIntAttr(attrs, "firstDataCol") ?? 0;
+  return { ref, r1, c1, r2, c2, rowCount, colCount, firstHeaderRow, firstDataRow, firstDataCol };
+}
+
+function readAttr(attrs: string, name: string): string | undefined {
+  const m = new RegExp(`\\b${name}=("|')([^"']*)\\1`).exec(attrs);
+  return m ? m[2] : undefined;
+}
+
+function readIntAttr(attrs: string, name: string): number | undefined {
+  const v = readAttr(attrs, name);
+  if (v === undefined) return undefined;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /**

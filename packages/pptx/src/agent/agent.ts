@@ -52,10 +52,18 @@ export interface PptxSearchResult {
  */
 export class PptxAgent {
   private readonly bus: CommandBus<PptxSnapshot>;
+  /**
+   * Stable per-agent identifier surfaced for clipboard / collab paths
+   * that need to tell same-session pastes from cross-session ones.
+   * Falls back to a freshly-minted UUID when the caller didn't pass
+   * one so every agent has *some* identity even in tests.
+   */
+  readonly sessionId: string;
 
   private constructor(initial: PptxSnapshot, opts: PptxAgentOptions) {
+    this.sessionId = opts.sessionId ?? generateSessionId();
     this.bus = new CommandBus<PptxSnapshot>(initial, {
-      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+      sessionId: this.sessionId,
       ...(opts.idMinter ? { mintNodeId: opts.idMinter } : {}),
     });
     this.bus.registerAll(allPptxHandlers);
@@ -269,6 +277,18 @@ function walkShapes(shapes: ReadonlyArray<Shape>, visit: (s: TextShape | Shape) 
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Tiny session-id minter used when the embedder didn't pass one.
+ * `crypto.randomUUID` is the cheapest stable identifier available in
+ * Node ≥ 19 and every modern browser; we fall back to a `Math.random`
+ * string for environments without it (older Jest / SSR shims).
+ */
+function generateSessionId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `pptx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function snippet(text: string, start: number, end: number, span = 40): string {
