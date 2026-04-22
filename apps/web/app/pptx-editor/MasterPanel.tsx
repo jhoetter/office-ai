@@ -127,10 +127,17 @@ export function MasterPanel({
       </Section>
 
       <Section title="Editing">
-        <p className="text-xs text-secondary">
-          Editing slide masters and theme palettes ships in a follow-up. For now this panel is read-only so
-          you can audit the design system before applying it via templates.
-        </p>
+        <div
+          data-testid="master-coming-soon"
+          className="flex flex-col items-center gap-1 rounded border border-dashed border-divider px-3 py-4 text-center"
+        >
+          <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-secondary">
+            Coming soon
+          </span>
+          <p className="text-[11px] text-secondary">
+            Editing slide masters and theme palettes is supported in the data model but the UI ships in a follow-up. Use the CLI in the meantime.
+          </p>
+        </div>
       </Section>
     </div>
   );

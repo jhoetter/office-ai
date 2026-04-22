@@ -413,8 +413,16 @@ function GradientSection({ value, onChange, testId }: GradientSectionProps): Rea
 
 function ComingSoonSection({ label }: { label: string }): React.ReactNode {
   return (
-    <div className="rounded border border-dashed border-divider px-3 py-4 text-center text-[11px] text-secondary">
-      {label} is coming in a future update.
+    <div
+      data-testid="fillpicker-coming-soon"
+      className="flex flex-col items-center gap-1 rounded border border-dashed border-divider px-3 py-4 text-center"
+    >
+      <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-secondary">
+        Coming soon
+      </span>
+      <p className="text-[11px] text-secondary">
+        {label} is supported in the data model but the UI ships in a follow-up. Use the CLI in the meantime.
+      </p>
     </div>
   );
 }

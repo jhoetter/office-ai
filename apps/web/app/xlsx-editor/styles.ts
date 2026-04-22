@@ -302,3 +302,69 @@ export function presetNumFmtId(presetId: NumberFormatPresetId): number | undefin
   const code = NUMBER_FORMAT_PRESETS.find((p) => p.id === presetId)?.code;
   return code ? BUILTIN_NUM_FMT_IDS[code] : undefined;
 }
+
+/**
+ * Built-in Excel number-format codes for the IDs the toolbar can
+ * produce or read. We need the *string* form so the
+ * "increase / decrease decimal" buttons can rewrite a code (which
+ * `xlsx:set-cell-format` can intern back to a numFmtId).
+ *
+ * IDs absent here fall through to "General" — full Excel parity for
+ * exotic numFmtIds (datetimes, fractions, scientific) is left to a
+ * follow-up dedicated to number-format infrastructure.
+ */
+const BUILTIN_NUM_FMT_CODES: Record<number, string> = {
+  0: "General",
+  1: "0",
+  2: "0.00",
+  3: "#,##0",
+  4: "#,##0.00",
+  9: "0%",
+  10: "0.00%",
+  11: "0.00E+00",
+  37: "#,##0;-#,##0",
+  38: "#,##0;[Red]-#,##0",
+  39: "#,##0.00;-#,##0.00",
+  40: "#,##0.00;[Red]-#,##0.00",
+  14: "yyyy-mm-dd",
+};
+
+/**
+ * Resolve a numFmtId to its concrete format-code string by walking
+ * the built-in table first then falling back to the workbook's
+ * custom numFmts map. Returns `null` when the id can't be resolved
+ * — the caller should treat this as "leave the existing format alone".
+ */
+export function resolveNumFmtCode(table: StyleTable, numFmtId: number): string | null {
+  const builtin = BUILTIN_NUM_FMT_CODES[numFmtId];
+  if (builtin) return builtin;
+  return table.numFmts.get(numFmtId) ?? null;
+}
+
+/**
+ * Apply +/- 1 decimal place to an Excel number-format code. Mirrors
+ * Excel's "Increase Decimal" / "Decrease Decimal" toolbar buttons
+ * by editing the *last* numeric placeholder run in the code so we
+ * preserve currency suffixes / percent signs / colour modifiers /
+ * negative-format clauses (`#,##0.00;[Red]-#,##0.00` …).
+ *
+ * Returns the rewritten code, or the original when no change is
+ * possible (e.g. trying to drop a decimal from an integer format).
+ */
+export function adjustDecimalsInCode(code: string, delta: 1 | -1): string {
+  const target = code === "General" ? "0" : code;
+  // Match the *last* placeholder run of the form `0`, `0.0`, `0.00…`
+  // anywhere in the code — survives currency prefixes, percent suffix,
+  // and the negative half of a two-clause format.
+  const regex = /0(?:\.0+)?(?=[^0.]*$)/;
+  const match = regex.exec(target);
+  if (!match) return code;
+  const placeholder = match[0];
+  const dotIdx = placeholder.indexOf(".");
+  const decimals = dotIdx === -1 ? 0 : placeholder.length - dotIdx - 1;
+  const next = decimals + delta;
+  if (next < 0) return code;
+  if (next > 30) return code;
+  const replacement = next === 0 ? "0" : `0.${"0".repeat(next)}`;
+  return target.slice(0, match.index) + replacement + target.slice(match.index + placeholder.length);
+}

@@ -205,6 +205,29 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["palette"],
     hidden: { reason: "Reachable via the sheet tabs context menu; CLI exposure is deferred." },
   },
+  {
+    id: "xlsx.set-sheet-tab-color",
+    commandType: "xlsx:set-sheet-tab-color",
+    label: "Set sheet tab color",
+    description: "Paint the sheet-tab strip with a custom color (or clear it).",
+    section: "Sheet",
+    surfaces: ["cli", "contextMenu"],
+    icon: "Palette",
+    args: [
+      { name: "sheet", flag: "--sheet <name>", kind: "string", required: true, description: "Target sheet name" },
+      {
+        name: "color",
+        flag: "--color <argb>",
+        kind: "string",
+        required: false,
+        description: "ARGB hex (e.g. FFCC0000); omit or pass empty string to clear",
+      },
+    ],
+    buildPayload: ({ sheet, color }) => ({
+      name: String(sheet),
+      color: color === undefined || color === null || color === "" ? null : String(color),
+    }),
+  },
 
   // ── Rows / columns / merges ───────────────────────────────────────
   {
@@ -349,6 +372,44 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
       sheet: String(sheet),
       row: Number(row),
       height: reset ? null : Number(height),
+    }),
+  },
+  {
+    id: "xlsx.set-row-visibility",
+    commandType: "xlsx:set-row-visibility",
+    label: "Hide / unhide row",
+    description: "Show or hide a single row (row-header context-menu parity).",
+    section: "Format",
+    surfaces: ["cli", "contextMenu"],
+    icon: "EyeOff",
+    args: [
+      { name: "sheet", flag: "--sheet <name>", kind: "string", required: true, description: "Target sheet name" },
+      { name: "row", flag: "--row <n>", kind: "number", required: true, description: "1-based row index" },
+      { name: "hidden", flag: "--hidden <bool>", kind: "boolean", required: true, description: "true = hide, false = show" },
+    ],
+    buildPayload: ({ sheet, row, hidden }) => ({
+      sheet: String(sheet),
+      row: Number(row),
+      hidden: Boolean(hidden),
+    }),
+  },
+  {
+    id: "xlsx.set-column-visibility",
+    commandType: "xlsx:set-column-visibility",
+    label: "Hide / unhide column",
+    description: "Show or hide a single column (column-header context-menu parity).",
+    section: "Format",
+    surfaces: ["cli", "contextMenu"],
+    icon: "EyeOff",
+    args: [
+      { name: "sheet", flag: "--sheet <name>", kind: "string", required: true, description: "Target sheet name" },
+      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "1-based column index (A=1)" },
+      { name: "hidden", flag: "--hidden <bool>", kind: "boolean", required: true, description: "true = hide, false = show" },
+    ],
+    buildPayload: ({ sheet, column, hidden }) => ({
+      sheet: String(sheet),
+      column: Number(column),
+      hidden: Boolean(hidden),
     }),
   },
 
@@ -1378,6 +1439,21 @@ export const xlsxActions: ReadonlyArray<ActionDescriptor> = [
   },
 
   // ── Phase 7: View tab ─────────────────────────────────────────────
+  {
+    // Palette-only opener for the Zoom dialog. Kept separate from
+    // `xlsx.set-sheet-view` so the palette entry that says "Set sheet
+    // view" actually configures the sheet view (mode + toggles) and
+    // the entry that says "Zoom" actually opens Zoom — instead of one
+    // running the other (the original wiring made Cmd+K → "Set sheet
+    // view" pop the Zoom dialog, which was a lying button).
+    id: "xlsx.open-zoom-dialog",
+    commandType: null,
+    label: "Zoom",
+    description: "Open the Excel-style zoom dialog (View → Zoom).",
+    section: "View",
+    surfaces: ["palette"],
+    icon: "ZoomIn",
+  },
   {
     id: "xlsx.set-sheet-view",
     commandType: "xlsx:set-sheet-view",

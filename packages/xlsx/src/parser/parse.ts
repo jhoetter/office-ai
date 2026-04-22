@@ -405,6 +405,8 @@ function resolveSheet(
 
   const opaqueSheetParts = sheetXml ? extractOpaqueSheetParts(sheetXml) : EMPTY_OPAQUE_SHEET_PARTS;
 
+  const tabColor = sheetXml ? extractTabColor(sheetXml) : undefined;
+
   // Shared / array formula metadata. SheetJS expands shared
   // formulas to per-cell text on parse, which loses the source
   // grouping. We re-scan the worksheet XML directly to recover the
@@ -463,6 +465,7 @@ function resolveSheet(
     name: entry.name,
     index,
     state: entry.state,
+    ...(tabColor ? { tabColor } : {}),
     kind,
     partPath,
     ...(relsPartPath ? { relsPartPath } : {}),
@@ -548,6 +551,30 @@ interface OpaqueSheetParts {
 }
 
 const EMPTY_OPAQUE_SHEET_PARTS: OpaqueSheetParts = {};
+
+/**
+ * Pull the per-sheet "Tab Color" out of the worksheet XML.
+ *
+ * Excel emits this as `<sheetPr ...><tabColor rgb="FFCC0000"/>...</sheetPr>`
+ * (or as part of the rare attribute-form `<sheetPr ... tabColor="..."/>`).
+ * We only handle the canonical nested form — anything else stays
+ * `undefined` and is preserved verbatim by the existing opaque
+ * round-trip.
+ */
+function extractTabColor(xml: string): string | undefined {
+  const sheetPrMatch = /<sheetPr\b[^>]*>([\s\S]*?)<\/sheetPr>/.exec(xml);
+  if (!sheetPrMatch) return undefined;
+  const inner = sheetPrMatch[1];
+  const tcMatch = /<tabColor\b([^/>]*)\/?>/.exec(inner);
+  if (!tcMatch) return undefined;
+  const attrs = tcMatch[1];
+  const rgbMatch = /\brgb\s*=\s*"([0-9A-Fa-f]+)"/.exec(attrs);
+  if (rgbMatch) {
+    const raw = rgbMatch[1].toUpperCase();
+    return raw.length === 6 ? `FF${raw}` : raw;
+  }
+  return undefined;
+}
 
 function extractFirstBlock(xml: string, tag: string): string | undefined {
   const re = new RegExp(`<${tag}\\b[^>]*?(?:/>|>[\\s\\S]*?</${tag}>)`);

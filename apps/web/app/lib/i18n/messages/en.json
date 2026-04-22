@@ -147,7 +147,19 @@
     "images": "Images",
     "currentSlide": "This slide",
     "currentPage": "This page",
-    "currentSheet": "This sheet"
+    "currentSheet": "This sheet",
+    "railTabComments": "Comments",
+    "railTabOutline": "Outline",
+    "railTabAnimations": "Animations",
+    "railTabMaster": "Master",
+    "railTabFootnotes": "Footnotes",
+    "railClose": "Close side panel",
+    "railAsideAria": "Editor side panel",
+    "railTabsAria": "Side panel tabs",
+    "railNoComments": "No comments provider.",
+    "railNoAnimations": "No animations provider.",
+    "railNoMaster": "No master provider.",
+    "railNoFootnotes": "No footnotes."
   },
   "status": {
     "page": "Page {n} of {total}",
@@ -157,6 +169,12 @@
     "selectionEmpty": "No selection",
     "shapesSelected": "{n} shapes selected",
     "slideOf": "Slide {n} of {total}",
+    "unnamedShape": "Shape",
+    "oneShapeSelected": "{name} selected",
+    "saveStateSaved": "Saved",
+    "saveStateUnsaved": "Unsaved changes",
+    "saveStateSaving": "Saving…",
+    "saveStateError": "Save error",
     "sum": "Sum",
     "avg": "Avg",
     "count": "Count",
@@ -844,6 +862,11 @@
       "preview": "Preview",
       "previewAll": "Preview the full sequence",
       "previewStep": "Preview this step",
+      "painterCopy": "Copy",
+      "painterCopyTitle": "Copy animations from this shape (Animation Painter)",
+      "painterPaste": "Paint",
+      "painterPasteTitle": "Apply {count} copied animation(s) to the selected shape",
+      "painterPasteEmpty": "Copy animations from a shape first to enable Paint",
       "presetAppear": "Appear",
       "presetFade": "Fade",
       "presetFlyIn": "Fly in",
@@ -888,7 +911,18 @@
       "moveLater": "Move later",
       "removeAnimation": "Remove animation",
       "shapeFallback": "Shape #{id}",
-      "listAriaLabel": "Animations on this slide"
+      "listAriaLabel": "Animations on this slide",
+      "transitionCustom": "Custom",
+      "transitionHintNone": "Hard cut, no animation",
+      "transitionHintFade": "Cross-fade between slides",
+      "transitionHintPush": "New slide pushes the old one off-screen",
+      "transitionHintWipe": "Wipe across the slide",
+      "transitionHintSplit": "Split open from the centre",
+      "transitionHintCut": "Instant cut",
+      "transitionMenuLabel": "Transition",
+      "transitionMenuTooltip": "Slide transition (currently {label})",
+      "presetTooltipDirections": "Directions: {list}",
+      "presetTooltipDefaultDuration": "Default duration: {ms} ms"
     },
     "present": {
       "ariaLabel": "Presentation",
@@ -970,6 +1004,16 @@
     "ocrPage": "Run OCR on this page",
     "ocrAll": "Run OCR on all pages",
     "noOutline": "This document has no outline.",
+    "addBookmark": "Add bookmark",
+    "addBookmarkPrompt": "Bookmark title:",
+    "documentProperties": "Document properties…",
+    "documentPropertiesTitle": "Document properties",
+    "documentPropertiesSave": "Save",
+    "documentPropertiesCancel": "Cancel",
+    "metaTitle": "Title",
+    "metaAuthor": "Author",
+    "metaSubject": "Subject",
+    "metaKeywords": "Keywords",
     "noAnnotations": "No annotations yet.",
     "noFormFields": "No form fields detected.",
     "addCommentHint": "Click any region to add a comment.",
@@ -1260,6 +1304,18 @@
         "label": "Set row height",
         "description": "Override a row's height in CSS pixels (or pass --reset to clear)."
       },
+      "set-row-visibility": {
+        "label": "Hide / unhide row",
+        "description": "Show or hide a single row (row-header context-menu parity)."
+      },
+      "set-column-visibility": {
+        "label": "Hide / unhide column",
+        "description": "Show or hide a single column (column-header context-menu parity)."
+      },
+      "set-sheet-tab-color": {
+        "label": "Tab color",
+        "description": "Paint the sheet-tab strip with a custom color (or clear it)."
+      },
       "add-comment": {
         "label": "Add comment",
         "description": "Attach a classic note (single-cell anchor)."
@@ -1491,6 +1547,10 @@
       "set-sheet-view": {
         "label": "Set sheet view",
         "description": "Patch the worksheet's <sheetView> element. Toggles view mode, gridlines, headings, ruler, zoom, and right-to-left."
+      },
+      "open-zoom-dialog": {
+        "label": "Zoom",
+        "description": "Open the Excel-style zoom dialog (View → Zoom)."
       }
     },
     "pptx": {
@@ -1689,6 +1749,10 @@
       "set-metadata": {
         "label": "Set metadata",
         "description": "Set / clear metadata fields (title, author, subject, keywords)."
+      },
+      "add-bookmark": {
+        "label": "Add bookmark",
+        "description": "Add a bookmark / outline entry to the document."
       },
       "fill-form": {
         "label": "Fill form",

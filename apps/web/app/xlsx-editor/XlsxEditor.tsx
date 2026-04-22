@@ -96,6 +96,8 @@ import {
   type PageSetupTab,
 } from "./PageSetupDialog";
 import { ZoomDialog } from "./ZoomDialog";
+import { SheetViewDialog } from "./SheetViewDialog";
+import { InsertFunctionDialog } from "./InsertFunctionDialog";
 import { ProtectSheetDialog, type ProtectSheetValues } from "./ProtectSheetDialog";
 import { ProtectWorkbookDialog, type ProtectWorkbookValues } from "./ProtectWorkbookDialog";
 import { InsertPivotTableDialog, type PivotDialogSubmit } from "./InsertPivotTableDialog";
@@ -115,7 +117,7 @@ import {
 import { TextToColumnsPopover } from "./TextToColumnsPopover";
 import { FilterDropdown } from "./FilterDropdown";
 import { sniffDelimiter } from "@officeai/xlsx";
-import { formatCellValue as renderCellValue } from "./styles";
+import { formatCellValue as renderCellValue, resolveNumFmtCode, adjustDecimalsInCode } from "./styles";
 import {
   marshalClipboard,
   parseClipboardPayload,
@@ -501,6 +503,8 @@ function XlsxEditorInner({
   const [protectSheetOpen, setProtectSheetOpen] = useState(false);
   const [protectWorkbookOpen, setProtectWorkbookOpen] = useState(false);
   const [zoomDialogOpen, setZoomDialogOpen] = useState(false);
+  const [sheetViewDialogOpen, setSheetViewDialogOpen] = useState(false);
+  const [insertFunctionOpen, setInsertFunctionOpen] = useState(false);
   /**
    * `editChartId !== null` opens the Edit-chart dialog pre-filled
    * from `activeSheet.charts.find(...)`. We keep an id (not the
@@ -2375,6 +2379,142 @@ function XlsxEditorInner({
     [activeSheet, selection, extraAreas, pushToast]
   );
 
+  // ── 9b: AutoSum / quick number-format / sort wiring ─────────────
+  // Excel's AutoSum picks a range by walking up from the anchor while
+  // the cells are numeric and stopping at the first non-numeric (or
+  // sheet edge). When nothing's above, it walks left. When the user
+  // already has a multi-cell selection, it sums *that* selection and
+  // writes the result one cell below the bottom row. The helper below
+  // mirrors that heuristic; ranges land in A1 form.
+  const detectAutoSumTarget = useCallback(
+    (
+      sheet: Sheet,
+      sel: Selection
+    ): { writeRef: string; range: string } | null => {
+      const isCellNumeric = (r: number, c: number): boolean => {
+        const cell = sheet.cells.get(cellKey(r, c));
+        return typeof cell?.value === "number";
+      };
+      // Multi-cell selection → sum the selection itself, write below.
+      if (!isSingle(sel)) {
+        const range = formatSelection(sel);
+        const r2 = Math.max(sel.anchor.row, sel.focus.row);
+        const c1 = Math.min(sel.anchor.col, sel.focus.col);
+        const writeRow = Math.min(GRID_ROWS - 1, r2 + 1);
+        const writeRef = formatA1({ row: writeRow, col: c1 });
+        return { writeRef, range };
+      }
+      const { row, col } = sel.anchor;
+      const writeRef = formatA1({ row, col });
+      // Walk up while numeric.
+      let topRow = row;
+      while (topRow - 1 >= 0 && isCellNumeric(topRow - 1, col)) topRow -= 1;
+      if (topRow < row) {
+        const start = formatA1({ row: topRow, col });
+        const end = formatA1({ row: row - 1, col });
+        return { writeRef, range: `${start}:${end}` };
+      }
+      // Otherwise walk left while numeric.
+      let leftCol = col;
+      while (leftCol - 1 >= 0 && isCellNumeric(row, leftCol - 1)) leftCol -= 1;
+      if (leftCol < col) {
+        const start = formatA1({ row, col: leftCol });
+        const end = formatA1({ row, col: col - 1 });
+        return { writeRef, range: `${start}:${end}` };
+      }
+      return null;
+    },
+    []
+  );
+
+  const onAutoSum = useCallback(
+    (kind: "sum" | "average" | "count" | "max" | "min") => {
+      const a = agentRef.current;
+      if (!a || !activeSheet || !selection) return;
+      const target = detectAutoSumTarget(activeSheet, selection);
+      if (!target) {
+        pushToast("warn", "AutoSum needs at least one numeric neighbour");
+        return;
+      }
+      const fn =
+        kind === "sum"
+          ? "SUM"
+          : kind === "average"
+            ? "AVERAGE"
+            : kind === "count"
+              ? "COUNT"
+              : kind === "max"
+                ? "MAX"
+                : "MIN";
+      void a
+        .applyCommand({
+          type: "xlsx:set-cell-formula",
+          payload: {
+            sheet: activeSheet.name,
+            ref: target.writeRef,
+            formula: `${fn}(${target.range})`,
+          },
+          source: "human",
+        })
+        .catch((err: unknown) => {
+          pushToast("error", err instanceof Error ? err.message : String(err));
+        });
+    },
+    [activeSheet, selection, detectAutoSumTarget, pushToast]
+  );
+
+  const onQuickNumberFormat = useCallback(
+    (preset: "percent" | "currency-usd" | "comma") => {
+      const code =
+        preset === "percent"
+          ? "0.00%"
+          : preset === "currency-usd"
+            ? '"$"#,##0.00'
+            : "#,##0.00";
+      onApplyFormat({ numberFormat: code });
+    },
+    [onApplyFormat]
+  );
+
+  const onAdjustDecimals = useCallback(
+    (delta: 1 | -1) => {
+      if (!snapshot || !selectedCell) return;
+      const eff = flattenCellXf(snapshot.root.styles, selectedCell.styleId);
+      const currentCode = resolveNumFmtCode(snapshot.root.styles, eff.numFmtId) ?? "General";
+      const next = adjustDecimalsInCode(currentCode, delta);
+      if (next === currentCode) return;
+      onApplyFormat({ numberFormat: next });
+    },
+    [snapshot, selectedCell, onApplyFormat]
+  );
+
+  const canSort = !!(
+    activeSheet &&
+    selection &&
+    Math.abs(selection.focus.row - selection.anchor.row) >= 1 &&
+    !isSingle(selection)
+  );
+
+  // `dispatchOrToast` is defined further below (after this block) so
+  // we late-bind it via a ref to avoid a TDZ on first render.
+  const dispatchOrToastRef = useRef<((type: string, payload: object) => void) | null>(null);
+
+  const onSort = useCallback(
+    (direction: "asc" | "desc") => {
+      if (!activeSheet || !selection || !canSort) return;
+      const dispatch = dispatchOrToastRef.current;
+      if (!dispatch) return;
+      const range = formatSelection(selection);
+      const colId = 0; // sort on the first column of the selection — Excel default
+      dispatch("xlsx:sort-range", {
+        sheet: activeSheet.name,
+        range,
+        sortBy: { colId, order: direction },
+      });
+    },
+    [activeSheet, selection, canSort]
+  );
+
   const dispatchOrToast = useCallback(
     (
       type:
@@ -2386,6 +2526,8 @@ function XlsxEditorInner({
         | "xlsx:delete-column"
         | "xlsx:set-column-width"
         | "xlsx:set-row-height"
+        | "xlsx:set-row-visibility"
+        | "xlsx:set-column-visibility"
         | "xlsx:text-to-columns"
         | "xlsx:fill-range"
         | "xlsx:set-auto-filter"
@@ -2399,6 +2541,7 @@ function XlsxEditorInner({
         | "xlsx:delete-sheet"
         | "xlsx:move-sheet"
         | "xlsx:set-sheet-state"
+        | "xlsx:set-sheet-tab-color"
         | "xlsx:add-conditional-format"
         | "xlsx:remove-conditional-format"
         | "xlsx:clear-conditional-formats"
@@ -2449,6 +2592,15 @@ function XlsxEditorInner({
     },
     [pushToast]
   );
+
+  // Wire the late-bound dispatchOrToast ref so callbacks declared
+  // before `dispatchOrToast` (like onSort, used by the Toolbar's
+  // 9b sort buttons) can still dispatch through the same plumbing.
+  useEffect(() => {
+    dispatchOrToastRef.current = (type, payload) => {
+      void dispatchOrToast(type as Parameters<typeof dispatchOrToast>[0], payload as Parameters<typeof dispatchOrToast>[1]);
+    };
+  }, [dispatchOrToast]);
 
   /**
    * Quick chart-type switch from the chart toolbar. Goes through
@@ -3675,6 +3827,8 @@ function XlsxEditorInner({
       ];
     }
     if (target.kind === "row-header") {
+      const rowIdx0 = target.row;
+      const rowIsHidden = !!activeSheet?.hiddenRows.has(rowIdx0);
       return [
         {
           kind: "action",
@@ -3704,11 +3858,27 @@ function XlsxEditorInner({
         { kind: "action", id: "insert-row-above", label: "Insert row above", onSelect: onInsertRowAbove },
         { kind: "action", id: "insert-row-below", label: "Insert row below", onSelect: onInsertRowBelow },
         { kind: "action", id: "delete-row", label: "Delete row", onSelect: onDeleteRow },
+        { kind: "divider", id: "div-row-hide" },
+        {
+          kind: "action",
+          id: "hide-row",
+          label: rowIsHidden ? "Unhide row" : "Hide row",
+          onSelect: () => {
+            if (!activeSheet) return;
+            dispatchOrToast("xlsx:set-row-visibility", {
+              sheet: activeSheet.name,
+              row: rowIdx0 + 1,
+              hidden: !rowIsHidden,
+            });
+          },
+        },
         { kind: "divider", id: "div-row-clear" },
         { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
       ];
     }
     if (target.kind === "col-header") {
+      const colIdx0 = target.col;
+      const colIsHidden = !!activeSheet?.hiddenCols.has(colIdx0);
       return [
         {
           kind: "action",
@@ -3743,6 +3913,20 @@ function XlsxEditorInner({
           onSelect: onInsertColumnRight,
         },
         { kind: "action", id: "delete-col", label: "Delete column", onSelect: onDeleteColumn },
+        { kind: "divider", id: "div-col-hide" },
+        {
+          kind: "action",
+          id: "hide-col",
+          label: colIsHidden ? "Unhide column" : "Hide column",
+          onSelect: () => {
+            if (!activeSheet) return;
+            dispatchOrToast("xlsx:set-column-visibility", {
+              sheet: activeSheet.name,
+              column: colIdx0 + 1,
+              hidden: !colIsHidden,
+            });
+          },
+        },
         { kind: "divider", id: "div-col-clear" },
         { kind: "action", id: "clear-contents", label: "Clear contents", onSelect: onClearContents },
         { kind: "divider", id: "div-col-data" },
@@ -4308,7 +4492,8 @@ function XlsxEditorInner({
         run: () => setProtectWorkbookOpen(true),
         enabled: Boolean(snapshot),
       },
-      "xlsx.set-sheet-view": { run: () => setZoomDialogOpen(true), enabled: Boolean(activeSheet) },
+      "xlsx.set-sheet-view": { run: () => setSheetViewDialogOpen(true), enabled: Boolean(activeSheet) },
+      "xlsx.open-zoom-dialog": { run: () => setZoomDialogOpen(true), enabled: Boolean(activeSheet) },
     };
     return buildPaletteFromCatalogue(xlsxActions, runners, t);
   }, [
@@ -4523,6 +4708,11 @@ function XlsxEditorInner({
               showRulerView={sheetView.showRuler}
               rightToLeft={sheetView.rightToLeft}
               zoomScale={sheetView.zoomScale}
+              onAutoSum={onAutoSum}
+              onQuickNumberFormat={onQuickNumberFormat}
+              onAdjustDecimals={onAdjustDecimals}
+              onSort={onSort}
+              canSort={canSort}
             />
           ) : (
             // Placeholder before the workbook loads so opening the
@@ -4689,6 +4879,65 @@ function XlsxEditorInner({
                   onSubmit={onSetZoom}
                 />
 
+                <SheetViewDialog
+                  open={sheetViewDialogOpen}
+                  current={{
+                    view: sheetView.view,
+                    showGridLines: sheetView.showGridLines,
+                    showRowColHeaders: sheetView.showRowColHeaders,
+                    showRuler: sheetView.showRuler,
+                    rightToLeft: sheetView.rightToLeft,
+                  }}
+                  onClose={() => setSheetViewDialogOpen(false)}
+                  onSubmit={(patch) => {
+                    if (!activeSheet) return;
+                    if (Object.keys(patch).length === 0) return;
+                    void dispatchAny("xlsx:set-sheet-view", { sheet: activeSheet.name, ...patch });
+                  }}
+                />
+
+                <InsertFunctionDialog
+                  open={insertFunctionOpen}
+                  onClose={() => setInsertFunctionOpen(false)}
+                  targetCellLabel={selection ? formatSelection(selection) : undefined}
+                  onPick={(fn) => {
+                    // Seed the formula bar with `=NAME(`. Users finish the
+                    // arguments interactively (the in-cell editor and the
+                    // formula bar share `formulaDraft`).
+                    const seed = `=${fn}(`;
+                    setFormulaDraft(seed);
+                    requestAnimationFrame(() => {
+                      const el = formulaInputRef.current;
+                      if (el) {
+                        el.focus();
+                        el.setSelectionRange(seed.length, seed.length);
+                      }
+                    });
+                  }}
+                  onInsertFormula={(formula) => {
+                    if (!activeSheet || !selection) return;
+                    const a = agentRef.current;
+                    if (!a) return;
+                    const ref = formatSelection({
+                      anchor: selection.anchor,
+                      focus: selection.anchor,
+                    });
+                    void a
+                      .applyCommand({
+                        type: "xlsx:set-cell-formula",
+                        payload: {
+                          sheet: activeSheet.name,
+                          ref,
+                          formula: formula.replace(/^=/, ""),
+                        },
+                        source: "human",
+                      })
+                      .catch((err: unknown) => {
+                        pushToast("error", err instanceof Error ? err.message : String(err));
+                      });
+                  }}
+                />
+
                 <div className="formula-bar relative flex items-center gap-2 rounded-md border border-divider bg-surface px-2 py-1.5">
                   <NameBox
                     selectionRef={selectedRef}
@@ -4699,7 +4948,18 @@ function XlsxEditorInner({
                     onOpenManager={() => setNameManagerOpen(true)}
                     disabled={!agent}
                   />
-                  <span className="text-secondary text-xs font-mono">fx</span>
+                  <button
+                    type="button"
+                    data-testid="formula-fx"
+                    aria-label="Insert function"
+                    title="Insert function"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setInsertFunctionOpen(true)}
+                    disabled={!agent}
+                    className="rounded px-1.5 py-0.5 text-xs font-mono italic text-secondary hover:bg-hover hover:text-foreground disabled:opacity-40"
+                  >
+                    fx
+                  </button>
                   <div className="relative flex-1 font-mono text-xs">
                     <FormulaHighlight
                       value={formulaValue}
@@ -4918,7 +5178,12 @@ function XlsxEditorInner({
                 </div>
 
                 <SheetTabBar
-                  sheets={sheets.map((s) => ({ id: String(s.id), name: s.name, state: s.state }))}
+                  sheets={sheets.map((s) => ({
+                    id: String(s.id),
+                    name: s.name,
+                    state: s.state,
+                    ...(s.tabColor ? { tabColor: s.tabColor } : {}),
+                  }))}
                   activeName={activeSheetName}
                   peers={realtimeRoom.remotePeers
                     .map((p) => {
@@ -4961,6 +5226,9 @@ function XlsxEditorInner({
                   onMove={(name, to) => onMoveSheet(name, to)}
                   onAdd={() => onAddSheet()}
                   onSetState={(name, state) => onSetSheetState(name, state)}
+                  onSetTabColor={(name, color) =>
+                    dispatchOrToast("xlsx:set-sheet-tab-color", { name, color })
+                  }
                 />
 
                 <ContextMenu

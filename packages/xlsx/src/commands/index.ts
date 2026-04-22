@@ -10,6 +10,7 @@ export { renameSheetHandler } from "./rename-sheet.js";
 export { addSheetHandler } from "./add-sheet.js";
 export { moveSheetHandler } from "./move-sheet.js";
 export { setSheetStateHandler } from "./set-sheet-state.js";
+export { setSheetTabColorHandler } from "./set-sheet-tab-color.js";
 export {
   addConditionalFormatHandler,
   removeConditionalFormatHandler,
@@ -44,6 +45,8 @@ export {
 } from "./image-commands.js";
 export { setColumnWidthHandler } from "./set-column-width.js";
 export { setRowHeightHandler } from "./set-row-height.js";
+export { setRowVisibilityHandler } from "./set-row-visibility.js";
+export { setColumnVisibilityHandler } from "./set-column-visibility.js";
 export { deleteSheetHandler } from "./delete-sheet.js";
 export { pasteRangeHandler } from "./paste-range.js";
 export { textToColumnsHandler } from "./text-to-columns.js";

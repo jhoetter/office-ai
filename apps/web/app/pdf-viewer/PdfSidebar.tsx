@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, ListTree, MessageSquare } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, ListTree, MessageSquare, Plus } from "lucide-react";
 import type { PdfEngineDocument } from "@officeai/pdf-engine";
 import type { PdfAnnotation, PdfComment, PdfOutlineNode, PdfPage, PdfSnapshot } from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";
@@ -26,6 +26,18 @@ export interface PdfSidebarProps {
    * `onJumpToPage(annotation.pageNumber)` when omitted.
    */
   readonly onJumpToAnnotation?: (annotation: PdfAnnotation) => void;
+  /**
+   * Phase 9d: dispatch `pdf:add-bookmark` for the current page. Wired
+   * to a small "+" affordance in the Outline tab header so the user
+   * can build their own outline alongside the PDF's intrinsic one.
+   */
+  readonly onAddBookmark?: () => void;
+  /**
+   * Phase 9d: dispatch `pdf:reorder-pages` after a drag in the
+   * thumbnail rail. The component reconstructs the new permutation
+   * and hands it to the parent; the parent dispatches the command.
+   */
+  readonly onReorderPages?: (order: ReadonlyArray<number>) => void;
 }
 
 /**
@@ -89,9 +101,15 @@ export function PdfSidebar(props: PdfSidebarProps): ReactNode {
             currentPage={currentPage}
             viewportRotation={viewportRotation}
             onJumpToPage={onJumpToPage}
+            {...(props.onReorderPages ? { onReorderPages: props.onReorderPages } : {})}
           />
         ) : tab === "outline" ? (
-          <OutlinePanel snapshot={snapshot} currentPage={currentPage} onJumpToPage={onJumpToPage} />
+          <OutlinePanel
+            snapshot={snapshot}
+            currentPage={currentPage}
+            onJumpToPage={onJumpToPage}
+            {...(props.onAddBookmark ? { onAddBookmark: props.onAddBookmark } : {})}
+          />
         ) : (
           <AnnotationsPanel
             snapshot={snapshot}
@@ -143,6 +161,12 @@ interface ThumbnailsPanelProps {
   readonly currentPage: number;
   readonly viewportRotation: 0 | 90 | 180 | 270;
   readonly onJumpToPage: (pageNumber: number) => void;
+  /**
+   * Optional drag-reorder callback (Phase 9d). When provided each
+   * thumbnail becomes a drag source/drop target; on drop the panel
+   * computes the new 1..N permutation and hands it back here.
+   */
+  readonly onReorderPages?: (order: ReadonlyArray<number>) => void;
 }
 
 const THUMB_SCALE = 0.18;
@@ -154,9 +178,44 @@ function ThumbnailsPanel({
   currentPage,
   viewportRotation,
   onJumpToPage,
+  onReorderPages,
 }: ThumbnailsPanelProps): ReactNode {
   const { t } = useTranslator();
   const pages = snapshot?.root.pages ?? [];
+
+  // Phase 9d drag-reorder state. We keep the dragged page number in
+  // a ref (so handlers see the latest value without re-binding) and
+  // the drop-target page number in state (so the visual indicator
+  // re-renders as the user moves between rows).
+  const dragPageRef = useRef<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<number | null>(null);
+  const finishDrag = useCallback((): void => {
+    dragPageRef.current = null;
+    setDropTarget(null);
+  }, []);
+  const commitDrop = useCallback(
+    (targetPageNumber: number): void => {
+      const dragged = dragPageRef.current;
+      finishDrag();
+      if (!onReorderPages || dragged == null || dragged === targetPageNumber) return;
+      const order = pages.map((p) => p.pageNumber);
+      const fromIdx = order.indexOf(dragged);
+      const toIdx = order.indexOf(targetPageNumber);
+      if (fromIdx < 0 || toIdx < 0) return;
+      // Splice-and-reinsert: remove the dragged page, then insert it
+      // *before* the drop target. When dragging downward (fromIdx <
+      // toIdx) the splice shifts every later index by 1, so the
+      // reinsert position is `toIdx`; when dragging upward
+      // (fromIdx > toIdx) the indices ahead of the drop are
+      // unaffected and we insert at exactly `toIdx`.
+      const [moved] = order.splice(fromIdx, 1);
+      if (moved === undefined) return;
+      const insertAt = fromIdx < toIdx ? toIdx : toIdx;
+      order.splice(insertAt, 0, moved);
+      onReorderPages(order);
+    },
+    [finishDrag, onReorderPages, pages]
+  );
 
   // Keep the active thumbnail roughly centred in the rail whenever
   // `currentPage` moves — including when the user is scrolling the
@@ -210,7 +269,20 @@ function ThumbnailsPanel({
           engineDoc={engineDoc}
           rotation={viewportRotation}
           active={p.pageNumber === currentPage}
+          dropIndicator={dropTarget === p.pageNumber}
+          draggable={!!onReorderPages}
           onClick={() => onJumpToPage(p.pageNumber)}
+          onDragStart={() => {
+            if (!onReorderPages) return;
+            dragPageRef.current = p.pageNumber;
+            setDropTarget(p.pageNumber);
+          }}
+          onDragOver={() => {
+            if (!onReorderPages || dragPageRef.current == null) return;
+            if (dropTarget !== p.pageNumber) setDropTarget(p.pageNumber);
+          }}
+          onDragEnd={finishDrag}
+          onDrop={() => commitDrop(p.pageNumber)}
         />
       ))}
     </div>
@@ -223,9 +295,27 @@ interface ThumbnailItemProps {
   readonly rotation: 0 | 90 | 180 | 270;
   readonly active: boolean;
   readonly onClick: () => void;
+  readonly draggable?: boolean;
+  readonly dropIndicator?: boolean;
+  readonly onDragStart?: () => void;
+  readonly onDragOver?: () => void;
+  readonly onDragEnd?: () => void;
+  readonly onDrop?: () => void;
 }
 
-function ThumbnailItem({ page, engineDoc, rotation, active, onClick }: ThumbnailItemProps): ReactNode {
+function ThumbnailItem({
+  page,
+  engineDoc,
+  rotation,
+  active,
+  onClick,
+  draggable,
+  dropIndicator,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onDrop,
+}: ThumbnailItemProps): ReactNode {
   const ref = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [visible, setVisible] = useState(false);
@@ -308,11 +398,35 @@ function ThumbnailItem({ page, engineDoc, rotation, active, onClick }: Thumbnail
         onClick={onClick}
         title={`Page ${page.pageNumber}`}
         data-testid={`pdf-thumbnail-${page.pageNumber}`}
+        draggable={!!draggable}
+        onDragStart={(e) => {
+          if (!draggable) return;
+          e.dataTransfer.effectAllowed = "move";
+          // Some browsers require any payload to satisfy the API
+          // contract; the page number is also handy for cross-app
+          // drags ("drop into a folder makes a sub-PDF" follow-up).
+          e.dataTransfer.setData("text/plain", String(page.pageNumber));
+          onDragStart?.();
+        }}
+        onDragOver={(e) => {
+          if (!draggable) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          onDragOver?.();
+        }}
+        onDragEnd={() => onDragEnd?.()}
+        onDrop={(e) => {
+          if (!draggable) return;
+          e.preventDefault();
+          onDrop?.();
+        }}
         className={
           "relative flex items-center justify-center overflow-hidden rounded border bg-white text-xs text-tertiary " +
           (active
             ? "border-[var(--accent)] ring-2 ring-[var(--accent)]/40"
-            : "border-divider hover:border-[var(--accent)]/60")
+            : dropIndicator
+              ? "border-[var(--accent)] ring-1 ring-[var(--accent)]/60"
+              : "border-divider hover:border-[var(--accent)]/60")
         }
         style={{ width: widthCss, height: heightCss }}
       >
@@ -331,9 +445,15 @@ interface OutlinePanelProps {
   readonly snapshot: PdfSnapshot | null;
   readonly currentPage: number;
   readonly onJumpToPage: (pageNumber: number) => void;
+  readonly onAddBookmark?: () => void;
 }
 
-function OutlinePanel({ snapshot, currentPage, onJumpToPage }: OutlinePanelProps): ReactNode {
+function OutlinePanel({
+  snapshot,
+  currentPage,
+  onJumpToPage,
+  onAddBookmark,
+}: OutlinePanelProps): ReactNode {
   const { t } = useTranslator();
   const outline = snapshot?.root.outline ?? [];
 
@@ -368,24 +488,61 @@ function OutlinePanel({ snapshot, currentPage, onJumpToPage }: OutlinePanelProps
     setOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
+  // Phase 9d: surface the "Add bookmark" affordance whether the
+  // document already has an outline or not. When empty we render the
+  // hint + button as a compact empty-state; otherwise the button
+  // sits in a header bar above the tree so the user-curated entries
+  // visually concatenate with whatever Acrobat (or pdftk, …) baked
+  // into the file.
   if (outline.length === 0) {
-    return <p className="p-4 text-xs text-tertiary">{t("pdf.noOutline")}</p>;
+    return (
+      <div className="flex flex-col gap-2 p-4 text-xs text-tertiary">
+        <p>{t("pdf.noOutline")}</p>
+        {onAddBookmark ? (
+          <button
+            type="button"
+            onClick={onAddBookmark}
+            className="inline-flex items-center gap-1 self-start rounded border border-divider px-2 py-1 text-[11px] text-foreground hover:border-[var(--accent)]"
+            data-testid="pdf-sidebar-add-bookmark"
+          >
+            <Plus size={12} />
+            {t("pdf.addBookmark")}
+          </button>
+        ) : null}
+      </div>
+    );
   }
   return (
-    <ul className="px-1 py-2 text-xs" role="tree">
-      {outline.map((node) => (
-        <OutlineEntry
-          key={node.id}
-          node={node}
-          depth={0}
-          activeId={activeId}
-          ancestorIds={ancestorIds}
-          openMap={openMap}
-          onToggle={onToggle}
-          onJumpToPage={onJumpToPage}
-        />
-      ))}
-    </ul>
+    <div className="flex flex-col" data-testid="pdf-sidebar-outline">
+      {onAddBookmark ? (
+        <div className="flex items-center justify-end border-b border-divider px-2 py-1">
+          <button
+            type="button"
+            onClick={onAddBookmark}
+            title={t("pdf.addBookmark")}
+            aria-label={t("pdf.addBookmark")}
+            className="inline-flex h-6 w-6 items-center justify-center rounded text-tertiary hover:bg-hover hover:text-foreground"
+            data-testid="pdf-sidebar-add-bookmark"
+          >
+            <Plus size={12} />
+          </button>
+        </div>
+      ) : null}
+      <ul className="px-1 py-2 text-xs" role="tree">
+        {outline.map((node) => (
+          <OutlineEntry
+            key={node.id}
+            node={node}
+            depth={0}
+            activeId={activeId}
+            ancestorIds={ancestorIds}
+            openMap={openMap}
+            onToggle={onToggle}
+            onJumpToPage={onJumpToPage}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
 

@@ -2,9 +2,11 @@
 
 import * as React from "react";
 import {
+  Bookmark,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Highlighter,
   Maximize2,
   Minus,
@@ -46,6 +48,10 @@ export interface PdfToolbarProps {
   readonly onPrint: () => void;
   readonly onRotatePages: () => void;
   readonly onDeletePages: () => void;
+  /** Phase 9d: dispatches `pdf:add-bookmark` for the current page. */
+  readonly onAddBookmark: () => void;
+  /** Phase 9d: opens the Document properties (`pdf:set-metadata`) dialog. */
+  readonly onOpenMetadata: () => void;
 }
 
 /**
@@ -148,6 +154,21 @@ export function PdfToolbar(props: PdfToolbarProps): React.ReactNode {
         disabled={disabled}
         onRotatePages={props.onRotatePages}
         onDeletePages={props.onDeletePages}
+      />
+      <Sep />
+      <IconButton
+        onClick={props.onAddBookmark}
+        icon={<Bookmark size={14} />}
+        label={t("pdf.addBookmark")}
+        disabled={disabled || noPages}
+        testId="pdf-add-bookmark"
+      />
+      <IconButton
+        onClick={props.onOpenMetadata}
+        icon={<FileText size={14} />}
+        label={t("pdf.documentProperties")}
+        disabled={disabled || noPages}
+        testId="pdf-open-metadata"
       />
       <Sep />
       <IconButton

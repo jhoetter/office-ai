@@ -81,7 +81,12 @@ const FORMATS = [
     name: "pdf",
     handlerDirs: ["packages/pdf/src/commands"],
     cataloguePath: "packages/pdf/src/actions/catalogue.ts",
-    uiDirs: ["apps/web/app/pdf-editor"],
+    // The PDF reader lives at `apps/web/app/pdf-viewer/`. The historical
+    // path `apps/web/app/pdf-editor/` was a phantom — the script reported
+    // `pdf ui-dispatched=0` because no such directory exists. Phase 9d
+    // (PDF parity sweep) replaces it with the real reader root so the
+    // gate actually sees the wired PDF buttons.
+    uiDirs: ["apps/web/app/pdf-viewer"],
   },
 ];
 

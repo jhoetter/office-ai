@@ -210,6 +210,7 @@ async function rewriteDirtySheets(
     xml = injectHiddenRows(xml, sheet.hiddenRows);
     xml = injectAutoFilter(xml, sheet.autoFilter);
     xml = injectSheetViews(xml, sheet);
+    xml = injectTabColor(xml, sheet);
     xml = injectCols(xml, sheet);
     xml = injectConditionalFormats(xml, sheet);
     xml = injectDataValidations(xml, sheet.dataValidations, sheet.opaqueDataValidations);
@@ -856,6 +857,40 @@ function injectTableParts(xml: string, sheet: Sheet): string {
  * AFTER those in canonical order, which means everything in this
  * function lands at the tail of the worksheet.
  */
+/**
+ * Stamp the per-sheet "Tab Color" into the worksheet's `<sheetPr>`.
+ *
+ * `<sheetPr>` is the very first child of `<worksheet>` per ECMA-376.
+ * If SheetJS emitted one already (rare but possible) we splice the
+ * `<tabColor>` child into it, replacing any prior tabColor. If not
+ * we insert a fresh `<sheetPr>` immediately after the opening
+ * `<worksheet ...>` tag. When `sheet.tabColor` is `undefined` we
+ * remove any existing `<tabColor>` child but keep `<sheetPr>` (Excel
+ * is happy with empty `<sheetPr/>`).
+ */
+function injectTabColor(xml: string, sheet: Sheet): string {
+  const tabColorChild = sheet.tabColor
+    ? `<tabColor rgb="${escapeXmlAttr(sheet.tabColor.toUpperCase())}"/>`
+    : "";
+  const sheetPrMatch = /<sheetPr\b([^>]*)(\/?)>([\s\S]*?)(<\/sheetPr>)?/.exec(xml);
+  if (sheetPrMatch && sheetPrMatch[0]) {
+    const attrs = sheetPrMatch[1];
+    const selfClose = sheetPrMatch[2] === "/";
+    const inner = selfClose ? "" : sheetPrMatch[3] ?? "";
+    const innerStripped = inner.replace(/<tabColor\b[^/>]*\/?>/g, "");
+    const newInner = `${tabColorChild}${innerStripped}`;
+    const replacement = newInner === ""
+      ? `<sheetPr${attrs}/>`
+      : `<sheetPr${attrs}>${newInner}</sheetPr>`;
+    return xml.slice(0, sheetPrMatch.index) + replacement + xml.slice(sheetPrMatch.index + sheetPrMatch[0].length);
+  }
+  if (!tabColorChild) return xml;
+  const wsOpen = /<worksheet\b[^>]*>/.exec(xml);
+  if (!wsOpen) return xml;
+  const insertAt = wsOpen.index + wsOpen[0].length;
+  return xml.slice(0, insertAt) + `<sheetPr>${tabColorChild}</sheetPr>` + xml.slice(insertAt);
+}
+
 function injectOpaqueTail(xml: string, sheet: Sheet): string {
   let next = xml;
   // sheetProtection lives much earlier in the canonical order; if we

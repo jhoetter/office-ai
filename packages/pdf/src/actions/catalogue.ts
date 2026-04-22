@@ -177,8 +177,12 @@ export const pdfActions: ReadonlyArray<ActionDescriptor> = [
     label: "Add bookmark",
     description: "Add a bookmark / outline entry to the document.",
     section: "Document",
+    // Phase 9d: now wired in PdfSidebar's outline tab (the "+"
+    // affordance) and PdfToolbar (icon button); also reachable from
+    // Cmd+K. CLI exposure stays deferred — the parent/child outline
+    // tree shape needs a dedicated CLI argument schema we haven't
+    // designed yet.
     surfaces: ["palette"],
-    hidden: { reason: "Reached via the bookmarks pane; CLI exposure is deferred." },
   },
 
   // ── Annotations ───────────────────────────────────────────────────

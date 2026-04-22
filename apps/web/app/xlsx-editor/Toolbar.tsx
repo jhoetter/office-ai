@@ -35,6 +35,20 @@ import {
   ZoomIn,
   Ruler,
   Tag,
+  Percent,
+  DollarSign,
+  ArrowUpAZ,
+  ArrowDownZA,
+  TrendingUp,
+  Heading,
+  Lightbulb,
+  CopyMinus,
+  Group,
+  Ungroup,
+  Sigma as SigmaIcon,
+  Target,
+  Wand2,
+  Filter as FilterIcon,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { TextFormatBar, cn } from "@officeai/ui";
@@ -204,6 +218,49 @@ export interface ToolbarProps {
   readonly sheetProtected: boolean;
   /** Whether the workbook currently has any protection. */
   readonly workbookProtected: boolean;
+
+  // ── 9b: Editing / quick-format / sort additions ─────────────────
+  /**
+   * Excel's classic AutoSum splitter. Compose `=SUM(range)` (or the
+   * matching aggregate) and dispatch `xlsx:set-cell-formula` to land
+   * it in the active anchor cell. The parent owns range detection
+   * (Excel's "walk up while non-empty" heuristic) and falls back to
+   * the current selection.
+   */
+  readonly onAutoSum: (kind: "sum" | "average" | "count" | "max" | "min") => void;
+  /**
+   * Apply one of the named number-format presets in a single click
+   * (no select-from-dropdown needed) — % / $ / "comma". Composes
+   * `xlsx:set-cell-format` with the preset's code. Disabled when no
+   * selection exists.
+   */
+  readonly onQuickNumberFormat: (preset: "percent" | "currency-usd" | "comma") => void;
+  /**
+   * Bump the active selection's number-format up or down one
+   * decimal place. The parent inspects the *current* preset and
+   * either appends `.0` / `.00` … or strips one trailing `0`.
+   * Mirrors Excel's "Increase Decimal" / "Decrease Decimal" buttons.
+   */
+  readonly onAdjustDecimals: (delta: 1 | -1) => void;
+  /**
+   * Sort the active range A→Z (asc) / Z→A (desc) on its first
+   * column. Disabled when the selection covers fewer than two rows
+   * (nothing to sort) or no selection exists.
+   */
+  readonly onSort: (direction: "asc" | "desc") => void;
+  readonly canSort: boolean;
+  /**
+   * Hide / unhide the row(s) or column(s) covered by the active
+   * selection — Excel-parity quick-actions composing
+   * `xlsx:set-row-height` (height=0 hides) and the column equivalent.
+   * Surfaced via the row/column header context menu in
+   * `XlsxEditor.tsx`; toolbar-side we keep them invisible.
+   * (Reserved for future direct-toolbar surfacing.)
+   */
+  readonly onHideRows?: () => void;
+  readonly onUnhideRows?: () => void;
+  readonly onHideColumns?: () => void;
+  readonly onUnhideColumns?: () => void;
 
   // ── View tab (extended) ──────────────────────────────────────────
   /** Set the worksheet view mode. */
@@ -460,28 +517,95 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
           {
             id: "number",
             label: "Zahl",
-            render: ({ onNumberFormat }) => (
-              <select
-                data-testid="format-number"
-                aria-label="Number format"
-                disabled={disabled}
-                defaultValue=""
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v) onNumberFormat(v as NumberFormatPresetId);
-                  e.currentTarget.value = "";
-                }}
-                className="h-7 rounded border border-divider bg-background px-1 text-xs text-foreground disabled:opacity-50"
-              >
-                <option value="" disabled>
-                  Format…
-                </option>
-                {NUMBER_FORMAT_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
+            render: ({ onNumberFormat, props }) => (
+              <div className="flex items-center gap-1">
+                <select
+                  data-testid="format-number"
+                  aria-label="Number format"
+                  disabled={disabled}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v) onNumberFormat(v as NumberFormatPresetId);
+                    e.currentTarget.value = "";
+                  }}
+                  className="h-7 rounded border border-divider bg-background px-1 text-xs text-foreground disabled:opacity-50"
+                >
+                  <option value="" disabled>
+                    Format…
                   </option>
-                ))}
-              </select>
+                  {NUMBER_FORMAT_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                {/*
+                 * Excel's Home → Number quick-action cluster. These
+                 * compose `xlsx:set-cell-format` with the same number
+                 * presets as the dropdown but in one click.
+                 */}
+                <ActionBtn
+                  icon={<DollarSign size={14} />}
+                  label="Currency ($)"
+                  testId="format-quick-currency"
+                  disabled={disabled || !props.selection}
+                  onClick={() => props.onQuickNumberFormat("currency-usd")}
+                />
+                <ActionBtn
+                  icon={<Percent size={14} />}
+                  label="Percent"
+                  testId="format-quick-percent"
+                  disabled={disabled || !props.selection}
+                  onClick={() => props.onQuickNumberFormat("percent")}
+                />
+                <button
+                  type="button"
+                  data-testid="format-quick-comma"
+                  title="Comma style (1,234.56)"
+                  aria-label="Comma style"
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={disabled || !props.selection}
+                  onClick={() => props.onQuickNumberFormat("comma")}
+                  className="inline-flex h-7 min-w-7 items-center justify-center rounded px-1 text-[11px] font-semibold text-foreground hover:bg-hover disabled:opacity-40"
+                >
+                  ,
+                </button>
+                <button
+                  type="button"
+                  data-testid="format-decimal-up"
+                  title="Increase decimal"
+                  aria-label="Increase decimal"
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={disabled || !props.selection}
+                  onClick={() => props.onAdjustDecimals(+1)}
+                  className="inline-flex h-7 min-w-7 items-center justify-center rounded px-1 text-[10px] font-mono text-foreground hover:bg-hover disabled:opacity-40"
+                >
+                  .0←
+                </button>
+                <button
+                  type="button"
+                  data-testid="format-decimal-down"
+                  title="Decrease decimal"
+                  aria-label="Decrease decimal"
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={disabled || !props.selection}
+                  onClick={() => props.onAdjustDecimals(-1)}
+                  className="inline-flex h-7 min-w-7 items-center justify-center rounded px-1 text-[10px] font-mono text-foreground hover:bg-hover disabled:opacity-40"
+                >
+                  ←.0
+                </button>
+              </div>
+            ),
+          },
+          {
+            id: "editing",
+            label: "Bearbeiten",
+            render: ({ props }) => (
+              <AutoSumSplit
+                disabled={disabled || !props.selection}
+                onPick={(kind) => props.onAutoSum(kind)}
+              />
             ),
           },
         ],
@@ -542,6 +666,47 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
               />
             ),
           },
+          {
+            // Phase 9c §4d — Insert depth.
+            //
+            // `add-sparkline` / `remove-sparkline` need an
+            // `<x14:sparklineGroups>` parser + sheet-cell SparklineRenderer
+            // (Canvas overlay over the existing grid renderer);
+            // `set-page-header-footer` writes `<headerFooter>` into
+            // `sheet1.xml`; "Recommended Charts" is a UI heuristic over
+            // the existing `xlsx:add-chart` plus a chart-shape inference
+            // step. Each is small but net-new and gets its own follow-up
+            // plan. We surface the planned ribbon group as
+            // disabled triggers (same pattern as DOCX Design / PPTX
+            // shape outline) so the gap is honest, not invisible.
+            id: "depth-coming-soon",
+            label: "Mehr",
+            render: () => (
+              <>
+                <ActionBtn
+                  icon={<TrendingUp size={14} />}
+                  label="Sparkline (coming soon — use CLI in the meantime)"
+                  testId="xlsx-add-sparkline-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<Heading size={14} />}
+                  label="Header / footer (coming soon — use CLI in the meantime)"
+                  testId="xlsx-set-page-header-footer-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<Lightbulb size={14} />}
+                  label="Recommended charts (coming soon — use CLI in the meantime)"
+                  testId="xlsx-recommended-charts-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+              </>
+            ),
+          },
         ],
       },
       {
@@ -565,14 +730,99 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
             id: "filter",
             label: "Sortieren und Filtern",
             render: ({ props }) => (
-              <ToggleBtn
-                icon={<Filter size={14} />}
-                label={props.filterActive ? "Remove AutoFilter" : "Apply AutoFilter"}
-                testId="data-filter-toggle"
-                active={props.filterActive}
-                disabled={disabled}
-                onClick={props.onToggleFilter}
-              />
+              <>
+                <ActionBtn
+                  icon={<ArrowUpAZ size={14} />}
+                  label="Sort A → Z"
+                  testId="data-sort-asc"
+                  disabled={disabled || !props.canSort}
+                  onClick={() => props.onSort("asc")}
+                />
+                <ActionBtn
+                  icon={<ArrowDownZA size={14} />}
+                  label="Sort Z → A"
+                  testId="data-sort-desc"
+                  disabled={disabled || !props.canSort}
+                  onClick={() => props.onSort("desc")}
+                />
+                <ToggleBtn
+                  icon={<Filter size={14} />}
+                  label={props.filterActive ? "Remove AutoFilter" : "Apply AutoFilter"}
+                  testId="data-filter-toggle"
+                  active={props.filterActive}
+                  disabled={disabled}
+                  onClick={props.onToggleFilter}
+                />
+              </>
+            ),
+          },
+          {
+            // Phase 9c §4e — Data depth.
+            //
+            // Remove-duplicates / group-rows / ungroup-rows /
+            // group-columns / ungroup-columns / add-subtotal /
+            // goal-seek / flash-fill / advanced-filter all need new
+            // backend handlers (typed model fields for outline levels,
+            // a bisection runtime for goal-seek, a string-interpolation
+            // heuristic for flash-fill). Surfacing the planned ribbon
+            // group with disabled triggers — matching the §4d pattern
+            // above and the §3b/§3c DOCX pattern — keeps the gap
+            // visible and lets a follow-up plan flip `disabled` and
+            // wire `onClick` once the backends land.
+            id: "data-depth-coming-soon",
+            label: "Datenwerkzeuge",
+            render: () => (
+              <>
+                <ActionBtn
+                  icon={<CopyMinus size={14} />}
+                  label="Remove duplicates (coming soon — use CLI in the meantime)"
+                  testId="xlsx-remove-duplicates-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<Group size={14} />}
+                  label="Group rows / columns (coming soon — use CLI in the meantime)"
+                  testId="xlsx-group-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<Ungroup size={14} />}
+                  label="Ungroup rows / columns (coming soon — use CLI in the meantime)"
+                  testId="xlsx-ungroup-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<SigmaIcon size={14} />}
+                  label="Subtotal (coming soon — use CLI in the meantime)"
+                  testId="xlsx-subtotal-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<Target size={14} />}
+                  label="Goal seek (coming soon — use CLI in the meantime)"
+                  testId="xlsx-goal-seek-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<Wand2 size={14} />}
+                  label="Flash fill (coming soon — use CLI in the meantime)"
+                  testId="xlsx-flash-fill-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionBtn
+                  icon={<FilterIcon size={14} />}
+                  label="Advanced filter (coming soon — use CLI in the meantime)"
+                  testId="xlsx-advanced-filter-coming-soon"
+                  disabled
+                  onClick={() => {}}
+                />
+              </>
             ),
           },
         ],
@@ -726,19 +976,41 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
             label: "Schützen",
             render: ({ props }) => (
               <>
-                <ToggleBtn
-                  icon={<Lock size={14} />}
-                  label={props.sheetProtected ? "Unprotect Sheet" : "Protect Sheet"}
+                {/* Protect Sheet/Workbook open a confirmation dialog rather
+                  * than acting as instant toggles, so we render them as
+                  * `ActionBtn` (no `aria-pressed`, no toggled background).
+                  * The Lock icon flips to "Unprotect…" wording when the
+                  * resource is already locked so users can tell at a glance
+                  * what the click will do — the dialog handles confirm. */}
+                <ActionBtn
+                  icon={
+                    props.sheetProtected ? (
+                      <span className="relative inline-flex">
+                        <Lock size={14} />
+                        <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
+                      </span>
+                    ) : (
+                      <Lock size={14} />
+                    )
+                  }
+                  label={props.sheetProtected ? "Unprotect Sheet…" : "Protect Sheet…"}
                   testId="action-protect-sheet"
-                  active={props.sheetProtected}
                   disabled={disabled}
                   onClick={props.onOpenProtectSheet}
                 />
-                <ToggleBtn
-                  icon={<Lock size={14} />}
-                  label={props.workbookProtected ? "Unprotect Workbook" : "Protect Workbook"}
+                <ActionBtn
+                  icon={
+                    props.workbookProtected ? (
+                      <span className="relative inline-flex">
+                        <Lock size={14} />
+                        <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
+                      </span>
+                    ) : (
+                      <Lock size={14} />
+                    )
+                  }
+                  label={props.workbookProtected ? "Unprotect Workbook…" : "Protect Workbook…"}
                   testId="action-protect-workbook"
-                  active={props.workbookProtected}
                   disabled={disabled}
                   onClick={props.onOpenProtectWorkbook}
                 />
@@ -1701,6 +1973,103 @@ function ViewModeMenu(props: ViewModeMenuProps): ReactNode {
           onClick={() => {
             setOpen(false);
             onSet("pageLayout");
+          }}
+        />
+      </ToolbarMenu>
+    </span>
+  );
+}
+
+/**
+ * Excel-parity AutoSum splitter. Single click defaults to SUM (the
+ * green Σ button on the ribbon); the chevron drops down the rest of
+ * the aggregate menu (Average, Count Numbers, Max, Min). Each entry
+ * dispatches `xlsx:set-cell-formula` against the active anchor; the
+ * parent decides which range to feed into the function via the
+ * standard "walk up while non-empty" Excel heuristic.
+ */
+function AutoSumSplit(props: {
+  readonly disabled: boolean;
+  readonly onPick: (kind: "sum" | "average" | "count" | "max" | "min") => void;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span className="inline-flex">
+      <button
+        type="button"
+        data-testid="action-autosum"
+        title="AutoSum (Σ)"
+        aria-label="AutoSum"
+        disabled={props.disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => props.onPick("sum")}
+        className="inline-flex h-7 items-center gap-1 rounded-l border border-divider px-1.5 text-foreground hover:bg-hover disabled:opacity-40"
+      >
+        <Sigma size={14} />
+        <span className="text-[11px]">Sum</span>
+      </button>
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="action-autosum-chevron"
+        title="More AutoSum options"
+        aria-label="More AutoSum options"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={props.disabled}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center justify-center rounded-r border border-l-0 border-divider px-1 text-foreground hover:bg-hover disabled:opacity-40"
+      >
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="autosum-menu"
+        className="min-w-[180px] rounded-md border border-divider bg-surface p-1 shadow-lg"
+      >
+        <SimpleMenuItem
+          label="Sum"
+          testId="autosum-menu-sum"
+          onClick={() => {
+            setOpen(false);
+            props.onPick("sum");
+          }}
+        />
+        <SimpleMenuItem
+          label="Average"
+          testId="autosum-menu-average"
+          onClick={() => {
+            setOpen(false);
+            props.onPick("average");
+          }}
+        />
+        <SimpleMenuItem
+          label="Count Numbers"
+          testId="autosum-menu-count"
+          onClick={() => {
+            setOpen(false);
+            props.onPick("count");
+          }}
+        />
+        <SimpleMenuItem
+          label="Max"
+          testId="autosum-menu-max"
+          onClick={() => {
+            setOpen(false);
+            props.onPick("max");
+          }}
+        />
+        <SimpleMenuItem
+          label="Min"
+          testId="autosum-menu-min"
+          onClick={() => {
+            setOpen(false);
+            props.onPick("min");
           }}
         />
       </ToolbarMenu>

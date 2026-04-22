@@ -84,6 +84,7 @@ import {
   pmSelectionToRange,
 } from "@/lib/format-helpers";
 import { Toolbar, type AlignmentValue, type ResolvedSpacingDisplay } from "./Toolbar";
+import { FootnotesPanel } from "./FootnotesPanel";
 import { computeDocxActive, createDocxFormatProvider } from "./docxFormatProvider";
 import { PageRuler } from "./PageRuler";
 import { PageSetupDialog, type PageSetupValues } from "./PageSetupDialog";
@@ -1189,10 +1190,15 @@ function DocxEditorInner({
     async (enabled: boolean) => {
       const agent = agentRef.current;
       if (!agent) return;
+      // Target the section under the caret. The handler walks forward
+      // from `paragraphIndex` to the next `<w:sectPr>` (or the trailing
+      // implicit section), so any paragraph inside the section is fine.
+      const v = mountRef.current?.view;
+      const paraIdx = v ? currentParagraphIndex(v.state) : 0;
       try {
         await agent.applyCommand({
           type: "docx:set-section-different-first",
-          payload: { paragraphIndex: 0, enabled },
+          payload: { paragraphIndex: paraIdx, enabled },
           source: "human",
         });
       } catch (err) {
@@ -1398,6 +1404,49 @@ function DocxEditorInner({
       }
     },
     [pushToast]
+  );
+
+  /**
+   * 9b — Word-parity list-level setter. Used by both the toolbar's
+   * `ListLevelMenu` and (indirectly) the Tab/Shift+Tab handler in
+   * `wordShortcutsKeymapPlugin`. Preserves the existing `numId` and
+   * only bumps `ilvl`, so the list keeps its definition (bullet vs
+   * numbered, restart rules, custom level text).
+   *
+   * Falls back to a toast when the caret isn't in a list — the menu
+   * is disabled in that case, but the palette runner can still fire.
+   */
+  const setListLevel = useCallback(
+    async (ilvl: number) => {
+      const agent = agentRef.current;
+      const mount = mountRef.current;
+      if (!agent || !mount) return;
+      const paragraphId = currentParagraphId(mount.view.state);
+      if (!paragraphId) {
+        pushToast("info", "Place the caret in a list paragraph first.");
+        return;
+      }
+      const snap = agent.getSnapshot();
+      const para = snap.root.body.find(
+        (b): b is typeof b & { kind: "paragraph" } => b.kind === "paragraph" && b.id === paragraphId,
+      );
+      const numbering = para?.properties.numbering;
+      if (!numbering) {
+        pushToast("info", "Place the caret in a list paragraph first.");
+        return;
+      }
+      const clamped = Math.max(0, Math.min(8, ilvl));
+      try {
+        await agent.applyCommand({
+          type: "docx:set-paragraph-list",
+          payload: { paragraphId, numId: numbering.numId, ilvl: clamped },
+          source: "human",
+        });
+      } catch (err) {
+        pushToast("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [pushToast],
   );
 
   const insertImageFromFile = useCallback(() => {
@@ -2067,6 +2116,13 @@ function DocxEditorInner({
   const snapshot = agent?.getSnapshot() ?? null;
   const currentParaIndex = view ? currentParagraphIndex(view.state) : 0;
   const activeStyle = snapshot ? paragraphStyle(snapshot, currentParaIndex) : "Normal";
+  const currentSectionTitlePg = snapshot ? sectionTitlePgAt(snapshot, currentParaIndex) : false;
+  // 9b — surface the current list level so `ListLevelMenu` can both
+  // disable itself when not in a list AND highlight the active level.
+  // Walks the body once per uiTick (cheap; bodies are sub-1k-paragraph
+  // in practice). Returns null when the caret paragraph isn't a list
+  // item, distinguishing "level 0 in a list" from "no list".
+  const currentListLevel = snapshot ? listLevelAt(snapshot, currentParaIndex) : null;
   // P3.1 / W3 — toolbar dropdowns fall back through the typed style
   // cascade when no direct PM mark carries the attribute. The shared
   // text-formatting provider plumbs that through ActiveTextFormat so a
@@ -2251,15 +2307,104 @@ function DocxEditorInner({
         const tr = v.state.tr.setSelection(TextSelection.create(v.state.doc, tStart, tEnd));
         v.dispatch(tr.scrollIntoView());
       },
-      replaceMatch() {
-        // PM-based replace will land in B5/B6 polish. For now, a no-op
-        // keeps the find UI useful without risking model corruption.
+      replaceMatch(match, replacement) {
+        const v = mountRef.current?.view;
+        if (!v) return;
+        const positions = textOffsetsToPmRange(v.state.doc, match);
+        if (!positions) return;
+        const { start, end } = positions;
+        // Use the schema's text node so marks at the boundary collapse the
+        // way Word would: the replacement inherits the marks at the start
+        // of the original match (matches Word's "carry formatting"
+        // behaviour). We deliberately strip block boundaries — Replace is
+        // a flat-text operation; users use Insert for structural changes.
+        if (replacement.length === 0) {
+          const tr = v.state.tr.delete(start, end).setSelection(
+            TextSelection.create(v.state.doc.resolve(start).doc, start, start),
+          );
+          v.dispatch(tr.scrollIntoView());
+          return;
+        }
+        const marks = v.state.doc.resolve(start).marks();
+        const node = v.state.schema.text(replacement, marks);
+        const tr = v.state.tr.replaceWith(start, end, node);
+        v.dispatch(tr.scrollIntoView());
       },
-      replaceAll() {
-        return 0;
+      replaceAll(query, replacement, opts) {
+        const v = mountRef.current?.view;
+        if (!v) return 0;
+        if (query.length === 0) return 0;
+        const re = buildRegex(query, opts);
+        if (!re) return 0;
+        const text = v.state.doc.textBetween(0, v.state.doc.content.size, "\n", " ");
+        // Collect every match in flat-text coordinates first; mutating the
+        // doc per match would invalidate the regex's lastIndex and shift
+        // every subsequent position. We compute right-to-left applies so
+        // earlier replacements don't shift later positions.
+        const hits: Array<{ start: number; end: number }> = [];
+        let m: RegExpExecArray | null;
+        let safety = 0;
+        while ((m = re.exec(text)) !== null && safety < 5000) {
+          hits.push({ start: m.index, end: m.index + m[0].length });
+          if (m[0].length === 0) re.lastIndex += 1;
+          safety += 1;
+        }
+        if (hits.length === 0) return 0;
+
+        // Map flat-text offsets to PM positions in one pass for the whole
+        // doc — O(N) walk vs. O(N*hits) if we re-walked per match.
+        const pmPositions = mapFlatOffsetsToPmPositions(v.state.doc, hits);
+        if (pmPositions.length === 0) return 0;
+
+        // Apply from the back so earlier replacements don't shift later
+        // PM positions. One transaction = one undo step.
+        let tr = v.state.tr;
+        for (let i = pmPositions.length - 1; i >= 0; i--) {
+          const range = pmPositions[i];
+          if (!range) continue;
+          const { start: s, end: e } = range;
+          const marks = tr.doc.resolve(s).marks();
+          if (replacement.length === 0) {
+            tr = tr.delete(s, e);
+          } else {
+            tr = tr.replaceWith(s, e, v.state.schema.text(replacement, marks));
+          }
+        }
+        v.dispatch(tr.scrollIntoView());
+        return pmPositions.length;
       },
     };
   }, [view]);
+
+  // 9b — User-authored footnote count (excludes the standard
+  // separator at id=-1 and continuation at id=0). Drives both the
+  // rail-tab badge AND the "show the tab at all" gate.
+  const userFootnoteCount = useMemo(() => {
+    const part = agent?.getSnapshot().root.footnotesPart;
+    if (!part) return 0;
+    return part.footnotes.filter((f) => f.id > 0).length;
+  }, [agent, uiTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const renderFootnotesPanel = useCallback((): React.ReactNode => {
+    return (
+      <FootnotesPanel
+        agent={agent}
+        snapshot={agent?.getSnapshot() ?? null}
+        onScrollToReference={(footnoteId) => {
+          // Best-effort: scroll the first matching reference into
+          // view. ProseMirror nodes carry the footnoteId on the
+          // `footnoteRef` attr; we walk the DOM to avoid coupling the
+          // rail to PM internals.
+          const surface = mountRef.current?.view.dom;
+          if (!surface) return;
+          const target = surface.querySelector<HTMLElement>(
+            `[data-footnote-id="${footnoteId}"]`,
+          );
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+        }}
+      />
+    );
+  }, [agent]);
 
   const renderCommentsPanel = useCallback((): React.ReactNode => {
     if (!commentsProvider) {
@@ -2536,6 +2681,8 @@ function DocxEditorInner({
       paletteCommands,
       findAdapter,
       renderCommentsPanel,
+      renderFootnotesPanel,
+      footnoteCount: userFootnoteCount,
       onAddComment: openCommentComposer,
     }),
     [
@@ -2553,9 +2700,11 @@ function DocxEditorInner({
       outline,
       paletteCommands,
       renderCommentsPanel,
+      renderFootnotesPanel,
       saveState,
       selectionText,
       shortcutsDialog,
+      userFootnoteCount,
     ]
   );
 
@@ -2602,6 +2751,9 @@ function DocxEditorInner({
             hfFocus={hfZoneFocus}
             onCloseHeaderFooter={closeHeaderFooter}
             onToggleSectionDifferentFirst={(checked) => void toggleSectionDifferentFirst(checked)}
+            currentSectionTitlePg={currentSectionTitlePg}
+            currentListLevel={currentListLevel}
+            onSetListLevel={(ilvl) => void setListLevel(ilvl)}
             onInsertHFField={(kind) => void insertHeaderFooterField(kind)}
             onInsertHFImage={() => hfImageInputRef.current?.click()}
             selectedImage={selectedImage}
@@ -3032,6 +3184,47 @@ interface ProtectionState {
  * `w:enforcement` is explicitly `"1"` (mirrors Word's semantics:
  * elements with `enforcement="0"` are persisted but not enforced).
  */
+/** Mirror `findOwningSection` from `set-section-different-first.ts` —
+ * walk forward from `paragraphIndex` to the next `<w:sectPr>`, falling
+ * back to the trailing implicit section. Returns the section's
+ * `titlePg` flag (false when no section exists at all). */
+function sectionTitlePgAt(snapshot: DocxSnapshot, paragraphIndex: number): boolean {
+  const body = snapshot.root.body;
+  for (let i = paragraphIndex; i < body.length; i++) {
+    const block = body[i];
+    if (block && block.kind === "section-break") {
+      return Boolean(block.properties.titlePg);
+    }
+  }
+  for (let i = body.length - 1; i >= 0; i--) {
+    const block = body[i];
+    if (block && block.kind === "section-break") {
+      return Boolean(block.properties.titlePg);
+    }
+  }
+  return false;
+}
+
+/**
+ * 9b — Resolve the active list level (ilvl) for the paragraph the
+ * caret currently sits in. Returns `null` when:
+ *   - the paragraph index is out of range,
+ *   - the body block at that index isn't a paragraph (e.g. a section
+ *     break — Word treats those as non-list anyway),
+ *   - the paragraph has no `<w:numPr>`.
+ *
+ * The "in a list at level 0" case must remain distinguishable from
+ * "not in a list" so the toolbar's `ListLevelMenu` can disable
+ * itself rather than highlight a level the user didn't pick.
+ */
+function listLevelAt(snapshot: DocxSnapshot, paragraphIndex: number): number | null {
+  const block = snapshot.root.body[paragraphIndex];
+  if (!block || block.kind !== "paragraph") return null;
+  const numbering = block.properties.numbering;
+  if (!numbering) return null;
+  return numbering.ilvl;
+}
+
 function readDocumentProtection(snapshot: DocxSnapshot | null): ProtectionState {
   const empty: ProtectionState = { enabled: false };
   if (!snapshot) return empty;
@@ -3064,6 +3257,57 @@ function readAttr(attrs: string, name: string): string | null {
   const re = new RegExp(`${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}="([^"]*)"`);
   const m = attrs.match(re);
   return m ? (m[1] ?? null) : null;
+}
+
+/** Convert a single `FindMatch` (id format `start:end` in flat-text offsets,
+ * matching `findAdapter.findAll` above) to PM positions. Returns `null` when
+ * the match falls outside any text node — defensive for edge cases like a
+ * match that straddled a block boundary that has since been removed. */
+function textOffsetsToPmRange(
+  doc: import("prosemirror-model").Node,
+  match: FindMatch,
+): { start: number; end: number } | null {
+  const parts = match.id.split(":");
+  if (parts.length !== 2) return null;
+  const flatStart = Number(parts[0]);
+  const flatEnd = Number(parts[1]);
+  if (!Number.isFinite(flatStart) || !Number.isFinite(flatEnd)) return null;
+  const mapped = mapFlatOffsetsToPmPositions(doc, [{ start: flatStart, end: flatEnd }]);
+  return mapped[0] ?? null;
+}
+
+/** Walk the PM doc once and resolve a list of flat-text `{start, end}`
+ * offsets to PM `{start, end}` positions. The flat text uses the same
+ * `textBetween(0, size, "\n", " ")` shape that `findAdapter.findAll` uses,
+ * so block boundaries cost one character (matching the regex offsets). */
+function mapFlatOffsetsToPmPositions(
+  doc: import("prosemirror-model").Node,
+  hits: ReadonlyArray<{ start: number; end: number }>,
+): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number } | null> = hits.map(() => null);
+  let acc = 0;
+  doc.descendants((node, pos) => {
+    if (!node.isText) return true;
+    const len = node.text?.length ?? 0;
+    const nodeStart = acc;
+    const nodeEnd = acc + len;
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i];
+      if (!h) continue;
+      const cur = out[i] ?? { start: -1, end: -1 };
+      if (cur.start < 0 && h.start >= nodeStart && h.start <= nodeEnd) {
+        cur.start = pos + (h.start - nodeStart);
+      }
+      if (cur.end < 0 && h.end >= nodeStart && h.end <= nodeEnd) {
+        cur.end = pos + (h.end - nodeStart);
+      }
+      out[i] = cur;
+    }
+    acc = nodeEnd;
+    return true;
+  });
+  return out
+    .filter((p): p is { start: number; end: number } => p !== null && p.start >= 0 && p.end >= 0 && p.end >= p.start);
 }
 
 function countTrackedChanges(snapshot: DocxSnapshot | null): number {

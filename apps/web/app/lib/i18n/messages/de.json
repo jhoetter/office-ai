@@ -147,7 +147,19 @@
     "images": "Bilder",
     "currentSlide": "Diese Folie",
     "currentPage": "Diese Seite",
-    "currentSheet": "Dieses Tabellenblatt"
+    "currentSheet": "Dieses Tabellenblatt",
+    "railTabComments": "Kommentare",
+    "railTabOutline": "Gliederung",
+    "railTabAnimations": "Animationen",
+    "railTabMaster": "Folienmaster",
+    "railTabFootnotes": "Fußnoten",
+    "railClose": "Seitenleiste schließen",
+    "railAsideAria": "Editor-Seitenleiste",
+    "railTabsAria": "Seitenleisten-Tabs",
+    "railNoComments": "Kein Kommentar-Anbieter.",
+    "railNoAnimations": "Kein Animationen-Panel.",
+    "railNoMaster": "Kein Master-Panel.",
+    "railNoFootnotes": "Keine Fußnoten."
   },
   "status": {
     "page": "Seite {n} von {total}",
@@ -157,6 +169,12 @@
     "selectionEmpty": "Keine Auswahl",
     "shapesSelected": "{n} Formen ausgewählt",
     "slideOf": "Folie {n} von {total}",
+    "unnamedShape": "Form",
+    "oneShapeSelected": "{name} ausgewählt",
+    "saveStateSaved": "Gespeichert",
+    "saveStateUnsaved": "Ungespeicherte Änderungen",
+    "saveStateSaving": "Wird gespeichert…",
+    "saveStateError": "Speicherfehler",
     "sum": "Summe",
     "avg": "Mittelwert",
     "count": "Anzahl",
@@ -844,6 +862,11 @@
       "preview": "Vorschau",
       "previewAll": "Komplette Sequenz abspielen",
       "previewStep": "Diesen Schritt abspielen",
+      "painterCopy": "Kopieren",
+      "painterCopyTitle": "Animationen dieser Form kopieren (Animationspinsel)",
+      "painterPaste": "Übertragen",
+      "painterPasteTitle": "{count} kopierte Animation(en) auf die ausgewählte Form anwenden",
+      "painterPasteEmpty": "Kopiere zuerst Animationen einer Form, um Übertragen zu aktivieren",
       "presetAppear": "Erscheinen",
       "presetFade": "Überblenden",
       "presetFlyIn": "Einfliegen",
@@ -888,7 +911,18 @@
       "moveLater": "Später abspielen",
       "removeAnimation": "Animation entfernen",
       "shapeFallback": "Form #{id}",
-      "listAriaLabel": "Animationen auf dieser Folie"
+      "listAriaLabel": "Animationen auf dieser Folie",
+      "transitionCustom": "Benutzerdefiniert",
+      "transitionHintNone": "Harter Schnitt, keine Animation",
+      "transitionHintFade": "Überblendung zwischen den Folien",
+      "transitionHintPush": "Neue Folie schiebt die alte hinaus",
+      "transitionHintWipe": "Wischt über die Folie",
+      "transitionHintSplit": "Teilt von der Mitte",
+      "transitionHintCut": "Sofortiger Schnitt",
+      "transitionMenuLabel": "Übergang",
+      "transitionMenuTooltip": "Folienübergang (aktuell: {label})",
+      "presetTooltipDirections": "Richtungen: {list}",
+      "presetTooltipDefaultDuration": "Standarddauer: {ms} ms"
     },
     "present": {
       "ariaLabel": "Präsentation",
@@ -970,6 +1004,16 @@
     "ocrPage": "OCR auf dieser Seite ausführen",
     "ocrAll": "OCR auf allen Seiten ausführen",
     "noOutline": "Dieses Dokument hat kein Inhaltsverzeichnis.",
+    "addBookmark": "Lesezeichen hinzufügen",
+    "addBookmarkPrompt": "Titel des Lesezeichens:",
+    "documentProperties": "Dokumenteigenschaften…",
+    "documentPropertiesTitle": "Dokumenteigenschaften",
+    "documentPropertiesSave": "Speichern",
+    "documentPropertiesCancel": "Abbrechen",
+    "metaTitle": "Titel",
+    "metaAuthor": "Autor",
+    "metaSubject": "Thema",
+    "metaKeywords": "Stichwörter",
     "noAnnotations": "Noch keine Anmerkungen.",
     "noFormFields": "Keine Formularfelder erkannt.",
     "addCommentHint": "Bereich anklicken, um einen Kommentar hinzuzufügen.",
@@ -1260,6 +1304,18 @@
         "label": "Zeilenhöhe festlegen",
         "description": "Überschreibt die Zeilenhöhe in CSS-Pixeln (oder --reset zum Zurücksetzen)."
       },
+      "set-row-visibility": {
+        "label": "Zeile aus-/einblenden",
+        "description": "Eine Zeile ein- oder ausblenden (Kontextmenü-Parität in der Zeilenkopfzeile)."
+      },
+      "set-column-visibility": {
+        "label": "Spalte aus-/einblenden",
+        "description": "Eine Spalte ein- oder ausblenden (Kontextmenü-Parität in der Spaltenkopfzeile)."
+      },
+      "set-sheet-tab-color": {
+        "label": "Registerfarbe",
+        "description": "Die Registerkartenfarbe eines Blatts setzen oder zurücksetzen."
+      },
       "add-comment": {
         "label": "Kommentar hinzufügen",
         "description": "Hängt eine klassische Notiz an (Einzelzellen-Anker)."
@@ -1491,6 +1547,10 @@
       "set-sheet-view": {
         "label": "Blattansicht festlegen",
         "description": "Patcht das <sheetView>-Element des Arbeitsblatts (Ansichtsmodus, Gitternetzlinien, Überschriften, Lineal, Zoom, von rechts nach links)."
+      },
+      "open-zoom-dialog": {
+        "label": "Zoom",
+        "description": "Öffnet den Excel-Zoom-Dialog (Ansicht → Zoom)."
       }
     },
     "pptx": {
@@ -1689,6 +1749,10 @@
       "set-metadata": {
         "label": "Metadaten setzen",
         "description": "Setzt oder löscht Metadatenfelder (Titel, Autor, Thema, Stichwörter)."
+      },
+      "add-bookmark": {
+        "label": "Lesezeichen hinzufügen",
+        "description": "Fügt einen Eintrag zum Inhaltsverzeichnis / den Lesezeichen hinzu."
       },
       "fill-form": {
         "label": "Formular ausfüllen",

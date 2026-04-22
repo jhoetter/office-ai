@@ -5,6 +5,9 @@ import {
   AlignCenter,
   AlignCenterHorizontal,
   AlignCenterVertical,
+  Link2,
+  MousePointerClick,
+  Sigma,
   AlignEndHorizontal,
   AlignEndVertical,
   AlignHorizontalDistributeCenter,
@@ -67,6 +70,7 @@ import { FillPicker } from "./FillPicker";
 export type TextAlignment = "left" | "center" | "right" | "justify";
 import { LayoutTemplate } from "lucide-react";
 import { Ribbon, ToolbarMenu, type RibbonCatalogue } from "../lib/shell";
+import { useTranslator } from "@/lib/i18n";
 
 export interface PptxToolbarProps {
   readonly disabled: boolean;
@@ -598,6 +602,48 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
               />
             ),
           },
+          {
+            // Phase 9c §5g (Insert depth). `insert-symbol` is wired live
+            // (composes a DOM-level `insertText` on the focused contenteditable
+            // overlay); `add-hyperlink`, `add-action`, and
+            // `set-slide-header-footer` need new typed model fields on
+            // `TextRun` / `Slide` plus parser/serializer support, so they ship
+            // as Coming-soon placeholder buttons here — same pattern used for
+            // the 9b PPTX shape-outline gap. Flipping `disabled` to `false`
+            // and wiring `onClick` is all that's needed once the backends
+            // land in their dedicated follow-up plans.
+            id: "symbol-links",
+            label: "Symbole",
+            render: () => (
+              <>
+                <SymbolPicker disabled={disabled} />
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<Link2 size={14} />}
+                  label="Hyperlink"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-add-hyperlink-coming-soon"
+                />
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<MousePointerClick size={14} />}
+                  label="Aktion"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-add-action-coming-soon"
+                />
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<StickyNote size={14} />}
+                  label="Kopf-/Fußzeile"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-set-slide-header-footer-coming-soon"
+                />
+              </>
+            ),
+          },
         ],
       },
       {
@@ -818,13 +864,61 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
             id: "shape-fill",
             label: "Formenarten",
             render: ({ props }) => (
-              <FillPicker
-                label="Fülleffekt"
-                value={currentShapeFill}
-                disabled={disabled || !hasSelection}
-                onChange={(spec) => props.onChangeShapeFill(spec)}
-                testId="pptx-shape-fill"
-              />
+              <>
+                <FillPicker
+                  label="Fülleffekt"
+                  value={currentShapeFill}
+                  disabled={disabled || !hasSelection}
+                  onChange={(spec) => props.onChangeShapeFill(spec)}
+                  testId="pptx-shape-fill"
+                />
+                {/*
+                 * Outline / effects / text-fill / text-outline placeholders.
+                 *
+                 * Per phase_9 plan §9b PPTX (`Shape outline / effects /
+                 * text-fill / text-outline groups in Formformat tab`):
+                 * the four backend commands (`pptx:set-shape-line`,
+                 * `pptx:set-shape-effects`, `pptx:set-text-fill`,
+                 * `pptx:set-text-outline`) do not yet exist; the plan
+                 * explicitly defers wiring to 9c. We render disabled
+                 * trigger buttons so the planned ribbon shape is
+                 * visible to users (no surprise blank space) and so a
+                 * 9c follow-up only needs to flip `disabled` and wire
+                 * `onClick`.
+                 */}
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<Spline size={14} />}
+                  label="Formkontur"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-shape-outline-coming-soon"
+                />
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<Wand2 size={14} />}
+                  label="Formeffekte"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-shape-effects-coming-soon"
+                />
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<Type size={14} />}
+                  label="Textfüllung"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-text-fill-coming-soon"
+                />
+                <ToolbarButton
+                  onClick={() => {}}
+                  icon={<Type size={14} />}
+                  label="Textkontur"
+                  title="Coming soon — use CLI in the meantime"
+                  disabled
+                  testId="pptx-text-outline-coming-soon"
+                />
+              </>
             ),
           },
           {
@@ -1331,35 +1425,34 @@ interface TransitionMenuProps {
   ) => void;
 }
 
-const TRANSITION_OPTIONS: ReadonlyArray<{
+const TRANSITION_RIBBON: ReadonlyArray<{
   readonly kind: import("@officeai/pptx").TransitionKind;
-  readonly label: string;
-  readonly hint: string;
+  readonly labelKey: string;
+  readonly hintKey: string;
 }> = [
-  { kind: "none", label: "None", hint: "Hard cut, no animation" },
-  { kind: "fade", label: "Fade", hint: "Cross-fade between slides" },
-  { kind: "push", label: "Push", hint: "New slide pushes the old one off" },
-  { kind: "wipe", label: "Wipe", hint: "Wipe across the slide" },
-  { kind: "split", label: "Split", hint: "Split open from the centre" },
-  { kind: "cut", label: "Cut", hint: "Instant cut" },
+  { kind: "none", labelKey: "transitionNone", hintKey: "transitionHintNone" },
+  { kind: "fade", labelKey: "transitionFade", hintKey: "transitionHintFade" },
+  { kind: "push", labelKey: "transitionPush", hintKey: "transitionHintPush" },
+  { kind: "wipe", labelKey: "transitionWipe", hintKey: "transitionHintWipe" },
+  { kind: "split", labelKey: "transitionSplit", hintKey: "transitionHintSplit" },
+  { kind: "cut", labelKey: "transitionCut", hintKey: "transitionHintCut" },
 ];
 
-const TRANSITION_SPEED_OPTIONS: ReadonlyArray<{
-  readonly value: import("@officeai/pptx").TransitionSpeed;
-  readonly label: string;
-}> = [
-  { value: "slow", label: "Slow" },
-  { value: "med", label: "Medium" },
-  { value: "fast", label: "Fast" },
-];
+const RIBBON_SPEED_KEY: Record<import("@officeai/pptx").TransitionSpeed, string> = {
+  slow: "speedSlow",
+  med: "speedMedium",
+  fast: "speedFast",
+};
 
 function TransitionMenu({ disabled, currentKind, currentSpeed, onSetTransition }: TransitionMenuProps) {
+  const { t } = useTranslator();
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const tx = (key: string) => t(`pptx.animations.${key}`);
   const activeLabel =
     currentKind === "unsupported"
-      ? "Custom"
-      : (TRANSITION_OPTIONS.find((o) => o.kind === currentKind)?.label ?? "None");
+      ? t("pptx.animations.transitionCustom")
+      : tx(TRANSITION_RIBBON.find((o) => o.kind === currentKind)?.labelKey ?? "transitionNone");
   return (
     <>
       <button
@@ -1367,12 +1460,12 @@ function TransitionMenu({ disabled, currentKind, currentSpeed, onSetTransition }
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        title={`Slide transition (currently ${activeLabel})`}
+        title={t("pptx.animations.transitionMenuTooltip", { label: activeLabel })}
         data-testid="pptx-transition-menu-trigger"
         className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Wand2 size={14} />
-        <span className="hidden sm:inline">Transition</span>
+        <span className="hidden sm:inline">{t("pptx.animations.transitionMenuLabel")}</span>
         {currentKind !== "none" && currentKind !== "unsupported" ? (
           <span className="hidden text-[10px] text-secondary md:inline">· {activeLabel}</span>
         ) : null}
@@ -1386,9 +1479,11 @@ function TransitionMenu({ disabled, currentKind, currentSpeed, onSetTransition }
         testId="pptx-transition-menu"
         className="w-[16rem] rounded-md border border-divider bg-surface p-2 shadow-lg"
       >
-        <div className="mb-2 px-1 text-[10px] uppercase tracking-wide text-secondary">Effect</div>
+        <div className="mb-2 px-1 text-[10px] uppercase tracking-wide text-secondary">
+          {t("pptx.animations.effect")}
+        </div>
         <div className="mb-2 grid grid-cols-2 gap-1.5">
-          {TRANSITION_OPTIONS.map((opt) => {
+          {TRANSITION_RIBBON.map((opt) => {
             const isActive = opt.kind === currentKind;
             return (
               <button
@@ -1400,33 +1495,35 @@ function TransitionMenu({ disabled, currentKind, currentSpeed, onSetTransition }
                   setOpen(false);
                   onSetTransition(opt.kind, currentSpeed ?? "med");
                 }}
-                title={opt.hint}
+                title={tx(opt.hintKey)}
                 className={`group flex flex-col items-start gap-0.5 rounded border px-2 py-1.5 text-left ${
                   isActive
                     ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]"
                     : "border-divider/60 bg-transparent hover:border-divider hover:bg-hover"
                 }`}
               >
-                <span className="text-[11px] font-medium text-foreground">{opt.label}</span>
-                <span className="truncate text-[10px] leading-tight text-secondary">{opt.hint}</span>
+                <span className="text-[11px] font-medium text-foreground">{tx(opt.labelKey)}</span>
+                <span className="truncate text-[10px] leading-tight text-secondary">{tx(opt.hintKey)}</span>
               </button>
             );
           })}
         </div>
-        <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-secondary">Speed</div>
+        <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-secondary">
+          {t("pptx.animations.speed")}
+        </div>
         <div className="inline-flex w-full overflow-hidden rounded border border-divider text-[10px]">
-          {TRANSITION_SPEED_OPTIONS.map((s) => {
-            const isActive = (currentSpeed ?? "med") === s.value;
+          {(Object.keys(RIBBON_SPEED_KEY) as import("@officeai/pptx").TransitionSpeed[]).map((s) => {
+            const isActive = (currentSpeed ?? "med") === s;
             return (
               <button
-                key={s.value}
+                key={s}
                 type="button"
                 disabled={currentKind === "none" || currentKind === "unsupported"}
-                onClick={() => onSetTransition(currentKind, s.value)}
+                onClick={() => onSetTransition(currentKind, s)}
                 className={`flex-1 px-2 py-1 disabled:opacity-40 ${isActive ? "bg-hover" : ""}`}
-                data-testid={`pptx-transition-speed-${s.value}`}
+                data-testid={`pptx-transition-speed-${s}`}
               >
-                {s.label}
+                {tx(RIBBON_SPEED_KEY[s])}
               </button>
             );
           })}
@@ -1639,6 +1736,112 @@ function ShapeMenu({ disabled, onPick }: ShapeMenuProps) {
             {opt.icon}
             <span>{opt.label}</span>
           </button>
+        ))}
+      </ToolbarMenu>
+    </>
+  );
+}
+
+/**
+ * Phase 9c §5g — Insert Symbol picker.
+ *
+ * Composes existing text editing rather than dispatching a new
+ * `pptx:insert-symbol` command: when the user picks a glyph we
+ * dispatch an `insertText` execCommand against the focused
+ * `contenteditable` overlay. That keeps undo / cursor position /
+ * format-bar coverage exactly the same as typing the character on
+ * the keyboard, and avoids touching the typed model for what is
+ * fundamentally a keyboard-shortcut affordance. When no text shape
+ * is focused we no-op (the trigger is still enabled because the
+ * focus state changes faster than a re-render — surfacing a stale
+ * disabled state would feel laggy).
+ */
+const SYMBOL_GROUPS: ReadonlyArray<{ label: string; symbols: ReadonlyArray<string> }> = [
+  { label: "Common", symbols: ["©", "®", "™", "§", "¶", "†", "‡", "•", "·", "…"] },
+  { label: "Currency", symbols: ["$", "€", "£", "¥", "¢", "₹", "₽", "₩", "₿"] },
+  { label: "Math", symbols: ["±", "×", "÷", "≤", "≥", "≠", "≈", "∞", "√", "∑", "π", "Δ"] },
+  { label: "Arrows", symbols: ["→", "←", "↑", "↓", "↔", "⇒", "⇐", "⇑", "⇓", "⇔"] },
+  { label: "Marks", symbols: ["✓", "✗", "★", "☆", "❤", "♠", "♣", "♥", "♦"] },
+  { label: "Quotes", symbols: ["“", "”", "‘", "’", "«", "»", "—", "–"] },
+];
+
+interface SymbolPickerProps {
+  readonly disabled: boolean;
+}
+
+function SymbolPicker({ disabled }: SymbolPickerProps): React.ReactElement {
+  const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const insert = React.useCallback((char: string): void => {
+    // Insert at the current selection inside the focused
+    // contenteditable. `execCommand("insertText")` is deprecated but
+    // remains the only reliable way to mutate a contenteditable in
+    // a way that participates in the browser's own undo stack — the
+    // PPTX text overlay relies on the same path for typed input, so
+    // routing the symbol through it keeps undo/redo coherent.
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    if (active instanceof HTMLElement && active.isContentEditable) {
+      try {
+        document.execCommand("insertText", false, char);
+        return;
+      } catch {
+        /* fall through to clipboard fallback */
+      }
+    }
+    // Fallback: copy to clipboard so the user can paste it. Better
+    // than silently doing nothing when no text shape is focused.
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard.writeText(char).catch(() => undefined);
+    }
+  }, []);
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title="Insert symbol"
+        data-testid="pptx-insert-symbol-trigger"
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Sigma size={14} />
+        <span className="hidden sm:inline">Symbol</span>
+        <ChevronDown size={12} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        testId="pptx-insert-symbol-menu"
+        className="flex w-64 flex-col gap-2 rounded-md border border-divider bg-surface p-2 shadow-lg"
+      >
+        {SYMBOL_GROUPS.map((group) => (
+          <div key={group.label} className="flex flex-col gap-1">
+            <span className="px-1 text-[10px] uppercase tracking-wide text-secondary">
+              {group.label}
+            </span>
+            <div className="grid grid-cols-10 gap-0.5">
+              {group.symbols.map((sym) => (
+                <button
+                  key={sym}
+                  type="button"
+                  role="menuitem"
+                  data-testid={`pptx-insert-symbol-${sym}`}
+                  // The symbol palette stays open after a pick so the
+                  // user can stack a few in a row (Acrobat & Word
+                  // both behave this way). Esc / outside-click close.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => insert(sym)}
+                  title={sym}
+                  className="flex h-6 w-6 items-center justify-center rounded text-sm text-foreground hover:bg-hover"
+                >
+                  {sym}
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </ToolbarMenu>
     </>

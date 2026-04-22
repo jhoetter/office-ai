@@ -104,6 +104,19 @@ export interface SetSheetStatePayload {
 }
 
 /**
+ * `xlsx:set-sheet-tab-color` — set or clear the per-sheet "Tab Color"
+ * Excel paints under the worksheet tab.
+ *
+ * `color` is an 8-char ARGB hex string (e.g. `"FFCC0000"`). `null`
+ * clears the color (Excel falls back to the OS default tab background).
+ * Round-tripped through `<sheetPr><tabColor rgb="…"/></sheetPr>`.
+ */
+export interface SetSheetTabColorPayload {
+  readonly name: string;
+  readonly color: string | null;
+}
+
+/**
  * `xlsx:add-conditional-format` — add a typed conditional
  * formatting rule to a sheet.
  *
@@ -326,6 +339,35 @@ export interface SetRowHeightPayload {
   readonly row: number;
   /** Height in CSS pixels. Pass `null` to reset to the default. */
   readonly height: number | null;
+}
+
+/**
+ * `xlsx:set-row-visibility` — show / hide one row by adding or
+ * removing it from {@link Sheet.hiddenRows}. The serializer's
+ * `injectHiddenRows` already paints `hidden="1"` on the matching
+ * `<row>` element, so the round-trip is preserved without touching
+ * row heights. Used by the row-header context menu's "Hide row" /
+ * "Unhide row" entries (Excel parity).
+ */
+export interface SetRowVisibilityPayload {
+  readonly sheet: string;
+  /** 1-based row index. */
+  readonly row: number;
+  /** `true` → row is hidden; `false` → row is shown. */
+  readonly hidden: boolean;
+}
+
+/**
+ * `xlsx:set-column-visibility` — show / hide one column. Mutates
+ * {@link Sheet.hiddenCols} *and* patches `Sheet.colsXml` so the
+ * serializer round-trips the change (Excel reads column hiddenness
+ * from `<col hidden="1"/>` blocks, not from per-cell shifts).
+ */
+export interface SetColumnVisibilityPayload {
+  readonly sheet: string;
+  /** 1-based column index (A=1). */
+  readonly column: number;
+  readonly hidden: boolean;
 }
 
 /** `xlsx:delete-sheet` */

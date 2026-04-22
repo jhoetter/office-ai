@@ -85,12 +85,48 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
     return () => unsub();
   }, [props.subscribeSnapshot]);
   const snapshot = props.subscribeSnapshot ? liveSnapshot : props.snapshot;
-  const slides = snapshot.root.slides;
+  // F-9a: hidden slides (Office's "Hide Slide" — `<p:sldId show="0"/>`)
+  // are skipped during playback. The editor still shows them; only
+  // PresentMode filters. We keep `allSlides` around so the topbar can
+  // surface the count of skipped slides (matching PowerPoint's
+  // presenter-view "X hidden" hint).
+  const allSlides = snapshot.root.slides;
+  // `show="0"` on `<p:sld>` is the OOXML "Hide Slide" flag (set by
+  // `pptx:set-slide-hidden`). Any other value (or absent) means the
+  // slide is shown.
+  const slides = React.useMemo(
+    () => allSlides.filter((s) => s.slideRootAttrs?.show !== "0"),
+    [allSlides],
+  );
+  const hiddenCount = allSlides.length - slides.length;
+  // F-9a: honor `<p:showPr>` slide-show options (PowerPoint Slide
+  // Show → Set Up Show). `loop` wraps next() past the last slide;
+  // `kiosk` suppresses Esc/right-click close (only the topbar X
+  // works); `browse` renders in a windowed shell rather than
+  // auto-fullscreen. `useTimings` is currently a TODO — see comment
+  // below.
+  const showOptions = React.useMemo(() => readShowOptionsForPresent(snapshot), [snapshot]);
   const slideSize = snapshot.root.slideSize;
   const theme = snapshot.root.themeDefault;
   const notesSlides = snapshot.root.notesSlides;
 
-  const [index, setIndex] = React.useState(() => clampIndex(props.initialSlideIndex, slides.length));
+  // The editor's `initialSlideIndex` is in the *unfiltered* coordinate
+  // system (it's a sidebar position). Map it onto the filtered list by
+  // finding the next non-hidden slide at-or-after that index — matches
+  // PowerPoint's "Start from Current Slide" behaviour when the current
+  // slide happens to be hidden.
+  const initialFilteredIndex = React.useMemo(() => {
+    if (slides.length === 0) return 0;
+    for (let i = props.initialSlideIndex; i < allSlides.length; i++) {
+      const slide = allSlides[i];
+      if (slide && slide.slideRootAttrs?.show !== "0") {
+        const filteredIdx = slides.indexOf(slide);
+        if (filteredIdx >= 0) return filteredIdx;
+      }
+    }
+    return 0;
+  }, [allSlides, slides, props.initialSlideIndex]);
+  const [index, setIndex] = React.useState(() => clampIndex(initialFilteredIndex, slides.length));
   const [showSpeaker, setShowSpeaker] = React.useState(false);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [startedAt] = React.useState(() => Date.now());
@@ -101,6 +137,18 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
     const id = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(id);
   }, []);
+
+  // TODO(9c+): honor `<p:showPr useTimings="1"/>` by auto-advancing
+  // slides using each slide's `<p:transition advTm="…">` timing.
+  // Logged once on mount so it shows up in dev consoles when the deck
+  // explicitly asked for timings — until then we silently fall back
+  // to manual advance.
+  React.useEffect(() => {
+    if (showOptions.useTimings) {
+      // eslint-disable-next-line no-console
+      console.info("[PresentMode] useTimings=1 requested — auto-advance not yet implemented; manual advance only.");
+    }
+  }, [showOptions.useTimings]);
 
   React.useEffect(() => {
     const onChange = (): void => setIsFullscreen(document.fullscreenElement === containerRef.current);
@@ -121,10 +169,30 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
   // the controller every frame.
   const [pendingAnims, setPendingAnims] = React.useState(0);
   const advanceLockRef = React.useRef(false);
-  const advanceSlide = React.useCallback(() => setIndex((i) => Math.min(i + 1, total - 1)), [total]);
+  const advanceSlide = React.useCallback(() => {
+    setIndex((i) => {
+      if (i + 1 < total) return i + 1;
+      // F-9a: `<p:showPr loop="1"/>` (Slide Show → Set Up Show → Loop
+      // continuously until 'Esc') — past the last slide, wrap back to
+      // the first instead of stopping.
+      if (showOptions.loop && total > 0) return 0;
+      return total - 1;
+    });
+  }, [total, showOptions.loop]);
+  /** Latest slide for `next()`; avoids a stale `index` closure and gates slide advance
+   * when the playback controller is not attached yet (see comment in `next`). */
+  const currentSlideForNavRef = React.useRef<Slide | null | undefined>(undefined);
   const next = React.useCallback(async () => {
     if (advanceLockRef.current) return;
     const controller = playbackRef.current;
+    const slide = currentSlideForNavRef.current;
+    // If the slide has typed animations but `createPlayback` has not run yet
+    // (SVG host not measured / one frame after mount), do not treat this like
+    // a slide with no build steps — otherwise Space advances in the same moment
+    // the controller would have consumed the first click.
+    if (!controller && slide && slide.animations.length > 0) {
+      return;
+    }
     if (controller && controller.hasMore()) {
       advanceLockRef.current = true;
       try {
@@ -161,10 +229,38 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
     setPendingAnims(controller && controller.hasMore() ? countRemainingGroups(controller) : 0);
   }, []);
 
-  const close = React.useCallback(() => {
+  // Kiosk mode (Slide Show → Set Up Show → Browsed at a kiosk) keeps
+  // the deck running until an explicit user gesture — Esc and the
+  // right-click menu both close it in PowerPoint, but we deliberately
+  // require a 5s long-press on the close affordance so an accidental
+  // Esc keypress in a public-display rotation doesn't kill the show.
+  const kioskHoldRef = React.useRef<number | null>(null);
+  const performClose = React.useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     props.onClose();
   }, [props.onClose]);
+  const close = React.useCallback(() => {
+    if (showOptions.showType !== "kiosk") {
+      performClose();
+      return;
+    }
+    // Kiosk: ignore single keypresses; the topbar close button uses
+    // the long-press handlers below (registered via PresentBarButton).
+  }, [showOptions.showType, performClose]);
+  const beginKioskClose = React.useCallback(() => {
+    if (kioskHoldRef.current !== null) return;
+    kioskHoldRef.current = window.setTimeout(() => {
+      kioskHoldRef.current = null;
+      performClose();
+    }, 5_000);
+  }, [performClose]);
+  const cancelKioskClose = React.useCallback(() => {
+    if (kioskHoldRef.current !== null) {
+      window.clearTimeout(kioskHoldRef.current);
+      kioskHoldRef.current = null;
+    }
+  }, []);
+  React.useEffect(() => () => cancelKioskClose(), [cancelKioskClose]);
 
   const toggleFullscreen = React.useCallback(() => {
     const el = containerRef.current;
@@ -192,6 +288,13 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
         case "ArrowDown":
         case "PageDown":
         case " ":
+          // Keyboard autorepeat would otherwise fire a second "next" the moment
+          // the first build step finishes, advancing the slide while the user
+          // still has the key down.
+          if (e.repeat) {
+            e.preventDefault();
+            return;
+          }
           e.preventDefault();
           void next();
           return;
@@ -211,6 +314,8 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
           return;
         case "Escape":
           e.preventDefault();
+          // Kiosk mode swallows Esc — `close()` is a no-op there.
+          // Use the topbar X with a 5s long-press to actually exit.
           close();
           return;
         case "s":
@@ -233,6 +338,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
 
   const currentSlide = slides[index];
   const nextSlide = slides[index + 1] ?? null;
+  currentSlideForNavRef.current = currentSlide;
 
   // F-C2: slide-to-slide transitions. Keep a snapshot of the previous
   // slide whenever `index` advances forward (Office's transition is
@@ -273,16 +379,37 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
     <div
       ref={containerRef}
       data-testid="pptx-present-mode"
+      data-show-type={showOptions.showType}
       role="dialog"
       aria-modal="true"
       aria-label="Presentation"
-      className="fixed inset-0 z-[100] flex flex-col bg-black text-white"
+      className={
+        // F-9a: `<p:showPr><p:browse/></p:showPr>` (Slide Show → Set Up
+        // Show → Browsed by an individual (window)) renders in a
+        // windowed shell with a small inset rather than full-bleed.
+        // Kiosk and presenter both use the full-bleed black surface.
+        showOptions.showType === "browse"
+          ? "fixed inset-4 z-[100] flex flex-col rounded-lg border border-divider bg-black text-white shadow-2xl"
+          : "fixed inset-0 z-[100] flex flex-col bg-black text-white"
+      }
     >
       <header className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
         <div className="flex items-center gap-2 opacity-70">
           <span data-testid="pptx-present-counter">
             Slide {index + 1} / {total}
           </span>
+          {hiddenCount > 0 ? (
+            <>
+              <span className="hidden sm:inline">·</span>
+              <span
+                data-testid="pptx-present-hidden-count"
+                className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/80"
+                title={`${hiddenCount} hidden slide${hiddenCount === 1 ? "" : "s"} skipped`}
+              >
+                {hiddenCount} hidden
+              </span>
+            </>
+          ) : null}
           <span className="hidden sm:inline">·</span>
           <span className="hidden sm:inline">Elapsed {formatElapsed(now - startedAt)}</span>
           {pendingAnims > 0 ? (
@@ -324,10 +451,23 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
             icon={isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           />
           <PresentBarButton
-            label="Exit present mode (Esc)"
-            onClick={close}
+            label={
+              showOptions.showType === "kiosk"
+                ? "Exit kiosk mode (hold 5s)"
+                : "Exit present mode (Esc)"
+            }
+            onClick={showOptions.showType === "kiosk" ? () => undefined : performClose}
             icon={<X size={14} />}
             testId="pptx-present-close"
+            {...(showOptions.showType === "kiosk"
+              ? {
+                  onMouseDown: beginKioskClose,
+                  onMouseUp: cancelKioskClose,
+                  onMouseLeave: cancelKioskClose,
+                  onTouchStart: beginKioskClose,
+                  onTouchEnd: cancelKioskClose,
+                }
+              : {})}
           />
         </div>
       </header>
@@ -338,9 +478,12 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
          * a transition kind that hasn't played yet, or the SlideStage
          * has reported entrance animations pending. PowerPoint shows
          * a similar hint via the cursor; on a single-screen web app
-         * the user expects a clearer visual cue. */}
-        <button
-          type="button"
+         * the user expects a clearer visual cue. Use a div+role=button, not
+         * a <button>, so Space does not also synthesize a second click
+         * while the global key handler advances. */}
+        <div
+          role="button"
+          tabIndex={-1}
           onClick={() => void next()}
           className={`relative flex min-h-0 flex-1 cursor-pointer items-center justify-center bg-transparent ${
             index === 0 &&
@@ -392,7 +535,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
           ) : (
             <span className="text-sm opacity-60">No slides</span>
           )}
-        </button>
+        </div>
 
         {/* Speaker view */}
         {showSpeaker ? (
@@ -683,6 +826,12 @@ interface PresentBarButtonProps {
   readonly onClick: () => void;
   readonly active?: boolean;
   readonly testId?: string;
+  /** Long-press hooks used by the kiosk-mode close button. */
+  readonly onMouseDown?: () => void;
+  readonly onMouseUp?: () => void;
+  readonly onMouseLeave?: () => void;
+  readonly onTouchStart?: () => void;
+  readonly onTouchEnd?: () => void;
 }
 
 function PresentBarButton(props: PresentBarButtonProps): React.ReactElement {
@@ -693,6 +842,11 @@ function PresentBarButton(props: PresentBarButtonProps): React.ReactElement {
       title={props.label}
       aria-label={props.label}
       {...(props.testId ? { "data-testid": props.testId } : {})}
+      {...(props.onMouseDown ? { onMouseDown: props.onMouseDown } : {})}
+      {...(props.onMouseUp ? { onMouseUp: props.onMouseUp } : {})}
+      {...(props.onMouseLeave ? { onMouseLeave: props.onMouseLeave } : {})}
+      {...(props.onTouchStart ? { onTouchStart: props.onTouchStart } : {})}
+      {...(props.onTouchEnd ? { onTouchEnd: props.onTouchEnd } : {})}
       className={[
         "inline-flex items-center gap-1 rounded px-2 py-1 text-xs",
         props.active ? "bg-white/15" : "hover:bg-white/10",
@@ -735,6 +889,53 @@ function formatClock(ms: number): string {
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
+}
+
+interface ShowOptionsForPresent {
+  readonly showType: "presenter" | "browse" | "kiosk";
+  readonly loop: boolean;
+  /**
+   * Honors `<p:showPr useTimings="1"/>`. PowerPoint advances slides
+   * automatically using each slide's `<p:transition advTm="…"/>` /
+   * the rehearsed `useTimings`. We currently surface the flag so
+   * callers can introspect it, but actual auto-advance playback is
+   * deferred — see TODO in `PresentMode` next() body.
+   */
+  readonly useTimings: boolean;
+}
+
+/**
+ * Read `<p:showPr>` slide-show options off the presentation's opaque
+ * tail. Mirrors `readShowOptions` in `PptxEditor.tsx` but inlined
+ * here so PresentMode does not pull on the editor module — the two
+ * surfaces happen to share a parser shape but are otherwise
+ * independent. PowerPoint defaults are used when `<p:showPr>` is
+ * absent.
+ */
+function readShowOptionsForPresent(snap: PptxSnapshot): ShowOptionsForPresent {
+  const defaults: ShowOptionsForPresent = {
+    showType: "presenter",
+    loop: false,
+    useTimings: true,
+  };
+  for (const el of snap.root.presentationOpaqueTail) {
+    if (el.tag !== "p:showPr") continue;
+    const attrs = el.attrs;
+    let showType: ShowOptionsForPresent["showType"] = "presenter";
+    for (const child of el.subtree) {
+      if (typeof child !== "object" || child === null) continue;
+      for (const key of Object.keys(child as Record<string, unknown>)) {
+        if (key === "p:browse") showType = "browse";
+        else if (key === "p:kiosk") showType = "kiosk";
+      }
+    }
+    return {
+      showType,
+      loop: attrs.loop === "1" || attrs.loop === "true",
+      useTimings: attrs.useTimings !== "0" && attrs.useTimings !== "false",
+    };
+  }
+  return defaults;
 }
 
 /**

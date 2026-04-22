@@ -95,6 +95,15 @@ export function wordShortcutsKeymapPlugin(agent: DocxAgent): Plugin {
 
 /** Exposed for unit testing — pure function over (view, event, agent). */
 export function dispatchShortcut(view: EditorView, event: KeyboardEvent, agent: DocxAgent): boolean {
+  // Tab / Shift+Tab inside list items demote/promote the bullet level
+  // (Word parity). We handle these BEFORE the Mod gate because Tab
+  // doesn't carry a modifier; PM falls back to its default Tab handler
+  // (insert literal tab) if the caret isn't in a list paragraph.
+  if (event.key === "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    const adjusted = adjustListLevel(view, agent, event.shiftKey ? -1 : +1);
+    if (adjusted) return true;
+  }
+
   const isMod = event.metaKey || event.ctrlKey;
   if (!isMod) return false;
 
@@ -363,4 +372,44 @@ function findParagraphById(
     if (block.kind === "paragraph" && block.id === paragraphId) return block;
   }
   return null;
+}
+
+/**
+ * Word-parity Tab / Shift+Tab demote/promote inside lists.
+ *
+ * Returns `true` and dispatches `docx:set-paragraph-list` (preserving
+ * the existing numId, only bumping ilvl) when:
+ *   - the caret sits in a list paragraph
+ *   - the resulting level stays in `[0, 8]` (Word's hard cap on
+ *     `<w:ilvl>` per OOXML's `numFmt` definitions)
+ *
+ * Returns `false` (and does NOT dispatch) when:
+ *   - the caret isn't in a list paragraph (PM's default Tab inserts
+ *     a literal tab character — we leave that contract intact),
+ *   - the level is already at the relevant boundary (so a stranded
+ *     Shift+Tab on a top-level bullet doesn't silently no-op the
+ *     Tab key and trap the user with no escape).
+ *
+ * The `direction` argument is `+1` for demote (Tab) and `-1` for
+ * promote (Shift+Tab), matching the visual mental model of "Tab
+ * pushes deeper".
+ */
+function adjustListLevel(view: EditorView, agent: DocxAgent, direction: 1 | -1): boolean {
+  const paragraphId = currentParagraphId(view.state);
+  if (!paragraphId) return false;
+  const snap = agent.getSnapshot();
+  const para = findParagraphById(snap, paragraphId);
+  const numbering = para?.properties.numbering;
+  if (!numbering) return false;
+  const nextIlvl = numbering.ilvl + direction;
+  // Word caps `<w:ilvl>` at 8 (levels 0..8 — the visible nine
+  // indents in the bullets ribbon dropdown). Below 0 there's no
+  // such thing as a "negative" indent.
+  if (nextIlvl < 0 || nextIlvl > 8) return false;
+  void agent.applyCommand({
+    type: "docx:set-paragraph-list",
+    payload: { paragraphId, numId: numbering.numId, ilvl: nextIlvl },
+    source: "human",
+  });
+  return true;
 }

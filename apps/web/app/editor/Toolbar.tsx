@@ -38,6 +38,14 @@ import {
   ArrowDownToLine,
   ArrowLeftToLine,
   ArrowRightToLine,
+  Bookmark,
+  Brush,
+  FileText,
+  Square,
+  ListTree,
+  Quote,
+  Link2,
+  Palette,
 } from "lucide-react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
@@ -127,6 +135,15 @@ export interface ToolbarProps {
     after?: number | null;
   }) => void;
   onToggleList: (kind: "bullet" | "ordered") => void;
+  /**
+   * 9b — Word-parity list-level mini-menu. Set to a number 0..8 when
+   * the caret sits in a list paragraph; null otherwise. The mini-menu
+   * surfaces nine indents (matching Word's bullets dropdown) and
+   * dispatches `docx:set-paragraph-list` preserving the existing
+   * numId.
+   */
+  currentListLevel: number | null;
+  onSetListLevel: (ilvl: number) => void;
   onAddComment: () => void;
   /**
    * B11 — Section break menu. The four OOXML section types map to
@@ -183,6 +200,14 @@ export interface ToolbarProps {
   hfFocus: PageZoneFocusDetail | null;
   onCloseHeaderFooter: () => void;
   onToggleSectionDifferentFirst: (checked: boolean) => void;
+  /**
+   * Reflects the current section's `<w:titlePg/>` flag so the "Erste
+   * Seite anders" checkbox shows whether the active section already
+   * suppresses its first-page header/footer (Word's "Different First
+   * Page" gesture). Computed by the editor from the snapshot at the
+   * caret's section.
+   */
+  currentSectionTitlePg: boolean;
   onInsertHFField: (kind: "PAGE" | "NUMPAGES") => void;
   onInsertHFImage: () => void;
   /**
@@ -372,6 +397,11 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                 <ToolbarBtn label="Numbered list" onClick={() => ctx.onToggleList("ordered")}>
                   <ListOrdered size={14} />
                 </ToolbarBtn>
+                <ListLevelMenu
+                  disabled={!agentReady || ctx.currentListLevel === null}
+                  level={ctx.currentListLevel}
+                  onPick={ctx.onSetListLevel}
+                />
                 <ToolbarBtn label="Decrease indent" onClick={() => ctx.onAdjustIndent(-360)}>
                   <Outdent size={14} />
                 </ToolbarBtn>
@@ -508,6 +538,156 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                     ? `${twipsToInches(ctx.activeIndentLeft)}"`
                     : ""}
                 </span>
+              </>
+            ),
+          },
+        ],
+      },
+      {
+        // Phase 9c §3b — Design / Entwurf tab.
+        //
+        // The four backend commands listed in the plan (`docx:set-page-color`,
+        // `docx:set-page-borders`, `docx:set-page-watermark`,
+        // `docx:set-document-theme`) require new typed model fields on
+        // `DocxDocument` (background block, sectPr.pgBorders writer, header
+        // part for watermarks, theme1.xml writer) plus parser/serializer
+        // support that we don't have yet. Per the same pattern used for
+        // the 9b PPTX shape-outline placeholders, we render disabled
+        // ribbon buttons here so the planned ribbon shape is visible
+        // and a follow-up plan only needs to flip `disabled` and wire
+        // `onClick`. CLI exposure stays deferred until backends land.
+        id: "design",
+        label: "Entwurf",
+        groups: [
+          {
+            id: "themes",
+            label: "Designs",
+            render: () => (
+              <ToolbarBtn
+                label="Coming soon — use CLI in the meantime"
+                onClick={() => {}}
+                disabled
+                testId="docx-set-document-theme-coming-soon"
+              >
+                <Palette size={14} />
+                <span className="ml-1 text-xs">Designs</span>
+              </ToolbarBtn>
+            ),
+          },
+          {
+            id: "page-background",
+            label: "Seitenhintergrund",
+            render: () => (
+              <>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-set-page-color-coming-soon"
+                >
+                  <PaintBucket size={14} />
+                  <span className="ml-1 text-xs">Seitenfarbe</span>
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-set-page-borders-coming-soon"
+                >
+                  <Square size={14} />
+                  <span className="ml-1 text-xs">Seitenränder</span>
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-set-page-watermark-coming-soon"
+                >
+                  <Brush size={14} />
+                  <span className="ml-1 text-xs">Wasserzeichen</span>
+                </ToolbarBtn>
+              </>
+            ),
+          },
+        ],
+      },
+      {
+        // Phase 9c §3c — References / Verweise tab.
+        //
+        // Identical Coming-soon strategy: bookmarks need a typed
+        // `<w:bookmarkStart/End>` model + serializer pair, TOC needs
+        // `<w:fldSimple>` + cached field result, captions/cross-refs
+        // need new run kinds. Each will get its own dedicated plan.
+        // Until then, surfacing the planned ribbon group here is the
+        // honest progress: CLI users see no entries, UI users see the
+        // intended group with disabled triggers.
+        id: "references",
+        label: "Verweise",
+        groups: [
+          {
+            id: "bookmarks",
+            label: "Lesezeichen",
+            render: () => (
+              <ToolbarBtn
+                label="Coming soon — use CLI in the meantime"
+                onClick={() => {}}
+                disabled
+                testId="docx-insert-bookmark-coming-soon"
+              >
+                <Bookmark size={14} />
+                <span className="ml-1 text-xs">Lesezeichen</span>
+              </ToolbarBtn>
+            ),
+          },
+          {
+            id: "toc",
+            label: "Inhaltsverzeichnis",
+            render: () => (
+              <>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-insert-toc-coming-soon"
+                >
+                  <ListTree size={14} />
+                  <span className="ml-1 text-xs">TOC</span>
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-update-toc-coming-soon"
+                >
+                  <FileText size={14} />
+                  <span className="ml-1 text-xs">Aktualisieren</span>
+                </ToolbarBtn>
+              </>
+            ),
+          },
+          {
+            id: "captions",
+            label: "Beschriftungen",
+            render: () => (
+              <>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-insert-caption-coming-soon"
+                >
+                  <Quote size={14} />
+                  <span className="ml-1 text-xs">Beschriftung</span>
+                </ToolbarBtn>
+                <ToolbarBtn
+                  label="Coming soon — use CLI in the meantime"
+                  onClick={() => {}}
+                  disabled
+                  testId="docx-insert-cross-reference-coming-soon"
+                >
+                  <Link2 size={14} />
+                  <span className="ml-1 text-xs">Querverweis</span>
+                </ToolbarBtn>
               </>
             ),
           },
@@ -852,17 +1032,35 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
             id: "hf-options",
             label: "Optionen",
             render: (ctx) => (
-              <label className="inline-flex items-center gap-1.5 px-2 text-xs text-foreground hover:text-foreground">
-                <input
-                  type="checkbox"
-                  onMouseDown={(e) => e.preventDefault()}
-                  checked={false}
-                  onChange={(e) => ctx.onToggleSectionDifferentFirst(e.target.checked)}
-                  data-testid="docx-hf-toggle-different-first"
-                  className="h-3 w-3 accent-[var(--accent)]"
-                />
-                Erste Seite anders
-              </label>
+              <div className="flex flex-col gap-0.5">
+                <label className="inline-flex items-center gap-1.5 px-2 text-xs text-foreground hover:text-foreground">
+                  <input
+                    type="checkbox"
+                    onMouseDown={(e) => e.preventDefault()}
+                    checked={ctx.currentSectionTitlePg}
+                    onChange={(e) => ctx.onToggleSectionDifferentFirst(e.target.checked)}
+                    data-testid="docx-hf-toggle-different-first"
+                    className="h-3 w-3 accent-[var(--accent)]"
+                  />
+                  Erste Seite anders
+                </label>
+                {/* "Different odd & even" is a real Word feature (`<w:evenAndOddHeaders/>`
+                  * on `settings.xml`) but the backend command does not exist yet.
+                  * Surfacing the toggle anyway and routing it through `onUnsupported`
+                  * means users get a "not yet supported" toast instead of a silently
+                  * dead checkbox — and exercises the prop wired through Toolbar/Catalogue. */}
+                <label className="inline-flex items-center gap-1.5 px-2 text-xs text-secondary hover:text-foreground">
+                  <input
+                    type="checkbox"
+                    onMouseDown={(e) => e.preventDefault()}
+                    checked={false}
+                    onChange={() => ctx.onUnsupported("Verschiedene gerade/ungerade Seiten")}
+                    data-testid="docx-hf-toggle-different-odd-even"
+                    className="h-3 w-3 accent-[var(--accent)]"
+                  />
+                  Verschiedene gerade/ungerade
+                </label>
+              </div>
             ),
           },
           {
@@ -1010,6 +1208,82 @@ function EditModePicker(props: { value: EditModeValue; onChange: (v: EditModeVal
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 9b — List-level mini-menu next to the bullet/numbered buttons.
+ *
+ * Surfaces the nine indent levels Word exposes in its bullets ribbon
+ * dropdown. Disabled (and visually muted) whenever the caret isn't in
+ * a list paragraph — that's the only time `set-paragraph-list` would
+ * have a meaningful target. The menu also supports the keyboard chord
+ * Tab / Shift+Tab via `wordShortcutsKeymapPlugin`; this dropdown is
+ * the discoverable / point-and-click affordance for the same action.
+ *
+ * The active level is highlighted so the user can see at a glance how
+ * deep they are without counting bullets on screen.
+ */
+function ListLevelMenu(props: {
+  disabled: boolean;
+  level: number | null;
+  onPick: (ilvl: number) => void;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const choose = (ilvl: number) => {
+    props.onPick(ilvl);
+    setOpen(false);
+  };
+
+  return (
+    <span className="inline-flex">
+      <button
+        ref={triggerRef}
+        type="button"
+        title={props.level === null ? "List level (place caret in a list)" : `List level (currently ${props.level + 1})`}
+        aria-label="Change list level"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={props.disabled}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-7 items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-foreground transition-colors hover:bg-hover",
+          props.disabled && "cursor-not-allowed opacity-50 hover:bg-transparent"
+        )}
+        data-testid="list-level-menu-trigger"
+      >
+        <Indent size={12} />
+        <span className="tabular-nums">{props.level === null ? "—" : props.level + 1}</span>
+        <ChevronDown size={10} />
+      </button>
+      <ToolbarMenu
+        open={open}
+        onClose={() => setOpen(false)}
+        triggerRef={triggerRef}
+        role="menu"
+        className="w-48 rounded-md border border-divider bg-surface p-1 text-xs shadow-md"
+      >
+        {Array.from({ length: 9 }, (_, i) => (
+          <button
+            key={i}
+            type="button"
+            role="menuitem"
+            onClick={() => choose(i)}
+            data-testid={`list-level-${i}`}
+            className={cn(
+              "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-hover",
+              props.level === i && "bg-hover font-semibold"
+            )}
+          >
+            <span className="tabular-nums text-secondary">{i + 1}.</span>
+            <span style={{ paddingLeft: i * 8 }}>•</span>
+            <span className="ml-auto text-tertiary">ilvl {i}</span>
+          </button>
+        ))}
+      </ToolbarMenu>
+    </span>
   );
 }
 
@@ -1270,6 +1544,15 @@ function ToolbarBtn(props: {
   onClick: () => void;
   active?: boolean;
   testId?: string;
+  /**
+   * Disabled trigger. Used both for state-conditional buttons (e.g.
+   * "Merge cells" with no multi-cell selection) and for Phase 9c
+   * Coming-soon placeholders that surface the planned ribbon shape
+   * before the underlying backend lands. Renders the same control,
+   * with `aria-disabled` and reduced opacity, so the layout doesn't
+   * jump when the button gates on/off.
+   */
+  disabled?: boolean;
   children: ReactNode;
 }): ReactNode {
   return (
@@ -1278,12 +1561,15 @@ function ToolbarBtn(props: {
       title={props.label}
       aria-label={props.label}
       aria-pressed={props.active ?? undefined}
+      aria-disabled={props.disabled ?? undefined}
+      disabled={props.disabled ?? undefined}
       data-testid={props.testId}
       onMouseDown={(e) => e.preventDefault()}
       onClick={props.onClick}
       className={cn(
         "inline-flex items-center rounded-md p-1.5 text-secondary hover:bg-hover hover:text-foreground",
-        props.active && "bg-accent-light text-foreground"
+        props.active && "bg-accent-light text-foreground",
+        props.disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-secondary"
       )}
     >
       {props.children}

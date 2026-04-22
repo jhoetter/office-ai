@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "@officeai/ui";
+import { useTranslator } from "@/lib/i18n";
 import { InlineSpinner } from "./InlineSpinner";
 import type { ProductAdapter, SaveState } from "./types";
 
@@ -57,15 +58,16 @@ export function EditorStatusBar({ adapter, leftSlot, rightSlot }: EditorStatusBa
 }
 
 function SaveStateMirror({ state }: { readonly state: SaveState }): ReactNode {
+  const { t } = useTranslator();
   if (state === "unknown") return null;
   const label =
     state === "saved"
-      ? "Saved"
+      ? t("status.saveStateSaved")
       : state === "modified"
-        ? "Unsaved changes"
+        ? t("status.saveStateUnsaved")
         : state === "saving"
-          ? "Saving…"
-          : "Save error";
+          ? t("status.saveStateSaving")
+          : t("status.saveStateError");
   const tone =
     state === "error"
       ? "text-[color:var(--error)]"

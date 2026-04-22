@@ -36,6 +36,7 @@ import { moveSheetHandler } from "./move-sheet.js";
 import { pasteRangeHandler } from "./paste-range.js";
 import { renameSheetHandler } from "./rename-sheet.js";
 import { setSheetStateHandler } from "./set-sheet-state.js";
+import { setSheetTabColorHandler } from "./set-sheet-tab-color.js";
 import {
   addConditionalFormatHandler,
   removeConditionalFormatHandler,
@@ -60,6 +61,8 @@ import { setColumnWidthHandler } from "./set-column-width.js";
 import { setFilterColumnHandler } from "./set-filter-column.js";
 import { setRangeValuesHandler } from "./set-range-values.js";
 import { setRowHeightHandler } from "./set-row-height.js";
+import { setRowVisibilityHandler } from "./set-row-visibility.js";
+import { setColumnVisibilityHandler } from "./set-column-visibility.js";
 import { setSheetProtectionHandler } from "./set-sheet-protection.js";
 import { setShowFormulasHandler } from "./set-show-formulas.js";
 import { setWorkbookProtectionHandler } from "./set-workbook-protection.js";
@@ -106,6 +109,7 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   renameSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   moveSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   setSheetStateHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setSheetTabColorHandler as CommandHandler<unknown, XlsxSnapshot>,
   addConditionalFormatHandler as CommandHandler<unknown, XlsxSnapshot>,
   removeConditionalFormatHandler as CommandHandler<unknown, XlsxSnapshot>,
   clearConditionalFormatsHandler as CommandHandler<unknown, XlsxSnapshot>,
@@ -119,6 +123,8 @@ export const allXlsxHandlers: ReadonlyArray<CommandHandler<unknown, XlsxSnapshot
   editCommentHandler as CommandHandler<unknown, XlsxSnapshot>,
   setColumnWidthHandler as CommandHandler<unknown, XlsxSnapshot>,
   setRowHeightHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setRowVisibilityHandler as CommandHandler<unknown, XlsxSnapshot>,
+  setColumnVisibilityHandler as CommandHandler<unknown, XlsxSnapshot>,
   deleteSheetHandler as CommandHandler<unknown, XlsxSnapshot>,
   pasteRangeHandler as CommandHandler<unknown, XlsxSnapshot>,
   textToColumnsHandler as CommandHandler<unknown, XlsxSnapshot>,

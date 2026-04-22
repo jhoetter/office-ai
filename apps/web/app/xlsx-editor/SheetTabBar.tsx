@@ -29,6 +29,8 @@ export interface SheetTabDescriptor {
   readonly id: string;
   readonly name: string;
   readonly state: "visible" | "hidden" | "veryHidden";
+  /** ARGB hex (e.g. "FFCC0000") or undefined for the OS default. */
+  readonly tabColor?: string;
 }
 
 export interface SheetTabPeerDot {
@@ -48,6 +50,11 @@ export interface SheetTabBarProps {
   readonly onAdd: () => void;
   readonly onSetState: (name: string, state: "visible" | "hidden") => void;
   /**
+   * Set the tab color for `name`. Pass `null` to clear (Excel: "No
+   * color"). Wired by the parent to `xlsx:set-sheet-tab-color`.
+   */
+  readonly onSetTabColor: (name: string, color: string | null) => void;
+  /**
    * Realtime peers projected to a per-sheet dot. Rendered as a tiny
    * stack of colored dots after each tab whose `sheetName` matches a
    * remote peer's currently-published `XlsxSelection.sheetName`. The
@@ -57,7 +64,18 @@ export interface SheetTabBarProps {
 }
 
 export function SheetTabBar(props: SheetTabBarProps): ReactNode {
-  const { sheets, activeName, onActivate, onRename, onDelete, onMove, onAdd, onSetState, peers } = props;
+  const {
+    sheets,
+    activeName,
+    onActivate,
+    onRename,
+    onDelete,
+    onMove,
+    onAdd,
+    onSetState,
+    onSetTabColor,
+    peers,
+  } = props;
   const peersBySheet = new Map<string, SheetTabPeerDot[]>();
   for (const p of peers ?? []) {
     const existing = peersBySheet.get(p.sheetName);
@@ -200,6 +218,14 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
                       ? "bg-background text-foreground shadow-sm border border-divider"
                       : "text-secondary hover:text-foreground hover:bg-hover"
                   )}
+                  style={
+                    s.tabColor
+                      ? {
+                          boxShadow: `inset 0 -3px 0 0 ${argbToCss(s.tabColor)}`,
+                        }
+                      : undefined
+                  }
+                  data-testid-tab-color={s.tabColor ?? "none"}
                 >
                   <span>{s.name}</span>
                   {(() => {
@@ -262,7 +288,20 @@ export function SheetTabBar(props: SheetTabBarProps): ReactNode {
         open={ctx !== null}
         x={ctx?.x ?? 0}
         y={ctx?.y ?? 0}
-        items={ctx ? buildItems(ctx.name, sheets, onActivate, startRename, onMove, onDelete, onSetState) : []}
+        items={
+          ctx
+            ? buildItems(
+                ctx.name,
+                sheets,
+                onActivate,
+                startRename,
+                onMove,
+                onDelete,
+                onSetState,
+                onSetTabColor
+              )
+            : []
+        }
         onClose={() => setCtx(null)}
         testId="sheet-tab-context-menu"
       />
@@ -277,11 +316,13 @@ function buildItems(
   startRename: (name: string) => void,
   onMove: (name: string, to: number) => void,
   onDelete: (name: string) => void,
-  onSetState: (name: string, state: "visible" | "hidden") => void
+  onSetState: (name: string, state: "visible" | "hidden") => void,
+  onSetTabColor: (name: string, color: string | null) => void
 ): ContextMenuItem[] {
   const idx = sheets.findIndex((s) => s.name === name);
   const isVisible = sheets[idx]?.state === "visible";
   const visibleCount = sheets.filter((s) => s.state === "visible").length;
+  const currentColor = sheets[idx]?.tabColor;
   return [
     {
       kind: "action",
@@ -311,6 +352,57 @@ function buildItems(
       onSelect: () => onMove(name, Math.min(sheets.length - 1, idx + 1)),
     },
     { kind: "divider", id: "d2" },
+    {
+      kind: "custom" as const,
+      id: "tab-color",
+      render: (close) => (
+        <div className="px-3 py-1.5">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-secondary">
+            Tab color
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {TAB_COLOR_SWATCHES.map((s) => {
+              const isCurrent = currentColor?.toUpperCase() === s.argb.toUpperCase();
+              return (
+                <button
+                  key={s.argb}
+                  type="button"
+                  title={s.label}
+                  data-testid={`sheet-tab-color-${s.argb}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onSetTabColor(name, s.argb);
+                    close();
+                  }}
+                  className={cn(
+                    "size-4 rounded-sm border",
+                    isCurrent ? "border-foreground" : "border-divider hover:border-foreground"
+                  )}
+                  style={{ backgroundColor: argbToCss(s.argb) }}
+                />
+              );
+            })}
+            <button
+              type="button"
+              title="No color"
+              data-testid="sheet-tab-color-clear"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSetTabColor(name, null);
+                close();
+              }}
+              className={cn(
+                "size-4 rounded-sm border text-[8px] leading-none flex items-center justify-center bg-background",
+                currentColor ? "border-divider hover:border-foreground" : "border-foreground"
+              )}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ),
+    },
+    { kind: "divider", id: "d2b" },
     isVisible
       ? {
           kind: "action" as const,
@@ -336,4 +428,34 @@ function buildItems(
       onSelect: () => onDelete(name),
     },
   ];
+}
+
+/**
+ * Excel "Standard Colors" palette mirrored from the desktop ribbon's
+ * Tab Color submenu. ARGB values are uppercase 8-char hex so they
+ * round-trip cleanly through `<tabColor rgb="..."/>`.
+ */
+const TAB_COLOR_SWATCHES: ReadonlyArray<{ argb: string; label: string }> = [
+  { argb: "FFCC0000", label: "Dark Red" },
+  { argb: "FFFF0000", label: "Red" },
+  { argb: "FFFFC000", label: "Orange" },
+  { argb: "FFFFFF00", label: "Yellow" },
+  { argb: "FF92D050", label: "Light Green" },
+  { argb: "FF00B050", label: "Green" },
+  { argb: "FF00B0F0", label: "Light Blue" },
+  { argb: "FF0070C0", label: "Blue" },
+  { argb: "FF002060", label: "Dark Blue" },
+  { argb: "FF7030A0", label: "Purple" },
+];
+
+/**
+ * Convert an 8-char ARGB hex (`AARRGGBB`, opacity-first per OOXML)
+ * into a CSS `#RRGGBB` triple. Falls back to `currentColor` on any
+ * parse glitch so the UI still renders something.
+ */
+function argbToCss(argb: string): string {
+  const raw = argb.replace(/^#/, "").trim();
+  if (raw.length === 8) return `#${raw.slice(2)}`;
+  if (raw.length === 6) return `#${raw}`;
+  return "currentColor";
 }

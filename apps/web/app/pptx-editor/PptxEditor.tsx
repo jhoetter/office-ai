@@ -2448,6 +2448,14 @@ function PptxEditorInner({
   // We hold one controller at a time and reset/destroy it before
   // starting a new preview so transforms never linger between runs.
   const playbackRef = useRef<PlaybackController | null>(null);
+  // True when an in-editor "Play from beginning" preview is active.
+  // While set, clicks on the slide surface advance the next build step
+  // (matches PresentMode's click-to-advance) and Esc exits.
+  const [animationStepMode, setAnimationStepMode] = useState(false);
+  // Tracks how many groups remain in the active step-by-step preview
+  // so we can auto-tear-down once the user has clicked through every
+  // build step.
+  const animationStepRemainingRef = useRef(0);
   useEffect(() => {
     return () => {
       playbackRef.current?.reset();
@@ -2455,6 +2463,55 @@ function PptxEditorInner({
       playbackRef.current = null;
     };
   }, []);
+
+  // Reset step-mode whenever the user navigates to a different slide;
+  // the controller belongs to the previous slide and would target the
+  // wrong SVG.
+  useEffect(() => {
+    if (!animationStepMode) return;
+    setAnimationStepMode(false);
+    playbackRef.current?.reset();
+    playbackRef.current?.destroy();
+    playbackRef.current = null;
+    animationStepRemainingRef.current = 0;
+  }, [activeIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const exitAnimationStepMode = useCallback(() => {
+    if (playbackRef.current) {
+      playbackRef.current.reset();
+      playbackRef.current.destroy();
+      playbackRef.current = null;
+    }
+    animationStepRemainingRef.current = 0;
+    setAnimationStepMode(false);
+  }, []);
+
+  const advanceAnimationStep = useCallback(async () => {
+    const controller = playbackRef.current;
+    if (!controller) return;
+    try {
+      await controller.clickAdvance();
+    } catch {
+      // controller torn down mid-advance — ignore.
+    }
+    animationStepRemainingRef.current -= 1;
+    if (animationStepRemainingRef.current <= 0) {
+      exitAnimationStepMode();
+    }
+  }, [exitAnimationStepMode]);
+
+  // Esc bails out of step mode the same way it does in PresentMode.
+  useEffect(() => {
+    if (!animationStepMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        exitAnimationStepMode();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [animationStepMode, exitAnimationStepMode]);
 
   const previewAnimation = useCallback(
     (animationId: string | null) => {
@@ -2468,11 +2525,35 @@ function PptxEditorInner({
       // on top of each other when the user spams the preview button.
       playbackRef.current?.reset();
       playbackRef.current?.destroy();
+      animationStepRemainingRef.current = 0;
+      setAnimationStepMode(false);
       const controller = createPlayback(svg, slide, {
         slideSize: snap.root.slideSize,
       });
       playbackRef.current = controller;
       controller.prepare();
+
+      // "Play from beginning" (animationId === null): enter step-by-
+      // step mode so the user clicks through builds the same way they
+      // would in PresentMode. We pre-compute group count so we know
+      // when to auto-exit. This matches the existing PresentMode fix
+      // and stops the editor preview from being a one-shot blur.
+      if (!animationId) {
+        const groups = countAnimationGroups(slide);
+        if (groups > 0) {
+          animationStepRemainingRef.current = groups;
+          setAnimationStepMode(true);
+          // Show the baseline (entrance shapes hidden) so the very
+          // first click reveals the first build step.
+          return;
+        }
+        // No animations to step through — just tear down silently.
+        controller.reset();
+        controller.destroy();
+        playbackRef.current = null;
+        return;
+      }
+
       const run = async () => {
         try {
           if (animationId) {
@@ -2878,17 +2959,20 @@ function PptxEditorInner({
     tick,
   ]);
 
-  // Selection summary surfaced in the status bar.
+  // Selection summary centred in the status bar. Slide index lives in
+  // the left column (`PptxSelectionHint`); this slot only names the
+  // current selection to avoid duplicating "Slide n of m" in two languages.
   const selectionText = useMemo(() => {
     if (!ready) return "";
     if (selectedShapeIds.length === 0) {
-      return `Slide ${activeIndex + 1} of ${slides.length}`;
+      return "";
     }
     if (selectedShapeIds.length === 1) {
-      return `${selectedShape?.name ?? "Shape"} selected · Slide ${activeIndex + 1} of ${slides.length}`;
+      const name = (selectedShape?.name ?? "").trim() || t("status.unnamedShape");
+      return t("status.oneShapeSelected", { name });
     }
-    return `${selectedShapeIds.length} shapes selected · Slide ${activeIndex + 1} of ${slides.length}`;
-  }, [activeIndex, ready, selectedShape?.name, selectedShapeIds.length, slides.length]);
+    return t("status.shapesSelected", { n: selectedShapeIds.length });
+  }, [ready, selectedShape?.name, selectedShapeIds.length, t]);
 
   // Palette is generated from the central pptx action catalogue (see
   // packages/pptx/src/actions/catalogue.ts). Labels, sections, and
@@ -3048,12 +3132,32 @@ function PptxEditorInner({
   }, [slide, selectedShapeIds]);
   usePublishPresence({ room: realtimeRoom.room, cursor: presenceCursor });
 
+  // PPTX outline = each slide's title placeholder text (when the
+  // slide layout exposes a `title` placeholder), with `level: 1`
+  // throughout — PowerPoint's outline view is flat, not hierarchical.
+  // Slides without a title placeholder fall back to "Slide N" so the
+  // rail never strands the user on an unnamed slide.
+  const outline = useMemo(() => {
+    if (!snap) return undefined;
+    return snap.root.slides.map((slide, i) => {
+      const title = readSlideTitle(slide);
+      return {
+        id: slide.partPath,
+        level: 1,
+        text: title || `Slide ${i + 1}`,
+        active: i === activeIndex,
+        onActivate: () => setActiveIndex(i),
+      };
+    });
+  }, [snap, activeIndex]);
+
   const adapter = useMemo<ProductAdapter>(
     () => ({
       product: "pptx",
       filename: docName,
       saveState,
       comments: { openCount: openCommentCount, resolvedCount: 0 },
+      ...(outline ? { outline } : {}),
       selectionSummary: { text: selectionText },
       canOpen: true,
       hideOpen: hideLocalFileOpen,
@@ -3116,6 +3220,7 @@ function PptxEditorInner({
       handleSave,
       hideLocalFileOpen,
       openCommentCount,
+      outline,
       paletteCommands,
       previewAnimation,
       ready,
@@ -3309,8 +3414,27 @@ function PptxEditorInner({
                         return;
                       }
                       slideSurfaceRef.current?.focus({ preventScroll: true });
+                      // Animation step-by-step preview: every pointer
+                      // click advances to the next build group (parity
+                      // with PresentMode). We listen on pointerdown so
+                      // it fires before SlideCanvas's selection
+                      // handlers, and stopPropagation so a click
+                      // doesn't simultaneously change selection
+                      // mid-preview.
+                      if (animationStepMode) {
+                        e.stopPropagation();
+                        void advanceAnimationStep();
+                      }
                     }}
                   >
+                    {animationStepMode ? (
+                      <div
+                        data-testid="pptx-anim-step-hint"
+                        className="pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-full bg-foreground/85 px-3 py-1 text-[11px] font-medium text-background shadow"
+                      >
+                        Click to advance · Esc to exit
+                      </div>
+                    ) : null}
                     <div className="relative min-h-0 w-full flex-1">
                       <SlideCanvas
                         agent={agent}
@@ -3470,6 +3594,46 @@ function readShowOptions(snap: PptxSnapshot | null): SetUpShowValues {
     }
   }
   return defaults;
+}
+
+/** Count the number of click-groups in a slide's animation list. A
+ * "click-group" is the unit advanced per click in PresentMode: every
+ * `onClick`-triggered animation starts a new group, the rest chain
+ * with/after-prev. Used by the editor preview's step-by-step mode to
+ * decide when to auto-tear-down. */
+function countAnimationGroups(slide: import("@officeai/pptx").Slide): number {
+  if (slide.animations.length === 0) return 0;
+  const ordered = [...slide.animations].sort((a, b) => a.order - b.order);
+  let groups = 0;
+  let inGroup = false;
+  for (const a of ordered) {
+    if (!inGroup || a.trigger === "onClick") {
+      groups += 1;
+      inGroup = true;
+    }
+  }
+  return groups;
+}
+
+/** Read the (typed) title-placeholder text from a slide for use by
+ * the rail's outline. Returns the empty string when the slide has no
+ * `<p:ph type="title"/>` shape; callers fall back to "Slide N" so the
+ * outline is never blank. */
+function readSlideTitle(slide: import("@officeai/pptx").Slide): string {
+  for (const shape of slide.shapes) {
+    if (shape.kind !== "text") continue;
+    if (!shape.placeholder) continue;
+    const phType = shape.placeholder.type;
+    // PowerPoint emits both `title` and `ctrTitle` for the title
+    // placeholder; both feed the outline.
+    if (phType !== "title" && phType !== "ctrTitle") continue;
+    const txt = shape.txBody.paragraphs
+      .map((p) => p.runs.map((r) => r.text).join(""))
+      .join(" ")
+      .trim();
+    if (txt.length > 0) return txt;
+  }
+  return "";
 }
 
 function readNotesText(snap: PptxSnapshot, slideIndex: number): string {

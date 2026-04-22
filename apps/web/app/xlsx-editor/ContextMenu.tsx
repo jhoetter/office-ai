@@ -5,6 +5,18 @@ import type { ReactNode } from "react";
 import { cn } from "@officeai/ui";
 
 /**
+ * `kind: "custom"` lets a caller render arbitrary content (e.g. a
+ * row of color swatches for "Tab Color" parity) inside the menu
+ * without us having to grow first-class menu primitives for every
+ * Office submenu shape.
+ */
+type CustomItem = {
+  readonly kind: "custom";
+  readonly id: string;
+  readonly render: (close: () => void) => ReactNode;
+};
+
+/**
  * One row in a context menu. Either a clickable action or a
  * separator. Submenus and toggle items are deliberately out of scope
  * for P13 — Excel's right-click is mostly flat.
@@ -19,7 +31,8 @@ export type ContextMenuItem =
       readonly disabled?: boolean;
       readonly onSelect: () => void;
     }
-  | { readonly kind: "divider"; readonly id: string };
+  | { readonly kind: "divider"; readonly id: string }
+  | CustomItem;
 
 export interface ContextMenuProps {
   readonly open: boolean;
@@ -89,6 +102,13 @@ export function ContextMenu(props: ContextMenuProps): ReactNode {
       {items.map((item) => {
         if (item.kind === "divider") {
           return <div key={item.id} className="my-1 h-px bg-divider" aria-hidden />;
+        }
+        if (item.kind === "custom") {
+          return (
+            <div key={item.id} data-testid={`menu-custom-${item.id}`}>
+              {item.render(onClose)}
+            </div>
+          );
         }
         return (
           <button

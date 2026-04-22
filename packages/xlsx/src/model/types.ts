@@ -335,6 +335,14 @@ export interface Sheet {
   readonly index: number;
   /** Hidden state: `"visible" | "hidden" | "veryHidden"`. */
   readonly state: "visible" | "hidden" | "veryHidden";
+  /**
+   * Sheet-tab color (Excel "Tab Color"). 8-char ARGB hex (e.g.
+   * `"FFCC0000"`) matching `StyleColor.rgb`. `undefined` = no color
+   * (Excel renders the OS default tab background). Parsed from
+   * `<sheetPr><tabColor rgb="..."/></sheetPr>` and written back
+   * through the dirty-rewrite path.
+   */
+  readonly tabColor?: string;
   /** Sheet kind. Phase 4 records it; commands respect it in Phase 5. */
   readonly kind: "worksheet" | "non-worksheet";
   /**

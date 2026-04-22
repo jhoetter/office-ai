@@ -46,6 +46,7 @@ import {
 import { PdfToolbar, type PdfAnnotationTool } from "./PdfToolbar";
 import { PdfCanvas, type PdfHighlight, type PdfViewMode } from "./PdfCanvas";
 import { PdfSidebar, type PdfSidebarTab } from "./PdfSidebar";
+import { PdfMetadataDialog } from "./PdfMetadataDialog";
 import { usePdfShortcuts } from "./usePdfShortcuts";
 import { usePdfFormatProvider } from "./usePdfFormatProvider";
 import { usePdfCommentsProvider } from "./usePdfCommentsProvider";
@@ -693,6 +694,83 @@ function PdfEditorInner({
     }
   }, [currentPage, onError, pushToast, totalPages]);
 
+  // Phase 9d wiring: bookmark / metadata / page reorder.
+  //
+  // These three handlers fill the parity gap surfaced by
+  // `scripts/check-action-parity.mjs` after extending its
+  // `FORMATS.pdf.uiDirs` to point at this folder. Each maps 1:1 to a
+  // catalogue entry in `packages/pdf/src/actions/catalogue.ts` and a
+  // backend handler in `packages/pdf/src/commands/`.
+  const onAddBookmark = useCallback(async () => {
+    const a = agentRef.current;
+    if (!a || totalPages === 0) return;
+    const defaultTitle = t("pdf.page") + " " + currentPage;
+    const title =
+      typeof window !== "undefined"
+        ? window.prompt(t("pdf.addBookmarkPrompt"), defaultTitle) ?? null
+        : defaultTitle;
+    if (title === null) return; // user cancelled
+    const trimmed = title.trim().length > 0 ? title.trim() : defaultTitle;
+    try {
+      await a.applyCommand({
+        type: "pdf:add-bookmark",
+        payload: { title: trimmed, pageNumber: currentPage },
+        source: "human",
+      });
+      // Auto-flip to the outline tab so the new entry is visible.
+      setSidebarTab("outline");
+    } catch (err) {
+      onError(err);
+    }
+  }, [currentPage, onError, t, totalPages]);
+
+  const [metaDialogOpen, setMetaDialogOpen] = useState(false);
+  const onOpenMetadata = useCallback(() => {
+    if (!agentRef.current) return;
+    setMetaDialogOpen(true);
+  }, []);
+  const onSubmitMetadata = useCallback(
+    async (patch: Partial<import("@officeai/pdf").PdfMetadata>) => {
+      const a = agentRef.current;
+      if (!a) return;
+      // No-op when nothing changed (the dialog already filtered to
+      // changed fields, but a save with an empty patch is still
+      // legal and would mint a tombstone diff).
+      if (Object.keys(patch).length === 0) return;
+      try {
+        await a.applyCommand({
+          type: "pdf:set-metadata",
+          payload: patch,
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError]
+  );
+
+  const onReorderPages = useCallback(
+    async (order: ReadonlyArray<number>) => {
+      const a = agentRef.current;
+      if (!a) return;
+      // Guard: server-side `validatePages` rejects malformed orders,
+      // but bouncing them here keeps the realtime broadcast path from
+      // emitting a doomed command in the first place.
+      if (order.length !== totalPages) return;
+      try {
+        await a.applyCommand({
+          type: "pdf:reorder-pages",
+          payload: { order },
+          source: "human",
+        });
+      } catch (err) {
+        onError(err);
+      }
+    },
+    [onError, totalPages]
+  );
+
   // ── Search / find-replace ─────────────────────────────────────────
   const findAdapter = useMemo<FindAdapter | undefined>(() => {
     if (!agent) return undefined;
@@ -832,6 +910,8 @@ function PdfEditorInner({
       "pdf.rotate-page": { run: () => void onRotatePages(), enabled: totalPages > 0 },
       "pdf.delete-page": { run: () => void onDeletePages(), enabled: totalPages > 1 },
       "pdf.print": { run: () => void onPrint(), enabled: totalPages > 0 },
+      "pdf.add-bookmark": { run: () => void onAddBookmark(), enabled: totalPages > 0 },
+      "pdf.set-metadata": { run: onOpenMetadata, enabled: totalPages > 0 },
     };
     return buildPaletteFromCatalogue(pdfActions, runners, t);
   }, [
@@ -849,6 +929,8 @@ function PdfEditorInner({
     onRotateClockwise,
     onRotateCounterClockwise,
     onRotatePages,
+    onAddBookmark,
+    onOpenMetadata,
     onZoomIn,
     onZoomOut,
     totalPages,
@@ -981,6 +1063,8 @@ function PdfEditorInner({
             onPrint={() => void onPrint()}
             onRotatePages={() => void onRotatePages()}
             onDeletePages={() => void onDeletePages()}
+            onAddBookmark={() => void onAddBookmark()}
+            onOpenMetadata={onOpenMetadata}
           />
         }
         statusBarLeft={<PdfStatusHint currentPage={currentPage} totalPages={totalPages} />}
@@ -1008,6 +1092,8 @@ function PdfEditorInner({
                   onTabChange={setSidebarTab}
                   onJumpToPage={onJumpToPage}
                   onJumpToComment={onJumpToComment}
+                  onAddBookmark={() => void onAddBookmark()}
+                  onReorderPages={(order) => void onReorderPages(order)}
                 />
                 <section className="relative min-h-0 min-w-0 flex-1">
                   <PdfCanvas
@@ -1038,6 +1124,14 @@ function PdfEditorInner({
         dropExtension=".pdf"
         onRenameFilename={(next) => setDocName(next)}
       />
+      {snap ? (
+        <PdfMetadataDialog
+          open={metaDialogOpen}
+          metadata={snap.root.metadata}
+          onClose={() => setMetaDialogOpen(false)}
+          onSubmit={(patch) => void onSubmitMetadata(patch)}
+        />
+      ) : null}
     </>
   );
 }

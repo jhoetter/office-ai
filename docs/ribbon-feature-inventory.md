@@ -5,8 +5,9 @@ Generated from `packages/{docx,xlsx,pptx,pdf}/src/actions/catalogue.ts` and the
 `scripts/check-action-parity.mjs` gate. Update this file whenever you flip a
 `surfaces` array, add a new `commandType`, or land a new ribbon button.
 
-Last update: end of agentic-implementation session for the
-[Office ribbon feature coverage plan](../.cursor/plans/office_ribbon_feature_coverage_d1867688.plan.md).
+Last update: end of Phase 9 (lying-button fixes, cheap-win wiring,
+small-feature ribbon shape, PDF parity sweep) — see
+[Phase 9 plan](../.cursor/plans/phase_9_office_finish_ca06d725.plan.md).
 
 ## Status legend
 
@@ -46,14 +47,20 @@ auto-binder swallows "already registered" errors so both can coexist.
 
 ## Headline counts
 
-| Format | Catalogue entries | Backend handlers | Auto-bound MCP tools (approx.) |
-| ------ | ----------------: | ---------------: | -----------------------------: |
-| docx   | 88 | 58 | ~57 |
-| xlsx   | 98 | 61 | ~80 |
-| pptx   | 80 | 60 | ~58 |
-| pdf    | 47 | 14 | ~14 |
+| Format | Catalogue entries | Backend handlers | UI-dispatched | Auto-bound MCP tools (approx.) |
+| ------ | ----------------: | ---------------: | ------------: | -----------------------------: |
+| docx   | 88  | 58 | 47 | ~57 |
+| xlsx   | 101 | 64 | 64 | ~83 |
+| pptx   | 80  | 60 | 44 | ~58 |
+| pdf    | 47  | 14 | 13 | ~14 |
 
-Parity check: **green** (`docx 88 / xlsx 98 / pptx 80 / pdf 47, violations 0`).
+Parity check: **green** (`scripts/check-action-parity.mjs` reports
+`docx 88 / xlsx 101 / pptx 80 / pdf 47`, violations 0). The PDF
+column moved from `ui-dispatched=0` to `ui-dispatched=13` after
+Phase 9d corrected the script's PDF `uiDirs` path
+(`apps/web/app/pdf-editor` → `apps/web/app/pdf-viewer`) and wired
+`pdf:add-bookmark` / `pdf:set-metadata` / `pdf:reorder-pages`
+through `PdfToolbar` and `PdfSidebar`.
 
 ## Plan phase status
 
@@ -65,27 +72,31 @@ Parity check: **green** (`docx 88 / xlsx 98 / pptx 80 / pdf 47, violations 0`).
 | 1 (pptx) | Insert table+chart, animations gallery + timing, review comments, rotation/geometry fields, hide slide, slide number/date/time | ✅ |
 | 2  | Cross-format staples (Clipboard, Find & Replace, Zoom, Clear formatting, Doc statistics) | ✅ (auto-binder safe; UI primitives partial) |
 | 3a | DOCX layout: margins / orientation / size / columns | ✅ |
-| 3b | DOCX design tab: themes / colors / fonts / page-color / borders / watermark | 🚧 |
-| 3c | DOCX references tab: bookmark / TOC / caption / cross-ref / citation / bibliography | 🚧 |
+| 3b | DOCX design tab: themes / colors / fonts / page-color / borders / watermark | 🧩 (Phase 9c — ribbon "Entwurf" tab visible with Designs / Seitenfarbe / Seitenränder / Wasserzeichen Coming-soon triggers; backends deferred to follow-up plan) |
+| 3c | DOCX references tab: bookmark / TOC / caption / cross-ref / citation / bibliography | 🧩 (Phase 9c — ribbon "Verweise" tab visible with Lesezeichen / TOC / Beschriftung / Querverweis Coming-soon triggers; backends deferred) |
 | 3d | DOCX image tools: crop / wrap / rotate / flip / reset / effects | 🚧 |
 | 3e | DOCX table tools: merge / split / shading / borders / alignment / styles / distribute / sizing | 🧩 (partial — `docx:set-cell-shading`, `docx:set-cell-alignment`, `docx:set-row-height`, `docx:set-column-width`, `docx:merge-cells-horizontal` shipped to CLI/MCP this session) |
 | 4a | XLSX number group quick buttons + wrap-text | ✅ |
 | 4b | XLSX page layout tab | 🧩 (partial — `xlsx:set-page-setup`, `set-page-margins`, `set-print-options`, `set-print-area`, `set-print-titles` shipped to CLI/MCP this session; sheet-background still pending) |
 | 4c | XLSX formulas tab (function library, auditing, calc mode) | 🧩 (partial — `xlsx:set-calc-mode` + `xlsx:set-show-formulas` shipped to CLI/MCP; function library / precedents-dependents / evaluate still pending) |
-| 4d | XLSX insert depth (chart picker, sparkline, slicer, hyperlink, header/footer) | 🚧 |
-| 4e | XLSX data depth (remove duplicates, multi-sort, advanced filter, group/ungroup, subtotal, goal-seek, flash fill) | 🚧 |
+| 4d | XLSX insert depth (chart picker, sparkline, slicer, hyperlink, header/footer) | 🧩 (Phase 9c — Insert tab "Mehr" group with Sparkline / Header-footer / Recommended-Charts Coming-soon triggers; backends deferred) |
+| 4e | XLSX data depth (remove duplicates, multi-sort, advanced filter, group/ungroup, subtotal, goal-seek, flash fill) | 🧩 (Phase 9c — Data tab "Datenwerkzeuge" group with Remove-duplicates / Group / Ungroup / Subtotal / Goal-seek / Flash-fill / Advanced-filter Coming-soon triggers; backends deferred) |
 | 4f | XLSX chart tools depth | 🚧 |
 | 5a | PPTX design depth (themes gallery, slide size) | 🧩 (partial — `pptx:set-slide-size` shipped to CLI/MCP; themes gallery still pending) |
 | 5b | PPTX transitions full | 🧩 (partial — `pptx:set-slide-transition` exposed to CLI/MCP/toolbar this session; extended gallery + sound + advance options still pending) |
-| 5c | PPTX animations full | 🚧 |
+| 5c | PPTX animations full | ✅ (Phase 9c — full preset gallery driven by `presetsByCategory()`, trigger picker via `pptx:set-shape-animation`, Animation Painter Copy/Paint composes `pptx:add-shape-animation`) |
 | 5d | PPTX slideshow tab | 🧩 (partial — `pptx:set-show-options` shipped this session; custom shows / rehearse still pending) |
 | 5e | PPTX picture format depth | 🚧 |
 | 5f | PPTX shape format depth | 🚧 |
-| 5g | PPTX insert depth (header/footer, symbol, hyperlink, action, screen recording) | 🚧 |
+| 5g | PPTX insert depth (header/footer, symbol, hyperlink, action, screen recording) | 🧩 (Phase 9c — Insert tab "Symbole" group: `insert-symbol` live (UI-only via `document.execCommand("insertText")` on focused contenteditable); `Hyperlink` / `Aktion` / `Kopf-/Fußzeile` Coming-soon triggers; backends deferred) |
 | 5h | PPTX view depth | 🚧 |
 | 6  | Cross-format Review (spell, comments, translate, compare, protection) | 🚧 (protection commands landed — see this file) |
 | 7  | View tab depth across all three | 🧩 (partial — `xlsx:set-sheet-view` shipped this session; docx/pptx view-pr still pending) |
 | 8  | MCP catalogue auto-binder (`actions-to-mcp.ts`, `--list-actions` CLI, parity gate) | ✅ |
+| 9a | "No more lying buttons" — DOCX Find/Replace, titlePg state, unsupported toast; XLSX palette fix + fx + protect toggle; PPTX hidden slides, `<p:showPr>`, format-aware Outline rail, editor canvas auto-trigger; Playwright `lying-buttons.spec.ts` | ✅ |
+| 9b | Cheap wins from existing backends — DOCX Tab/Shift+Tab list demote/promote + level picker, in-place footnotes panel; XLSX AutoSum splitter, % / $ / comma / inc-dec-decimal quick buttons, A↑/Z↓ sort, hide/unhide row+col, sheet-tab color (new `xlsx:set-sheet-tab-color`), Insert Function (fx) wizard; PPTX animation drag-reorder; PPTX shape-outline / effects / text-fill / text-outline ribbon shape (Coming-soon — backends deferred to follow-up plan) | ✅ |
+| 9c | Small new features — DOCX Design / References ribbon shape, XLSX Insert / Data depth ribbon shape (all Coming-soon, backends deferred to dedicated plans matching the §3b/§3c/§4d/§4e dependencies); PPTX animation gallery (already driven by `presetsByCategory()`), set-animation-trigger (already wired via `pptx:set-shape-animation`), Animation Painter (UI-only, composes `pptx:add-shape-animation`); PPTX `insert-symbol` (UI-only via `document.execCommand("insertText")` on the focused contenteditable overlay), `set-slide-header-footer` / `add-hyperlink` / `add-action` ribbon shape (Coming-soon) | ✅ |
+| 9d | PDF reader parity sweep — fixed `scripts/check-action-parity.mjs` PDF `uiDirs` path; wired `pdf:add-bookmark`, `pdf:set-metadata`, `pdf:reorder-pages` (drag in thumbnail rail) through `PdfToolbar` / `PdfSidebar` / `PdfMetadataDialog`; updated EN+DE i18n for bookmark / metadata strings; this inventory refreshed | ✅ |
 
 ## DOCX surfaces
 
@@ -285,7 +296,31 @@ Parity check: **green** (`docx 88 / xlsx 98 / pptx 80 / pdf 47, violations 0`).
 
 ## PDF surfaces
 
-PDF catalogue is unchanged this session. 47 entries, 14 handlers, all green.
+47 catalogue entries, 14 backend handlers; **13 of 14 dispatched from
+the UI** (the 14th is `pdf:rotate-pages` which is dispatched but uses a
+different argument name mapping than the script's heuristic catches —
+tracked separately, not a regression).
+
+### Phase 9d wiring landed this session
+
+| Catalogue id | UI location | Notes |
+| ------------ | ----------- | ----- |
+| `pdf.add-bookmark` | `PdfToolbar` "Add bookmark" + `PdfSidebar` Outline tab "+" button | Prompts for a title; defaults to "Page N"; auto-flips sidebar to Outline tab |
+| `pdf.set-metadata` | `PdfToolbar` "Document properties" → `PdfMetadataDialog` | Editable: title / author / subject / keywords; read-only: creator / producer / dates / version |
+| `pdf.reorder-pages` | `PdfSidebar` Thumbnails tab — drag-and-drop | Validates `order.length === totalPages`; dispatches the new permutation |
+
+### Surfaces summary
+
+- ✅ Page navigation, rotation, deletion, print
+- ✅ Highlight + sticky annotations (`pdf:add-annotation`,
+  `pdf:remove-annotation`, `pdf:update-annotation`)
+- ✅ Comments lifecycle (`pdf:add-comment`, `edit-comment`,
+  `resolve-comment`, `reply-comment`)
+- ✅ Bookmarks (`pdf:add-bookmark` — Phase 9d)
+- ✅ Metadata (`pdf:set-metadata` — Phase 9d)
+- ✅ Page reorder via thumbnail drag (Phase 9d)
+- 🚧 Form filling, redaction, OCR — out of scope for the current
+  reader; tracked for the eventual PDF editor MVP plan
 
 ## Cross-format (Phase 6 — Review & Spell)
 

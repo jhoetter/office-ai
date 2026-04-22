@@ -192,7 +192,13 @@ export interface ProductAdapter {
   readonly saveState: SaveState;
   /** Right-rail comments badge. Undefined hides the badge. */
   readonly comments?: CommentsBadge;
-  /** DOCX-only outline. Undefined hides the Outline tab. */
+  /**
+   * Outline tab data. Originally DOCX-only (heading hierarchy), but
+   * PPTX surfaces it too as a slide-title outline so jumping between
+   * sections of a deck doesn't require scrolling the slide tray.
+   * Undefined hides the Outline tab; an empty array shows a
+   * format-aware empty state.
+   */
   readonly outline?: ReadonlyArray<OutlineEntry>;
   /** Status-bar selection summary. */
   readonly selectionSummary?: SelectionSummary;
@@ -251,6 +257,24 @@ export interface ProductAdapter {
    * editing lands in a follow-up phase.
    */
   readonly renderMasterPanel?: () => ReactNode;
+  /**
+   * 9b — Optional Footnotes panel (DOCX only). Lists every footnote
+   * in document order, lets the user inline-edit the body, scrolls
+   * to its reference, and deletes the footnote (which also strips
+   * the in-text reference via `docx:delete-footnote`).
+   *
+   * The shell only surfaces the "Footnotes" tab when this renderer is
+   * present AND the document has at least one user-authored footnote
+   * (the separator + continuationSeparator notes Word inserts at -1/0
+   * are excluded from the badge by the adapter).
+   */
+  readonly renderFootnotesPanel?: () => ReactNode;
+  /**
+   * 9b — Footnote count for the rail tab badge. Should exclude the
+   * standard separator (-1) / continuation (0) auto-notes; the
+   * adapter is responsible for filtering. Undefined hides the badge.
+   */
+  readonly footnoteCount?: number;
   /** Optional: produce a programmatic "open the comment composer"
    * trigger that the shell can fire from the top-bar comments icon. */
   readonly onAddComment?: () => void;

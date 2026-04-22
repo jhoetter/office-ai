@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@officeai/ui";
-import { LayoutTemplate, ListTree, MessageSquare, Search, Sparkles, X } from "lucide-react";
+import { Asterisk, LayoutTemplate, ListTree, MessageSquare, Search, Sparkles, X } from "lucide-react";
+import { useTranslator } from "@/lib/i18n";
 import type { OutlineEntry, ProductAdapter } from "./types";
 
-export type RightRailTab = "comments" | "outline" | "animations" | "master";
+export type RightRailTab = "comments" | "outline" | "animations" | "master" | "footnotes";
 
 export interface RightRailProps {
   readonly adapter: ProductAdapter;
@@ -28,20 +29,31 @@ export interface RightRailProps {
  * state; the top-bar comments icon toggles it back on.
  */
 export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRailProps): ReactNode {
+  const { t } = useTranslator();
   if (!open) return null;
-  const hasOutline = (adapter.outline?.length ?? 0) > 0 || adapter.product === "docx";
+  // Show the Outline tab whenever the adapter exposes the array (even
+  // empty — empty triggers the format-aware empty state). DOCX is
+  // kept as a default fall-through for back-compat: the DOCX adapter
+  // populates `outline` on demand and we want the tab visible even
+  // before the first heading is typed.
+  const hasOutline = adapter.outline !== undefined || adapter.product === "docx";
   const hasAnimations = adapter.renderAnimationsPanel != null;
   const hasMaster = adapter.renderMasterPanel != null;
+  // 9b — only surface the Footnotes tab when both the adapter wires
+  // the renderer AND the document has at least one user-authored
+  // footnote. The adapter pre-filters the standard separator notes
+  // out of `footnoteCount` so the badge reflects user intent.
+  const hasFootnotes = adapter.renderFootnotesPanel != null && (adapter.footnoteCount ?? 0) > 0;
   return (
     <aside
       className="flex h-full w-[320px] flex-col border-l border-divider bg-background"
       role="complementary"
-      aria-label="Editor side panel"
+      aria-label={t("shell.railAsideAria")}
     >
       <div className="flex items-center justify-between border-b border-divider px-2 py-1.5">
-        <div className="flex items-center gap-1" role="tablist" aria-label="Side panel tabs">
+        <div className="flex items-center gap-1" role="tablist" aria-label={t("shell.railTabsAria")}>
           <RailTab
-            label="Comments"
+            label={t("shell.railTabComments")}
             active={tab === "comments"}
             onClick={() => onTabChange("comments")}
             icon={<MessageSquare size={13} />}
@@ -50,7 +62,7 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
           />
           {hasOutline ? (
             <RailTab
-              label="Outline"
+              label={t("shell.railTabOutline")}
               active={tab === "outline"}
               onClick={() => onTabChange("outline")}
               icon={<ListTree size={13} />}
@@ -59,7 +71,7 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
           ) : null}
           {hasAnimations ? (
             <RailTab
-              label="Animations"
+              label={t("shell.railTabAnimations")}
               active={tab === "animations"}
               onClick={() => onTabChange("animations")}
               icon={<Sparkles size={13} />}
@@ -68,11 +80,21 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
           ) : null}
           {hasMaster ? (
             <RailTab
-              label="Master"
+              label={t("shell.railTabMaster")}
               active={tab === "master"}
               onClick={() => onTabChange("master")}
               icon={<LayoutTemplate size={13} />}
               testId="rail-tab-master"
+            />
+          ) : null}
+          {hasFootnotes ? (
+            <RailTab
+              label={t("shell.railTabFootnotes")}
+              active={tab === "footnotes"}
+              onClick={() => onTabChange("footnotes")}
+              icon={<Asterisk size={13} />}
+              badge={adapter.footnoteCount}
+              testId="rail-tab-footnotes"
             />
           ) : null}
         </div>
@@ -80,14 +102,16 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
           type="button"
           onClick={onClose}
           className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-hover hover:text-foreground"
-          aria-label="Close side panel"
-          title="Close side panel"
+          aria-label={t("shell.railClose")}
+          title={t("shell.railClose")}
           data-testid="rail-close"
         >
           <X size={14} />
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{renderRailBody(tab, adapter)}</div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {renderRailBody(tab, adapter, t)}
+      </div>
     </aside>
   );
 }
@@ -97,27 +121,37 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
  * exhaustive switch so adding a new tab forces a TS compile error
  * rather than a silent fall-through to the comments panel.
  */
-function renderRailBody(tab: RightRailTab, adapter: ProductAdapter): ReactNode {
+function renderRailBody(
+  tab: RightRailTab,
+  adapter: ProductAdapter,
+  t: (key: string) => string
+): ReactNode {
   switch (tab) {
     case "comments":
       return adapter.renderCommentsPanel ? (
         adapter.renderCommentsPanel()
       ) : (
-        <div className="p-4 text-sm text-secondary">No comments provider.</div>
+        <div className="p-4 text-sm text-secondary">{t("shell.railNoComments")}</div>
       );
     case "outline":
-      return <OutlinePanel entries={adapter.outline ?? []} />;
+      return <OutlinePanel entries={adapter.outline ?? []} product={adapter.product} />;
     case "animations":
       return adapter.renderAnimationsPanel ? (
         adapter.renderAnimationsPanel()
       ) : (
-        <div className="p-4 text-sm text-secondary">No animations provider.</div>
+        <div className="p-4 text-sm text-secondary">{t("shell.railNoAnimations")}</div>
       );
     case "master":
       return adapter.renderMasterPanel ? (
         adapter.renderMasterPanel()
       ) : (
-        <div className="p-4 text-sm text-secondary">No master provider.</div>
+        <div className="p-4 text-sm text-secondary">{t("shell.railNoMaster")}</div>
+      );
+    case "footnotes":
+      return adapter.renderFootnotesPanel ? (
+        adapter.renderFootnotesPanel()
+      ) : (
+        <div className="p-4 text-sm text-secondary">{t("shell.railNoFootnotes")}</div>
       );
     default: {
       const exhaustive: never = tab;
@@ -178,7 +212,13 @@ function RailTab({
  * cheaper than maintaining an index, and we never want filter state
  * to leak into the underlying document model.
  */
-function OutlinePanel({ entries }: { readonly entries: ReadonlyArray<OutlineEntry> }): ReactNode {
+function OutlinePanel({
+  entries,
+  product,
+}: {
+  readonly entries: ReadonlyArray<OutlineEntry>;
+  readonly product: ProductAdapter["product"];
+}): ReactNode {
   const [filter, setFilter] = useState("");
   const activeRef = useRef<HTMLButtonElement | null>(null);
 
@@ -196,8 +236,12 @@ function OutlinePanel({ entries }: { readonly entries: ReadonlyArray<OutlineEntr
 
   if (entries.length === 0) {
     return (
-      <div className="p-4 text-sm text-secondary">
-        No headings yet. Use heading styles in the toolbar to populate the outline.
+      <div className="p-4 text-sm text-secondary" data-testid="rail-outline-empty">
+        {product === "pptx"
+          ? "No slides yet. Insert a slide to populate the outline."
+          : product === "docx"
+            ? "No headings yet. Use heading styles in the toolbar to populate the outline."
+            : "Outline is empty."}
       </div>
     );
   }
