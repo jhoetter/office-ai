@@ -106,7 +106,7 @@ describe("docx headers/footers — parser + commands", () => {
     if (!header || header.body[0].kind !== "paragraph") throw new Error("header shape");
     if (!footer || footer.body[0].kind !== "paragraph") throw new Error("footer shape");
     expect(paragraphPlainText(header.body[0])).toBe("Acme Corp — Confidential");
-    expect(paragraphPlainText(footer.body[0])).toBe("Page footer · office-ai fixture");
+    expect(paragraphPlainText(footer.body[0])).toBe("Page footer · officeAI fixture");
   });
 
   it("set-header-text replaces the targeted paragraph and dirties only that part", async () => {
