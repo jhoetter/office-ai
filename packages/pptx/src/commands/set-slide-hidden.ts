@@ -47,7 +47,7 @@ export const setSlideHiddenHandler: CommandHandler<SetSlideHiddenPayload, PptxSn
 
 function nextRootAttrs(
   current: Readonly<Record<string, string>>,
-  hidden: boolean,
+  hidden: boolean
 ): Readonly<Record<string, string>> {
   const has = current.show === "0";
   if (hidden && has) return current;

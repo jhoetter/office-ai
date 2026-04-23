@@ -32,7 +32,7 @@ export const setPrintAreaHandler: CommandHandler<SetPrintAreaPayload, XlsxSnapsh
       }
       throw new CommandError(
         "invalid-payload",
-        "set-print-area: must supply --range, or --clear to remove the existing area.",
+        "set-print-area: must supply --range, or --clear to remove the existing area."
       );
     }
 
@@ -77,7 +77,7 @@ export const setPrintTitlesHandler: CommandHandler<SetPrintTitlesPayload, XlsxSn
       }
       throw new CommandError(
         "invalid-payload",
-        "set-print-titles: must supply --rows or --cols (or both), or --clear.",
+        "set-print-titles: must supply --rows or --cols (or both), or --clear."
       );
     }
 
@@ -108,7 +108,7 @@ export const setPrintTitlesHandler: CommandHandler<SetPrintTitlesPayload, XlsxSn
 function commit(
   snapshot: XlsxSnapshot,
   definedNames: ReadonlyArray<DefinedName>,
-  summary: string,
+  summary: string
 ): { next: XlsxSnapshot; diff: ReturnType<typeof buildDiff> } {
   const next: XlsxWorkbook = { ...snapshot.root, definedNames };
   const evolved = evolveSnapshot(snapshot, next, { workbook: true });

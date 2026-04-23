@@ -278,16 +278,15 @@ function gradFillChildren(spec: GradientFillSpec): unknown[] {
     // 3-o-clock. Our model already uses degrees clockwise from
     // horizontal-right so the conversion is a straight scale.
     const angleOoxml = String(Math.round(spec.angleDeg * 60_000));
-    return [
-      { "a:gsLst": gsLst },
-      { "a:lin": [], ":@": { "@_ang": angleOoxml, "@_scaled": "0" } },
-    ];
+    return [{ "a:gsLst": gsLst }, { "a:lin": [], ":@": { "@_ang": angleOoxml, "@_scaled": "0" } }];
   }
   // Radial. PowerPoint uses `<a:path path="circle"><a:fillToRect/></a:path>`.
   return [
     { "a:gsLst": gsLst },
     {
-      "a:path": [{ "a:fillToRect": [], ":@": { "@_l": "50000", "@_t": "50000", "@_r": "50000", "@_b": "50000" } }],
+      "a:path": [
+        { "a:fillToRect": [], ":@": { "@_l": "50000", "@_t": "50000", "@_r": "50000", "@_b": "50000" } },
+      ],
       ":@": { "@_path": "circle" },
     },
   ];
@@ -409,7 +408,7 @@ function readGradFill(subtree: ReadonlyArray<unknown>): GradientFillSpec | null 
       const ang = attrs?.["@_ang"];
       if (typeof ang === "string") {
         const n = Number(ang);
-        if (Number.isFinite(n)) angleDeg = ((n / 60_000) % 360 + 360) % 360;
+        if (Number.isFinite(n)) angleDeg = (((n / 60_000) % 360) + 360) % 360;
       }
     } else if ("a:path" in node) {
       const attrs = node[":@"] as Record<string, unknown> | undefined;
@@ -514,10 +513,7 @@ export function spliceSlideBackground(
     rawAttrs: {},
     subtree: [
       {
-        "p:bgPr": [
-          serializeOpaqueAsObj(fillNode),
-          { "a:effectLst": [] },
-        ],
+        "p:bgPr": [serializeOpaqueAsObj(fillNode), { "a:effectLst": [] }],
       },
     ],
   };

@@ -42,7 +42,7 @@ export const setShowOptionsHandler: CommandHandler<SetShowOptionsPayload, PptxSn
     ) {
       throw makeError(
         "invalid-payload",
-        "set-show-options: must supply at least one of showType/loop/showNarration/showAnimation/useTimings, or set clear:true",
+        "set-show-options: must supply at least one of showType/loop/showNarration/showAnimation/useTimings, or set clear:true"
       );
     }
 
@@ -67,7 +67,7 @@ export const setShowOptionsHandler: CommandHandler<SetShowOptionsPayload, PptxSn
 function commit(
   snapshot: PptxSnapshot,
   nextTail: OpaqueXml[],
-  summary: string,
+  summary: string
 ): { next: PptxSnapshot; diff: ReturnType<typeof buildDiff> } {
   const root: PptxPresentation = { ...snapshot.root, presentationOpaqueTail: nextTail };
   const evolved = evolveSnapshot(snapshot, root, { presentation: true });
@@ -140,11 +140,7 @@ function inferShowType(prev: OpaqueXml | null): "presenter" | "browse" | "kiosk"
   return "presenter";
 }
 
-function applyBoolAttr(
-  attrs: Record<string, string>,
-  name: string,
-  value: boolean | undefined,
-): void {
+function applyBoolAttr(attrs: Record<string, string>, name: string, value: boolean | undefined): void {
   if (value === undefined) return;
   if (value) {
     attrs[name] = "1";

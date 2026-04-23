@@ -82,10 +82,7 @@ export function RibbonGalleryButton(props: RibbonGalleryButtonProps): ReactNode 
         testId={`${testId}-menu`}
         className="rounded-md border border-divider bg-surface p-2 shadow-lg"
       >
-        <div
-          className="grid gap-1"
-          style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
-        >
+        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
           {items.map((item) => (
             <button
               key={item.id}

@@ -135,7 +135,8 @@ export function MasterPanel({
             Coming soon
           </span>
           <p className="text-[11px] text-secondary">
-            Editing slide masters and theme palettes is supported in the data model but the UI ships in a follow-up. Use the CLI in the meantime.
+            Editing slide masters and theme palettes is supported in the data model but the UI ships in a
+            follow-up. Use the CLI in the meantime.
           </p>
         </div>
       </Section>

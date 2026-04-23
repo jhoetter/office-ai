@@ -130,10 +130,7 @@ export function resolveShapePaint(
  * resolve it through the theme. Handles `srgbClr`, `sysClr`, and
  * `schemeClr` (the case `readFillSpec` collapses to grey).
  */
-function resolveSolidThemeColor(
-  spPrTail: ReadonlyArray<OpaqueXml>,
-  theme: ThemeColorScheme
-): string | null {
+function resolveSolidThemeColor(spPrTail: ReadonlyArray<OpaqueXml>, theme: ThemeColorScheme): string | null {
   for (const c of spPrTail) {
     if (c.tag !== "a:solidFill") continue;
     for (const inner of c.subtree) {

@@ -40,11 +40,7 @@ export interface SlideSizeDialogProps {
   readonly currentCxEmu: number;
   readonly currentCyEmu: number;
   readonly onClose: () => void;
-  readonly onSubmit: (payload: {
-    preset: SlideSizePreset;
-    cxEmu: number;
-    cyEmu: number;
-  }) => void;
+  readonly onSubmit: (payload: { preset: SlideSizePreset; cxEmu: number; cyEmu: number }) => void;
 }
 
 export function SlideSizeDialog(props: SlideSizeDialogProps): ReactNode {

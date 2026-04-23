@@ -102,7 +102,10 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
     .command("list-actions")
     .description("Print a JSON manifest of every catalogue action across docx / xlsx / pptx / pdf.")
     .option("--format <fmt>", "Restrict to one format")
-    .option("--surface <surface>", "Restrict to actions exposing the given surface (cli, palette, toolbar, contextMenu, mcp)")
+    .option(
+      "--surface <surface>",
+      "Restrict to actions exposing the given surface (cli, palette, toolbar, contextMenu, mcp)"
+    )
     .option("--pretty", "Pretty-print JSON output", false)
     .action((opts: Record<string, unknown>) => {
       const filterFormat = typeof opts.format === "string" ? opts.format : undefined;

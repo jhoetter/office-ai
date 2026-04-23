@@ -42,9 +42,10 @@ export const removeDuplicatesHandler: CommandHandler<RemoveDuplicatesPayload, Xl
       return { next: noop, diff: buildDiff(snapshot.revision, noop.revision, []) };
     }
 
-    const keyOffsets = (payload.keyCols && payload.keyCols.length > 0
-      ? payload.keyCols
-      : Array.from({ length: colSpan + 1 }, (_, i) => i)
+    const keyOffsets = (
+      payload.keyCols && payload.keyCols.length > 0
+        ? payload.keyCols
+        : Array.from({ length: colSpan + 1 }, (_, i) => i)
     ).slice();
     for (const off of keyOffsets) {
       if (!Number.isInteger(off) || off < 0 || off > colSpan) {

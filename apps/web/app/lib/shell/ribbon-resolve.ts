@@ -51,10 +51,7 @@ export function resolveActiveTabId<C>(
  * still applicable: same signature → same selection → keep the pin;
  * different signature → selection changed → drop the override.
  */
-export function autoActivationSignature<C>(
-  visibleTabs: ReadonlyArray<RibbonTab<C>>,
-  ctx: C
-): string {
+export function autoActivationSignature<C>(visibleTabs: ReadonlyArray<RibbonTab<C>>, ctx: C): string {
   const ids: string[] = [];
   for (const t of visibleTabs) {
     if (t.contextual && t.autoActivateWhen?.(ctx)) ids.push(t.id);

@@ -123,8 +123,20 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar", "contextMenu"],
     icon: "EyeOff",
     args: [
-      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
-      { name: "hidden", flag: "--hidden <bool>", kind: "boolean", default: true, description: "true to hide, false to unhide" },
+      {
+        name: "slideIndex",
+        flag: "--slide <n>",
+        kind: "number",
+        required: true,
+        description: "0-based slide index",
+      },
+      {
+        name: "hidden",
+        flag: "--hidden <bool>",
+        kind: "boolean",
+        default: true,
+        description: "true to hide, false to unhide",
+      },
     ],
     buildPayload: ({ slideIndex, hidden }) => ({
       slideIndex: Number(slideIndex),
@@ -140,7 +152,13 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar"],
     icon: "ChevronsLeftRightEllipsis",
     args: [
-      { name: "slideIndex", flag: "--slide-index <n>", kind: "number", required: true, description: "0-based slide index." },
+      {
+        name: "slideIndex",
+        flag: "--slide-index <n>",
+        kind: "number",
+        required: true,
+        description: "0-based slide index.",
+      },
       {
         name: "kind",
         flag: "--kind <k>",
@@ -361,9 +379,27 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette"],
     icon: "Move",
     args: [
-      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
-      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
-      { name: "x", flag: "--x <emu>", kind: "number", required: true, description: "X coordinate in EMU (914400 EMU = 1 inch)" },
+      {
+        name: "slideIndex",
+        flag: "--slide <n>",
+        kind: "number",
+        required: true,
+        description: "0-based slide index",
+      },
+      {
+        name: "shapeId",
+        flag: "--shape-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target shape id",
+      },
+      {
+        name: "x",
+        flag: "--x <emu>",
+        kind: "number",
+        required: true,
+        description: "X coordinate in EMU (914400 EMU = 1 inch)",
+      },
       { name: "y", flag: "--y <emu>", kind: "number", required: true, description: "Y coordinate in EMU" },
     ],
     buildPayload: ({ slideIndex, shapeId, x, y }) => ({
@@ -382,10 +418,28 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette"],
     icon: "Maximize2",
     args: [
-      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
-      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
+      {
+        name: "slideIndex",
+        flag: "--slide <n>",
+        kind: "number",
+        required: true,
+        description: "0-based slide index",
+      },
+      {
+        name: "shapeId",
+        flag: "--shape-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target shape id",
+      },
       { name: "width", flag: "--width <emu>", kind: "number", required: true, description: "Width in EMU" },
-      { name: "height", flag: "--height <emu>", kind: "number", required: true, description: "Height in EMU" },
+      {
+        name: "height",
+        flag: "--height <emu>",
+        kind: "number",
+        required: true,
+        description: "Height in EMU",
+      },
     ],
     buildPayload: ({ slideIndex, shapeId, width, height }) => ({
       slideIndex: Number(slideIndex),
@@ -403,9 +457,27 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette"],
     icon: "RotateCw",
     args: [
-      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
-      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
-      { name: "degrees", flag: "--degrees <deg>", kind: "number", required: true, description: "Rotation in degrees (normalised to [0, 360))" },
+      {
+        name: "slideIndex",
+        flag: "--slide <n>",
+        kind: "number",
+        required: true,
+        description: "0-based slide index",
+      },
+      {
+        name: "shapeId",
+        flag: "--shape-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target shape id",
+      },
+      {
+        name: "degrees",
+        flag: "--degrees <deg>",
+        kind: "number",
+        required: true,
+        description: "Rotation in degrees (normalised to [0, 360))",
+      },
     ],
     buildPayload: ({ slideIndex, shapeId, degrees }) => ({
       slideIndex: Number(slideIndex),
@@ -444,10 +516,34 @@ export const pptxActions: ReadonlyArray<ActionDescriptor> = [
     section: "Format",
     surfaces: ["cli", "palette"],
     args: [
-      { name: "slideIndex", flag: "--slide <n>", kind: "number", required: true, description: "0-based slide index" },
-      { name: "shapeId", flag: "--shape-id <id>", kind: "string", required: true, description: "Target shape id" },
-      { name: "adjName", flag: "--adj <name>", kind: "string", required: true, description: 'Adjustment name (e.g. "adj", "adj1")' },
-      { name: "value", flag: "--value <n>", kind: "number", required: true, description: "OOXML adjustment value in 1000-th-of-percent units (0–100000)" },
+      {
+        name: "slideIndex",
+        flag: "--slide <n>",
+        kind: "number",
+        required: true,
+        description: "0-based slide index",
+      },
+      {
+        name: "shapeId",
+        flag: "--shape-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target shape id",
+      },
+      {
+        name: "adjName",
+        flag: "--adj <name>",
+        kind: "string",
+        required: true,
+        description: 'Adjustment name (e.g. "adj", "adj1")',
+      },
+      {
+        name: "value",
+        flag: "--value <n>",
+        kind: "number",
+        required: true,
+        description: "OOXML adjustment value in 1000-th-of-percent units (0–100000)",
+      },
     ],
     buildPayload: ({ slideIndex, shapeId, adjName, value }) => ({
       slideIndex: Number(slideIndex),

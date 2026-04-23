@@ -12,13 +12,14 @@ function syntheticTableDoc(
   const widths = opts.columnWidths ?? new Array(cols).fill(2000);
   const grid = widths.map((w) => `<w:gridCol w:w="${w}"/>`).join("");
   const trXml = rows
-    .map((row) =>
-      `<w:tr>${row
-        .map(
-          (text, c) =>
-            `<w:tc><w:tcPr><w:tcW w:w="${widths[c]}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p></w:tc>`
-        )
-        .join("")}</w:tr>`
+    .map(
+      (row) =>
+        `<w:tr>${row
+          .map(
+            (text, c) =>
+              `<w:tc><w:tcPr><w:tcW w:w="${widths[c]}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p></w:tc>`
+          )
+          .join("")}</w:tr>`
     )
     .join("");
   const tableXml = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid>${trXml}</w:tbl>`;

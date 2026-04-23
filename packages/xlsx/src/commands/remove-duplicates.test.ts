@@ -88,14 +88,7 @@ describe("xlsx:remove-duplicates", () => {
   });
 
   it("compares strings case-insensitively", () => {
-    const snap = makeSnapshot(
-      makeSheet("S", [
-        ["A"],
-        ["alpha"],
-        ["ALPHA"],
-        ["beta"],
-      ])
-    );
+    const snap = makeSnapshot(makeSheet("S", [["A"], ["alpha"], ["ALPHA"], ["beta"]]));
     const out = removeDuplicatesHandler.apply(snap, { sheet: "S", range: "A1:A4" });
     const sheet = out.next.root.sheets[0]!;
     expect(sheet.cells.get(cellKey(1, 0))?.value).toBe("alpha");
@@ -127,14 +120,7 @@ describe("xlsx:remove-duplicates", () => {
   });
 
   it("returns a no-op diff when nothing changes", () => {
-    const snap = makeSnapshot(
-      makeSheet("S", [
-        ["A"],
-        ["x"],
-        ["y"],
-        ["z"],
-      ])
-    );
+    const snap = makeSnapshot(makeSheet("S", [["A"], ["x"], ["y"], ["z"]]));
     const out = removeDuplicatesHandler.apply(snap, { sheet: "S", range: "A1:A4" });
     const sheet = out.next.root.sheets[0]!;
     expect(sheet.cells.get(cellKey(1, 0))?.value).toBe("x");
@@ -148,8 +134,8 @@ describe("xlsx:remove-duplicates", () => {
         ["x", "y"],
       ])
     );
-    expect(() =>
-      removeDuplicatesHandler.apply(snap, { sheet: "S", range: "A1:B2", keyCols: [5] })
-    ).toThrow(CommandError);
+    expect(() => removeDuplicatesHandler.apply(snap, { sheet: "S", range: "A1:B2", keyCols: [5] })).toThrow(
+      CommandError
+    );
   });
 });

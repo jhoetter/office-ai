@@ -12,7 +12,7 @@ async function loadAgent(): Promise<PptxAgent> {
 }
 
 describe("pptx:set-slide-hidden", () => {
-  it("sets show=\"0\" on the targeted slide and round-trips", async () => {
+  it('sets show="0" on the targeted slide and round-trips', async () => {
     const agent = await loadAgent();
     expect(agent.getSnapshot().root.slides[0]!.slideRootAttrs.show).toBeUndefined();
 
@@ -24,7 +24,7 @@ describe("pptx:set-slide-hidden", () => {
     expect(agent.getSnapshot().root.slides[0]!.slideRootAttrs.show).toBe("0");
   });
 
-  it("clears show=\"0\" when toggled back to visible", async () => {
+  it('clears show="0" when toggled back to visible', async () => {
     const agent = await loadAgent();
     await agent.applyCommand({
       type: "pptx:set-slide-hidden",

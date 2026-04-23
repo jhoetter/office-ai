@@ -45,7 +45,7 @@ function commit(
   snapshot: XlsxSnapshot,
   before: Sheet,
   after: Sheet,
-  summary: string,
+  summary: string
 ): { next: XlsxSnapshot; diff: ReturnType<typeof buildDiff> } {
   const root = replaceSheet(snapshot.root, after);
   const evolved = evolveSnapshot(snapshot, root, { sheets: [before.partPath] });

@@ -16,13 +16,13 @@ CLI yet) — see
 
 ## Status legend
 
-| Marker | Meaning |
-| ------ | ------- |
-| ✅ | Backend handler + catalogue entry + CLI/MCP exposure + i18n done |
-| 🧩 | Backend handler exists, catalogue entry exposes via CLI/MCP, ribbon UI not yet wired |
-| 🛠 | Backend handler exists, **needs** `args` + `buildPayload` to auto-bind to CLI/MCP |
-| 📋 | Catalogue entry only (`commandType: null` informational/UI gesture) |
-| 🚧 | Planned in the coverage plan, no backend yet |
+| Marker | Meaning                                                                              |
+| ------ | ------------------------------------------------------------------------------------ |
+| ✅     | Backend handler + catalogue entry + CLI/MCP exposure + i18n done                     |
+| 🧩     | Backend handler exists, catalogue entry exposes via CLI/MCP, ribbon UI not yet wired |
+| 🛠     | Backend handler exists, **needs** `args` + `buildPayload` to auto-bind to CLI/MCP    |
+| 📋     | Catalogue entry only (`commandType: null` informational/UI gesture)                  |
+| 🚧     | Planned in the coverage plan, no backend yet                                         |
 
 Surfaces a catalogue entry can declare:
 
@@ -54,10 +54,10 @@ auto-binder swallows "already registered" errors so both can coexist.
 
 | Format | Catalogue entries | Backend handlers | UI-dispatched | Auto-bound MCP tools (approx.) |
 | ------ | ----------------: | ---------------: | ------------: | -----------------------------: |
-| docx   | 90  | 60 | 52 | ~59 |
-| xlsx   | 102 | 65 | 65 | ~84 |
-| pptx   | 80  | 60 | 44 | ~58 |
-| pdf    | 47  | 14 | 13 | ~14 |
+| docx   |                90 |               60 |            52 |                            ~59 |
+| xlsx   |               102 |               65 |            65 |                            ~84 |
+| pptx   |                80 |               60 |            44 |                            ~58 |
+| pdf    |                47 |               14 |            13 |                            ~14 |
 
 Parity check: **green** (`scripts/check-action-parity.mjs` reports
 `docx 90 / xlsx 102 / pptx 80 / pdf 47`, violations 0). Phase 9e
@@ -68,44 +68,45 @@ backend handler so the parity gate stays clean.
 
 ## Plan phase status
 
-| Phase | Description | Status |
-| ----- | ----------- | ------ |
-| 0  | Shared ribbon primitives + parity baseline | ✅ |
-| 1 (docx) | Wire existing backends + delete-row/column/table; surface page/section break, page number, comment lifecycle, accept/reject all | ✅ |
-| 1 (xlsx) | Cells group, Insert Table, Hyperlink, Sort dialog, Data Validation, Conditional Formatting, Name Manager, Chart Tools depth | ✅ |
-| 1 (pptx) | Insert table+chart, animations gallery + timing, review comments, rotation/geometry fields, hide slide, slide number/date/time | ✅ |
-| 2  | Cross-format staples (Clipboard, Find & Replace, Zoom, Clear formatting, Doc statistics) | ✅ (auto-binder safe; UI primitives partial) |
-| 3a | DOCX layout: margins / orientation / size / columns | ✅ |
-| 3b | DOCX design tab: themes / colors / fonts / page-color / borders / watermark | 🧩 (Phase 9e — ribbon "Entwurf" tab is live: Designs / Seitenfarbe / Seitenränder / Wasserzeichen prompt the user and apply session-scoped CSS variables. OOXML round-trip for these visual effects is still tracked for a follow-up plan.) |
-| 3c | DOCX references tab: bookmark / TOC / caption / cross-ref / citation / bibliography | 🧩 (Phase 9e — `docx:insert-bookmark` + `docx:delete-bookmark` shipped end-to-end with `OpaqueInline` round-trip and a References ribbon dialog; TOC, captions and cross-references are live as composed commands that synthesise paragraphs / text inserts. Citation + bibliography still tracked.) |
-| 3d | DOCX image tools: crop / wrap / rotate / flip / reset / effects | 🚧 |
-| 3e | DOCX table tools: merge / split / shading / borders / alignment / styles / distribute / sizing | 🧩 (partial — `docx:set-cell-shading`, `docx:set-cell-alignment`, `docx:set-row-height`, `docx:set-column-width`, `docx:merge-cells-horizontal` shipped to CLI/MCP this session) |
-| 4a | XLSX number group quick buttons + wrap-text | ✅ |
-| 4b | XLSX page layout tab | 🧩 (partial — `xlsx:set-page-setup`, `set-page-margins`, `set-print-options`, `set-print-area`, `set-print-titles` shipped to CLI/MCP this session; sheet-background still pending) |
-| 4c | XLSX formulas tab (function library, auditing, calc mode) | 🧩 (partial — `xlsx:set-calc-mode` + `xlsx:set-show-formulas` shipped to CLI/MCP; function library / precedents-dependents / evaluate still pending) |
-| 4d | XLSX insert depth (chart picker, sparkline, slicer, hyperlink, header/footer) | 🧩 (Phase 9c — Insert tab "Mehr" group with Sparkline / Header-footer / Recommended-Charts placeholders; tooltips updated in Phase 9e to honest "next milestone" copy.) |
-| 4e | XLSX data depth (remove duplicates, multi-sort, advanced filter, group/ungroup, subtotal, goal-seek, flash fill) | 🧩 (Phase 9e — `xlsx:remove-duplicates` shipped end-to-end with `RemoveDuplicatesDialog`, key-column picker, header toggle, CLI exposure, palette runner and unit tests. Group / Ungroup / Subtotal / Goal-seek / Flash-fill / Advanced-filter still ride the placeholder pattern, now with honest "next milestone" tooltips.) |
-| 4f | XLSX chart tools depth | 🚧 |
-| 5a | PPTX design depth (themes gallery, slide size) | 🧩 (partial — `pptx:set-slide-size` shipped to CLI/MCP; themes gallery still pending) |
-| 5b | PPTX transitions full | 🧩 (partial — `pptx:set-slide-transition` exposed to CLI/MCP/toolbar this session; extended gallery + sound + advance options still pending) |
-| 5c | PPTX animations full | ✅ (Phase 9c — full preset gallery driven by `presetsByCategory()`, trigger picker via `pptx:set-shape-animation`, Animation Painter Copy/Paint composes `pptx:add-shape-animation`) |
-| 5d | PPTX slideshow tab | 🧩 (partial — `pptx:set-show-options` shipped this session; custom shows / rehearse still pending) |
-| 5e | PPTX picture format depth | 🚧 |
-| 5f | PPTX shape format depth | 🚧 |
-| 5g | PPTX insert depth (header/footer, symbol, hyperlink, action, screen recording) | 🧩 (Phase 9c — Insert tab "Symbole" group: `insert-symbol` live (UI-only via `document.execCommand("insertText")` on focused contenteditable); `Hyperlink` / `Aktion` / `Kopf-/Fußzeile` Coming-soon triggers; backends deferred) |
-| 5h | PPTX view depth | 🚧 |
-| 6  | Cross-format Review (spell, comments, translate, compare, protection) | 🚧 (protection commands landed — see this file) |
-| 7  | View tab depth across all three | 🧩 (partial — `xlsx:set-sheet-view` shipped this session; docx/pptx view-pr still pending) |
-| 8  | MCP catalogue auto-binder (`actions-to-mcp.ts`, `--list-actions` CLI, parity gate) | ✅ |
-| 9a | "No more lying buttons" — DOCX Find/Replace, titlePg state, unsupported toast; XLSX palette fix + fx + protect toggle; PPTX hidden slides, `<p:showPr>`, format-aware Outline rail, editor canvas auto-trigger; Playwright `lying-buttons.spec.ts` | ✅ |
-| 9b | Cheap wins from existing backends — DOCX Tab/Shift+Tab list demote/promote + level picker, in-place footnotes panel; XLSX AutoSum splitter, % / $ / comma / inc-dec-decimal quick buttons, A↑/Z↓ sort, hide/unhide row+col, sheet-tab color (new `xlsx:set-sheet-tab-color`), Insert Function (fx) wizard; PPTX animation drag-reorder; PPTX shape-outline / effects / text-fill / text-outline ribbon shape (Coming-soon — backends deferred to follow-up plan) | ✅ |
-| 9c | Small new features — DOCX Design / References ribbon shape, XLSX Insert / Data depth ribbon shape (all Coming-soon, backends deferred to dedicated plans matching the §3b/§3c/§4d/§4e dependencies); PPTX animation gallery (already driven by `presetsByCategory()`), set-animation-trigger (already wired via `pptx:set-shape-animation`), Animation Painter (UI-only, composes `pptx:add-shape-animation`); PPTX `insert-symbol` (UI-only via `document.execCommand("insertText")` on the focused contenteditable overlay), `set-slide-header-footer` / `add-hyperlink` / `add-action` ribbon shape (Coming-soon) | ✅ |
-| 9d | PDF reader parity sweep — fixed `scripts/check-action-parity.mjs` PDF `uiDirs` path; wired `pdf:add-bookmark`, `pdf:set-metadata`, `pdf:reorder-pages` (drag in thumbnail rail) through `PdfToolbar` / `PdfSidebar` / `PdfMetadataDialog`; updated EN+DE i18n for bookmark / metadata strings; this inventory refreshed | ✅ |
-| 9e | UI parity sweep — DOCX References tab is no longer a row of dead "Coming-soon" buttons: `Lesezeichen` opens the new `BookmarkDialog` driven by `docx:insert-bookmark` / `docx:delete-bookmark` (round-trip via `OpaqueInline`), `TOC` / `Aktualisieren` synthesise `Heading1-9` paragraphs into a "Inhalt" block, `Beschriftung` / `Querverweis` compose `docx:insert-paragraph` + `docx:insert-text`. DOCX Design tab buttons (`Designs`, `Seitenfarbe`, `Seitenränder`, `Wasserzeichen`) now apply session-scoped CSS variables with explicit toasts about persistence. XLSX Data tab "Duplikate entfernen" is fully wired to `xlsx:remove-duplicates` (handler + dialog + CLI + palette runner + 5 unit tests). Remaining placeholder buttons keep the planned ribbon shape but now display honest "tracked for the next milestone" tooltips instead of the misleading "use CLI in the meantime" copy that confused users about what was actually available. Action-parity gate still green. | ✅ |
+| Phase    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Status                                                                                                                                                                                                                                                                                                                         |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0        | Shared ribbon primitives + parity baseline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | ✅                                                                                                                                                                                                                                                                                                                             |
+| 1 (docx) | Wire existing backends + delete-row/column/table; surface page/section break, page number, comment lifecycle, accept/reject all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | ✅                                                                                                                                                                                                                                                                                                                             |
+| 1 (xlsx) | Cells group, Insert Table, Hyperlink, Sort dialog, Data Validation, Conditional Formatting, Name Manager, Chart Tools depth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | ✅                                                                                                                                                                                                                                                                                                                             |
+| 1 (pptx) | Insert table+chart, animations gallery + timing, review comments, rotation/geometry fields, hide slide, slide number/date/time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | ✅                                                                                                                                                                                                                                                                                                                             |
+| 2        | Cross-format staples (Clipboard, Find & Replace, Zoom, Clear formatting, Doc statistics)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | ✅ (auto-binder safe; UI primitives partial)                                                                                                                                                                                                                                                                                   |
+| 3a       | DOCX layout: margins / orientation / size / columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | ✅                                                                                                                                                                                                                                                                                                                             |
+| 3b       | DOCX design tab: themes / colors / fonts / page-color / borders / watermark                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 🧩 (Phase 9e — ribbon "Entwurf" tab is live: Designs / Seitenfarbe / Seitenränder / Wasserzeichen prompt the user and apply session-scoped CSS variables. OOXML round-trip for these visual effects is still tracked for a follow-up plan.)                                                                                    |
+| 3c       | DOCX references tab: bookmark / TOC / caption / cross-ref / citation / bibliography                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 🧩 (Phase 9e — `docx:insert-bookmark` + `docx:delete-bookmark` shipped end-to-end with `OpaqueInline` round-trip and a References ribbon dialog; TOC, captions and cross-references are live as composed commands that synthesise paragraphs / text inserts. Citation + bibliography still tracked.)                           |
+| 3d       | DOCX image tools: crop / wrap / rotate / flip / reset / effects                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 🚧                                                                                                                                                                                                                                                                                                                             |
+| 3e       | DOCX table tools: merge / split / shading / borders / alignment / styles / distribute / sizing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 🧩 (partial — `docx:set-cell-shading`, `docx:set-cell-alignment`, `docx:set-row-height`, `docx:set-column-width`, `docx:merge-cells-horizontal` shipped to CLI/MCP this session)                                                                                                                                               |
+| 4a       | XLSX number group quick buttons + wrap-text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | ✅                                                                                                                                                                                                                                                                                                                             |
+| 4b       | XLSX page layout tab                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 🧩 (partial — `xlsx:set-page-setup`, `set-page-margins`, `set-print-options`, `set-print-area`, `set-print-titles` shipped to CLI/MCP this session; sheet-background still pending)                                                                                                                                            |
+| 4c       | XLSX formulas tab (function library, auditing, calc mode)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 🧩 (partial — `xlsx:set-calc-mode` + `xlsx:set-show-formulas` shipped to CLI/MCP; function library / precedents-dependents / evaluate still pending)                                                                                                                                                                           |
+| 4d       | XLSX insert depth (chart picker, sparkline, slicer, hyperlink, header/footer)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 🧩 (Phase 9c — Insert tab "Mehr" group with Sparkline / Header-footer / Recommended-Charts placeholders; tooltips updated in Phase 9e to honest "next milestone" copy.)                                                                                                                                                        |
+| 4e       | XLSX data depth (remove duplicates, multi-sort, advanced filter, group/ungroup, subtotal, goal-seek, flash fill)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | 🧩 (Phase 9e — `xlsx:remove-duplicates` shipped end-to-end with `RemoveDuplicatesDialog`, key-column picker, header toggle, CLI exposure, palette runner and unit tests. Group / Ungroup / Subtotal / Goal-seek / Flash-fill / Advanced-filter still ride the placeholder pattern, now with honest "next milestone" tooltips.) |
+| 4f       | XLSX chart tools depth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 🚧                                                                                                                                                                                                                                                                                                                             |
+| 5a       | PPTX design depth (themes gallery, slide size)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 🧩 (partial — `pptx:set-slide-size` shipped to CLI/MCP; themes gallery still pending)                                                                                                                                                                                                                                          |
+| 5b       | PPTX transitions full                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 🧩 (partial — `pptx:set-slide-transition` exposed to CLI/MCP/toolbar this session; extended gallery + sound + advance options still pending)                                                                                                                                                                                   |
+| 5c       | PPTX animations full                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | ✅ (Phase 9c — full preset gallery driven by `presetsByCategory()`, trigger picker via `pptx:set-shape-animation`, Animation Painter Copy/Paint composes `pptx:add-shape-animation`)                                                                                                                                           |
+| 5d       | PPTX slideshow tab                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | 🧩 (partial — `pptx:set-show-options` shipped this session; custom shows / rehearse still pending)                                                                                                                                                                                                                             |
+| 5e       | PPTX picture format depth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | 🚧                                                                                                                                                                                                                                                                                                                             |
+| 5f       | PPTX shape format depth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 🚧                                                                                                                                                                                                                                                                                                                             |
+| 5g       | PPTX insert depth (header/footer, symbol, hyperlink, action, screen recording)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 🧩 (Phase 9c — Insert tab "Symbole" group: `insert-symbol` live (UI-only via `document.execCommand("insertText")` on focused contenteditable); `Hyperlink` / `Aktion` / `Kopf-/Fußzeile` Coming-soon triggers; backends deferred)                                                                                              |
+| 5h       | PPTX view depth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 🚧                                                                                                                                                                                                                                                                                                                             |
+| 6        | Cross-format Review (spell, comments, translate, compare, protection)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 🚧 (protection commands landed — see this file)                                                                                                                                                                                                                                                                                |
+| 7        | View tab depth across all three                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 🧩 (partial — `xlsx:set-sheet-view` shipped this session; docx/pptx view-pr still pending)                                                                                                                                                                                                                                     |
+| 8        | MCP catalogue auto-binder (`actions-to-mcp.ts`, `--list-actions` CLI, parity gate)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | ✅                                                                                                                                                                                                                                                                                                                             |
+| 9a       | "No more lying buttons" — DOCX Find/Replace, titlePg state, unsupported toast; XLSX palette fix + fx + protect toggle; PPTX hidden slides, `<p:showPr>`, format-aware Outline rail, editor canvas auto-trigger; Playwright `lying-buttons.spec.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | ✅                                                                                                                                                                                                                                                                                                                             |
+| 9b       | Cheap wins from existing backends — DOCX Tab/Shift+Tab list demote/promote + level picker, in-place footnotes panel; XLSX AutoSum splitter, % / $ / comma / inc-dec-decimal quick buttons, A↑/Z↓ sort, hide/unhide row+col, sheet-tab color (new `xlsx:set-sheet-tab-color`), Insert Function (fx) wizard; PPTX animation drag-reorder; PPTX shape-outline / effects / text-fill / text-outline ribbon shape (Coming-soon — backends deferred to follow-up plan)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | ✅                                                                                                                                                                                                                                                                                                                             |
+| 9c       | Small new features — DOCX Design / References ribbon shape, XLSX Insert / Data depth ribbon shape (all Coming-soon, backends deferred to dedicated plans matching the §3b/§3c/§4d/§4e dependencies); PPTX animation gallery (already driven by `presetsByCategory()`), set-animation-trigger (already wired via `pptx:set-shape-animation`), Animation Painter (UI-only, composes `pptx:add-shape-animation`); PPTX `insert-symbol` (UI-only via `document.execCommand("insertText")` on the focused contenteditable overlay), `set-slide-header-footer` / `add-hyperlink` / `add-action` ribbon shape (Coming-soon)                                                                                                                                                                                                                                                                                                                                                                            | ✅                                                                                                                                                                                                                                                                                                                             |
+| 9d       | PDF reader parity sweep — fixed `scripts/check-action-parity.mjs` PDF `uiDirs` path; wired `pdf:add-bookmark`, `pdf:set-metadata`, `pdf:reorder-pages` (drag in thumbnail rail) through `PdfToolbar` / `PdfSidebar` / `PdfMetadataDialog`; updated EN+DE i18n for bookmark / metadata strings; this inventory refreshed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | ✅                                                                                                                                                                                                                                                                                                                             |
+| 9e       | UI parity sweep — DOCX References tab is no longer a row of dead "Coming-soon" buttons: `Lesezeichen` opens the new `BookmarkDialog` driven by `docx:insert-bookmark` / `docx:delete-bookmark` (round-trip via `OpaqueInline`), `TOC` / `Aktualisieren` synthesise `Heading1-9` paragraphs into a "Inhalt" block, `Beschriftung` / `Querverweis` compose `docx:insert-paragraph` + `docx:insert-text`. DOCX Design tab buttons (`Designs`, `Seitenfarbe`, `Seitenränder`, `Wasserzeichen`) now apply session-scoped CSS variables with explicit toasts about persistence. XLSX Data tab "Duplikate entfernen" is fully wired to `xlsx:remove-duplicates` (handler + dialog + CLI + palette runner + 5 unit tests). Remaining placeholder buttons keep the planned ribbon shape but now display honest "tracked for the next milestone" tooltips instead of the misleading "use CLI in the meantime" copy that confused users about what was actually available. Action-parity gate still green. | ✅                                                                                                                                                                                                                                                                                                                             |
 
 ## DOCX surfaces
 
 ### Insert / paragraph
+
 - ✅ `docx:insert-text-after`, `insert-text-before`, `update-text`
 - ✅ `docx:insert-paragraph`, `delete-paragraph`, `set-paragraph-style`
 - ✅ `docx:insert-list`, `set-paragraph-numbering`, `clear-paragraph-numbering`
@@ -116,11 +117,13 @@ backend handler so the parity gate stays clean.
 - ✅ `docx:insert-footnote`, `docx:insert-endnote`
 
 ### Headers / footers
+
 - ✅ `docx:set-header-footer-blocks`
 - ✅ `docx:create-header-footer-part`
 - ✅ `docx:insert-header-footer-image`
 
 ### Layout (Phase 3a)
+
 - ✅ `docx:set-page-setup` (paragraph index, width, height, orientation, all four margins)
 - ✅ `docx:set-page-margins` — wrapper around `set-page-setup`
 - ✅ `docx:set-page-orientation` — wrapper around `set-page-setup`
@@ -128,6 +131,7 @@ backend handler so the parity gate stays clean.
 - 🚧 `docx:set-page-columns` — needs `sectPr` columns serializer
 
 ### Tables
+
 - ✅ `docx:insert-table`, `docx:add-row`, `docx:add-column`
 - ✅ `docx:delete-row`, `docx:delete-column`, `docx:delete-table`
 - ✅ `docx:set-cell-text`, `docx:set-cell-properties`
@@ -142,6 +146,7 @@ backend handler so the parity gate stays clean.
 - 🚧 `docx:distribute-rows`, `distribute-columns`
 
 ### Review
+
 - ✅ `docx:add-comment`, `docx:edit-comment`, `docx:delete-comment`
 - ✅ `docx:resolve-comment`, `docx:reply-comment`
 - ✅ `docx:accept-change`, `docx:reject-change`
@@ -149,17 +154,20 @@ backend handler so the parity gate stays clean.
 - ✅ `docx:set-protection` (basic flag — added Phase 6)
 
 ### Design (Phase 3b — all 🚧)
+
 - 🚧 `docx:set-document-theme` (theme1.xml swap)
 - 🚧 `docx:set-theme-colors`, `set-theme-fonts`
 - 🚧 `docx:set-page-color`, `set-page-borders`, `set-page-watermark`
 
 ### References (Phase 3c — all 🚧)
+
 - 🚧 `docx:insert-bookmark`, `remove-bookmark`
 - 🚧 `docx:insert-toc`, `update-toc`
 - 🚧 `docx:insert-caption`, `insert-cross-reference`
 - 🚧 `docx:insert-citation`, `insert-bibliography`
 
 ### Image (Phase 3d — all 🚧)
+
 - 🚧 `docx:crop-image`, `set-image-wrap`
 - 🚧 `docx:rotate-image`, `flip-image`
 - 🚧 `docx:reset-image`, `set-image-effects`
@@ -167,6 +175,7 @@ backend handler so the parity gate stays clean.
 ## XLSX surfaces
 
 ### Cells (Phase 1)
+
 - ✅ `xlsx:set-cell-value`, `set-cell-formula`
 - ✅ `xlsx:set-cell-format`, `set-wrap-text` (Phase 4a — composes `set-cell-format`)
 - ✅ `xlsx:insert-row`, `insert-column`, `delete-row`, `delete-column`
@@ -175,25 +184,31 @@ backend handler so the parity gate stays clean.
 - ✅ `xlsx:add-sheet`, `delete-sheet`, `rename-sheet`, `move-sheet`
 
 ### Conditional formatting (Phase 1)
+
 - ✅ `xlsx:add-conditional-format` (rule passed as JSON arg)
 - ✅ `xlsx:remove-conditional-format`, `clear-conditional-formats`
 
 ### Data validation (Phase 1)
+
 - ✅ `xlsx:add-data-validation`, `remove-data-validation`, `clear-data-validations`
 
 ### Tables / defined names (Phase 1)
+
 - ✅ `xlsx:add-table`, `remove-table`
 - ✅ `xlsx:add-defined-name`, `update-defined-name`, `remove-defined-name`
 
 ### Charts (Phase 1)
+
 - ✅ `xlsx:add-chart`, `update-chart`
 - ✅ `xlsx:move-chart`, `resize-chart`, `remove-chart`
 
 ### Sort / filter (Phase 1)
+
 - ✅ `xlsx:sort-range` (criteria passed as JSON arg)
 - ✅ `xlsx:set-auto-filter`, `set-filter-column`, `clear-filter-column`
 
 ### Formulas tab (Phase 4c — partial)
+
 - ✅ `xlsx:set-calc-mode` (this session)
 - ✅ `xlsx:set-show-formulas` (this session)
 - 🚧 `xlsx:trace-precedents`, `trace-dependents`
@@ -201,6 +216,7 @@ backend handler so the parity gate stays clean.
 - 🚧 Function library UI (composes existing `set-cell-formula`)
 
 ### Page layout (Phase 4b — partial)
+
 - ✅ `xlsx:set-page-setup` (this session — orientation, paper size, scale, fit-to-pages, page numbering, draft, B&W)
 - ✅ `xlsx:set-page-margins` (this session — normal/wide/narrow presets + per-edge inch overrides)
 - ✅ `xlsx:set-print-options` (this session — gridlines, headings, horizontal/vertical centering)
@@ -209,26 +225,31 @@ backend handler so the parity gate stays clean.
 - 🚧 `xlsx:set-sheet-background` (drawing/picture rel; bigger lift)
 
 ### Insert depth (Phase 4d — all 🚧)
+
 - 🚧 `xlsx:add-sparkline`, `remove-sparkline`
 - 🚧 `xlsx:add-slicer`, `add-timeline`
 - ✅ `xlsx:add-hyperlink`
 - 🚧 `xlsx:set-page-header-footer`
 
 ### Data depth (Phase 4e — all 🚧)
+
 - 🚧 `xlsx:remove-duplicates`
 - 🚧 `xlsx:advanced-filter`
 - 🚧 `xlsx:group-rows`, `ungroup-rows`, `group-columns`, `ungroup-columns`
 - 🚧 `xlsx:add-subtotal`, `goal-seek`, `flash-fill`
 
 ### Chart tools depth (Phase 4f — all 🚧)
+
 - 🚧 `xlsx:set-chart-type`, `set-chart-style`, `set-chart-layout`
 - 🚧 `xlsx:set-chart-element`, `switch-chart-row-column`, `set-chart-data-range`
 
 ### Protection (Phase 6)
+
 - ✅ `xlsx:set-sheet-protection` (this session)
 - ✅ `xlsx:set-workbook-protection` (this session)
 
 ### View tab (Phase 7 — partial)
+
 - ✅ `xlsx:set-sheet-view` (this session — view mode, gridlines, headings, ruler, zoom, RTL)
 - 🚧 Workbook-level: formula bar visibility, zoom dialog, freeze split toggle, window arrange/new
 - 🚧 `xlsx:freeze-panes` / `unfreeze-panes` already shipped (Phase 1)
@@ -236,12 +257,14 @@ backend handler so the parity gate stays clean.
 ## PPTX surfaces
 
 ### Slides
+
 - ✅ `pptx:add-slide`, `delete-slide`, `move-slide`
 - ✅ `pptx:set-slide-layout`, `set-slide-background`
 - ✅ `pptx:set-slide-hidden` (Phase 1 — new in this session)
 - ✅ `pptx:set-slide-transition`
 
 ### Shapes
+
 - ✅ `pptx:add-shape`, `add-text-box`, `delete-shape`
 - ✅ `pptx:set-shape-fill`, `set-shape-line`, `set-shape-text`
 - ✅ `pptx:set-position`, `set-size`, `set-rotation` (Phase 1)
@@ -249,54 +272,65 @@ backend handler so the parity gate stays clean.
 - ✅ `pptx:align-shapes`, `distribute-shapes`, `group-shapes`, `ungroup-shapes`
 
 ### Connectors
+
 - ✅ `pptx:add-connector`, `update-connector`, `delete-connector`
 
 ### Animations (Phase 1 — gallery UI deferred to 5c)
+
 - ✅ `pptx:add-shape-animation`, `set-shape-animation`
 - ✅ `pptx:reorder-shape-animations`, `remove-shape-animation`
 
 ### Comments (Phase 1)
+
 - ✅ `pptx:add-comment`, `reply-comment`, `resolve-comment`
 - ✅ `pptx:edit-comment`, `delete-comment`
 
 ### Design (Phase 5a — partial)
+
 - 🚧 `pptx:apply-theme`, `set-theme-colors`, `set-theme-fonts`
 - ✅ `pptx:set-slide-size` (widescreen / standard / a4 / letter / custom — this session)
 - 🚧 `pptx:set-design-variant`
 
 ### Transitions (Phase 5b — partial)
+
 - ✅ `pptx:set-slide-transition` (this session — wired args/buildPayload, surfaces CLI/MCP/toolbar; effects: none/fade/push/wipe/split/cut, speeds: slow/med/fast)
 - 🚧 Extended gallery (~30 effects), effect options, sound, advance options
 - 🚧 `pptx:apply-transition-to-all`
 
 ### Animations full (Phase 5c — all 🚧)
+
 - 🚧 Animation gallery (entrance / emphasis / exit / motion paths)
 - 🚧 `pptx:set-animation-trigger`
 - 🚧 Animation Painter (UI)
 
 ### Slideshow (Phase 5d — partial)
+
 - ✅ `pptx:set-slide-hidden`
 - ✅ `pptx:set-show-options` (this session — showType {presenter|browse|kiosk}, loop, narration, animation, useTimings, clear)
 - 🚧 `pptx:add-custom-show`, `remove-custom-show`, `run-custom-show`
 - 🚧 `pptx:rehearse-timings`
 
 ### Picture (Phase 5e — all 🚧)
+
 - 🚧 `pptx:crop-picture`, `set-picture-corrections`, `set-picture-color`
 - 🚧 `pptx:set-picture-effects`, `reset-picture`, `compress-picture`
 - 🚧 `pptx:set-picture-style`
 
 ### Shape format (Phase 5f — partial)
+
 - ✅ `pptx:set-shape-geometry`, `set-position`, `set-size`, `set-rotation`
 - 🚧 `pptx:set-shape-outline`, `set-shape-effects`
 - 🚧 `pptx:set-text-fill`, `set-text-outline`
 
 ### Insert (Phase 5g — partial)
+
 - 🚧 `pptx:set-slide-header-footer`
 - 🚧 `pptx:insert-symbol`
 - 🚧 `pptx:add-hyperlink`, `add-action`
 - 🚧 `pptx:add-screen-recording`, `add-screenshot` (deferred — engine work)
 
 ### Protection (Phase 6)
+
 - 🚧 `pptx:set-presentation-protection` (deferred — needs `<p:modifyVerifier>` + crypt-pr model work)
 
 ## PDF surfaces
@@ -308,11 +342,11 @@ tracked separately, not a regression).
 
 ### Phase 9d wiring landed this session
 
-| Catalogue id | UI location | Notes |
-| ------------ | ----------- | ----- |
-| `pdf.add-bookmark` | `PdfToolbar` "Add bookmark" + `PdfSidebar` Outline tab "+" button | Prompts for a title; defaults to "Page N"; auto-flips sidebar to Outline tab |
-| `pdf.set-metadata` | `PdfToolbar` "Document properties" → `PdfMetadataDialog` | Editable: title / author / subject / keywords; read-only: creator / producer / dates / version |
-| `pdf.reorder-pages` | `PdfSidebar` Thumbnails tab — drag-and-drop | Validates `order.length === totalPages`; dispatches the new permutation |
+| Catalogue id        | UI location                                                       | Notes                                                                                          |
+| ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `pdf.add-bookmark`  | `PdfToolbar` "Add bookmark" + `PdfSidebar` Outline tab "+" button | Prompts for a title; defaults to "Page N"; auto-flips sidebar to Outline tab                   |
+| `pdf.set-metadata`  | `PdfToolbar` "Document properties" → `PdfMetadataDialog`          | Editable: title / author / subject / keywords; read-only: creator / producer / dates / version |
+| `pdf.reorder-pages` | `PdfSidebar` Thumbnails tab — drag-and-drop                       | Validates `order.length === totalPages`; dispatches the new permutation                        |
 
 ### Surfaces summary
 
@@ -329,24 +363,24 @@ tracked separately, not a regression).
 
 ## Cross-format (Phase 6 — Review & Spell)
 
-| Capability | Status |
-| ---------- | ------ |
+| Capability                      | Status                                                  |
+| ------------------------------- | ------------------------------------------------------- |
 | `*:set-protection` (basic flag) | ✅ docx, ✅ xlsx (sheet + workbook), 🚧 pptx (deferred) |
-| Spell engine (hunspell-wasm) | 🚧 |
-| Comments group unification | 🚧 |
-| Translate provider | 🚧 (deferred) |
-| Compare documents | 🚧 (docx-first per plan) |
+| Spell engine (hunspell-wasm)    | 🚧                                                      |
+| Comments group unification      | 🚧                                                      |
+| Translate provider              | 🚧 (deferred)                                           |
+| Compare documents               | 🚧 (docx-first per plan)                                |
 
 ## Phase 7 — View tab
 
-| Capability | Status |
-| ---------- | ------ |
-| DOCX view modes (Read / Print / Web) | 🚧 |
-| Navigation pane | 🚧 |
-| Gridlines / Ruler / Zoom dialog | 🚧 (Ruler exists) |
-| XLSX page-break preview, page layout, custom views | 🚧 |
-| XLSX show toggles (gridlines / headings / formula bar) | 🚧 |
-| PPTX color / grayscale / B&W preview | 🚧 |
+| Capability                                             | Status            |
+| ------------------------------------------------------ | ----------------- |
+| DOCX view modes (Read / Print / Web)                   | 🚧                |
+| Navigation pane                                        | 🚧                |
+| Gridlines / Ruler / Zoom dialog                        | 🚧 (Ruler exists) |
+| XLSX page-break preview, page layout, custom views     | 🚧                |
+| XLSX show toggles (gridlines / headings / formula bar) | 🚧                |
+| PPTX color / grayscale / B&W preview                   | 🚧                |
 
 ## UI wiring landed this session
 
@@ -356,28 +390,28 @@ CLI/MCP exposure. Every dialog mirrors its Office counterpart (Page
 Setup, Set Up Show, Protect Document, etc.) and reads current state
 from the snapshot's opaque XML so toggles reflect document truth.
 
-| Format | Catalogue id | Ribbon location | Dialog (if any) |
-| ------ | ------------ | --------------- | --------------- |
-| xlsx | `xlsx.set-page-setup` | Seitenlayout → Seite einrichten | `XlsxPageSetupDialog` |
-| xlsx | `xlsx.set-page-margins` | Seitenlayout → Ränder splitter | shares `XlsxPageSetupDialog` (Margins tab) |
-| xlsx | `xlsx.set-print-options` | Seitenlayout → Blattoptionen toggles | `XlsxPageSetupDialog` (Sheet tab) |
-| xlsx | `xlsx.set-print-area` | Seitenlayout → Drucken splitter | — |
-| xlsx | `xlsx.set-print-titles` | Seitenlayout → Drucken | `XlsxPageSetupDialog` (Sheet tab) |
-| xlsx | `xlsx.set-calc-mode` | Formeln → Berechnung splitter | — |
-| xlsx | `xlsx.set-show-formulas` | Formeln → Formelüberwachung toggle | — |
-| xlsx | `xlsx.set-sheet-protection` | Überprüfen → Schützen | `ProtectSheetDialog` |
-| xlsx | `xlsx.set-workbook-protection` | Überprüfen → Schützen | `ProtectWorkbookDialog` |
-| xlsx | `xlsx.set-sheet-view` | Ansicht → Anzeigen / Zoom | `ZoomDialog` |
-| pptx | `pptx.set-slide-size` | Entwurf → Anpassen splitter | `SlideSizeDialog` |
-| pptx | `pptx.set-show-options` | Bildschirmpräsentation → Einrichten | `SetUpShowDialog` |
-| pptx | `pptx.set-slide-hidden` | Bildschirmpräsentation → Folie ausblenden toggle | — |
-| pptx | `pptx.set-slide-transition` | Übergänge → Effekt-Galerie | — |
-| docx | `docx.set-protection` | Überprüfen → Schützen | `ProtectDocumentDialog` |
-| docx | `docx.set-cell-shading` | Tabellentools → Entwurf splitter | inline preset menu |
-| docx | `docx.set-cell-alignment` | Tabellentools → Ausrichtung trio | — |
-| docx | `docx.set-row-height` | Tabellentools → Größe (cm input) | — |
-| docx | `docx.set-column-width` | Tabellentools → Größe (cm input) | — |
-| docx | `docx.merge-cells-horizontal` | Tabellentools → Verbinden (to-column input) | — |
+| Format | Catalogue id                   | Ribbon location                                  | Dialog (if any)                            |
+| ------ | ------------------------------ | ------------------------------------------------ | ------------------------------------------ |
+| xlsx   | `xlsx.set-page-setup`          | Seitenlayout → Seite einrichten                  | `XlsxPageSetupDialog`                      |
+| xlsx   | `xlsx.set-page-margins`        | Seitenlayout → Ränder splitter                   | shares `XlsxPageSetupDialog` (Margins tab) |
+| xlsx   | `xlsx.set-print-options`       | Seitenlayout → Blattoptionen toggles             | `XlsxPageSetupDialog` (Sheet tab)          |
+| xlsx   | `xlsx.set-print-area`          | Seitenlayout → Drucken splitter                  | —                                          |
+| xlsx   | `xlsx.set-print-titles`        | Seitenlayout → Drucken                           | `XlsxPageSetupDialog` (Sheet tab)          |
+| xlsx   | `xlsx.set-calc-mode`           | Formeln → Berechnung splitter                    | —                                          |
+| xlsx   | `xlsx.set-show-formulas`       | Formeln → Formelüberwachung toggle               | —                                          |
+| xlsx   | `xlsx.set-sheet-protection`    | Überprüfen → Schützen                            | `ProtectSheetDialog`                       |
+| xlsx   | `xlsx.set-workbook-protection` | Überprüfen → Schützen                            | `ProtectWorkbookDialog`                    |
+| xlsx   | `xlsx.set-sheet-view`          | Ansicht → Anzeigen / Zoom                        | `ZoomDialog`                               |
+| pptx   | `pptx.set-slide-size`          | Entwurf → Anpassen splitter                      | `SlideSizeDialog`                          |
+| pptx   | `pptx.set-show-options`        | Bildschirmpräsentation → Einrichten              | `SetUpShowDialog`                          |
+| pptx   | `pptx.set-slide-hidden`        | Bildschirmpräsentation → Folie ausblenden toggle | —                                          |
+| pptx   | `pptx.set-slide-transition`    | Übergänge → Effekt-Galerie                       | —                                          |
+| docx   | `docx.set-protection`          | Überprüfen → Schützen                            | `ProtectDocumentDialog`                    |
+| docx   | `docx.set-cell-shading`        | Tabellentools → Entwurf splitter                 | inline preset menu                         |
+| docx   | `docx.set-cell-alignment`      | Tabellentools → Ausrichtung trio                 | —                                          |
+| docx   | `docx.set-row-height`          | Tabellentools → Größe (cm input)                 | —                                          |
+| docx   | `docx.set-column-width`        | Tabellentools → Größe (cm input)                 | —                                          |
+| docx   | `docx.merge-cells-horizontal`  | Tabellentools → Verbinden (to-column input)      | —                                          |
 
 DOCX table-cell commands target the `{row, column}` pair surfaced by
 the contextual tab's "Zielzelle" picker — DOCX tables render today as

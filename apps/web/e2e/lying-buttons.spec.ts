@@ -58,11 +58,12 @@ test.describe("Phase 9a — lying-buttons regression net", () => {
     // We assert at least one occurrence of the replacement so the test
     // fails loud if the replacement was inserted somewhere wrong (e.g.
     // the find input itself).
-    await expect(page.locator(".ProseMirror").getByText("officeAI", { exact: false }).first())
-      .toBeVisible({ timeout: 5_000 });
-    await expect(
-      page.locator(".ProseMirror").getByText("office-ai", { exact: false })
-    ).toHaveCount(0, { timeout: 5_000 });
+    await expect(page.locator(".ProseMirror").getByText("officeAI", { exact: false }).first()).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.locator(".ProseMirror").getByText("office-ai", { exact: false })).toHaveCount(0, {
+      timeout: 5_000,
+    });
   });
 
   test("XLSX palette: set-sheet-view + open-zoom-dialog are distinct entries", async ({ page }) => {
@@ -124,15 +125,11 @@ test.describe("Phase 9a — lying-buttons regression net", () => {
     } else {
       // Some builds expose layouts as `pptx-layout-item-…`. Fall back
       // to a more permissive selector before failing the test.
-      await page.locator('[role="menu"] [role="menuitem"], [role="menu"] button')
-        .first()
-        .click();
+      await page.locator('[role="menu"] [role="menuitem"], [role="menu"] button').first().click();
     }
 
     // Wait for the second thumbnail to appear in the rail.
-    await expect(
-      page.getByTestId("pptx-sidebar").getByRole("button").nth(1)
-    ).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId("pptx-sidebar").getByRole("button").nth(1)).toBeVisible({ timeout: 5_000 });
 
     // Hide the *currently active* slide (the toggle acts on it).
     await page.getByTestId("pptx-hide-slide-toggle").click();

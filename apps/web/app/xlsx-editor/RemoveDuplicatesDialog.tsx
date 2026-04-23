@@ -148,9 +148,7 @@ export function RemoveDuplicatesDialog(props: RemoveDuplicatesDialogProps): Reac
 
           <fieldset className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <legend className="text-xs font-medium uppercase tracking-wide text-secondary">
-                Spalten
-              </legend>
+              <legend className="text-xs font-medium uppercase tracking-wide text-secondary">Spalten</legend>
               <div className="flex items-center gap-2 text-xs">
                 <button
                   type="button"

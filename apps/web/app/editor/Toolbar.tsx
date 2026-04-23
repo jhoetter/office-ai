@@ -297,12 +297,7 @@ export interface ToolbarProps {
   /** Apply `<w:tcW>` to the targeted column. */
   onSetColumnWidth: (tableId: string, column: number, widthTwips: number) => void;
   /** Merge `[fromColumn..toColumn]` in the targeted row. */
-  onMergeCellsHorizontal: (
-    tableId: string,
-    row: number,
-    fromColumn: number,
-    toColumn: number
-  ) => void;
+  onMergeCellsHorizontal: (tableId: string, row: number, fromColumn: number, toColumn: number) => void;
 }
 
 export type EditModeValue = "edit" | "suggest" | "view";
@@ -704,11 +699,7 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
             label: "Beschriftungen",
             render: (ctx) => (
               <>
-                <ToolbarBtn
-                  label="Insert caption"
-                  onClick={ctx.onInsertCaption}
-                  testId="docx-insert-caption"
-                >
+                <ToolbarBtn label="Insert caption" onClick={ctx.onInsertCaption} testId="docx-insert-caption">
                   <Quote size={14} />
                   <span className="ml-1 text-xs">Beschriftung</span>
                 </ToolbarBtn>
@@ -979,7 +970,13 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                     testId="docx-cell-align-top"
                     onClick={() => {
                       const id = ctx.selectedTableId;
-                      if (id) ctx.onSetCellAlignment(id, ctx.activeTableCell.row, ctx.activeTableCell.column, "top");
+                      if (id)
+                        ctx.onSetCellAlignment(
+                          id,
+                          ctx.activeTableCell.row,
+                          ctx.activeTableCell.column,
+                          "top"
+                        );
                     }}
                   >
                     <AlignVerticalJustifyStart size={14} />
@@ -989,7 +986,13 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                     testId="docx-cell-align-center"
                     onClick={() => {
                       const id = ctx.selectedTableId;
-                      if (id) ctx.onSetCellAlignment(id, ctx.activeTableCell.row, ctx.activeTableCell.column, "center");
+                      if (id)
+                        ctx.onSetCellAlignment(
+                          id,
+                          ctx.activeTableCell.row,
+                          ctx.activeTableCell.column,
+                          "center"
+                        );
                     }}
                   >
                     <AlignVerticalJustifyCenter size={14} />
@@ -999,7 +1002,13 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                     testId="docx-cell-align-bottom"
                     onClick={() => {
                       const id = ctx.selectedTableId;
-                      if (id) ctx.onSetCellAlignment(id, ctx.activeTableCell.row, ctx.activeTableCell.column, "bottom");
+                      if (id)
+                        ctx.onSetCellAlignment(
+                          id,
+                          ctx.activeTableCell.row,
+                          ctx.activeTableCell.column,
+                          "bottom"
+                        );
                     }}
                   >
                     <AlignVerticalJustifyEnd size={14} />
@@ -1077,10 +1086,10 @@ function buildDocxRibbonCatalogue(opts: DocxRibbonOptions): RibbonCatalogue<Docx
                   Erste Seite anders
                 </label>
                 {/* "Different odd & even" is a real Word feature (`<w:evenAndOddHeaders/>`
-                  * on `settings.xml`) but the backend command does not exist yet.
-                  * Surfacing the toggle anyway and routing it through `onUnsupported`
-                  * means users get a "not yet supported" toast instead of a silently
-                  * dead checkbox — and exercises the prop wired through Toolbar/Catalogue. */}
+                 * on `settings.xml`) but the backend command does not exist yet.
+                 * Surfacing the toggle anyway and routing it through `onUnsupported`
+                 * means users get a "not yet supported" toast instead of a silently
+                 * dead checkbox — and exercises the prop wired through Toolbar/Catalogue. */}
                 <label className="inline-flex items-center gap-1.5 px-2 text-xs text-secondary hover:text-foreground">
                   <input
                     type="checkbox"
@@ -1274,7 +1283,11 @@ function ListLevelMenu(props: {
       <button
         ref={triggerRef}
         type="button"
-        title={props.level === null ? "List level (place caret in a list)" : `List level (currently ${props.level + 1})`}
+        title={
+          props.level === null
+            ? "List level (place caret in a list)"
+            : `List level (currently ${props.level + 1})`
+        }
         aria-label="Change list level"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -1944,12 +1957,7 @@ function CellShadingPicker(props: {
               key={p.label}
               type="button"
               onClick={() => {
-                props.onSetCellShading(
-                  props.tableId,
-                  props.cell.row,
-                  props.cell.column,
-                  p.fill
-                );
+                props.onSetCellShading(props.tableId, props.cell.row, props.cell.column, p.fill);
                 setOpen(false);
               }}
               className="flex items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-hover"

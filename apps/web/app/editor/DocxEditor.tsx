@@ -1431,7 +1431,7 @@ function DocxEditorInner({
       }
       const snap = agent.getSnapshot();
       const para = snap.root.body.find(
-        (b): b is typeof b & { kind: "paragraph" } => b.kind === "paragraph" && b.id === paragraphId,
+        (b): b is typeof b & { kind: "paragraph" } => b.kind === "paragraph" && b.id === paragraphId
       );
       const numbering = para?.properties.numbering;
       if (!numbering) {
@@ -1449,7 +1449,7 @@ function DocxEditorInner({
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [pushToast],
+    [pushToast]
   );
 
   const insertImageFromFile = useCallback(() => {
@@ -1516,7 +1516,7 @@ function DocxEditorInner({
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [pushToast],
+    [pushToast]
   );
 
   const handleDeleteBookmark = useCallback(
@@ -1533,35 +1533,32 @@ function DocxEditorInner({
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [pushToast],
+    [pushToast]
   );
 
-  const handleGoToBookmark = useCallback(
-    (b: BookmarkRow) => {
-      const m = mountRef.current;
-      if (!m) return;
-      const v = m.view;
-      let foundPos: number | null = null;
-      v.state.doc.descendants((node, nodePos) => {
-        if (foundPos !== null) return false;
-        if (node.type.name === "paragraph" && node.attrs.paragraphId === b.paragraphId) {
-          // PM positions are 1-based inside the paragraph; the start
-          // marker sits at `nodePos`, the first text position at
-          // `nodePos + 1`. The bookmark's flat offset matches the
-          // same flat-text walk PM uses for `currentParagraphIndex`.
-          foundPos = nodePos + 1 + b.startOffset;
-          return false;
-        }
-        return true;
-      });
-      if (foundPos === null) return;
-      const pos = Math.min(Math.max(foundPos, 1), v.state.doc.content.size - 1);
-      const tr = v.state.tr.setSelection(TextSelection.create(v.state.doc, pos, pos));
-      v.dispatch(tr.scrollIntoView());
-      v.focus();
-    },
-    [],
-  );
+  const handleGoToBookmark = useCallback((b: BookmarkRow) => {
+    const m = mountRef.current;
+    if (!m) return;
+    const v = m.view;
+    let foundPos: number | null = null;
+    v.state.doc.descendants((node, nodePos) => {
+      if (foundPos !== null) return false;
+      if (node.type.name === "paragraph" && node.attrs.paragraphId === b.paragraphId) {
+        // PM positions are 1-based inside the paragraph; the start
+        // marker sits at `nodePos`, the first text position at
+        // `nodePos + 1`. The bookmark's flat offset matches the
+        // same flat-text walk PM uses for `currentParagraphIndex`.
+        foundPos = nodePos + 1 + b.startOffset;
+        return false;
+      }
+      return true;
+    });
+    if (foundPos === null) return;
+    const pos = Math.min(Math.max(foundPos, 1), v.state.doc.content.size - 1);
+    const tr = v.state.tr.setSelection(TextSelection.create(v.state.doc, pos, pos));
+    v.dispatch(tr.scrollIntoView());
+    v.focus();
+  }, []);
 
   const handleOpenBookmarkDialog = useCallback(() => {
     setBookmarkDialogOpen(true);
@@ -1607,12 +1604,15 @@ function DocxEditorInner({
           const insertAt = currentParagraphIndex(m.view.state);
           await insertTocBlock(a, insertAt, headings);
         }
-        pushToast("success", `Table of contents ${mode === "update" ? "updated" : "inserted"} (${headings.length} entries).`);
+        pushToast(
+          "success",
+          `Table of contents ${mode === "update" ? "updated" : "inserted"} (${headings.length} entries).`
+        );
       } catch (err) {
         pushToast("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [pushToast],
+    [pushToast]
   );
 
   // ── References tab — Caption ────────────────────────────────────────────
@@ -1710,7 +1710,7 @@ function DocxEditorInner({
     const current = root.style.getPropertyValue("--pm-page-border") || "none";
     const next = window.prompt(
       "Page borders. Use a CSS shorthand like '1px solid #000', or 'none' to clear.",
-      current === "none" ? "1px solid #999" : current,
+      current === "none" ? "1px solid #999" : current
     );
     if (next === null) return;
     const trimmed = next.trim();
@@ -2049,12 +2049,7 @@ function DocxEditorInner({
   );
 
   const handleSetCellAlignment = useCallback(
-    async (
-      tableId: string,
-      row: number,
-      column: number,
-      vAlign: "top" | "center" | "bottom" | null
-    ) => {
+    async (tableId: string, row: number, column: number, vAlign: "top" | "center" | "bottom" | null) => {
       const agent = agentRef.current;
       if (!agent) return;
       try {
@@ -2071,12 +2066,7 @@ function DocxEditorInner({
   );
 
   const handleSetRowHeight = useCallback(
-    async (
-      tableId: string,
-      row: number,
-      heightTwips: number | null,
-      rule?: "auto" | "exact" | "atLeast"
-    ) => {
+    async (tableId: string, row: number, heightTwips: number | null, rule?: "auto" | "exact" | "atLeast") => {
       const agent = agentRef.current;
       if (!agent) return;
       try {
@@ -2449,10 +2439,7 @@ function DocxEditorInner({
   const activeIndentLeft = computeActiveIndentLeft(snapshot, activeParagraphIndex);
   const styleOptions = paragraphStyleOptions(snapshot, activeStyle);
   const trackedChangesCount = countTrackedChanges(snapshot);
-  const protectionState = useMemo(
-    () => readDocumentProtection(snapshot),
-    [snapshot]
-  );
+  const protectionState = useMemo(() => readDocumentProtection(snapshot), [snapshot]);
   // Drive the contextual ribbon tabs ("Bildtools", "Tabellentools").
   // We re-derive on every render because `uiTick` already forces one
   // on every selection change, so this is essentially `O(1)` work
@@ -2626,9 +2613,9 @@ function DocxEditorInner({
         // behaviour). We deliberately strip block boundaries — Replace is
         // a flat-text operation; users use Insert for structural changes.
         if (replacement.length === 0) {
-          const tr = v.state.tr.delete(start, end).setSelection(
-            TextSelection.create(v.state.doc.resolve(start).doc, start, start),
-          );
+          const tr = v.state.tr
+            .delete(start, end)
+            .setSelection(TextSelection.create(v.state.doc.resolve(start).doc, start, start));
           v.dispatch(tr.scrollIntoView());
           return;
         }
@@ -2704,9 +2691,7 @@ function DocxEditorInner({
           // rail to PM internals.
           const surface = mountRef.current?.view.dom;
           if (!surface) return;
-          const target = surface.querySelector<HTMLElement>(
-            `[data-footnote-id="${footnoteId}"]`,
-          );
+          const target = surface.querySelector<HTMLElement>(`[data-footnote-id="${footnoteId}"]`);
           if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
         }}
       />
@@ -2785,24 +2770,14 @@ function DocxEditorInner({
       "docx.set-cell-shading": {
         run: () => {
           if (!selectedTableId) return;
-          void handleSetCellShading(
-            selectedTableId,
-            activeTableCell.row,
-            activeTableCell.column,
-            "FFF2CC"
-          );
+          void handleSetCellShading(selectedTableId, activeTableCell.row, activeTableCell.column, "FFF2CC");
         },
         enabled: selectedTableId !== null,
       },
       "docx.set-cell-alignment": {
         run: () => {
           if (!selectedTableId) return;
-          void handleSetCellAlignment(
-            selectedTableId,
-            activeTableCell.row,
-            activeTableCell.column,
-            "center"
-          );
+          void handleSetCellAlignment(selectedTableId, activeTableCell.row, activeTableCell.column, "center");
         },
         enabled: selectedTableId !== null,
       },
@@ -3588,11 +3563,7 @@ function readDocumentProtection(snapshot: DocxSnapshot | null): ProtectionState 
   const formatting = readAttr(attrs, "w:formatting");
   if (!edit) return empty;
   const isProtectionEdit = (v: string): v is ProtectionEdit =>
-    v === "readOnly" ||
-    v === "comments" ||
-    v === "trackedChanges" ||
-    v === "forms" ||
-    v === "none";
+    v === "readOnly" || v === "comments" || v === "trackedChanges" || v === "forms" || v === "none";
   const editTyped: ProtectionEdit = isProtectionEdit(edit) ? edit : "readOnly";
   const enforce = enforcement === "1" || enforcement === "true";
   return {
@@ -3615,7 +3586,7 @@ function readAttr(attrs: string, name: string): string | null {
  * match that straddled a block boundary that has since been removed. */
 function textOffsetsToPmRange(
   doc: import("prosemirror-model").Node,
-  match: FindMatch,
+  match: FindMatch
 ): { start: number; end: number } | null {
   const parts = match.id.split(":");
   if (parts.length !== 2) return null;
@@ -3632,7 +3603,7 @@ function textOffsetsToPmRange(
  * so block boundaries cost one character (matching the regex offsets). */
 function mapFlatOffsetsToPmPositions(
   doc: import("prosemirror-model").Node,
-  hits: ReadonlyArray<{ start: number; end: number }>,
+  hits: ReadonlyArray<{ start: number; end: number }>
 ): Array<{ start: number; end: number }> {
   const out: Array<{ start: number; end: number } | null> = hits.map(() => null);
   let acc = 0;
@@ -3656,8 +3627,9 @@ function mapFlatOffsetsToPmPositions(
     acc = nodeEnd;
     return true;
   });
-  return out
-    .filter((p): p is { start: number; end: number } => p !== null && p.start >= 0 && p.end >= 0 && p.end >= p.start);
+  return out.filter(
+    (p): p is { start: number; end: number } => p !== null && p.start >= 0 && p.end >= 0 && p.end >= p.start
+  );
 }
 
 /**

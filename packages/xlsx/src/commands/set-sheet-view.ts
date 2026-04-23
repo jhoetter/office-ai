@@ -24,7 +24,7 @@ export const setSheetViewHandler: CommandHandler<SetSheetViewPayload, XlsxSnapsh
     if (!hasAnyKnob(payload)) {
       throw new CommandError(
         "invalid-payload",
-        "set-sheet-view: pass at least one of view/showGridLines/showRowColHeaders/showZeros/showRuler/showOutlineSymbols/rightToLeft/zoomScale/zoomScaleNormal.",
+        "set-sheet-view: pass at least one of view/showGridLines/showRowColHeaders/showZeros/showRuler/showOutlineSymbols/rightToLeft/zoomScale/zoomScaleNormal."
       );
     }
     if (payload.zoomScale !== undefined) validateZoom(payload.zoomScale, "zoomScale");
@@ -70,10 +70,7 @@ function hasAnyKnob(p: SetSheetViewPayload): boolean {
 
 function validateZoom(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 10 || value > 400) {
-    throw new CommandError(
-      "invalid-payload",
-      `set-sheet-view: ${name} must be 10–400 (got ${value}).`,
-    );
+    throw new CommandError("invalid-payload", `set-sheet-view: ${name} must be 10–400 (got ${value}).`);
   }
 }
 
@@ -97,7 +94,8 @@ function mutateSheetView(current: string | undefined, p: SetSheetViewPayload): s
   if (p.showRowColHeaders !== undefined) attrs = setBoolAttr(attrs, "showRowColHeaders", p.showRowColHeaders);
   if (p.showZeros !== undefined) attrs = setBoolAttr(attrs, "showZeros", p.showZeros);
   if (p.showRuler !== undefined) attrs = setBoolAttr(attrs, "showRuler", p.showRuler);
-  if (p.showOutlineSymbols !== undefined) attrs = setBoolAttr(attrs, "showOutlineSymbols", p.showOutlineSymbols);
+  if (p.showOutlineSymbols !== undefined)
+    attrs = setBoolAttr(attrs, "showOutlineSymbols", p.showOutlineSymbols);
   if (p.rightToLeft !== undefined) attrs = setBoolAttr(attrs, "rightToLeft", p.rightToLeft);
   if (p.zoomScale !== undefined) attrs = setNumAttr(attrs, "zoomScale", p.zoomScale);
   if (p.zoomScaleNormal !== undefined) attrs = setNumAttr(attrs, "zoomScaleNormal", p.zoomScaleNormal);

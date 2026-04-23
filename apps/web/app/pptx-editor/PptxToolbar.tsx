@@ -315,14 +315,7 @@ export function PptxToolbar(props: PptxToolbarProps) {
         textFormatProvider,
         textFormatActive,
       }),
-    [
-      disabled,
-      hasSelection,
-      currentShapeFill,
-      currentSlideBackground,
-      textFormatProvider,
-      textFormatActive,
-    ]
+    [disabled, hasSelection, currentShapeFill, currentSlideBackground, textFormatProvider, textFormatActive]
   );
 
   return (
@@ -769,11 +762,7 @@ function buildPptxRibbonCatalogue(opts: PptxRibbonOptions): RibbonCatalogue<Pptx
                 onClick={props.onToggleHideSlide}
                 disabled={disabled || props.slideCount < 1}
                 aria-pressed={props.activeSlideHidden}
-                title={
-                  props.activeSlideHidden
-                    ? "Folie wieder einblenden"
-                    : "Aktuelle Folie ausblenden"
-                }
+                title={props.activeSlideHidden ? "Folie wieder einblenden" : "Aktuelle Folie ausblenden"}
                 data-testid="pptx-hide-slide-toggle"
                 className={`inline-flex items-center gap-1 rounded border border-divider px-2 py-1 text-xs text-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
                   props.activeSlideHidden ? "bg-hover ring-1 ring-[var(--accent)]/40" : ""
@@ -1819,9 +1808,7 @@ function SymbolPicker({ disabled }: SymbolPickerProps): React.ReactElement {
       >
         {SYMBOL_GROUPS.map((group) => (
           <div key={group.label} className="flex flex-col gap-1">
-            <span className="px-1 text-[10px] uppercase tracking-wide text-secondary">
-              {group.label}
-            </span>
+            <span className="px-1 text-[10px] uppercase tracking-wide text-secondary">{group.label}</span>
             <div className="grid grid-cols-10 gap-0.5">
               {group.symbols.map((sym) => (
                 <button

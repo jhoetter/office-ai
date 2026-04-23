@@ -109,9 +109,7 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
           <X size={14} />
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {renderRailBody(tab, adapter, t)}
-      </div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{renderRailBody(tab, adapter, t)}</div>
     </aside>
   );
 }
@@ -121,11 +119,7 @@ export function RightRail({ adapter, open, tab, onTabChange, onClose }: RightRai
  * exhaustive switch so adding a new tab forces a TS compile error
  * rather than a silent fall-through to the comments panel.
  */
-function renderRailBody(
-  tab: RightRailTab,
-  adapter: ProductAdapter,
-  t: (key: string) => string
-): ReactNode {
+function renderRailBody(tab: RightRailTab, adapter: ProductAdapter, t: (key: string) => string): ReactNode {
   switch (tab) {
     case "comments":
       return adapter.renderCommentsPanel ? (

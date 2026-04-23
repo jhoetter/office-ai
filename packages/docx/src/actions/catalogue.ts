@@ -1791,10 +1791,27 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar"],
     icon: "FileText",
     args: [
-      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
-      { name: "width", flag: "--width <twips>", kind: "number", description: "Page width in twips (1440 twips = 1 inch)" },
+      {
+        name: "paragraphIndex",
+        flag: "--paragraph-index <n>",
+        kind: "number",
+        required: true,
+        description: "0-based body block index inside the target section",
+      },
+      {
+        name: "width",
+        flag: "--width <twips>",
+        kind: "number",
+        description: "Page width in twips (1440 twips = 1 inch)",
+      },
       { name: "height", flag: "--height <twips>", kind: "number", description: "Page height in twips" },
-      { name: "orient", flag: "--orient <portrait|landscape>", kind: "enum", choices: ["portrait", "landscape"], description: "Page orientation" },
+      {
+        name: "orient",
+        flag: "--orient <portrait|landscape>",
+        kind: "enum",
+        choices: ["portrait", "landscape"],
+        description: "Page orientation",
+      },
       { name: "top", flag: "--top <twips>", kind: "number", description: "Top margin in twips" },
       { name: "right", flag: "--right <twips>", kind: "number", description: "Right margin in twips" },
       { name: "bottom", flag: "--bottom <twips>", kind: "number", description: "Bottom margin in twips" },
@@ -1809,12 +1826,19 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.set-page-margins",
     commandType: "docx:set-page-setup",
     label: "Set page margins",
-    description: "Set the top / right / bottom / left / header / footer / gutter margins (twips) on a section.",
+    description:
+      "Set the top / right / bottom / left / header / footer / gutter margins (twips) on a section.",
     section: "Layout",
     surfaces: ["cli", "palette", "toolbar"],
     icon: "AlignJustify",
     args: [
-      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
+      {
+        name: "paragraphIndex",
+        flag: "--paragraph-index <n>",
+        kind: "number",
+        required: true,
+        description: "0-based body block index inside the target section",
+      },
       { name: "top", flag: "--top <twips>", kind: "number", description: "Top margin in twips" },
       { name: "right", flag: "--right <twips>", kind: "number", description: "Right margin in twips" },
       { name: "bottom", flag: "--bottom <twips>", kind: "number", description: "Bottom margin in twips" },
@@ -1835,13 +1859,27 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.set-page-orientation",
     commandType: "docx:set-page-setup",
     label: "Set page orientation",
-    description: "Set page orientation (portrait/landscape) on the section that owns a paragraph. Swaps width/height when needed.",
+    description:
+      "Set page orientation (portrait/landscape) on the section that owns a paragraph. Swaps width/height when needed.",
     section: "Layout",
     surfaces: ["cli", "palette", "toolbar"],
     icon: "RectangleHorizontal",
     args: [
-      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
-      { name: "orient", flag: "--orient <portrait|landscape>", kind: "enum", choices: ["portrait", "landscape"], required: true, description: "Page orientation" },
+      {
+        name: "paragraphIndex",
+        flag: "--paragraph-index <n>",
+        kind: "number",
+        required: true,
+        description: "0-based body block index inside the target section",
+      },
+      {
+        name: "orient",
+        flag: "--orient <portrait|landscape>",
+        kind: "enum",
+        choices: ["portrait", "landscape"],
+        required: true,
+        description: "Page orientation",
+      },
     ],
     buildPayload: ({ paragraphIndex, orient }) => ({
       paragraphIndex: Number(paragraphIndex),
@@ -1852,18 +1890,33 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.set-page-size",
     commandType: "docx:set-page-setup",
     label: "Set page size",
-    description: "Set the page width and height (in twips) on the section that owns a paragraph. 1440 twips = 1 inch.",
+    description:
+      "Set the page width and height (in twips) on the section that owns a paragraph. 1440 twips = 1 inch.",
     section: "Layout",
     surfaces: ["cli", "palette", "toolbar"],
     icon: "Maximize",
     args: [
-      { name: "paragraphIndex", flag: "--paragraph-index <n>", kind: "number", required: true, description: "0-based body block index inside the target section" },
-      { name: "preset", flag: "--preset <name>", kind: "enum", choices: ["letter", "legal", "a4", "a3", "a5"], description: "Convenience preset (overridden by explicit --width/--height)" },
+      {
+        name: "paragraphIndex",
+        flag: "--paragraph-index <n>",
+        kind: "number",
+        required: true,
+        description: "0-based body block index inside the target section",
+      },
+      {
+        name: "preset",
+        flag: "--preset <name>",
+        kind: "enum",
+        choices: ["letter", "legal", "a4", "a3", "a5"],
+        description: "Convenience preset (overridden by explicit --width/--height)",
+      },
       { name: "width", flag: "--width <twips>", kind: "number", description: "Page width in twips" },
       { name: "height", flag: "--height <twips>", kind: "number", description: "Page height in twips" },
     ],
     buildPayload: ({ paragraphIndex, preset, width, height }) => {
-      const presetSize = preset ? PAGE_SIZE_PRESETS[String(preset) as keyof typeof PAGE_SIZE_PRESETS] : undefined;
+      const presetSize = preset
+        ? PAGE_SIZE_PRESETS[String(preset) as keyof typeof PAGE_SIZE_PRESETS]
+        : undefined;
       const w = width !== undefined ? Number(width) : presetSize?.w;
       const h = height !== undefined ? Number(height) : presetSize?.h;
       if (w === undefined || h === undefined) {
@@ -1963,12 +2016,40 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar", "contextMenu"],
     icon: "PaintBucket",
     args: [
-      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id.",
+      },
       { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
-      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "0-based grid column index." },
-      { name: "fill", flag: "--fill <hex|null>", kind: "string", required: true, description: "Hex RGB color (e.g. FFE699), 'auto', or 'null' to clear." },
-      { name: "color", flag: "--color <hex>", kind: "string", description: "Optional pattern foreground color." },
-      { name: "pattern", flag: "--pattern <val>", kind: "string", description: "Optional shading pattern (clear/solid/pct25/...)." },
+      {
+        name: "column",
+        flag: "--column <n>",
+        kind: "number",
+        required: true,
+        description: "0-based grid column index.",
+      },
+      {
+        name: "fill",
+        flag: "--fill <hex|null>",
+        kind: "string",
+        required: true,
+        description: "Hex RGB color (e.g. FFE699), 'auto', or 'null' to clear.",
+      },
+      {
+        name: "color",
+        flag: "--color <hex>",
+        kind: "string",
+        description: "Optional pattern foreground color.",
+      },
+      {
+        name: "pattern",
+        flag: "--pattern <val>",
+        kind: "string",
+        description: "Optional shading pattern (clear/solid/pct25/...).",
+      },
     ],
     buildPayload: (parsed) => {
       const fillRaw = String(parsed.fill);
@@ -1993,9 +2074,21 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar", "contextMenu"],
     icon: "AlignVerticalJustifyCenter",
     args: [
-      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id.",
+      },
       { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
-      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "0-based grid column index." },
+      {
+        name: "column",
+        flag: "--column <n>",
+        kind: "number",
+        required: true,
+        description: "0-based grid column index.",
+      },
       {
         name: "vAlign",
         flag: "--v-align <v>",
@@ -2021,10 +2114,28 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar", "contextMenu"],
     icon: "MoveVertical",
     args: [
-      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id.",
+      },
       { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
-      { name: "heightTwips", flag: "--height-twips <n|null>", kind: "string", required: true, description: "Row height in twips, or 'null' to clear." },
-      { name: "rule", flag: "--rule <r>", kind: "enum", choices: ["auto", "exact", "atLeast"], description: "Row-height rule." },
+      {
+        name: "heightTwips",
+        flag: "--height-twips <n|null>",
+        kind: "string",
+        required: true,
+        description: "Row height in twips, or 'null' to clear.",
+      },
+      {
+        name: "rule",
+        flag: "--rule <r>",
+        kind: "enum",
+        choices: ["auto", "exact", "atLeast"],
+        description: "Row-height rule.",
+      },
     ],
     buildPayload: ({ tableId, row, heightTwips, rule }) => {
       const raw = String(heightTwips);
@@ -2046,9 +2157,27 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar", "contextMenu"],
     icon: "MoveHorizontal",
     args: [
-      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
-      { name: "column", flag: "--column <n>", kind: "number", required: true, description: "0-based grid column index." },
-      { name: "widthTwips", flag: "--width-twips <n>", kind: "number", required: true, description: "Column width in twips." },
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id.",
+      },
+      {
+        name: "column",
+        flag: "--column <n>",
+        kind: "number",
+        required: true,
+        description: "0-based grid column index.",
+      },
+      {
+        name: "widthTwips",
+        flag: "--width-twips <n>",
+        kind: "number",
+        required: true,
+        description: "Column width in twips.",
+      },
     ],
     buildPayload: ({ tableId, column, widthTwips }) => ({
       tableId: String(tableId),
@@ -2065,10 +2194,28 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar", "contextMenu"],
     icon: "TableCellsMerge",
     args: [
-      { name: "tableId", flag: "--table-id <id>", kind: "string", required: true, description: "Target table id." },
+      {
+        name: "tableId",
+        flag: "--table-id <id>",
+        kind: "string",
+        required: true,
+        description: "Target table id.",
+      },
       { name: "row", flag: "--row <n>", kind: "number", required: true, description: "0-based row index." },
-      { name: "fromColumn", flag: "--from-column <n>", kind: "number", required: true, description: "0-based starting grid column." },
-      { name: "toColumn", flag: "--to-column <n>", kind: "number", required: true, description: "0-based ending grid column (inclusive)." },
+      {
+        name: "fromColumn",
+        flag: "--from-column <n>",
+        kind: "number",
+        required: true,
+        description: "0-based starting grid column.",
+      },
+      {
+        name: "toColumn",
+        flag: "--to-column <n>",
+        kind: "number",
+        required: true,
+        description: "0-based ending grid column (inclusive).",
+      },
     ],
     buildPayload: ({ tableId, row, fromColumn, toColumn }) => ({
       tableId: String(tableId),
@@ -2117,8 +2264,18 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
         kind: "boolean",
         description: "Restrict formatting changes too.",
       },
-      { name: "passwordHash", flag: "--password-hash <hex>", kind: "string", description: "Precomputed password hash." },
-      { name: "algorithmName", flag: "--algorithm-name <name>", kind: "string", description: "Hash algorithm name." },
+      {
+        name: "passwordHash",
+        flag: "--password-hash <hex>",
+        kind: "string",
+        description: "Precomputed password hash.",
+      },
+      {
+        name: "algorithmName",
+        flag: "--algorithm-name <name>",
+        kind: "string",
+        description: "Hash algorithm name.",
+      },
       { name: "saltValue", flag: "--salt-value <b64>", kind: "string", description: "Salt for the hash." },
       { name: "spinCount", flag: "--spin-count <n>", kind: "number", description: "Iteration count." },
     ],
@@ -2128,7 +2285,8 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
       };
       if (parsed.edit) out.edit = String(parsed.edit);
       if (parsed.enforce !== undefined) out.enforce = parsed.enforce !== false && parsed.enforce !== "false";
-      if (parsed.formatting !== undefined) out.formatting = parsed.formatting !== false && parsed.formatting !== "false";
+      if (parsed.formatting !== undefined)
+        out.formatting = parsed.formatting !== false && parsed.formatting !== "false";
       if (parsed.passwordHash) out.passwordHash = String(parsed.passwordHash);
       if (parsed.algorithmName) out.algorithmName = String(parsed.algorithmName);
       if (parsed.saltValue) out.saltValue = String(parsed.saltValue);
@@ -2148,7 +2306,13 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     surfaces: ["cli", "palette", "toolbar"],
     icon: "Bookmark",
     args: [
-      { name: "name", flag: "--name <id>", kind: "string", required: true, description: "Bookmark name (identifier)." },
+      {
+        name: "name",
+        flag: "--name <id>",
+        kind: "string",
+        required: true,
+        description: "Bookmark name (identifier).",
+      },
       {
         name: "paragraphId",
         flag: "--paragraph-id <id>",
@@ -2182,7 +2346,8 @@ export const docxActions: ReadonlyArray<ActionDescriptor> = [
     id: "docx.delete-bookmark",
     commandType: "docx:delete-bookmark",
     label: "Delete bookmark",
-    description: "Strip every <w:bookmarkStart>/<w:bookmarkEnd> anchor pair carrying the given name. Idempotent.",
+    description:
+      "Strip every <w:bookmarkStart>/<w:bookmarkEnd> anchor pair carrying the given name. Idempotent.",
     section: "References",
     surfaces: ["cli", "palette", "toolbar"],
     icon: "Trash2",

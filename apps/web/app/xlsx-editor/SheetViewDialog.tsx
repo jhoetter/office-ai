@@ -116,7 +116,11 @@ export function SheetViewDialog(props: SheetViewDialogProps): ReactNode {
                   onChange={() => setView(m)}
                 />
                 <span>
-                  {m === "normal" ? "Normal" : m === "pageBreakPreview" ? "Page Break Preview" : "Page Layout"}
+                  {m === "normal"
+                    ? "Normal"
+                    : m === "pageBreakPreview"
+                      ? "Page Break Preview"
+                      : "Page Layout"}
                 </span>
               </label>
             ))}

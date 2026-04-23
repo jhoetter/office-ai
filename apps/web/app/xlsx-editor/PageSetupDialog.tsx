@@ -94,7 +94,7 @@ const MARGIN_PRESETS: Record<"normal" | "wide" | "narrow", Omit<MarginsValues, "
 export function PageSetupDialog(props: PageSetupDialogProps): ReactNode {
   const { open, initialTab, snapshot, sheetName, onClose, onSubmit } = props;
   const sheet = useMemo(
-    () => (snapshot && sheetName ? snapshot.root.sheets.find((s) => s.name === sheetName) ?? null : null),
+    () => (snapshot && sheetName ? (snapshot.root.sheets.find((s) => s.name === sheetName) ?? null) : null),
     [snapshot, sheetName]
   );
 
@@ -143,10 +143,7 @@ export function PageSetupDialog(props: PageSetupDialogProps): ReactNode {
     }
     const trimmedRows = titleRows.trim();
     const trimmedCols = titleCols.trim();
-    if (
-      trimmedRows !== (initial.titleRows ?? "") ||
-      trimmedCols !== (initial.titleCols ?? "")
-    ) {
+    if (trimmedRows !== (initial.titleRows ?? "") || trimmedCols !== (initial.titleCols ?? "")) {
       submit.printTitles = {
         rows: trimmedRows ? trimmedRows : null,
         cols: trimmedCols ? trimmedCols : null,
@@ -193,9 +190,24 @@ export function PageSetupDialog(props: PageSetupDialogProps): ReactNode {
         </header>
 
         <div className="flex gap-4 border-b border-divider px-5">
-          <TabBtn label="Page" active={tab === "page"} onClick={() => setTab("page")} testId="page-setup-tab-page" />
-          <TabBtn label="Margins" active={tab === "margins"} onClick={() => setTab("margins")} testId="page-setup-tab-margins" />
-          <TabBtn label="Sheet" active={tab === "sheet"} onClick={() => setTab("sheet")} testId="page-setup-tab-sheet" />
+          <TabBtn
+            label="Page"
+            active={tab === "page"}
+            onClick={() => setTab("page")}
+            testId="page-setup-tab-page"
+          />
+          <TabBtn
+            label="Margins"
+            active={tab === "margins"}
+            onClick={() => setTab("margins")}
+            testId="page-setup-tab-margins"
+          />
+          <TabBtn
+            label="Sheet"
+            active={tab === "sheet"}
+            onClick={() => setTab("sheet")}
+            testId="page-setup-tab-sheet"
+          />
         </div>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 text-sm">
@@ -247,9 +259,7 @@ function TabBtn(props: { label: string; active: boolean; onClick: () => void; te
       aria-selected={active}
       onClick={onClick}
       className={`-mb-px border-b-2 px-1 py-2 text-xs font-medium transition-colors ${
-        active
-          ? "border-accent text-default"
-          : "border-transparent text-secondary hover:text-default"
+        active ? "border-accent text-default" : "border-transparent text-secondary hover:text-default"
       }`}
     >
       {label}
@@ -396,7 +406,8 @@ function MarginsTab(props: { values: MarginsValues; onChange: (v: MarginsValues)
                   : "border-divider bg-background hover:bg-hover"
               }`}
             >
-              {id[0]?.toUpperCase()}{id.slice(1)}
+              {id[0]?.toUpperCase()}
+              {id.slice(1)}
             </button>
           ))}
         </div>
@@ -405,12 +416,36 @@ function MarginsTab(props: { values: MarginsValues; onChange: (v: MarginsValues)
         <legend className="col-span-2 text-xs font-medium uppercase tracking-wide text-secondary">
           Custom (inches)
         </legend>
-        <NumField label="Top" value={values.topIn} onChange={(v) => onChange({ ...values, preset: "custom", topIn: v })} />
-        <NumField label="Bottom" value={values.bottomIn} onChange={(v) => onChange({ ...values, preset: "custom", bottomIn: v })} />
-        <NumField label="Left" value={values.leftIn} onChange={(v) => onChange({ ...values, preset: "custom", leftIn: v })} />
-        <NumField label="Right" value={values.rightIn} onChange={(v) => onChange({ ...values, preset: "custom", rightIn: v })} />
-        <NumField label="Header" value={values.headerIn} onChange={(v) => onChange({ ...values, preset: "custom", headerIn: v })} />
-        <NumField label="Footer" value={values.footerIn} onChange={(v) => onChange({ ...values, preset: "custom", footerIn: v })} />
+        <NumField
+          label="Top"
+          value={values.topIn}
+          onChange={(v) => onChange({ ...values, preset: "custom", topIn: v })}
+        />
+        <NumField
+          label="Bottom"
+          value={values.bottomIn}
+          onChange={(v) => onChange({ ...values, preset: "custom", bottomIn: v })}
+        />
+        <NumField
+          label="Left"
+          value={values.leftIn}
+          onChange={(v) => onChange({ ...values, preset: "custom", leftIn: v })}
+        />
+        <NumField
+          label="Right"
+          value={values.rightIn}
+          onChange={(v) => onChange({ ...values, preset: "custom", rightIn: v })}
+        />
+        <NumField
+          label="Header"
+          value={values.headerIn}
+          onChange={(v) => onChange({ ...values, preset: "custom", headerIn: v })}
+        />
+        <NumField
+          label="Footer"
+          value={values.footerIn}
+          onChange={(v) => onChange({ ...values, preset: "custom", footerIn: v })}
+        />
       </fieldset>
     </>
   );
@@ -426,7 +461,16 @@ function SheetTab(props: {
   onTitleRowsChange: (v: string) => void;
   onTitleColsChange: (v: string) => void;
 }): ReactNode {
-  const { printOpts, onPrintOptsChange, printArea, onPrintAreaChange, titleRows, titleCols, onTitleRowsChange, onTitleColsChange } = props;
+  const {
+    printOpts,
+    onPrintOptsChange,
+    printArea,
+    onPrintAreaChange,
+    titleRows,
+    titleCols,
+    onTitleRowsChange,
+    onTitleColsChange,
+  } = props;
   return (
     <>
       <fieldset className="flex flex-col gap-2">
@@ -544,7 +588,12 @@ function NumField(props: { label: string; value: number; onChange: (v: number) =
   );
 }
 
-function CheckRow(props: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }): ReactNode {
+function CheckRow(props: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  testId: string;
+}): ReactNode {
   const { label, checked, onChange, testId } = props;
   return (
     <label className="flex items-center gap-2">

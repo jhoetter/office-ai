@@ -707,7 +707,7 @@ function PdfEditorInner({
     const defaultTitle = t("pdf.page") + " " + currentPage;
     const title =
       typeof window !== "undefined"
-        ? window.prompt(t("pdf.addBookmarkPrompt"), defaultTitle) ?? null
+        ? (window.prompt(t("pdf.addBookmarkPrompt"), defaultTitle) ?? null)
         : defaultTitle;
     if (title === null) return; // user cancelled
     const trimmed = title.trim().length > 0 ? title.trim() : defaultTitle;

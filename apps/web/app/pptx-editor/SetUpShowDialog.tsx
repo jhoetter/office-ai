@@ -90,9 +90,7 @@ export function SetUpShowDialog(props: SetUpShowDialogProps): ReactNode {
 
         <div className="flex flex-col gap-4 px-5 py-4 text-sm">
           <fieldset className="flex flex-col gap-1">
-            <legend className="text-xs font-medium uppercase tracking-wide text-secondary">
-              Show type
-            </legend>
+            <legend className="text-xs font-medium uppercase tracking-wide text-secondary">Show type</legend>
             <Radio
               label="Presented by a speaker (full screen)"
               checked={values.showType === "presenter"}
@@ -180,18 +178,18 @@ function Radio(props: { label: string; checked: boolean; onChange: () => void; t
   const { label, checked, onChange, testId } = props;
   return (
     <label className="flex items-center gap-2">
-      <input
-        type="radio"
-        checked={checked}
-        onChange={onChange}
-        data-testid={testId}
-      />
+      <input type="radio" checked={checked} onChange={onChange} data-testid={testId} />
       <span>{label}</span>
     </label>
   );
 }
 
-function Check(props: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }): ReactNode {
+function Check(props: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  testId: string;
+}): ReactNode {
   const { label, checked, onChange, testId } = props;
   return (
     <label className="flex items-center gap-2">

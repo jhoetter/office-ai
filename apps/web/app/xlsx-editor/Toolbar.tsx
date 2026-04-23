@@ -985,11 +985,11 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
             render: ({ props }) => (
               <>
                 {/* Protect Sheet/Workbook open a confirmation dialog rather
-                  * than acting as instant toggles, so we render them as
-                  * `ActionBtn` (no `aria-pressed`, no toggled background).
-                  * The Lock icon flips to "Unprotect…" wording when the
-                  * resource is already locked so users can tell at a glance
-                  * what the click will do — the dialog handles confirm. */}
+                 * than acting as instant toggles, so we render them as
+                 * `ActionBtn` (no `aria-pressed`, no toggled background).
+                 * The Lock icon flips to "Unprotect…" wording when the
+                 * resource is already locked so users can tell at a glance
+                 * what the click will do — the dialog handles confirm. */}
                 <ActionBtn
                   icon={
                     props.sheetProtected ? (
@@ -1035,11 +1035,7 @@ function buildXlsxRibbonCatalogue(opts: XlsxRibbonOptions): RibbonCatalogue<Xlsx
             id: "view-modes",
             label: "Arbeitsmappenansichten",
             render: ({ props }) => (
-              <ViewModeMenu
-                disabled={disabled}
-                mode={props.viewMode}
-                onSet={props.onSetSheetView}
-              />
+              <ViewModeMenu disabled={disabled} mode={props.viewMode} onSet={props.onSetSheetView} />
             ),
           },
           {

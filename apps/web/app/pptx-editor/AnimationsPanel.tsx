@@ -171,7 +171,10 @@ const PRESET_KEY: Record<AnimationPreset, string> = {
   custom: "presetCustom",
 };
 
-function animT(t: (k: string, vars?: Readonly<Record<string, string | number>>) => string, key: string): string {
+function animT(
+  t: (k: string, vars?: Readonly<Record<string, string | number>>) => string,
+  key: string
+): string {
   return t(`pptx.animations.${key}`);
 }
 
@@ -242,10 +245,7 @@ export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement
       ? (props.selectedShape as { cNvPrId: number }).cNvPrId
       : null;
   const selectedShapeAnimations = React.useMemo(
-    () =>
-      selectedCNvPrId === null
-        ? []
-        : animations.filter((a) => a.targetCNvPrId === selectedCNvPrId),
+    () => (selectedCNvPrId === null ? [] : animations.filter((a) => a.targetCNvPrId === selectedCNvPrId)),
     [animations, selectedCNvPrId]
   );
   const onCopyPainter = React.useCallback((): void => {
@@ -276,8 +276,7 @@ export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement
       });
     }
   }, [painterBuffer, painterSourceCNvPrId, selectedCNvPrId, props]);
-  const canCopyPainter =
-    !props.disabled && selectedCNvPrId !== null && selectedShapeAnimations.length > 0;
+  const canCopyPainter = !props.disabled && selectedCNvPrId !== null && selectedShapeAnimations.length > 0;
   const canPastePainter =
     !props.disabled &&
     selectedCNvPrId !== null &&
@@ -659,122 +658,122 @@ function AnimationList(props: AnimationListProps): React.ReactElement {
                 data-testid="pptx-anim-drop-indicator"
               />
             ) : null}
-          <li
-            className={`overflow-hidden rounded border ${accent.border}`}
-            data-testid={`pptx-anim-row-${a.id}`}
-            draggable={!props.disabled}
-            onDragStart={(e) => {
-              dragIdRef.current = a.id;
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/plain", a.id);
-            }}
-            onDragOver={(e) => {
-              if (dragIdRef.current === null) return;
-              e.preventDefault();
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              const before = e.clientY < rect.top + rect.height / 2;
-              setDropAt(before ? idx : idx + 1);
-            }}
-            onDragEnd={() => finishDrag()}
-            onDrop={(e) => {
-              e.preventDefault();
-              commitDrop();
-            }}
-          >
-            <div className="flex items-center gap-2 bg-surface px-2 py-1.5">
-              <span
-                className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-hover text-[10px] font-semibold tabular-nums"
-                title={`${t(`pptx.animations.${CAT_KEY[a.category]}`)} · ${labelForPreset(t, a.preset)}`}
-              >
-                {idx + 1}
-              </span>
-              <span className={`h-1.5 w-1.5 rounded-full ${accent.dot}`} aria-hidden />
-              <button
-                type="button"
-                disabled={props.disabled}
-                onClick={() => props.onToggleEdit(a.id)}
-                className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50"
-                data-testid={`pptx-anim-edit-${a.id}`}
-                aria-expanded={isOpen}
-              >
-                <div className="truncate text-xs font-medium text-foreground">
-                  {labelForPreset(t, a.preset)}
-                  {a.direction ? (
-                    <span className="ml-1 text-[10px] font-normal text-secondary">
-                      · {t(`pptx.animations.${DIRECTION_KEY[a.direction]}`)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-1 truncate text-[10px] text-secondary">
-                  <TriggerIcon size={10} />
-                  <span>{t(`pptx.animations.${TRIGGER_KEY[a.trigger]}`)}</span>
-                  <span aria-hidden>·</span>
-                  <span className="truncate">{shapeName}</span>
-                </div>
-              </button>
-              <div className="flex items-center gap-0.5">
-                {props.onPreview ? (
-                  <button
-                    type="button"
-                    disabled={props.disabled}
-                    onClick={() => props.onPreview?.(a.id)}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
-                    title={t("pptx.animations.previewStep")}
-                    aria-label={t("pptx.animations.previewStep")}
-                    data-testid={`pptx-anim-preview-${a.id}`}
-                  >
-                    <Play size={11} />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={props.disabled || idx === 0}
-                  onClick={() => props.onMove(a.id, -1)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
-                  title={t("pptx.animations.moveEarlier")}
-                  aria-label={t("pptx.animations.moveEarlier")}
+            <li
+              className={`overflow-hidden rounded border ${accent.border}`}
+              data-testid={`pptx-anim-row-${a.id}`}
+              draggable={!props.disabled}
+              onDragStart={(e) => {
+                dragIdRef.current = a.id;
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", a.id);
+              }}
+              onDragOver={(e) => {
+                if (dragIdRef.current === null) return;
+                e.preventDefault();
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                const before = e.clientY < rect.top + rect.height / 2;
+                setDropAt(before ? idx : idx + 1);
+              }}
+              onDragEnd={() => finishDrag()}
+              onDrop={(e) => {
+                e.preventDefault();
+                commitDrop();
+              }}
+            >
+              <div className="flex items-center gap-2 bg-surface px-2 py-1.5">
+                <span
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-hover text-[10px] font-semibold tabular-nums"
+                  title={`${t(`pptx.animations.${CAT_KEY[a.category]}`)} · ${labelForPreset(t, a.preset)}`}
                 >
-                  <ChevronUp size={12} />
-                </button>
-                <button
-                  type="button"
-                  disabled={props.disabled || idx === props.animations.length - 1}
-                  onClick={() => props.onMove(a.id, 1)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
-                  title={t("pptx.animations.moveLater")}
-                  aria-label={t("pptx.animations.moveLater")}
-                >
-                  <ChevronDown size={12} />
-                </button>
+                  {idx + 1}
+                </span>
+                <span className={`h-1.5 w-1.5 rounded-full ${accent.dot}`} aria-hidden />
                 <button
                   type="button"
                   disabled={props.disabled}
-                  onClick={() => props.onRemove(a.id)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30"
-                  title={t("pptx.animations.removeAnimation")}
-                  aria-label={t("pptx.animations.removeAnimation")}
-                  data-testid={`pptx-anim-remove-${a.id}`}
+                  onClick={() => props.onToggleEdit(a.id)}
+                  className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid={`pptx-anim-edit-${a.id}`}
+                  aria-expanded={isOpen}
                 >
-                  <Trash2 size={12} />
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {labelForPreset(t, a.preset)}
+                    {a.direction ? (
+                      <span className="ml-1 text-[10px] font-normal text-secondary">
+                        · {t(`pptx.animations.${DIRECTION_KEY[a.direction]}`)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-1 truncate text-[10px] text-secondary">
+                    <TriggerIcon size={10} />
+                    <span>{t(`pptx.animations.${TRIGGER_KEY[a.trigger]}`)}</span>
+                    <span aria-hidden>·</span>
+                    <span className="truncate">{shapeName}</span>
+                  </div>
                 </button>
+                <div className="flex items-center gap-0.5">
+                  {props.onPreview ? (
+                    <button
+                      type="button"
+                      disabled={props.disabled}
+                      onClick={() => props.onPreview?.(a.id)}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
+                      title={t("pptx.animations.previewStep")}
+                      aria-label={t("pptx.animations.previewStep")}
+                      data-testid={`pptx-anim-preview-${a.id}`}
+                    >
+                      <Play size={11} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={props.disabled || idx === 0}
+                    onClick={() => props.onMove(a.id, -1)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
+                    title={t("pptx.animations.moveEarlier")}
+                    aria-label={t("pptx.animations.moveEarlier")}
+                  >
+                    <ChevronUp size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={props.disabled || idx === props.animations.length - 1}
+                    onClick={() => props.onMove(a.id, 1)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
+                    title={t("pptx.animations.moveLater")}
+                    aria-label={t("pptx.animations.moveLater")}
+                  >
+                    <ChevronDown size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={props.disabled}
+                    onClick={() => props.onRemove(a.id)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-hover hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30"
+                    title={t("pptx.animations.removeAnimation")}
+                    aria-label={t("pptx.animations.removeAnimation")}
+                    data-testid={`pptx-anim-remove-${a.id}`}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
-            </div>
-            {isOpen ? (
-              <EffectOptions
-                animation={a}
-                disabled={props.disabled}
-                onSet={props.onSet}
-                onPreview={props.onPreview}
+              {isOpen ? (
+                <EffectOptions
+                  animation={a}
+                  disabled={props.disabled}
+                  onSet={props.onSet}
+                  onPreview={props.onPreview}
+                />
+              ) : null}
+            </li>
+            {dropAt !== null && idx === props.animations.length - 1 && dropAt === props.animations.length ? (
+              <div
+                className="mx-1 h-0.5 rounded bg-accent"
+                aria-hidden
+                data-testid="pptx-anim-drop-indicator"
               />
             ) : null}
-          </li>
-          {dropAt !== null && idx === props.animations.length - 1 && dropAt === props.animations.length ? (
-            <div
-              className="mx-1 h-0.5 rounded bg-accent"
-              aria-hidden
-              data-testid="pptx-anim-drop-indicator"
-            />
-          ) : null}
           </React.Fragment>
         );
       })}

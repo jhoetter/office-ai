@@ -1,10 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type { Picture, PptxSnapshot, Shape, TextShape } from "../model/types.js";
-import {
-  normaliseFillSpec,
-  spliceFillIntoSpPr,
-  type FillSpec,
-} from "../model/fill.js";
+import { normaliseFillSpec, spliceFillIntoSpPr, type FillSpec } from "../model/fill.js";
 import {
   buildDiff,
   evolveSnapshot,

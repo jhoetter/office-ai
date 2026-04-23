@@ -39,18 +39,23 @@ export interface SetCellShadingPayload {
 export const setCellShadingHandler: CommandHandler<SetCellShadingPayload, DocxSnapshot> = {
   type: "docx:set-cell-shading",
   apply(snapshot, payload) {
-    return mutateCell(snapshot, payload, (props) => {
-      if (payload.fill === null) {
-        const { shd: _shd, ...rest } = props;
-        return rest;
-      }
-      const shd: Shading = {
-        fill: normaliseHex(payload.fill),
-        ...(payload.color !== undefined ? { color: normaliseHex(payload.color) } : {}),
-        ...(payload.pattern !== undefined ? { pattern: payload.pattern } : {}),
-      };
-      return { ...props, shd };
-    }, "shading");
+    return mutateCell(
+      snapshot,
+      payload,
+      (props) => {
+        if (payload.fill === null) {
+          const { shd: _shd, ...rest } = props;
+          return rest;
+        }
+        const shd: Shading = {
+          fill: normaliseHex(payload.fill),
+          ...(payload.color !== undefined ? { color: normaliseHex(payload.color) } : {}),
+          ...(payload.pattern !== undefined ? { pattern: payload.pattern } : {}),
+        };
+        return { ...props, shd };
+      },
+      "shading"
+    );
   },
 };
 
@@ -65,13 +70,18 @@ export interface SetCellAlignmentPayload {
 export const setCellAlignmentHandler: CommandHandler<SetCellAlignmentPayload, DocxSnapshot> = {
   type: "docx:set-cell-alignment",
   apply(snapshot, payload) {
-    return mutateCell(snapshot, payload, (props) => {
-      if (payload.vAlign === null) {
-        const { vAlign: _v, ...rest } = props;
-        return rest;
-      }
-      return { ...props, vAlign: payload.vAlign };
-    }, "alignment");
+    return mutateCell(
+      snapshot,
+      payload,
+      (props) => {
+        if (payload.vAlign === null) {
+          const { vAlign: _v, ...rest } = props;
+          return rest;
+        }
+        return { ...props, vAlign: payload.vAlign };
+      },
+      "alignment"
+    );
   },
 };
 
@@ -87,17 +97,22 @@ export interface SetRowHeightPayload {
 export const setRowHeightHandler: CommandHandler<SetRowHeightPayload, DocxSnapshot> = {
   type: "docx:set-row-height",
   apply(snapshot, payload) {
-    return mutateRow(snapshot, payload, (props) => {
-      if (payload.heightTwips === null) {
-        const { trHeight: _h, ...rest } = props;
-        return rest;
-      }
-      const value = Math.max(0, Math.floor(payload.heightTwips));
-      return {
-        ...props,
-        trHeight: { value, ...(payload.rule ? { rule: payload.rule } : {}) },
-      };
-    }, "row-height");
+    return mutateRow(
+      snapshot,
+      payload,
+      (props) => {
+        if (payload.heightTwips === null) {
+          const { trHeight: _h, ...rest } = props;
+          return rest;
+        }
+        const value = Math.max(0, Math.floor(payload.heightTwips));
+        return {
+          ...props,
+          trHeight: { value, ...(payload.rule ? { rule: payload.rule } : {}) },
+        };
+      },
+      "row-height"
+    );
   },
 };
 
@@ -113,7 +128,10 @@ export const setColumnWidthHandler: CommandHandler<SetColumnWidthPayload, DocxSn
   type: "docx:set-column-width",
   apply(snapshot, payload) {
     if (!Number.isFinite(payload.widthTwips) || payload.widthTwips <= 0) {
-      throw new CommandError("invalid-payload", `widthTwips must be a positive number, got ${payload.widthTwips}`);
+      throw new CommandError(
+        "invalid-payload",
+        `widthTwips must be a positive number, got ${payload.widthTwips}`
+      );
     }
     const located = locateTable(snapshot.root, payload.tableId);
     const table = located.table;
@@ -188,7 +206,10 @@ export const mergeCellsHorizontalHandler: CommandHandler<MergeCellsHorizontalPay
     const table = located.table;
     const row = table.rows[payload.row];
     if (!row) {
-      throw new CommandError("invalid-position", `row ${payload.row} out of range for table "${payload.tableId}"`);
+      throw new CommandError(
+        "invalid-position",
+        `row ${payload.row} out of range for table "${payload.tableId}"`
+      );
     }
 
     const span = payload.toColumn - payload.fromColumn + 1;
@@ -284,7 +305,16 @@ function mutateCell(
   const cell = row.cells[cellIdx];
   const nextProps = patch(cell.properties);
   if (nextProps === cell.properties) {
-    return { next: snapshot, diff: buildDiff(snapshot.revision, snapshot.revision, { kind: "node-updated", nodeId: cell.id, path: [], field, summary: "noop" }) };
+    return {
+      next: snapshot,
+      diff: buildDiff(snapshot.revision, snapshot.revision, {
+        kind: "node-updated",
+        nodeId: cell.id,
+        path: [],
+        field,
+        summary: "noop",
+      }),
+    };
   }
 
   const nextCell: TableCell = { ...cell, properties: nextProps };
@@ -344,7 +374,10 @@ function commit(
 function normaliseHex(value: string): string {
   const v = value.trim().replace(/^#/, "").toUpperCase();
   if (!/^[0-9A-F]{6}$/.test(v) && v !== "AUTO") {
-    throw new CommandError("invalid-payload", `Expected hex RGB color (e.g. "FF8800") or "auto", got "${value}"`);
+    throw new CommandError(
+      "invalid-payload",
+      `Expected hex RGB color (e.g. "FF8800") or "auto", got "${value}"`
+    );
   }
   return v;
 }

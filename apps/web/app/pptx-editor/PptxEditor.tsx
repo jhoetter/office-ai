@@ -3328,9 +3328,7 @@ function PptxEditorInner({
             onSetSlideTransition={(kind, speed) => void setSlideTransition(kind, speed)}
             onOpenRail={(tab) => requestRail(tab)}
             onOpenSlideSize={() => setSlideSizeDialogOpen(true)}
-            onApplySlideSizePreset={(preset) =>
-              void applySlideSize({ preset })
-            }
+            onApplySlideSizePreset={(preset) => void applySlideSize({ preset })}
             onOpenSetUpShow={() => setSetUpShowDialogOpen(true)}
             onToggleHideSlide={() => void toggleHideActiveSlide()}
             activeSlideHidden={activeSlideHidden}

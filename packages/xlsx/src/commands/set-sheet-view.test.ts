@@ -16,7 +16,7 @@ function viewXml(agent: XlsxAgent, sheetName: string): string {
 }
 
 describe("xlsx:set-sheet-view", () => {
-  it("toggles showGridLines off (writes \"0\")", async () => {
+  it('toggles showGridLines off (writes "0")', async () => {
     const agent = await loadAgent();
     const sheetName = agent.listSheets()[0]!.name;
 

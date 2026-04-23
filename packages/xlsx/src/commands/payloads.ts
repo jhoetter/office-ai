@@ -551,7 +551,6 @@ export interface RemoveDuplicatesPayload {
   readonly keyCols?: ReadonlyArray<number>;
 }
 
-
 /* ── Images (raster, free-floating overlays) ─────────────────────────────
  * v1 only authors `editAs="oneCell"` — images move with cells but do
  * not size with cells. Anchor + dimensions live in CSS pixels in the

@@ -53,7 +53,10 @@ export const insertBookmarkHandler: CommandHandler<InsertBookmarkPayload, DocxSn
       throw new CommandError("invalid-payload", "paragraphId is required");
     }
     if (!Number.isInteger(startOffset) || startOffset < 0) {
-      throw new CommandError("invalid-payload", `startOffset must be a non-negative integer (got ${startOffset})`);
+      throw new CommandError(
+        "invalid-payload",
+        `startOffset must be a non-negative integer (got ${startOffset})`
+      );
     }
     if (!Number.isInteger(endOffset) || endOffset < startOffset) {
       throw new CommandError(
@@ -83,7 +86,11 @@ export const insertBookmarkHandler: CommandHandler<InsertBookmarkPayload, DocxSn
 
     const id = mintBookmarkId(snapshot.root);
     const stripped = stripBookmarkByName(paragraph, name);
-    const withStart = insertOpaqueInlineAt(stripped, startOffset, makeBookmarkStart(id, name, ctx.mintNodeId));
+    const withStart = insertOpaqueInlineAt(
+      stripped,
+      startOffset,
+      makeBookmarkStart(id, name, ctx.mintNodeId)
+    );
     // Re-clamp end after a potential start insertion: the start anchor
     // doesn't consume flat-text bytes, so offsets stay stable, but we
     // still walk by flat offset and the start anchor occupies a slot

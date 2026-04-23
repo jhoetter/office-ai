@@ -876,13 +876,13 @@ function injectTabColor(xml: string, sheet: Sheet): string {
   if (sheetPrMatch && sheetPrMatch[0]) {
     const attrs = sheetPrMatch[1];
     const selfClose = sheetPrMatch[2] === "/";
-    const inner = selfClose ? "" : sheetPrMatch[3] ?? "";
+    const inner = selfClose ? "" : (sheetPrMatch[3] ?? "");
     const innerStripped = inner.replace(/<tabColor\b[^/>]*\/?>/g, "");
     const newInner = `${tabColorChild}${innerStripped}`;
-    const replacement = newInner === ""
-      ? `<sheetPr${attrs}/>`
-      : `<sheetPr${attrs}>${newInner}</sheetPr>`;
-    return xml.slice(0, sheetPrMatch.index) + replacement + xml.slice(sheetPrMatch.index + sheetPrMatch[0].length);
+    const replacement = newInner === "" ? `<sheetPr${attrs}/>` : `<sheetPr${attrs}>${newInner}</sheetPr>`;
+    return (
+      xml.slice(0, sheetPrMatch.index) + replacement + xml.slice(sheetPrMatch.index + sheetPrMatch[0].length)
+    );
   }
   if (!tabColorChild) return xml;
   const wsOpen = /<worksheet\b[^>]*>/.exec(xml);

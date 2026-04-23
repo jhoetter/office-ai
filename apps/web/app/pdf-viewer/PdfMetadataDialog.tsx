@@ -93,9 +93,7 @@ export function PdfMetadataDialog({
         onSubmit={handleSubmit}
         className="w-[420px] max-w-[90vw] rounded-lg border border-divider bg-background p-4 shadow-xl"
       >
-        <h2 className="mb-3 text-sm font-semibold text-foreground">
-          {t("pdf.documentPropertiesTitle")}
-        </h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">{t("pdf.documentPropertiesTitle")}</h2>
         <div className="flex flex-col gap-3">
           <Field label={t("pdf.metaTitle")} testId="pdf-meta-title">
             <input

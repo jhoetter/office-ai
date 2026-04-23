@@ -113,44 +113,40 @@ function registerOne(server: McpServer, action: ActionDescriptor, ctx: McpDispat
   const inputSchema = buildInputSchema(action);
   const description = buildDescription(action);
 
-  server.registerTool(
-    toolName,
-    { description, inputSchema },
-    async (input: Record<string, unknown>) => {
-      try {
-        const handle = String(input.handle ?? "");
-        if (!handle) throw new Error(`${toolName}: missing required "handle" argument`);
-        const agent = ctx.lookup(handle);
-        const buildPayload = action.buildPayload;
-        if (!buildPayload) {
-          throw new Error(`${toolName}: catalogue entry has no buildPayload (internal error)`);
-        }
-        const declared = action.args ?? [];
-        const parsed = collectArgs(input, declared);
-        const payload = buildPayload(parsed);
-        const result = await ctx.dispatch({
-          handle,
-          agent,
-          commandType: action.commandType as string,
-          payload,
-          outPath: typeof input.out_path === "string" ? input.out_path : undefined,
-          source: input.source === "human" ? "human" : "agent",
-          approve: input.approve !== false,
-        });
-        const text = JSON.stringify(result, null, 2);
-        return {
-          content: [{ type: "text" as const, text }],
-          structuredContent: result as Record<string, unknown>,
-        };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return {
-          isError: true as const,
-          content: [{ type: "text" as const, text: `${toolName} failed: ${msg}` }],
-        };
+  server.registerTool(toolName, { description, inputSchema }, async (input: Record<string, unknown>) => {
+    try {
+      const handle = String(input.handle ?? "");
+      if (!handle) throw new Error(`${toolName}: missing required "handle" argument`);
+      const agent = ctx.lookup(handle);
+      const buildPayload = action.buildPayload;
+      if (!buildPayload) {
+        throw new Error(`${toolName}: catalogue entry has no buildPayload (internal error)`);
       }
+      const declared = action.args ?? [];
+      const parsed = collectArgs(input, declared);
+      const payload = buildPayload(parsed);
+      const result = await ctx.dispatch({
+        handle,
+        agent,
+        commandType: action.commandType as string,
+        payload,
+        outPath: typeof input.out_path === "string" ? input.out_path : undefined,
+        source: input.source === "human" ? "human" : "agent",
+        approve: input.approve !== false,
+      });
+      const text = JSON.stringify(result, null, 2);
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent: result as Record<string, unknown>,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        isError: true as const,
+        content: [{ type: "text" as const, text: `${toolName} failed: ${msg}` }],
+      };
     }
-  );
+  });
 }
 
 /**
@@ -207,9 +203,8 @@ function zodForArg(arg: ActionArg): ZodTypeAny {
       base = z.string();
       break;
     case "enum":
-      base = arg.choices && arg.choices.length > 0
-        ? z.enum(arg.choices as [string, ...string[]])
-        : z.string();
+      base =
+        arg.choices && arg.choices.length > 0 ? z.enum(arg.choices as [string, ...string[]]) : z.string();
       break;
     case "number":
       base = z.number();

@@ -101,9 +101,11 @@ function patchColsXml(prev: string | undefined, column1: number, hidden: boolean
   if (idx >= 0) {
     const band = cols[idx];
     const splits: Col[] = [];
-    if (band.min < column1) splits.push({ min: band.min, max: column1 - 1, hidden: band.hidden, extras: band.extras });
+    if (band.min < column1)
+      splits.push({ min: band.min, max: column1 - 1, hidden: band.hidden, extras: band.extras });
     splits.push({ min: column1, max: column1, hidden, extras: band.extras });
-    if (band.max > column1) splits.push({ min: column1 + 1, max: band.max, hidden: band.hidden, extras: band.extras });
+    if (band.max > column1)
+      splits.push({ min: column1 + 1, max: band.max, hidden: band.hidden, extras: band.extras });
     cols.splice(idx, 1, ...splits);
   } else if (hidden) {
     cols.push({ min: column1, max: column1, hidden: true, extras: ' width="9.140625" customWidth="1"' });

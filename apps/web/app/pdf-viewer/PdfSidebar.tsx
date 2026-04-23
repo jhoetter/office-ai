@@ -448,12 +448,7 @@ interface OutlinePanelProps {
   readonly onAddBookmark?: () => void;
 }
 
-function OutlinePanel({
-  snapshot,
-  currentPage,
-  onJumpToPage,
-  onAddBookmark,
-}: OutlinePanelProps): ReactNode {
+function OutlinePanel({ snapshot, currentPage, onJumpToPage, onAddBookmark }: OutlinePanelProps): ReactNode {
   const { t } = useTranslator();
   const outline = snapshot?.root.outline ?? [];
 

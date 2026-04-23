@@ -77,10 +77,8 @@ export function ProtectDocumentDialog(props: ProtectDocumentDialogProps): ReactN
       onClose();
       return;
     }
-    let hashFields: Pick<
-      ProtectDocumentSubmit,
-      "algorithmName" | "hashValue" | "saltValue" | "spinCount"
-    > = {};
+    let hashFields: Pick<ProtectDocumentSubmit, "algorithmName" | "hashValue" | "saltValue" | "spinCount"> =
+      {};
     if (password.length > 0) {
       try {
         setWorking(true);
@@ -257,7 +255,12 @@ function Radio(props: { label: string; checked: boolean; onChange: () => void; t
   );
 }
 
-function Check(props: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }): ReactNode {
+function Check(props: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  testId: string;
+}): ReactNode {
   const { label, checked, onChange, testId } = props;
   return (
     <label className="flex items-center gap-2">
@@ -287,8 +290,7 @@ async function hashPassword(password: string): Promise<{
   saltValue: string;
   spinCount: number;
 }> {
-  const subtle =
-    typeof crypto !== "undefined" && crypto.subtle ? crypto.subtle : null;
+  const subtle = typeof crypto !== "undefined" && crypto.subtle ? crypto.subtle : null;
   if (!subtle) throw new Error("Web Crypto API unavailable in this browser.");
   const saltBytes = new Uint8Array(16);
   crypto.getRandomValues(saltBytes);

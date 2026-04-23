@@ -228,8 +228,7 @@ function MarginHandle(props: MarginHandleProps) {
   const labelValue = (twips / factor).toFixed(2);
   const unit = useMetric ? "cm" : "in";
   const ariaKey = side === "left" ? "docx.pageRuler.leftMargin" : "docx.pageRuler.rightMargin";
-  const titleKey =
-    side === "left" ? "docx.pageRuler.leftMarginValue" : "docx.pageRuler.rightMarginValue";
+  const titleKey = side === "left" ? "docx.pageRuler.leftMarginValue" : "docx.pageRuler.rightMarginValue";
   return (
     <div
       role="slider"

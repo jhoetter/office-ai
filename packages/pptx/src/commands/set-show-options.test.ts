@@ -12,9 +12,7 @@ async function loadAgent(): Promise<PptxAgent> {
 }
 
 function findShowPr(agent: PptxAgent) {
-  return agent
-    .getSnapshot()
-    .root.presentationOpaqueTail.find((o) => o.tag === "p:showPr");
+  return agent.getSnapshot().root.presentationOpaqueTail.find((o) => o.tag === "p:showPr");
 }
 
 describe("pptx:set-show-options", () => {
@@ -98,9 +96,7 @@ describe("pptx:set-show-options", () => {
 
     const bytes = await agent.exportFile();
     const reopened = await PptxAgent.fromBuffer(bytes);
-    const showPr = reopened
-      .getSnapshot()
-      .root.presentationOpaqueTail.find((o) => o.tag === "p:showPr");
+    const showPr = reopened.getSnapshot().root.presentationOpaqueTail.find((o) => o.tag === "p:showPr");
     expect(showPr).toBeDefined();
     expect(showPr?.attrs.loop).toBe("1");
     expect(showPr?.attrs.useTimings).toBeUndefined();

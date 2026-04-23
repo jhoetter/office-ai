@@ -285,9 +285,9 @@ interface SolidSectionProps {
 function SolidSection({ value, onChange, testId }: SolidSectionProps): React.ReactNode {
   const color = value?.color?.toLowerCase() ?? "ffffff";
   const alpha = value?.alpha ?? 1;
-  const setColor = (hex: string) => onChange({ type: "solid", color: hex, alpha: alpha < 1 ? alpha : undefined });
-  const setAlpha = (a: number) =>
-    onChange({ type: "solid", color, alpha: a >= 1 ? undefined : a });
+  const setColor = (hex: string) =>
+    onChange({ type: "solid", color: hex, alpha: alpha < 1 ? alpha : undefined });
+  const setAlpha = (a: number) => onChange({ type: "solid", color, alpha: a >= 1 ? undefined : a });
   return (
     <div className="flex flex-col gap-2">
       <SwatchRow label="Theme Colors" swatches={THEME_SWATCHES} active={color} onPick={setColor} />

@@ -47,10 +47,7 @@ export function SelectionPane(props: SelectionPaneProps): ReactNode {
 
   if (items.length === 0) {
     return (
-      <div
-        className="px-3 py-2 text-xs text-tertiary"
-        data-testid={`${testIdPrefix}-empty`}
-      >
+      <div className="px-3 py-2 text-xs text-tertiary" data-testid={`${testIdPrefix}-empty`}>
         {emptyMessage}
       </div>
     );

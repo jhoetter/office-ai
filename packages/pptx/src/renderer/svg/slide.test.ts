@@ -446,9 +446,7 @@ describe("slideToSvgString", () => {
       spPrTail: [],
       txBody: {
         bodyPrRaw: undefined,
-        paragraphs: [
-          { properties: {}, runs: [{ text: "x", isLineBreak: false, properties: {} }] },
-        ],
+        paragraphs: [{ properties: {}, runs: [{ text: "x", isLineBreak: false, properties: {} }] }],
       },
     } as unknown as TextShape;
     const svg = shapeToSvg(shape, {
@@ -461,10 +459,10 @@ describe("slideToSvgString", () => {
     expect(svg).toMatch(/<g class="anim-target" data-cnvprid="99" style="visibility:hidden;opacity:0">/);
     // Sibling shapes that aren't entrance targets still render with
     // the bare wrapper — no inline style.
-    const otherSvg = shapeToSvg(
-      { ...shape, cNvPrId: 100 } as unknown as TextShape,
-      { slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 }, hiddenCNvPrIds: new Set([99]) }
-    );
+    const otherSvg = shapeToSvg({ ...shape, cNvPrId: 100 } as unknown as TextShape, {
+      slideSize: { cxEmu: 9_144_000, cyEmu: 6_858_000 },
+      hiddenCNvPrIds: new Set([99]),
+    });
     expect(otherSvg).toMatch(/<g class="anim-target" data-cnvprid="100">/);
   });
 

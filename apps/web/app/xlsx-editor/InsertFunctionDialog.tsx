@@ -84,7 +84,12 @@ const CATALOGUE: ReadonlyArray<FunctionEntry> = [
     ],
   },
   { name: "ABS", category: "Math & Trig", summary: "Absolute value.", args: [ARG_NUMBER] },
-  { name: "INT", category: "Math & Trig", summary: "Rounds down to the nearest integer.", args: [ARG_NUMBER] },
+  {
+    name: "INT",
+    category: "Math & Trig",
+    summary: "Rounds down to the nearest integer.",
+    args: [ARG_NUMBER],
+  },
   {
     name: "MOD",
     category: "Math & Trig",
@@ -147,14 +152,19 @@ const CATALOGUE: ReadonlyArray<FunctionEntry> = [
     ],
   },
   { name: "MEDIAN", category: "Statistical", summary: "Returns the median value.", args: [ARG_RANGE] },
-  { name: "STDEV", category: "Statistical", summary: "Estimates standard deviation (sample).", args: [ARG_RANGE] },
+  {
+    name: "STDEV",
+    category: "Statistical",
+    summary: "Estimates standard deviation (sample).",
+    args: [ARG_RANGE],
+  },
   // Logical
   {
     name: "IF",
     category: "Logical",
     summary: "Conditional value.",
     args: [
-      { name: "logical_test", kind: "value", hint: 'e.g. A1>0' },
+      { name: "logical_test", kind: "value", hint: "e.g. A1>0" },
       { name: "value_if_true", kind: "value" },
       { name: "value_if_false", kind: "value", optional: true },
     ],
@@ -162,7 +172,12 @@ const CATALOGUE: ReadonlyArray<FunctionEntry> = [
   { name: "IFS", category: "Logical", summary: "Multiple conditions, returns first true value." },
   { name: "AND", category: "Logical", summary: "TRUE iff all arguments are TRUE." },
   { name: "OR", category: "Logical", summary: "TRUE iff at least one argument is TRUE." },
-  { name: "NOT", category: "Logical", summary: "Logical negation.", args: [{ name: "logical", kind: "value" }] },
+  {
+    name: "NOT",
+    category: "Logical",
+    summary: "Logical negation.",
+    args: [{ name: "logical", kind: "value" }],
+  },
   {
     name: "IFERROR",
     category: "Logical",
@@ -226,7 +241,12 @@ const CATALOGUE: ReadonlyArray<FunctionEntry> = [
       { name: "if_not_found", kind: "value", optional: true },
     ],
   },
-  { name: "INDIRECT", category: "Lookup", summary: "Resolves a text reference into a range.", args: [ARG_TEXT] },
+  {
+    name: "INDIRECT",
+    category: "Lookup",
+    summary: "Resolves a text reference into a range.",
+    args: [ARG_TEXT],
+  },
   // Text
   { name: "CONCAT", category: "Text", summary: "Concatenates strings." },
   {
@@ -295,9 +315,24 @@ const CATALOGUE: ReadonlyArray<FunctionEntry> = [
       { name: "day", kind: "value" },
     ],
   },
-  { name: "YEAR", category: "Date & Time", summary: "Returns the year of a date.", args: [{ name: "date", kind: "value" }] },
-  { name: "MONTH", category: "Date & Time", summary: "Returns the month of a date.", args: [{ name: "date", kind: "value" }] },
-  { name: "DAY", category: "Date & Time", summary: "Returns the day of a date.", args: [{ name: "date", kind: "value" }] },
+  {
+    name: "YEAR",
+    category: "Date & Time",
+    summary: "Returns the year of a date.",
+    args: [{ name: "date", kind: "value" }],
+  },
+  {
+    name: "MONTH",
+    category: "Date & Time",
+    summary: "Returns the month of a date.",
+    args: [{ name: "date", kind: "value" }],
+  },
+  {
+    name: "DAY",
+    category: "Date & Time",
+    summary: "Returns the day of a date.",
+    args: [{ name: "date", kind: "value" }],
+  },
   {
     name: "WEEKDAY",
     category: "Date & Time",
@@ -436,9 +471,7 @@ export function InsertFunctionDialog(props: InsertFunctionDialogProps): ReactNod
             {step === "args" && chosen ? (
               <span className="text-xs text-secondary font-mono">{chosen.name}</span>
             ) : null}
-            {targetCellLabel ? (
-              <span className="text-[11px] text-tertiary">→ {targetCellLabel}</span>
-            ) : null}
+            {targetCellLabel ? <span className="text-[11px] text-tertiary">→ {targetCellLabel}</span> : null}
           </div>
           <button
             type="button"
@@ -450,73 +483,71 @@ export function InsertFunctionDialog(props: InsertFunctionDialogProps): ReactNod
           </button>
         </header>
         {step === "pick" ? (
-        <div className="flex flex-col gap-3 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search
-                size={12}
-                className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary"
-              />
-              <input
-                ref={inputRef}
-                value={query}
+          <div className="flex flex-col gap-3 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  size={12}
+                  className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary"
+                />
+                <input
+                  ref={inputRef}
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.currentTarget.value);
+                    setActiveIdx(0);
+                  }}
+                  onKeyDown={onKeyDown}
+                  placeholder="Search a function (e.g. VLOOKUP)…"
+                  className="h-7 w-full rounded-md border border-divider bg-background pl-6 pr-2 text-sm focus:border-[var(--accent)] focus:outline-none"
+                  data-testid="xlsx-fx-search"
+                  aria-label="Search functions"
+                />
+              </div>
+              <select
+                value={category}
                 onChange={(e) => {
-                  setQuery(e.currentTarget.value);
+                  setCategory(e.currentTarget.value);
                   setActiveIdx(0);
                 }}
-                onKeyDown={onKeyDown}
-                placeholder="Search a function (e.g. VLOOKUP)…"
-                className="h-7 w-full rounded-md border border-divider bg-background pl-6 pr-2 text-sm focus:border-[var(--accent)] focus:outline-none"
-                data-testid="xlsx-fx-search"
-                aria-label="Search functions"
-              />
+                className="h-7 rounded-md border border-divider bg-background px-2 text-sm focus:border-[var(--accent)] focus:outline-none"
+                data-testid="xlsx-fx-category"
+                aria-label="Function category"
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
-            <select
-              value={category}
-              onChange={(e) => {
-                setCategory(e.currentTarget.value);
-                setActiveIdx(0);
-              }}
-              className="h-7 rounded-md border border-divider bg-background px-2 text-sm focus:border-[var(--accent)] focus:outline-none"
-              data-testid="xlsx-fx-category"
-              aria-label="Function category"
+            <ul
+              className="max-h-72 min-h-32 overflow-auto rounded border border-divider bg-background"
+              data-testid="xlsx-fx-list"
             >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              {filtered.length === 0 ? (
+                <li className="px-3 py-4 text-center text-sm text-tertiary">No matches.</li>
+              ) : (
+                filtered.map((entry, i) => (
+                  <li
+                    key={entry.name}
+                    className={`flex cursor-pointer items-baseline justify-between gap-3 px-3 py-1.5 text-sm hover:bg-hover ${
+                      i === activeIdx ? "bg-hover" : ""
+                    }`}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    onClick={() => choose(entry)}
+                    data-testid={`xlsx-fx-row-${entry.name}`}
+                  >
+                    <span className="font-mono text-foreground">{entry.name}</span>
+                    <span className="truncate text-xs text-secondary">{entry.summary}</span>
+                  </li>
+                ))
+              )}
+            </ul>
           </div>
-          <ul
-            className="max-h-72 min-h-32 overflow-auto rounded border border-divider bg-background"
-            data-testid="xlsx-fx-list"
-          >
-            {filtered.length === 0 ? (
-              <li className="px-3 py-4 text-center text-sm text-tertiary">No matches.</li>
-            ) : (
-              filtered.map((entry, i) => (
-                <li
-                  key={entry.name}
-                  className={`flex cursor-pointer items-baseline justify-between gap-3 px-3 py-1.5 text-sm hover:bg-hover ${
-                    i === activeIdx ? "bg-hover" : ""
-                  }`}
-                  onMouseEnter={() => setActiveIdx(i)}
-                  onClick={() => choose(entry)}
-                  data-testid={`xlsx-fx-row-${entry.name}`}
-                >
-                  <span className="font-mono text-foreground">{entry.name}</span>
-                  <span className="truncate text-xs text-secondary">{entry.summary}</span>
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
         ) : (
           <div className="flex flex-col gap-3 px-5 py-4" data-testid="xlsx-fx-args">
-            {chosen ? (
-              <p className="text-xs text-secondary">{chosen.summary}</p>
-            ) : null}
+            {chosen ? <p className="text-xs text-secondary">{chosen.summary}</p> : null}
             {(chosen?.args ?? []).map((spec, i) => (
               <label key={`${spec.name}-${i}`} className="flex flex-col gap-1 text-xs">
                 <span className="flex items-baseline gap-2">
@@ -547,9 +578,11 @@ export function InsertFunctionDialog(props: InsertFunctionDialogProps): ReactNod
               </label>
             ))}
             {chosen ? (
-              <p className="rounded border border-dashed border-divider bg-background px-2 py-1 font-mono text-[11px] text-secondary" data-testid="xlsx-fx-preview">
-                =
-                {chosen.name}(
+              <p
+                className="rounded border border-dashed border-divider bg-background px-2 py-1 font-mono text-[11px] text-secondary"
+                data-testid="xlsx-fx-preview"
+              >
+                ={chosen.name}(
                 {(chosen.args ?? [])
                   .map((spec, i) => {
                     const raw = (argValues[i] ?? "").trim();

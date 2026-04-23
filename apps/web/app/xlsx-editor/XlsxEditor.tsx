@@ -90,19 +90,12 @@ import { DataValidationDialog } from "./DataValidationDialog";
 import { NameBox } from "./NameBox";
 import { NameManagerDialog } from "./NameManagerDialog";
 import { ChartDialog, InsertChartDialog } from "./InsertChartDialog";
-import {
-  PageSetupDialog,
-  type PageSetupSubmit,
-  type PageSetupTab,
-} from "./PageSetupDialog";
+import { PageSetupDialog, type PageSetupSubmit, type PageSetupTab } from "./PageSetupDialog";
 import { ZoomDialog } from "./ZoomDialog";
 import { SheetViewDialog } from "./SheetViewDialog";
 import { InsertFunctionDialog } from "./InsertFunctionDialog";
 import { ProtectSheetDialog, type ProtectSheetValues } from "./ProtectSheetDialog";
-import {
-  RemoveDuplicatesDialog,
-  type RemoveDuplicatesValues,
-} from "./RemoveDuplicatesDialog";
+import { RemoveDuplicatesDialog, type RemoveDuplicatesValues } from "./RemoveDuplicatesDialog";
 import { ProtectWorkbookDialog, type ProtectWorkbookValues } from "./ProtectWorkbookDialog";
 import { InsertPivotTableDialog, type PivotDialogSubmit } from "./InsertPivotTableDialog";
 import type { ChartKind, ConditionalFormat, DataValidation, DefinedName } from "@officeai/xlsx";
@@ -327,8 +320,7 @@ function readCalcState(snapshot: XlsxSnapshot | null): CalcState {
   if (!xml) return { mode: "auto", calcOnSave: true };
   const m = xml.match(/\bcalcMode\s*=\s*"([^"]*)"/);
   const modeStr = m?.[1];
-  const mode: CalcState["mode"] =
-    modeStr === "manual" || modeStr === "autoNoTable" ? modeStr : "auto";
+  const mode: CalcState["mode"] = modeStr === "manual" || modeStr === "autoNoTable" ? modeStr : "auto";
   const calcOnSaveAttr = xml.match(/\bcalcOnSave\s*=\s*"([^"]*)"/);
   const calcOnSave = calcOnSaveAttr ? calcOnSaveAttr[1] !== "0" && calcOnSaveAttr[1] !== "false" : true;
   return { mode, calcOnSave };
@@ -361,9 +353,7 @@ function readSheetViewState(sheet: Sheet | null): SheetViewState {
   };
   const viewAttr = tag.match(/\bview\s*=\s*"([^"]*)"/);
   const view: SheetViewState["view"] =
-    viewAttr?.[1] === "pageBreakPreview" || viewAttr?.[1] === "pageLayout"
-      ? viewAttr[1]
-      : "normal";
+    viewAttr?.[1] === "pageBreakPreview" || viewAttr?.[1] === "pageLayout" ? viewAttr[1] : "normal";
   return {
     view,
     showGridLines: truthy("showGridLines", true),
@@ -2392,10 +2382,7 @@ function XlsxEditorInner({
   // writes the result one cell below the bottom row. The helper below
   // mirrors that heuristic; ranges land in A1 form.
   const detectAutoSumTarget = useCallback(
-    (
-      sheet: Sheet,
-      sel: Selection
-    ): { writeRef: string; range: string } | null => {
+    (sheet: Sheet, sel: Selection): { writeRef: string; range: string } | null => {
       const isCellNumeric = (r: number, c: number): boolean => {
         const cell = sheet.cells.get(cellKey(r, c));
         return typeof cell?.value === "number";
@@ -2470,12 +2457,7 @@ function XlsxEditorInner({
 
   const onQuickNumberFormat = useCallback(
     (preset: "percent" | "currency-usd" | "comma") => {
-      const code =
-        preset === "percent"
-          ? "0.00%"
-          : preset === "currency-usd"
-            ? '"$"#,##0.00'
-            : "#,##0.00";
+      const code = preset === "percent" ? "0.00%" : preset === "currency-usd" ? '"$"#,##0.00' : "#,##0.00";
       onApplyFormat({ numberFormat: code });
     },
     [onApplyFormat]
@@ -2526,11 +2508,7 @@ function XlsxEditorInner({
    * active sheet. We don't require headers — the dialog has its own
    * "My data has headers" toggle.
    */
-  const canRemoveDuplicates = !!(
-    activeSheet &&
-    selection &&
-    !isSingle(selection)
-  );
+  const canRemoveDuplicates = !!(activeSheet && selection && !isSingle(selection));
   const onOpenRemoveDuplicates = useCallback(() => {
     if (!canRemoveDuplicates) return;
     setRemoveDuplicatesOpen(true);
@@ -2654,7 +2632,10 @@ function XlsxEditorInner({
   // 9b sort buttons) can still dispatch through the same plumbing.
   useEffect(() => {
     dispatchOrToastRef.current = (type, payload) => {
-      void dispatchOrToast(type as Parameters<typeof dispatchOrToast>[0], payload as Parameters<typeof dispatchOrToast>[1]);
+      void dispatchOrToast(
+        type as Parameters<typeof dispatchOrToast>[0],
+        payload as Parameters<typeof dispatchOrToast>[1]
+      );
     };
   }, [dispatchOrToast]);
 
@@ -2760,9 +2741,7 @@ function XlsxEditorInner({
       const existing = snapshot?.root.definedNames.find(
         (n) => n.name === "_xlnm.Print_Area" && n.scope === activeSheet.name
       );
-      const existingClean = existing
-        ? stripSheetPrefixUtil(existing.refersTo, activeSheet.name)
-        : "";
+      const existingClean = existing ? stripSheetPrefixUtil(existing.refersTo, activeSheet.name) : "";
       const merged = existingClean ? `${existingClean},${newRange}` : newRange;
       void dispatchAny("xlsx:set-print-area", { sheet: activeSheet.name, range: merged });
     },
@@ -2835,7 +2814,11 @@ function XlsxEditorInner({
       const sheet = activeSheet.name;
       if (submit.setup) {
         const s = submit.setup;
-        const payload: Record<string, unknown> = { sheet, orientation: s.orientation, paperSize: s.paperSize };
+        const payload: Record<string, unknown> = {
+          sheet,
+          orientation: s.orientation,
+          paperSize: s.paperSize,
+        };
         if (s.fitToWidth !== null || s.fitToHeight !== null) {
           payload.fitToWidth = s.fitToWidth ?? 1;
           payload.fitToHeight = s.fitToHeight ?? 1;
@@ -4930,9 +4913,7 @@ function XlsxEditorInner({
                 <RemoveDuplicatesDialog
                   open={removeDuplicatesOpen}
                   sheetName={activeSheet?.name ?? null}
-                  rangeRef={
-                    selection && activeSheet ? formatSelection(selection) : null
-                  }
+                  rangeRef={selection && activeSheet ? formatSelection(selection) : null}
                   headerLabels={(() => {
                     if (!activeSheet || !selection) return [];
                     const n = normalizeSelection(selection);

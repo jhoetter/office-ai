@@ -103,9 +103,7 @@ export function shapeToSvg(shape: Shape, ctx: SvgRenderCtx): string {
   // collisions with arbitrary user-defined ids inside shape bodies.
   // `class="anim-target"` lets the playback CSS reset transforms
   // cleanly when an animation finishes.
-  const hidden = ctx.hiddenCNvPrIds?.has(shape.cNvPrId)
-    ? ` style="visibility:hidden;opacity:0"`
-    : "";
+  const hidden = ctx.hiddenCNvPrIds?.has(shape.cNvPrId) ? ` style="visibility:hidden;opacity:0"` : "";
   return `<g class="anim-target" data-cnvprid="${shape.cNvPrId}"${hidden}>${rotated}</g>`;
 }
 
@@ -843,9 +841,7 @@ function renderWrappedTextHtml(
         ? "flex-end"
         : "flex-start";
 
-  const paragraphs = shape.txBody.paragraphs
-    .map((p) => paragraphToHtml(p, theme, phDefaults))
-    .join("");
+  const paragraphs = shape.txBody.paragraphs.map((p) => paragraphToHtml(p, theme, phDefaults)).join("");
 
   // foreignObject sits inside an SVG that's itself inside a `<g>` with
   // the shape's `translate(x y)` already applied — so we anchor at

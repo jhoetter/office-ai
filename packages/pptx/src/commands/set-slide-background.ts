@@ -1,10 +1,6 @@
 import type { CommandHandler } from "@officeai/core";
 import type { PptxSnapshot, Slide } from "../model/types.js";
-import {
-  normaliseFillSpec,
-  spliceSlideBackground,
-  type FillSpec,
-} from "../model/fill.js";
+import { normaliseFillSpec, spliceSlideBackground, type FillSpec } from "../model/fill.js";
 import { buildDiff, evolveSnapshot, findSlide, makeError } from "./helpers.js";
 import type { SetSlideBackgroundPayload } from "./payloads.js";
 

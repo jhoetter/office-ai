@@ -94,10 +94,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
   // `show="0"` on `<p:sld>` is the OOXML "Hide Slide" flag (set by
   // `pptx:set-slide-hidden`). Any other value (or absent) means the
   // slide is shown.
-  const slides = React.useMemo(
-    () => allSlides.filter((s) => s.slideRootAttrs?.show !== "0"),
-    [allSlides],
-  );
+  const slides = React.useMemo(() => allSlides.filter((s) => s.slideRootAttrs?.show !== "0"), [allSlides]);
   const hiddenCount = allSlides.length - slides.length;
   // F-9a: honor `<p:showPr>` slide-show options (PowerPoint Slide
   // Show → Set Up Show). `loop` wraps next() past the last slide;
@@ -146,7 +143,9 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
   React.useEffect(() => {
     if (showOptions.useTimings) {
       // eslint-disable-next-line no-console
-      console.info("[PresentMode] useTimings=1 requested — auto-advance not yet implemented; manual advance only.");
+      console.info(
+        "[PresentMode] useTimings=1 requested — auto-advance not yet implemented; manual advance only."
+      );
     }
   }, [showOptions.useTimings]);
 
@@ -451,11 +450,7 @@ export function PresentMode(props: PresentModeProps): React.ReactElement {
             icon={isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           />
           <PresentBarButton
-            label={
-              showOptions.showType === "kiosk"
-                ? "Exit kiosk mode (hold 5s)"
-                : "Exit present mode (Esc)"
-            }
+            label={showOptions.showType === "kiosk" ? "Exit kiosk mode (hold 5s)" : "Exit present mode (Esc)"}
             onClick={showOptions.showType === "kiosk" ? () => undefined : performClose}
             icon={<X size={14} />}
             testId="pptx-present-close"

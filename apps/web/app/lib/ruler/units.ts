@@ -33,8 +33,7 @@ export function rulerUnitForLocale(locale?: string): RulerUnitInfo {
 }
 
 export function isMetricLocale(locale?: string): boolean {
-  const raw =
-    locale ?? (typeof navigator !== "undefined" ? navigator.language : "en-US") ?? "en-US";
+  const raw = locale ?? (typeof navigator !== "undefined" ? navigator.language : "en-US") ?? "en-US";
   const lang = raw.toLowerCase();
   if (lang.startsWith("en-us")) return false;
   if (lang.startsWith("en-gb")) return false;

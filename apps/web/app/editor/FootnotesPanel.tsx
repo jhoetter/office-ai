@@ -42,20 +42,14 @@ export function FootnotesPanel(props: FootnotesPanelProps): ReactNode {
 
   if (footnotes.length === 0) {
     return (
-      <div
-        className="p-4 text-sm text-secondary"
-        data-testid="footnotes-panel-empty"
-      >
+      <div className="p-4 text-sm text-secondary" data-testid="footnotes-panel-empty">
         No footnotes yet. Insert one via References → Footnote.
       </div>
     );
   }
 
   return (
-    <ul
-      className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2"
-      data-testid="footnotes-panel"
-    >
+    <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2" data-testid="footnotes-panel">
       {footnotes.map((fn) => (
         <FootnoteRow
           key={fn.id}
@@ -132,7 +126,7 @@ function FootnoteRow({
     // Footnote deletion also strips every in-text reference; that's a
     // structural change, so we confirm even though there's an undo.
     const ok = window.confirm(
-      `Delete footnote ${footnote.id}? Every reference in the body will be removed too.`,
+      `Delete footnote ${footnote.id}? Every reference in the body will be removed too.`
     );
     if (!ok) return;
     await agent.applyCommand({
@@ -143,10 +137,7 @@ function FootnoteRow({
   };
 
   return (
-    <li
-      className="rounded border border-divider bg-surface p-2"
-      data-testid={`footnote-row-${footnote.id}`}
-    >
+    <li className="rounded border border-divider bg-surface p-2" data-testid={`footnote-row-${footnote.id}`}>
       <div className="flex items-start gap-2">
         <button
           type="button"
@@ -155,7 +146,7 @@ function FootnoteRow({
           title="Scroll to reference"
           className={cn(
             "shrink-0 rounded bg-hover px-1.5 py-0.5 text-[11px] font-semibold text-foreground hover:bg-divider",
-            !onScrollToReference && "cursor-default opacity-60 hover:bg-hover",
+            !onScrollToReference && "cursor-default opacity-60 hover:bg-hover"
           )}
           data-testid={`footnote-jump-${footnote.id}`}
         >
@@ -305,9 +296,7 @@ function plainTextToBlocks(text: string): import("@officeai/docx").BlockNode[] {
         kind: "run",
         id: "" as never,
         properties: {},
-        children: [
-          { kind: "text", id: "" as never, text: line, xmlSpacePreserve: line.length === 0 },
-        ],
+        children: [{ kind: "text", id: "" as never, text: line, xmlSpacePreserve: line.length === 0 }],
       },
     ],
   })) as unknown as import("@officeai/docx").BlockNode[];

@@ -33,7 +33,7 @@ export const setPageSetupHandler: CommandHandler<SetPageSetupPayload, XlsxSnapsh
     ) {
       throw new CommandError(
         "invalid-payload",
-        `set-page-setup: scale must be 10–400 (got ${payload.scale}).`,
+        `set-page-setup: scale must be 10–400 (got ${payload.scale}).`
       );
     }
 
@@ -53,7 +53,7 @@ function commit(
   snapshot: XlsxSnapshot,
   before: Sheet,
   after: Sheet,
-  summary: string,
+  summary: string
 ): { next: XlsxSnapshot; diff: ReturnType<typeof buildDiff> } {
   const root = replaceSheet(snapshot.root, after);
   const evolved = evolveSnapshot(snapshot, root, { sheets: [before.partPath] });
@@ -91,7 +91,8 @@ function applyPatch(attrs: Map<string, string>, p: SetPageSetupPayload): void {
   if (p.fitToHeight !== undefined) attrs.set("fitToHeight", String(Math.max(0, Math.floor(p.fitToHeight))));
   if (p.firstPageNumber !== undefined) attrs.set("firstPageNumber", String(Math.floor(p.firstPageNumber)));
   if (p.useFirstPageNumber !== undefined) attrs.set("useFirstPageNumber", p.useFirstPageNumber ? "1" : "0");
-  if (p.horizontalDpi !== undefined) attrs.set("horizontalDpi", String(Math.max(0, Math.floor(p.horizontalDpi))));
+  if (p.horizontalDpi !== undefined)
+    attrs.set("horizontalDpi", String(Math.max(0, Math.floor(p.horizontalDpi))));
   if (p.verticalDpi !== undefined) attrs.set("verticalDpi", String(Math.max(0, Math.floor(p.verticalDpi))));
   if (p.blackAndWhite !== undefined) attrs.set("blackAndWhite", p.blackAndWhite ? "1" : "0");
   if (p.draft !== undefined) attrs.set("draft", p.draft ? "1" : "0");
@@ -111,11 +112,7 @@ function buildElement(attrs: Map<string, string>): string {
 }
 
 function escapeXmlAttr(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function summarise(p: SetPageSetupPayload): string {

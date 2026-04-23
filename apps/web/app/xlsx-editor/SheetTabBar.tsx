@@ -357,9 +357,7 @@ function buildItems(
       id: "tab-color",
       render: (close) => (
         <div className="px-3 py-1.5">
-          <div className="mb-1 text-[10px] uppercase tracking-wide text-secondary">
-            Tab color
-          </div>
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-secondary">Tab color</div>
           <div className="flex flex-wrap items-center gap-1">
             {TAB_COLOR_SWATCHES.map((s) => {
               const isCurrent = currentColor?.toUpperCase() === s.argb.toUpperCase();

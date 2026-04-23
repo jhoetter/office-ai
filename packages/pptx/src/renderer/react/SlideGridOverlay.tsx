@@ -60,14 +60,7 @@ export function SlideGridOverlay(props: SlideGridOverlayProps): React.ReactEleme
   return (
     <g data-testid="pptx-grid-overlay" pointerEvents="none">
       <defs>
-        <pattern
-          id={MINOR_PATTERN_ID}
-          x={0}
-          y={0}
-          width={minor}
-          height={minor}
-          patternUnits="userSpaceOnUse"
-        >
+        <pattern id={MINOR_PATTERN_ID} x={0} y={0} width={minor} height={minor} patternUnits="userSpaceOnUse">
           <path
             d={`M ${minor} 0 L 0 0 0 ${minor}`}
             fill="none"
@@ -76,14 +69,7 @@ export function SlideGridOverlay(props: SlideGridOverlayProps): React.ReactEleme
             opacity={0.18}
           />
         </pattern>
-        <pattern
-          id={MAJOR_PATTERN_ID}
-          x={0}
-          y={0}
-          width={major}
-          height={major}
-          patternUnits="userSpaceOnUse"
-        >
+        <pattern id={MAJOR_PATTERN_ID} x={0} y={0} width={major} height={major} patternUnits="userSpaceOnUse">
           <rect width={major} height={major} fill={`url(#${MINOR_PATTERN_ID})`} />
           <path
             d={`M ${major} 0 L 0 0 0 ${major}`}
