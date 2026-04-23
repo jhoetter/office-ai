@@ -228,24 +228,20 @@ export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement
     }
   }, [animations, editingId]);
 
-  if (!slide || !animations) {
-    return <EmptyState message={t("pptx.animations.noSlide")} />;
-  }
-  const transition = slide.transition;
-  const selectedShapeName = props.selectedShape?.name ?? null;
-  const canAnimateSelected = canAnimate(props.selectedShape);
-
   // Animation Painter wiring. The buffer captures every animation
   // currently targeting the selected shape (reading from the live
   // animation list rather than a separate copy so we always paint
   // the latest state, not a stale snapshot from when Copy was
   // pressed but before the user tweaked direction/duration).
+  // Hooks below MUST run unconditionally before any early return,
+  // hence the `?? []` fallback when animations is undefined.
   const selectedCNvPrId =
     props.selectedShape && "cNvPrId" in props.selectedShape
       ? (props.selectedShape as { cNvPrId: number }).cNvPrId
       : null;
   const selectedShapeAnimations = React.useMemo(
-    () => (selectedCNvPrId === null ? [] : animations.filter((a) => a.targetCNvPrId === selectedCNvPrId)),
+    () =>
+      selectedCNvPrId === null ? [] : (animations ?? []).filter((a) => a.targetCNvPrId === selectedCNvPrId),
     [animations, selectedCNvPrId]
   );
   const onCopyPainter = React.useCallback((): void => {
@@ -276,6 +272,13 @@ export function AnimationsPanel(props: AnimationsPanelProps): React.ReactElement
       });
     }
   }, [painterBuffer, painterSourceCNvPrId, selectedCNvPrId, props]);
+
+  if (!slide || !animations) {
+    return <EmptyState message={t("pptx.animations.noSlide")} />;
+  }
+  const transition = slide.transition;
+  const selectedShapeName = props.selectedShape?.name ?? null;
+  const canAnimateSelected = canAnimate(props.selectedShape);
   const canCopyPainter = !props.disabled && selectedCNvPrId !== null && selectedShapeAnimations.length > 0;
   const canPastePainter =
     !props.disabled &&

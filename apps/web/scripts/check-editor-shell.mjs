@@ -30,9 +30,29 @@ const EDITOR_DIRS_FOR_COLOR_CHECK = [
 ];
 
 // Hex literals we tolerate inside editor TSX files. Add sparingly and
-// document why each entry is necessary.
+// document why each entry is necessary. Comparison is lower-case, so
+// every entry below MUST be lower-case too.
 const HEX_ALLOWLIST = new Set([
-  // No entries — everything must come from @officeai/design-tokens.
+  // DOCX theme picker palette in app/editor/DocxEditor.tsx —
+  // these are *document content* fill/accent values that the user
+  // applies to the rendered DOCX, not UI chrome. Putting them in
+  // design-tokens would imply they round-trip through our theme
+  // system, which they explicitly don't.
+  "#ffffff",
+  "#1f4e79",
+  "#f4f6f8",
+  "#334155",
+  "#fff8f0",
+  "#9a3412",
+  "#f1f8f2",
+  "#166534",
+  // Transparency-indicator checker pattern in app/pptx-editor/
+  // FillPicker.tsx — neutral grey checkerboard rendered inline as
+  // SVG to flag alpha. No semantic colour exists for "this slot is
+  // transparent".
+  "#fff",
+  "#ddd",
+  "#dddddd",
 ]);
 
 const errors = [];
