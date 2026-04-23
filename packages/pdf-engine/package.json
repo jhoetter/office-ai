@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pdf-engine",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Engine-agnostic PDF rendering + read API. Default backend: PDF.js (Apache 2.0). Optional fidelity fallback: PDFium-WASM (BSD-3-Clause via @embedpdf/pdfium), lazy-loaded behind the same interface.",
   "type": "module",
   "main": "./dist/index.js",

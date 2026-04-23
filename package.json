@@ -1,6 +1,6 @@
 {
   "name": "office-ai",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "office-ai — AI-native, browser-embeddable editors for DOCX, XLSX and PPTX",
   "scripts": {
