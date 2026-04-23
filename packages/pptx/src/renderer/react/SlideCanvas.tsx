@@ -1731,7 +1731,7 @@ function renderPortHoverOverlay(
   );
 }
 
-function slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
+function _slideBackgroundFillAttr(slide: Slide, theme: typeof DEFAULT_THEME): string {
   const bg = resolveSlideBackgroundColor(slide.cSldHead, theme);
   return bg ? `#${bg}` : "white";
 }

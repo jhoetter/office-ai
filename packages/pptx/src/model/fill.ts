@@ -384,7 +384,7 @@ function readAlphaFromChildren(subtree: unknown): number | undefined {
 }
 
 function readGradFill(subtree: ReadonlyArray<unknown>): GradientFillSpec | null {
-  let stops: GradientStop[] = [];
+  const stops: GradientStop[] = [];
   let kind: GradientKind = "linear";
   let angleDeg = 0;
   for (const inner of subtree) {
