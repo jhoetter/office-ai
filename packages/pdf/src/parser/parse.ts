@@ -59,6 +59,18 @@ export const parsePdf = async (
 
   const forceEngine: PdfEngineKind | undefined = opts.forceEngine ?? selectEngineFromHints(opts.hints);
 
+  // Hash the buffer up front. `loadDocument` hands `buffer` to the
+  // PDF.js worker via `postMessage(..., [data.buffer])`, which
+  // synchronously transfers — and therefore detaches — the underlying
+  // ArrayBuffer on the main thread. Any later read from the same
+  // Uint8Array view (including the partHash computation below) would
+  // throw "Cannot perform Construct on a detached ArrayBuffer" because
+  // js-sha256 internally constructs a fresh typed-array view over the
+  // input. Computing the hash before the transfer keeps the parser
+  // engine-agnostic — pdfium and any future backends transfer the
+  // buffer too — and avoids paying for a defensive clone of the bytes.
+  const pdfBytesHash = sha256Hex(buffer);
+
   let doc: PdfEngineDocument;
   try {
     doc = await loadDocument(buffer, {
@@ -173,7 +185,7 @@ export const parsePdf = async (
     };
 
     const partHashes: Record<string, string> = {
-      "pdf-bytes": sha256Hex(buffer),
+      "pdf-bytes": pdfBytesHash,
     };
 
     return {
