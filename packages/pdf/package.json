@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pdf",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "PDF editor: in-memory document model, parser (engine-delegated), incremental serializer (pdf-lib), command handlers, headless PdfAgent.",
   "type": "module",
   "main": "./dist/index.js",
