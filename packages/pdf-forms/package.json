@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pdf-forms",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "AcroForm fill, validation, and flatten for PDFs.",
   "type": "module",
   "main": "./dist/index.js",

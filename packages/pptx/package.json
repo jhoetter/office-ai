@@ -1,6 +1,6 @@
 {
   "name": "@officeai/pptx",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "PPTX editor: parser, model, serializer, command handlers, agent API, hybrid SVG/HTML renderer.",
   "type": "module",
   "main": "./dist/index.js",
