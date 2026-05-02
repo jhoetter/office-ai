@@ -1591,10 +1591,6 @@
         "label": "Move slide",
         "description": "Reorder a slide."
       },
-      "set-slide-transition": {
-        "label": "Set slide transition",
-        "description": "Set the entry transition for a slide."
-      },
       "set-slide-size": {
         "label": "Set slide size",
         "description": "Resize the deck. Pass a preset (widescreen / standard / a4 / letter) or 'custom' with explicit cxEmu / cyEmu."

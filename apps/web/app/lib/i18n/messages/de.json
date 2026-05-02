@@ -1591,10 +1591,6 @@
         "label": "Folie verschieben",
         "description": "Sortiert eine Folie um."
       },
-      "set-slide-transition": {
-        "label": "Folienübergang festlegen",
-        "description": "Setzt den Eingangsübergang einer Folie."
-      },
       "set-slide-size": {
         "label": "Foliengröße festlegen",
         "description": "Ändert die Foliengröße. Übergibt einen Voreinstellungs­wert (widescreen / standard / a4 / letter) oder 'custom' mit expliziten cxEmu / cyEmu."
