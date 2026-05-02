@@ -29,8 +29,13 @@ import type {
  */
 
 type PdfjsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+interface ActiveCanvasRender {
+  readonly promise: Promise<unknown>;
+  cancel(): void;
+}
 
 let pdfjsModule: PdfjsModule | null = null;
+const activeCanvasRenders = new WeakMap<HTMLCanvasElement, ActiveCanvasRender>();
 
 const loadPdfjs = async (): Promise<PdfjsModule> => {
   if (pdfjsModule) return pdfjsModule;
@@ -44,6 +49,24 @@ const normalizeRotation = (raw: number): 0 | 90 | 180 | 270 => {
   const r = ((raw % 360) + 360) % 360;
   for (const v of ROTATION_VALUES) if (v === r) return v;
   return 0;
+};
+
+const cancelPreviousCanvasRender = async (canvas: HTMLCanvasElement): Promise<void> => {
+  const active = activeCanvasRenders.get(canvas);
+  if (!active) return;
+  try {
+    active.cancel();
+  } catch {
+    // PDF.js cancellation is best-effort; the promise below settles the task.
+  }
+  try {
+    await active.promise;
+  } catch {
+    // Cancellation rejects the previous render promise.
+  }
+  if (activeCanvasRenders.get(canvas) === active) {
+    activeCanvasRenders.delete(canvas);
+  }
 };
 
 const annotationSubtype = (a: { subtype?: string }): string =>
@@ -234,15 +257,31 @@ const buildPage = async (raw: import("pdfjs-dist").PDFPageProxy): Promise<PdfEng
     const renderViewport = raw.getViewport({ scale, rotation });
     const canvas = renderOpts.canvas;
     if (!canvas) return undefined;
+    await cancelPreviousCanvasRender(canvas as HTMLCanvasElement);
     const ctx = (canvas as HTMLCanvasElement).getContext("2d");
     if (!ctx) throw new Error("pdfjs backend: 2d canvas context unavailable");
     canvas.width = Math.ceil(renderViewport.width);
     canvas.height = Math.ceil(renderViewport.height);
-    await raw.render({
+    const task = raw.render({
       canvasContext: ctx as unknown as CanvasRenderingContext2D,
       viewport: renderViewport,
       canvas: canvas as HTMLCanvasElement,
-    } as unknown as Parameters<typeof raw.render>[0]).promise;
+    } as unknown as Parameters<typeof raw.render>[0]) as {
+      promise: Promise<unknown>;
+      cancel?: () => void;
+    };
+    const active: ActiveCanvasRender = {
+      promise: task.promise,
+      cancel: () => task.cancel?.(),
+    };
+    activeCanvasRenders.set(canvas as HTMLCanvasElement, active);
+    try {
+      await task.promise;
+    } finally {
+      if (activeCanvasRenders.get(canvas as HTMLCanvasElement) === active) {
+        activeCanvasRenders.delete(canvas as HTMLCanvasElement);
+      }
+    }
     return undefined;
   };
 
