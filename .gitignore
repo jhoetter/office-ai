@@ -71,6 +71,8 @@ htmlcov/
 # --- IDE ---
 .vscode/
 .idea/
+.claude/
+.entire/
 *.swp
 *.swo
 *~
