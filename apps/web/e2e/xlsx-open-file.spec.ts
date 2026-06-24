@@ -1,11 +1,13 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { gotoXlsxEditor } from "./_helpers";
+import { fixturePath, requiredMatrixFixture } from "../../../tests/fixture-matrix.js";
 
-// Resolve the fixture relative to the spec's working directory
-// (apps/web). Playwright runs specs from the package root so this is
-// stable across local + CI invocations.
-const FIXTURE = path.resolve(process.cwd(), "../../fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx");
+// Use the shared matrix entry so this smoke follows the same canonical
+// fixture selection as roundtrip and MCP tests.
+const FIXTURE_ENTRY = requiredMatrixFixture("xlsx", { id: "xlsx.synthetic.single-sheet-numbers" });
+const FIXTURE = fixturePath(FIXTURE_ENTRY);
+const FIXTURE_NAME = path.basename(FIXTURE_ENTRY.path);
 
 test.describe("xlsx editor: open .xlsx from disk", () => {
   test("loading a fixture replaces the seeded sample workbook", async ({ page }) => {
@@ -20,7 +22,7 @@ test.describe("xlsx editor: open .xlsx from disk", () => {
     await page.getByTestId("open-xlsx-input").setInputFiles(FIXTURE);
 
     // The header label flips to the uploaded file's name.
-    await expect(page.getByTestId("filename")).toHaveText("01-single-sheet-numbers.xlsx", {
+    await expect(page.getByTestId("filename")).toHaveText(FIXTURE_NAME, {
       timeout: 10_000,
     });
 

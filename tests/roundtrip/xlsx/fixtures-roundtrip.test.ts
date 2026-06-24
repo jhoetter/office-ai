@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ooxml, sha256Hex } from "@officeai/core";
 import { parseXlsx, serializeXlsx } from "@officeai/xlsx";
+import { fixturePath, matrixFixtures } from "../../fixture-matrix.js";
 
 /**
  * End-to-end round-trip test against the synthetic XLSX fixture corpus.
@@ -17,10 +18,20 @@ import { parseXlsx, serializeXlsx } from "@officeai/xlsx";
 
 const FIXTURE_DIR = resolve(__dirname, "../../../fixtures/xlsx/synthetic");
 
-async function listFixtures(): Promise<string[]> {
+async function listFixtures(): Promise<Array<{ name: string; path: string }>> {
+  const fromMatrix = matrixFixtures({
+    format: "xlsx",
+    origin: "synthetic",
+    expectedBehavior: "noop-roundtrip",
+  }).map((fixture) => ({ name: fixture.path.split("/").at(-1) ?? fixture.id, path: fixturePath(fixture) }));
+  if (fromMatrix.length > 0) return fromMatrix;
+
   try {
     const entries = await readdir(FIXTURE_DIR);
-    return entries.filter((f) => f.endsWith(".xlsx")).sort();
+    return entries
+      .filter((f) => f.endsWith(".xlsx"))
+      .sort()
+      .map((name) => ({ name, path: resolve(FIXTURE_DIR, name) }));
   } catch {
     return [];
   }
@@ -36,9 +47,8 @@ describe("XLSX synthetic fixtures roundtrip", async () => {
     return;
   }
 
-  for (const name of fixtures) {
+  for (const { name, path } of fixtures) {
     it(`${name}: untouched parts are byte-identical after parse → serialize`, async () => {
-      const path = resolve(FIXTURE_DIR, name);
       const buf = await readFile(path);
 
       const original = await ooxml.OoxmlContainer.load(buf);
@@ -63,7 +73,6 @@ describe("XLSX synthetic fixtures roundtrip", async () => {
     });
 
     it(`${name}: re-parses after serialize, sheet list is structurally equal`, async () => {
-      const path = resolve(FIXTURE_DIR, name);
       const buf = await readFile(path);
       const original = await parseXlsx(buf);
       const out = await serializeXlsx(original);

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ooxml, sha256Hex } from "@officeai/core";
 import { DocxAgent, parseDocx } from "@officeai/docx";
+import { fixturePath, matrixFixtures } from "../../fixture-matrix.js";
 
 /**
  * End-to-end round-trip test against the synthetic fixture corpus.
@@ -16,10 +17,20 @@ import { DocxAgent, parseDocx } from "@officeai/docx";
 
 const FIXTURE_DIR = resolve(__dirname, "../../../fixtures/docx/synthetic");
 
-async function listFixtures(): Promise<string[]> {
+async function listFixtures(): Promise<Array<{ name: string; path: string }>> {
+  const fromMatrix = matrixFixtures({
+    format: "docx",
+    origin: "synthetic",
+    expectedBehavior: "noop-roundtrip",
+  }).map((fixture) => ({ name: fixture.path.split("/").at(-1) ?? fixture.id, path: fixturePath(fixture) }));
+  if (fromMatrix.length > 0) return fromMatrix;
+
   try {
     const entries = await readdir(FIXTURE_DIR);
-    return entries.filter((f) => f.endsWith(".docx")).sort();
+    return entries
+      .filter((f) => f.endsWith(".docx"))
+      .sort()
+      .map((name) => ({ name, path: resolve(FIXTURE_DIR, name) }));
   } catch {
     return [];
   }
@@ -35,9 +46,8 @@ describe("DOCX synthetic fixtures roundtrip", async () => {
     return;
   }
 
-  for (const name of fixtures) {
+  for (const { name, path } of fixtures) {
     it(`${name}: untouched parts are byte-identical after parse → serialize`, async () => {
-      const path = resolve(FIXTURE_DIR, name);
       const buf = await readFile(path);
 
       const original = await ooxml.OoxmlContainer.load(buf);
@@ -63,7 +73,6 @@ describe("DOCX synthetic fixtures roundtrip", async () => {
     });
 
     it(`${name}: re-parses after agent export`, async () => {
-      const path = resolve(FIXTURE_DIR, name);
       const buf = await readFile(path);
       const agent = await DocxAgent.fromBuffer(buf);
       const out = await agent.exportFile();

@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions \
+.PHONY: help install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions fixtures-check \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -79,6 +79,7 @@ help:
 	@echo "  lint           Lint root + apps/web (== lint-root + lint-web)"
 	@echo "  architecture   Validate package dep graph (separation of concerns)"
 	@echo "  actions        Validate CLI/palette/UI action parity (every bus handler is catalogued)"
+	@echo "  fixtures-check Validate fixtures/MATRIX.json and fixture file coverage"
 	@echo "  typecheck      Typecheck all packages"
 	@echo "  test           Run every test in the workspace (turbo)"
 	@echo "  test-docx      Run only @officeai/docx tests"
@@ -255,6 +256,9 @@ architecture:
 actions:
 	pnpm actions
 
+fixtures-check:
+	pnpm fixtures:check
+
 typecheck:
 	pnpm typecheck
 
@@ -286,11 +290,12 @@ test-web:
 #   3. lint-web      — apps/web lint (Next.js config). Split out so an apps/web
 #                       regression fails in seconds, before the slower steps.
 #   4. actions       — catches CLI/palette parity drift (every bus handler is catalogued)
-#   5. architecture  — catches package-level dep-graph violations
-#   6. typecheck     — catches type-system violations
-#   7. test          — catches behavioural regressions
-#   8. build         — catches build-time/integration issues
-verify: format-check lint-root lint-web actions architecture typecheck test build
+#   5. fixtures-check — catches missing/unindexed real document fixtures
+#   6. architecture   — catches package-level dep-graph violations
+#   7. typecheck      — catches type-system violations
+#   8. test           — catches behavioural regressions
+#   9. build          — catches build-time/integration issues
+verify: format-check lint-root lint-web actions fixtures-check architecture typecheck test build
 	@echo ""
 	@echo "✅ verify: all quality gates passed."
 

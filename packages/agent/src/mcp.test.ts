@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { XlsxAgent } from "@officeai/xlsx";
 import { createMcpServer, __resetMcpSessionsForTests } from "./mcp.js";
+import { fixturePath, requiredMatrixFixture, type FixtureFormat } from "../../../tests/fixture-matrix.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const xlsxFixtures = resolvePath(here, "../../../fixtures/xlsx/synthetic");
@@ -61,6 +62,15 @@ function structured(result: unknown): Record<string, unknown> {
     if (first.text) return JSON.parse(first.text);
   }
   throw new Error("tool result had neither structuredContent nor parseable text");
+}
+
+function matrixPath(format: FixtureFormat): string {
+  return fixturePath(
+    requiredMatrixFixture(format, {
+      complexity: "simple",
+      expectedBehavior: "import",
+    })
+  );
 }
 
 describe("OfficeAI MCP server", () => {
@@ -142,6 +152,34 @@ describe("OfficeAI MCP server", () => {
     for (const expected of handRolled) {
       expect(names.has(expected), `missing hand-rolled tool ${expected}`).toBe(true);
     }
+  });
+
+  it("loads matrix-selected fixtures for every core format", async () => {
+    const client = await makeClient();
+
+    const docx = structured(
+      await client.callTool({ name: "docx_load", arguments: { path: matrixPath("docx") } })
+    );
+    expect(typeof docx.handle).toBe("string");
+    expect((docx.summary as { paragraphs?: number }).paragraphs ?? 0).toBeGreaterThan(0);
+
+    const xlsx = structured(
+      await client.callTool({ name: "xlsx_load", arguments: { path: matrixPath("xlsx") } })
+    );
+    expect(typeof xlsx.handle).toBe("string");
+    expect(((xlsx.summary as { sheets?: unknown[] }).sheets ?? []).length).toBeGreaterThan(0);
+
+    const pptx = structured(
+      await client.callTool({ name: "pptx_load", arguments: { path: matrixPath("pptx") } })
+    );
+    expect(typeof pptx.handle).toBe("string");
+    expect((pptx.summary as { slides?: number }).slides ?? 0).toBeGreaterThan(0);
+
+    const pdf = structured(
+      await client.callTool({ name: "pdf_load", arguments: { path: matrixPath("pdf") } })
+    );
+    expect(typeof pdf.handle).toBe("string");
+    expect((pdf.summary as { pageCount?: number }).pageCount ?? 0).toBeGreaterThan(0);
   });
 
   it("auto-binds catalogue actions that declare args + buildPayload as MCP tools", async () => {

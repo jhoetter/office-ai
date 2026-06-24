@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ooxml, sha256Hex } from "@officeai/core";
 import { PptxAgent, parsePptx, serializePptx } from "@officeai/pptx";
 import type { PptxSnapshot, TextShape } from "@officeai/pptx";
+import { fixturePath, matrixFixtures } from "../../fixture-matrix.js";
 
 /**
  * Real-world fixture roundtrip suite (F1.4).
@@ -33,10 +34,20 @@ import type { PptxSnapshot, TextShape } from "@officeai/pptx";
 const FIXTURE_DIR = resolve(__dirname, "../../../fixtures/pptx/real");
 const PURE_ROUNDTRIP_THRESHOLD = 0.95;
 
-async function listFixtures(): Promise<string[]> {
+async function listFixtures(): Promise<Array<{ name: string; path: string }>> {
+  const fromMatrix = matrixFixtures({
+    format: "pptx",
+    origin: "generated-real-shape",
+    expectedBehavior: "noop-roundtrip",
+  }).map((fixture) => ({ name: fixture.path.split("/").at(-1) ?? fixture.id, path: fixturePath(fixture) }));
+  if (fromMatrix.length > 0) return fromMatrix;
+
   try {
     const entries = await readdir(FIXTURE_DIR);
-    return entries.filter((f) => f.endsWith(".pptx")).sort();
+    return entries
+      .filter((f) => f.endsWith(".pptx"))
+      .sort()
+      .map((name) => ({ name, path: resolve(FIXTURE_DIR, name) }));
   } catch {
     return [];
   }
@@ -60,9 +71,7 @@ describe("PPTX real-world fixtures roundtrip", async () => {
     return;
   }
 
-  for (const name of fixtures) {
-    const path = resolve(FIXTURE_DIR, name);
-
+  for (const { name, path } of fixtures) {
     it(`${name}: pure roundtrip preserves ≥95 % of parts byte-for-byte`, async () => {
       const buf = await readFile(path);
       const original = await ooxml.OoxmlContainer.load(buf);

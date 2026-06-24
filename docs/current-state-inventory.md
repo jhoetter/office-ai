@@ -99,9 +99,10 @@ Gaps against MCP-first:
   `export_document` tool family yet.
 - Handles are process-lifetime IDs and are not durable session/document
   identifiers.
-- Auto-generated MCP mutation tools are derived from `surfaces`
-  containing `cli`; that is an implementation shortcut, not a product
-  contract.
+- Auto-generated MCP mutation tools now require explicit
+  `agentCallable` metadata plus a catalogue-owned command schema; the
+  remaining gap is a canonical session/document envelope around those
+  actions.
 - MCP responses do not yet share one envelope with document ID,
   diagnostics, export history and next-action hints across all formats.
 
@@ -124,12 +125,12 @@ The CLI has two kinds of commands:
 - hand-written commands for reads, custom output formats, apply/diff
   flows and PDF helper operations.
 - generated mutation subcommands from action catalogue entries that
-  expose the `cli` surface and provide `args`/`buildPayload`.
+  set `cliCallable` and provide a catalogue-owned command schema.
 
 Gaps:
 
-- CLI is still structurally important to action generation and MCP
-  auto-binding.
+- CLI remains a compatibility and power-user surface, but it is no
+  longer the metadata source for MCP auto-binding.
 - Some top-level DOCX commands remain as backward-compatible shims.
 - CLI flows are path-first; session-first flows are not the default.
 
@@ -160,10 +161,12 @@ Gaps:
 
 Fixtures:
 
+- Machine-readable fixture matrix: `fixtures/MATRIX.json`, enforced by
+  `pnpm fixtures:check` / `make fixtures-check`.
 - DOCX: 5 synthetic and 11 real-world fixtures.
 - XLSX: 6 synthetic fixtures.
 - PPTX: 11 synthetic and 3 real fixtures.
-- PDF: 11 fixtures covering metadata, text, page size/rotation,
+- PDF: 12 fixtures covering metadata, text, page size/rotation,
   annotations, forms, outline, signatures and larger documents.
 
 Test file inventory:
@@ -183,16 +186,19 @@ Baseline checks run for this inventory:
 
 ```bash
 pnpm actions
+pnpm fixtures:check
 ```
 
-The action parity check passed with zero violations.
+The action parity check passed with zero violations. The fixture matrix
+check passed with 48 indexed fixtures and at least three simple and
+three complex fixtures per core format.
 
 ## Biggest technical risks
 
 1. MCP-first contract is incomplete. Current MCP works, but does not yet
    expose stable sessions/documents as the primary abstraction.
-2. Action metadata conflates CLI and agent reachability. This can create
-   accidental MCP exposure or hide useful agent-only operations.
+2. MCP and web surfaces still need to adopt the shared command lifecycle
+   end-to-end, including pending review and diagnostics.
 3. PDF is not normalized into the same command/review/export lifecycle as
    OOXML formats.
 4. Web editor parity is strong per format but weak at the cross-document
@@ -204,15 +210,14 @@ The action parity check passed with zero violations.
 
 ## Fastest wins
 
-1. Add explicit action metadata:
-   `agentCallable`, `webCallable`, `cliCallable`, `requiresReview`,
-   `supportsDryRun`, `supportsDiff`.
-2. Introduce canonical MCP tools for sessions/documents/projections/export
+1. Introduce canonical MCP tools for sessions/documents/projections/export
    while keeping existing format tools as compatibility wrappers.
-3. Add a local session store under a data-dir and move path-loaded handles
+2. Add a local session store under a data-dir and move path-loaded handles
    behind `import_document`.
-4. Add a web session browser and pending-changes panel backed by the same
+3. Add a web session browser and pending-changes panel backed by the same
    session state.
-5. Normalize PDF diagnostics and export envelopes.
-6. Replace environment-specific docs with generic adapter language and
+4. Normalize PDF diagnostics and export envelopes.
+5. Replace environment-specific docs with generic adapter language and
    move old release notes into historical context.
+6. Add one `doctor` command that reports runtime prereqs for PDF
+   rendering/OCR, LibreOffice roundtrip and Playwright.

@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
-import { readdirSync } from "node:fs";
+import { basename } from "node:path";
 import { expect, test } from "@playwright/test";
 import { gotoEditor } from "./_helpers";
+import { fixturePath, matrixFixtures } from "../../../tests/fixture-matrix.js";
 
 /**
  * Visual regression scaffold for the docx-fidelity-overhaul (Phase 0).
@@ -22,16 +22,12 @@ import { gotoEditor } from "./_helpers";
  * who does not want to land snapshot-update churn).
  */
 
-const FIXTURE_ROOT = resolve(__dirname, "../../../fixtures/docx/real-world");
-
-function listFixtures(): string[] {
-  try {
-    return readdirSync(FIXTURE_ROOT)
-      .filter((f) => f.endsWith(".docx"))
-      .sort();
-  } catch {
-    return [];
-  }
+function listFixtures(): Array<{ name: string; path: string }> {
+  return matrixFixtures({
+    format: "docx",
+    origin: "generated-real-shape",
+    expectedBehavior: "import",
+  }).map((fixture) => ({ name: basename(fixture.path), path: fixturePath(fixture) }));
 }
 
 const SHOULD_SKIP = process.env.OFFICEAI_VISUAL_FIXTURES === "skip";
@@ -47,7 +43,7 @@ test.describe("visual regression: real-world fixtures", () => {
     return;
   }
 
-  for (const name of fixtures) {
+  for (const { name, path } of fixtures) {
     test(`${name}: editor surface matches baseline`, async ({ page }) => {
       await gotoEditor(page);
 
@@ -55,7 +51,7 @@ test.describe("visual regression: real-world fixtures", () => {
       // type="file" />. Resolve it by the accept attribute so we don't
       // collide with the image-file input that lives in the same form.
       const fileInput = page.locator('input[type="file"][accept*="wordprocessingml"]').first();
-      await fileInput.setInputFiles(resolve(FIXTURE_ROOT, name));
+      await fileInput.setInputFiles(path);
 
       // Wait for the editor to re-mount with the new doc: the toolbar's
       // toast confirms the open. We also wait for the PM surface to
