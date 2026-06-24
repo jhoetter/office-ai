@@ -55,10 +55,18 @@ office-ai/
 
 ```bash
 make install         # install workspace deps
-make dev             # Next.js editor host on :3000
+make dev             # Next.js editor host on :3100, realtime on :1234
+make dev-forwarded   # tunnel-friendly ports :23003 and :21234
+make dev-forwarded-fugu  # Fugu ports :63003 and :61234
 make test            # roundtrip + agent tests
 make cli             # build the office-agent CLI
 make verify          # full quality gate (run before pushing)
+```
+
+Forwarded profiles need both the web and realtime ports tunnelled, for example:
+
+```bash
+ssh -L 23003:127.0.0.1:23003 -L 21234:127.0.0.1:21234 <host>
 ```
 
 ## Quality gates

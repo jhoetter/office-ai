@@ -16,30 +16,35 @@
         schema-validate-pptx schema-validate-all
 
 # ----------------------------------------------------------------------
-# Dev port (Next.js editor host)
+# Dev ports (Next.js editor host + realtime websocket)
 #
-# Default 3100 (one digit above Next.js's 3000) so the editor coexists
-# with hof-os's `make dev` out of the box — hof-os binds 3000 and its
-# `kill-ports` step `kill -9`s anything else holding it. Override with
-# `PORT=3000 make dev` if you're running office-ai standalone and want
-# the historical localhost:3000. The realtime ws server listens on
-# 1234 (override via OAI_RT_PORT) — never collides with hof-os.
+# Default 3100 keeps office-ai out of the common localhost:3000 slot. Override
+# with `PORT=3000 make dev` for standalone experiments that want the historical
+# Next.js port. The realtime websocket server listens on 1234 by default.
+#
+# Forwarded ports follow the Sonaloop dev convention:
+#   local:     3100 / 1234
+#   forwarded: 23003 / 21234
+#   fugu:      63003 / 61234
 # ----------------------------------------------------------------------
-PORT           ?= 3100
-FORWARDED_PORT ?= 23003
-FUGU_PORT      ?= 63003
-RT_PORT        ?= 1234
+PORT              ?= 3100
+FORWARDED_PORT    ?= 23003
+FUGU_PORT         ?= 63003
+RT_PORT           ?= 1234
+RT_HOST           ?= 127.0.0.1
+FORWARDED_RT_PORT ?= 21234
+FUGU_RT_PORT      ?= 61234
+REALTIME_URL      ?= ws://localhost:$(RT_PORT)
 
 # ----------------------------------------------------------------------
 # Realtime-server reuse
 #
-# When hof-os is also running on this machine its `make dev` auto-spawns
-# a copy of *our* realtime server on :$(RT_PORT) (it points at this
-# checkout via OFFICEAI_LOCAL_PATH). If we then `kill-ports` and
-# `pnpm --filter @officeai/realtime-server dev` blindly we:
+# When another local stack is already using office-ai collaboration it may have
+# started a compatible realtime server on :$(RT_PORT). If we then `kill-ports`
+# and `pnpm --filter @officeai/realtime-server dev` blindly we:
 #
-#   1. tear down the healthy server hof-os is depending on, and
-#   2. race hof-os's respawn loop for the bind, surfacing a scary
+#   1. tear down the healthy server that stack is depending on, and
+#   2. race its respawn loop for the bind, surfacing a scary
 #      `apps/realtime-server dev: Failed` line for what is actually a
 #      benign duplicate-spawn collision.
 #
@@ -59,12 +64,12 @@ help:
 	@echo "office-ai — available targets (see docs/ci-pipeline.md for the full map)"
 	@echo ""
 	@echo "  install        Install all dependencies"
-	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100; coexists with hof-os on 3000)"
-	@echo "                   Reuses an existing healthy realtime server on \$$RT_PORT (e.g. one spawned by hof-os);"
-	@echo "                   set OAI_RT_REUSE=0 to force a clean restart of the realtime server."
-	@echo "  dev-forwarded  Start the editor host on \$$FORWARDED_PORT (default 23003; Sonaloop SSH tunnel)"
+	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100)"
+	@echo "  dev-forwarded  Start web/realtime on tunnel-friendly ports $(FORWARDED_PORT)/$(FORWARDED_RT_PORT)"
 	@echo "  dev-forwarded-fugu"
-	@echo "                 Start the editor host on \$$FUGU_PORT (default 63003; Fugu tunnel)"
+	@echo "                 Start web/realtime on Fugu ports $(FUGU_PORT)/$(FUGU_RT_PORT)"
+	@echo "                   Reuses an existing healthy realtime server on \$$RT_PORT;"
+	@echo "                   set OAI_RT_REUSE=0 to force a clean restart of the realtime server."
 	@echo "  kill-ports     Free \$$PORT (default 3100) and \$$RT_PORT (default 1234, skipped when healthy) — auto-runs as a prereq of \`dev\`"
 	@echo "  build          Build all packages"
 	@echo ""
@@ -132,11 +137,9 @@ install:
 # `pnpm build` (or `pnpm --filter @officeai/<pkg> build`) in another shell
 # — Next.js HMR will pick up the new dist on next request.
 #
-# PORT is forwarded into Next.js dev (it honours $PORT natively).
-# Default is 3100 so this can run alongside hof-os's `make dev` (which
-# claims 3000 and `kill -9`s any other process holding it). Run with
-# `PORT=3000 make dev` if you want the historical localhost:3000 in
-# standalone office-ai workflows.
+# PORT is forwarded into Next.js dev (it honours $PORT natively). Run with
+# `PORT=3000 make dev` if you want the historical localhost:3000 in standalone
+# office-ai workflows.
 # Frees the ports we own before re-launching `make dev`. Mirrors
 # mail-ai/collaboration-ai's pattern: kill the PIDs holding the port,
 # AND `pkill` the supervisor processes in case Next/turbo respawn a
@@ -150,20 +153,19 @@ install:
 #   - Between kill and the next bind there's a tiny window in which the
 #     supervisor can respawn.
 #
-# hof-os coexistence:
-#   hof-os' `make dev` auto-spawns a copy of *our* realtime server on
-#   :$(RT_PORT) from OFFICEAI_LOCAL_PATH. To avoid two stacks fighting
-#   over the bind, both `kill-ports` and `dev` first probe
-#   `http://localhost:$(RT_PORT)/health`. If a healthy server already
-#   answers, we leave it alone and `next dev` shares it; if not we kill
-#   the port and start our own. Set `OAI_RT_REUSE=0` to force the
-#   historical kill+respawn behaviour. See the `OAI_RT_REUSE` block at
-#   the top of this file for the full rationale.
+# Realtime coexistence:
+#   To avoid two local stacks fighting over the bind, both `kill-ports` and
+#   `dev` first probe `http://localhost:$(RT_PORT)/health`. If a healthy server
+#   already answers, we leave it alone and `next dev` shares it; if not we kill
+#   the port and start our own. Set `OAI_RT_REUSE=0` to force the historical
+#   kill+respawn behaviour. See the `OAI_RT_REUSE` block at the top of this file
+#   for the full rationale.
 kill-ports:
 	@WS_TAG="$(CURDIR)"; \
 	PORTS="$(PORT)"; \
 	if [ "$(OAI_RT_REUSE)" = "1" ] \
-	   && ( curl -sf -m 1 http://localhost:$(RT_PORT)/health >/dev/null 2>&1 \
+	   && ( curl -sf -m 1 http://$(RT_HOST):$(RT_PORT)/health >/dev/null 2>&1 \
+	     || curl -sf -m 1 http://localhost:$(RT_PORT)/health  >/dev/null 2>&1 \
 	     || curl -sf -m 1 http://[::1]:$(RT_PORT)/health      >/dev/null 2>&1 ); then \
 	  echo "kill-ports: realtime server on :$(RT_PORT) is healthy — reusing (set OAI_RT_REUSE=0 to force restart)."; \
 	else \
@@ -174,10 +176,10 @@ kill-ports:
 	    pids=$$(lsof -ti :$$p 2>/dev/null); \
 	    [ -n "$$pids" ] && kill -9 $$pids 2>/dev/null || true; \
 	  done; \
-	  pkill -9 -f "next-server.*$$WS_TAG"  2>/dev/null || true; \
-	  pkill -9 -f "next dev.*$$WS_TAG"     2>/dev/null || true; \
-	  pkill -9 -f "tsx.*$$WS_TAG"          2>/dev/null || true; \
-	  pkill -9 -f "turbo run dev"          2>/dev/null || true; \
+	  pkill -9 -f "[n]ext-server.*$$WS_TAG"  2>/dev/null || true; \
+	  pkill -9 -f "[n]ext dev.*$$WS_TAG"     2>/dev/null || true; \
+	  pkill -9 -f "[t]sx.*$$WS_TAG"          2>/dev/null || true; \
+	  pkill -9 -f "[t]urbo run dev"          2>/dev/null || true; \
 	  busy=""; \
 	  for p in $$PORTS; do \
 	    lsof -ti :$$p >/dev/null 2>&1 && busy="$$busy $$p"; \
@@ -191,33 +193,35 @@ kill-ports:
 dev: kill-ports
 	pnpm build
 	@if [ "$(OAI_RT_REUSE)" = "1" ] \
-	   && ( curl -sf -m 1 http://localhost:$(RT_PORT)/health >/dev/null 2>&1 \
+	   && ( curl -sf -m 1 http://$(RT_HOST):$(RT_PORT)/health >/dev/null 2>&1 \
+	     || curl -sf -m 1 http://localhost:$(RT_PORT)/health  >/dev/null 2>&1 \
 	     || curl -sf -m 1 http://[::1]:$(RT_PORT)/health      >/dev/null 2>&1 ); then \
 	  echo ""; \
 	  echo "→ next dev      http://localhost:$(PORT)"; \
-	  echo "→ realtime ws   ws://localhost:$(RT_PORT)   (reusing existing healthy server — likely hof-os)"; \
+	  echo "→ realtime ws   $(REALTIME_URL)   (reusing existing healthy server)"; \
 	  echo ""; \
-	  PORT=$(PORT) pnpm --filter @officeai/web dev; \
+	  PORT=$(PORT) NEXT_PUBLIC_OAI_REALTIME_URL=$(REALTIME_URL) pnpm --filter @officeai/web dev; \
 	else \
 	  echo ""; \
 	  echo "→ next dev      http://localhost:$(PORT)"; \
-	  echo "→ realtime ws   ws://localhost:$(RT_PORT)   (health: http://localhost:$(RT_PORT)/health)"; \
+	  echo "→ realtime ws   $(REALTIME_URL)   (health: http://$(RT_HOST):$(RT_PORT)/health)"; \
 	  echo ""; \
-	  PORT=$(PORT) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev; \
+	  PORT=$(PORT) OAI_RT_PORT=$(RT_PORT) OAI_RT_HOST=$(RT_HOST) NEXT_PUBLIC_OAI_REALTIME_URL=$(REALTIME_URL) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev; \
 	fi
 
-# Forwarded dev profile for viewing this machine through a Sonaloop SSH tunnel.
-#   ssh -L $(FORWARDED_PORT):127.0.0.1:$(FORWARDED_PORT) <host>
+# Forwarded dev profile for viewing this machine through an SSH tunnel:
+#   ssh -L $(FORWARDED_PORT):127.0.0.1:$(FORWARDED_PORT) \
+#       -L $(FORWARDED_RT_PORT):127.0.0.1:$(FORWARDED_RT_PORT) <host>
 dev-forwarded:
-	$(MAKE) dev PORT=$(FORWARDED_PORT)
+	$(MAKE) dev PORT=$(FORWARDED_PORT) RT_PORT=$(FORWARDED_RT_PORT) REALTIME_URL=ws://localhost:$(FORWARDED_RT_PORT)
 
 # Same, but on the Fugu (non-EU) dev host's port range so it can be tunnelled
 # alongside the EU host without local port clashes (FUGU = FORWARDED + 40000).
 dev-forwarded-fugu:
-	$(MAKE) dev PORT=$(FUGU_PORT)
+	$(MAKE) dev PORT=$(FUGU_PORT) RT_PORT=$(FUGU_RT_PORT) REALTIME_URL=ws://localhost:$(FUGU_RT_PORT)
 
 dev-realtime: kill-ports
-	pnpm --filter @officeai/realtime-server dev
+	OAI_RT_PORT=$(RT_PORT) OAI_RT_HOST=$(RT_HOST) pnpm --filter @officeai/realtime-server dev
 
 build:
 	pnpm build
