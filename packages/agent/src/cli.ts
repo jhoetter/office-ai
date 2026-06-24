@@ -27,6 +27,7 @@ import { xlsxActions } from "@officeai/xlsx";
 import { pdfActions } from "@officeai/pdf";
 import { registerActionsAsSubcommands, type AgentDispatchContext } from "./actions-to-cli.js";
 import { renderDoctorReport, runDoctor } from "./doctor.js";
+import { createLocalSessionStore } from "./session-store.js";
 
 const defaultIO: IO = { stdout: process.stdout, stderr: process.stderr };
 
@@ -46,6 +47,17 @@ function matchesActionSurface(action: ActionDescriptor, surface: string): boolea
     default:
       return false;
   }
+}
+
+function renderSessionMaintenance(
+  title: string,
+  diagnostics: ReadonlyArray<{ readonly level: string; readonly code: string; readonly message: string }>
+): string {
+  const lines = [title];
+  for (const diagnostic of diagnostics) {
+    lines.push(`${diagnostic.level.toUpperCase().padEnd(8)} ${diagnostic.code} - ${diagnostic.message}`);
+  }
+  return lines.join("\n");
 }
 
 export async function runCli(argv: string[], io: IO = defaultIO): Promise<number> {
@@ -193,6 +205,61 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       }
       if (!report.ok) {
         throw new CliError(1, "doctor found errors", { silent: true });
+      }
+    });
+
+  const sessions = program
+    .command("sessions")
+    .description("Inspect and maintain the local OfficeAI session store.");
+  sessions
+    .command("inspect")
+    .description("Inspect session-store schema state without mutating documents.")
+    .option("--json", "Emit machine-readable JSON.", false)
+    .option("--pretty", "Pretty-print JSON output.", false)
+    .option("--data-dir <path>", "Override OFFICEAI_DATA_DIR.")
+    .action(async (opts: Record<string, unknown>) => {
+      const store = createLocalSessionStore({
+        dataDir: typeof opts.dataDir === "string" ? opts.dataDir : undefined,
+      });
+      const result = await store.inspectDataDir();
+      if (opts.json === true) {
+        io.stdout.write(stringifyJson(result, opts.pretty === true) + "\n");
+      } else {
+        io.stdout.write(renderSessionMaintenance("office-ai sessions inspect", result.diagnostics) + "\n");
+      }
+    });
+  sessions
+    .command("migrate")
+    .description("Migrate old local session-store metadata after creating backups.")
+    .option("--json", "Emit machine-readable JSON.", false)
+    .option("--pretty", "Pretty-print JSON output.", false)
+    .option("--data-dir <path>", "Override OFFICEAI_DATA_DIR.")
+    .action(async (opts: Record<string, unknown>) => {
+      const store = createLocalSessionStore({
+        dataDir: typeof opts.dataDir === "string" ? opts.dataDir : undefined,
+      });
+      const result = await store.migrateDataDir();
+      if (opts.json === true) {
+        io.stdout.write(stringifyJson(result, opts.pretty === true) + "\n");
+      } else {
+        io.stdout.write(renderSessionMaintenance("office-ai sessions migrate", result.diagnostics) + "\n");
+      }
+    });
+  sessions
+    .command("cleanup")
+    .description("Remove temporary session-store files without deleting original or working artifacts.")
+    .option("--json", "Emit machine-readable JSON.", false)
+    .option("--pretty", "Pretty-print JSON output.", false)
+    .option("--data-dir <path>", "Override OFFICEAI_DATA_DIR.")
+    .action(async (opts: Record<string, unknown>) => {
+      const store = createLocalSessionStore({
+        dataDir: typeof opts.dataDir === "string" ? opts.dataDir : undefined,
+      });
+      const result = await store.cleanupTemporaryArtifacts();
+      if (opts.json === true) {
+        io.stdout.write(stringifyJson(result, opts.pretty === true) + "\n");
+      } else {
+        io.stdout.write(renderSessionMaintenance("office-ai sessions cleanup", result.diagnostics) + "\n");
       }
     });
 

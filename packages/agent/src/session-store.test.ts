@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +127,83 @@ describe("LocalSessionStore", () => {
     writeFileSync(join(store.dataDir, "sessions", "session_1", "session.json"), "{not json");
 
     await expect(store.listSessions()).rejects.toBeInstanceOf(SessionStoreCorruptError);
+  });
+
+  it("migrates legacy session metadata after writing a backup", async () => {
+    const store = new LocalSessionStore({ dataDir: tempDataDir() });
+    const sessionDir = join(store.dataDir, "sessions", "session_legacy");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "session.json"),
+      JSON.stringify(
+        {
+          id: "session_legacy",
+          title: "Legacy",
+          createdAt: "2026-06-24T09:00:00.000Z",
+          updatedAt: "2026-06-24T09:00:00.000Z",
+          documentIds: [],
+        },
+        null,
+        2
+      )
+    );
+
+    const before = await store.inspectDataDir();
+    expect(before.needsMigration).toBe(true);
+    expect(before.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "session-migration-required" })])
+    );
+
+    const result = await store.migrateDataDir();
+    expect(result.migrations).toHaveLength(1);
+    expect(existsSync(result.migrations[0]!.backupPath)).toBe(true);
+    const sessions = await store.listSessions();
+    expect(sessions[0]).toMatchObject({
+      schema: "office-ai/session-record@1",
+      schemaVersion: 1,
+      version: 1,
+      id: "session_legacy",
+    });
+    await expect(store.inspectDataDir()).resolves.toMatchObject({ needsMigration: false });
+  });
+
+  it("cleans temporary store files without deleting original artifacts", async () => {
+    const store = new LocalSessionStore({ dataDir: tempDataDir() });
+    await store.putSession({
+      id: "session_1",
+      title: "Cleanup",
+      createdAt: "2026-06-24T09:00:00.000Z",
+      updatedAt: "2026-06-24T09:00:00.000Z",
+      documentIds: ["doc_1"],
+    });
+    const stored = await store.putDocument(
+      {
+        id: "doc_1",
+        sessionId: "session_1",
+        format: "pdf",
+        name: "cleanup.pdf",
+        status: "ready",
+        createdAt: "2026-06-24T09:00:00.000Z",
+        updatedAt: "2026-06-24T09:01:00.000Z",
+        revision: 1,
+        diagnostics: [],
+        exportHistory: [],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      {
+        originalBytes: Buffer.from("original"),
+        workingBytes: Buffer.from("working"),
+      }
+    );
+    const tempPath = join(store.documentDir("session_1", "doc_1"), "artifacts", ".working.pdf.1.tmp");
+    writeFileSync(tempPath, "temp");
+
+    const result = await store.cleanupTemporaryArtifacts();
+    expect(result.removed).toContain(tempPath);
+    expect(existsSync(tempPath)).toBe(false);
+    expect(existsSync(stored.artifacts.originalPath!)).toBe(true);
+    expect(existsSync(stored.artifacts.workingPath!)).toBe(true);
   });
 
   it("surfaces storage adapter failures as structured diagnostics", async () => {

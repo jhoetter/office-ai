@@ -168,6 +168,37 @@ describe("office-agent CLI", () => {
     );
   });
 
+  it("sessions migrate prints a machine-readable migration report", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-migrate-"));
+    const sessionDir = join(dir, "sessions", "session_legacy");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "session.json"),
+      JSON.stringify({
+        id: "session_legacy",
+        title: "Legacy",
+        createdAt: "2026-06-24T09:00:00.000Z",
+        updatedAt: "2026-06-24T09:00:00.000Z",
+        documentIds: [],
+      })
+    );
+    const { io, stdout } = makeIO();
+    const code = await runCli(["sessions", "migrate", "--json", "--data-dir", dir], io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout.text()) as {
+      schema: string;
+      migrations: Array<{ kind: string; id: string; backupPath: string }>;
+    };
+    expect(parsed.schema).toBe("office-ai/session-store-migration@1");
+    expect(parsed.migrations).toEqual([
+      expect.objectContaining({
+        kind: "session",
+        id: "session_legacy",
+        backupPath: expect.stringContaining("backups"),
+      }),
+    ]);
+  });
+
   it("insert-text writes a modified file that re-reads with the new text", async () => {
     const input = await makeFixture();
     const dir = mkdtempSync(join(tmpdir(), "office-agent-out-"));

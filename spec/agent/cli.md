@@ -64,6 +64,21 @@ Severity is intentionally feature-scoped:
 - `optional` means a feature such as OCR is absent but the core product
   remains usable.
 
+## Session store maintenance
+
+```text
+office-agent sessions inspect [--json] [--pretty] [--data-dir <path>]
+office-agent sessions migrate [--json] [--pretty] [--data-dir <path>]
+office-agent sessions cleanup [--json] [--pretty] [--data-dir <path>]
+```
+
+`inspect` reads local session-store metadata and reports whether a
+migration is needed without rewriting files. `migrate` backs up each
+changed metadata file under `backups/migration-*` before writing the
+current schema. `cleanup` only removes atomic-write temp files from
+known store directories; it does not delete `original.*` or `working.*`
+document artifacts.
+
 ## DOCX commands
 
 ### Read-only

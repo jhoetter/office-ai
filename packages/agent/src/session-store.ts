@@ -3,6 +3,10 @@ import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+export const DATA_DIR_SCHEMA_VERSION = 1;
+export const SESSION_RECORD_SCHEMA_VERSION = 1;
+export const DOCUMENT_RECORD_SCHEMA_VERSION = 1;
+
 export type StoredOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf";
 export type StoredDiagnosticLevel = "info" | "warning" | "error" | "destructive";
 
@@ -44,6 +48,7 @@ export interface StoredCommandLogEntry {
 
 export interface StoredSessionRecord {
   readonly schema: "office-ai/session-record@1";
+  readonly schemaVersion: 1;
   readonly version: 1;
   readonly id: string;
   readonly title: string;
@@ -59,6 +64,7 @@ export interface StoredSessionRecord {
 
 export interface StoredDocumentRecord {
   readonly schema: "office-ai/document-record@1";
+  readonly schemaVersion: 1;
   readonly version: 1;
   readonly id: string;
   readonly sessionId: string;
@@ -110,6 +116,42 @@ export interface SessionStorageAdapter {
 export interface LocalSessionStoreOptions {
   readonly dataDir?: string;
   readonly storage?: SessionStorageAdapter;
+}
+
+export interface SessionStoreInspection {
+  readonly schema: "office-ai/session-store-inspection@1";
+  readonly dataDir: string;
+  readonly schemaVersion: 1;
+  readonly inspectedAt: string;
+  readonly needsMigration: boolean;
+  readonly diagnostics: ReadonlyArray<StoredDiagnostic>;
+}
+
+export interface SessionStoreMigrationRecord {
+  readonly kind: "session" | "document";
+  readonly id: string;
+  readonly path: string;
+  readonly backupPath: string;
+  readonly fromSchema?: string;
+  readonly fromVersion?: number;
+  readonly toSchema: string;
+  readonly toVersion: number;
+}
+
+export interface SessionStoreMigrationResult {
+  readonly schema: "office-ai/session-store-migration@1";
+  readonly dataDir: string;
+  readonly migratedAt: string;
+  readonly migrations: ReadonlyArray<SessionStoreMigrationRecord>;
+  readonly diagnostics: ReadonlyArray<StoredDiagnostic>;
+}
+
+export interface SessionStoreCleanupResult {
+  readonly schema: "office-ai/session-store-cleanup@1";
+  readonly dataDir: string;
+  readonly cleanedAt: string;
+  readonly removed: ReadonlyArray<string>;
+  readonly diagnostics: ReadonlyArray<StoredDiagnostic>;
 }
 
 export class SessionStoreCorruptError extends Error {
@@ -233,7 +275,8 @@ export class LocalSessionStore {
     await this.storage.ensureDir(this.sessionsDir());
     await atomicWriteJson(this.storage, this.storage.join(this.dataDir, "VERSION.json"), {
       schema: "office-ai/data-dir@1",
-      version: 1,
+      schemaVersion: DATA_DIR_SCHEMA_VERSION,
+      version: DATA_DIR_SCHEMA_VERSION,
       createdOrUpdatedAt: new Date().toISOString(),
     });
   }
@@ -255,10 +298,13 @@ export class LocalSessionStore {
     return this.storage.join(this.documentDir(sessionId, documentId), "artifacts", `${kind}.${format}`);
   }
 
-  async putSession(record: Omit<StoredSessionRecord, "schema" | "version" | "lease">): Promise<void> {
+  async putSession(
+    record: Omit<StoredSessionRecord, "schema" | "schemaVersion" | "version" | "lease">
+  ): Promise<void> {
     await this.init();
     const full: StoredSessionRecord = {
       schema: "office-ai/session-record@1",
+      schemaVersion: SESSION_RECORD_SCHEMA_VERSION,
       version: 1,
       ...record,
       lease: {
@@ -271,7 +317,7 @@ export class LocalSessionStore {
   }
 
   async putDocument(
-    record: Omit<StoredDocumentRecord, "schema" | "version" | "artifacts">,
+    record: Omit<StoredDocumentRecord, "schema" | "schemaVersion" | "version" | "artifacts">,
     opts: {
       readonly originalBytes?: Uint8Array | Buffer;
       readonly originalSourcePath?: string;
@@ -309,6 +355,7 @@ export class LocalSessionStore {
 
     const full: StoredDocumentRecord = {
       schema: "office-ai/document-record@1",
+      schemaVersion: DOCUMENT_RECORD_SCHEMA_VERSION,
       version: 1,
       ...record,
       artifacts: {
@@ -378,6 +425,177 @@ export class LocalSessionStore {
     return this.storage.readBytes(path);
   }
 
+  async inspectDataDir(): Promise<SessionStoreInspection> {
+    const inspectedAt = new Date().toISOString();
+    const diagnostics: StoredDiagnostic[] = [];
+    const sessionEntries = await this.storage.list(this.sessionsDir());
+    for (const sessionId of sessionEntries) {
+      const sessionPath = this.sessionJsonPath(sessionId);
+      if (!(await this.storage.exists(sessionPath))) continue;
+      const parsed = await readLooseJson(this.storage, sessionPath).catch((err: unknown) => {
+        diagnostics.push({
+          level: "error",
+          code: "session-store-corrupt-metadata",
+          message: `Cannot read session metadata ${sessionPath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+        return null;
+      });
+      if (!parsed) continue;
+      if (needsSessionMigration(parsed)) {
+        diagnostics.push({
+          level: "warning",
+          code: "session-migration-required",
+          message: `Session metadata ${sessionPath} needs migration to schema version ${SESSION_RECORD_SCHEMA_VERSION}.`,
+        });
+      }
+
+      const documentEntries = await this.storage.list(
+        this.storage.join(this.sessionDir(sessionId), "documents")
+      );
+      for (const documentId of documentEntries) {
+        const documentPath = this.documentJsonPath(sessionId, documentId);
+        if (!(await this.storage.exists(documentPath))) continue;
+        const document = await readLooseJson(this.storage, documentPath).catch((err: unknown) => {
+          diagnostics.push({
+            level: "error",
+            code: "session-store-corrupt-metadata",
+            message: `Cannot read document metadata ${documentPath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+          return null;
+        });
+        if (document && needsDocumentMigration(document)) {
+          diagnostics.push({
+            level: "warning",
+            code: "document-migration-required",
+            message: `Document metadata ${documentPath} needs migration to schema version ${DOCUMENT_RECORD_SCHEMA_VERSION}.`,
+          });
+        }
+      }
+    }
+    return {
+      schema: "office-ai/session-store-inspection@1",
+      dataDir: this.dataDir,
+      schemaVersion: DATA_DIR_SCHEMA_VERSION,
+      inspectedAt,
+      needsMigration: diagnostics.some((diagnostic) => diagnostic.code.endsWith("migration-required")),
+      diagnostics,
+    };
+  }
+
+  async migrateDataDir(): Promise<SessionStoreMigrationResult> {
+    const migratedAt = new Date().toISOString();
+    await this.init();
+    const backupRoot = this.storage.join(
+      this.dataDir,
+      "backups",
+      `migration-${migratedAt.replace(/[^0-9A-Za-z_.-]/g, "_")}`
+    );
+    const migrations: SessionStoreMigrationRecord[] = [];
+    const diagnostics: StoredDiagnostic[] = [];
+    const sessionEntries = await this.storage.list(this.sessionsDir());
+
+    for (const sessionId of sessionEntries) {
+      const sessionPath = this.sessionJsonPath(sessionId);
+      if (!(await this.storage.exists(sessionPath))) continue;
+      const session = await readLooseJson(this.storage, sessionPath);
+      if (needsSessionMigration(session)) {
+        const backupPath = this.storage.join(backupRoot, "sessions", safeSegment(sessionId), "session.json");
+        await copyStoredFile(this.storage, sessionPath, backupPath);
+        await atomicWriteJson(this.storage, sessionPath, migrateSessionRecord(session));
+        migrations.push({
+          kind: "session",
+          id: sessionId,
+          path: sessionPath,
+          backupPath,
+          fromSchema: objectString(session, "schema"),
+          fromVersion: objectNumber(session, "version"),
+          toSchema: "office-ai/session-record@1",
+          toVersion: SESSION_RECORD_SCHEMA_VERSION,
+        });
+      }
+
+      const documentEntries = await this.storage.list(
+        this.storage.join(this.sessionDir(sessionId), "documents")
+      );
+      for (const documentId of documentEntries) {
+        const documentPath = this.documentJsonPath(sessionId, documentId);
+        if (!(await this.storage.exists(documentPath))) continue;
+        const document = await readLooseJson(this.storage, documentPath);
+        if (!needsDocumentMigration(document)) continue;
+        const backupPath = this.storage.join(
+          backupRoot,
+          "sessions",
+          safeSegment(sessionId),
+          "documents",
+          safeSegment(documentId),
+          "document.json"
+        );
+        await copyStoredFile(this.storage, documentPath, backupPath);
+        await atomicWriteJson(this.storage, documentPath, migrateDocumentRecord(document));
+        migrations.push({
+          kind: "document",
+          id: documentId,
+          path: documentPath,
+          backupPath,
+          fromSchema: objectString(document, "schema"),
+          fromVersion: objectNumber(document, "version"),
+          toSchema: "office-ai/document-record@1",
+          toVersion: DOCUMENT_RECORD_SCHEMA_VERSION,
+        });
+      }
+    }
+
+    diagnostics.push({
+      level: "info",
+      code: migrations.length > 0 ? "session-store-migrated" : "session-store-current",
+      message:
+        migrations.length > 0
+          ? `Migrated ${migrations.length} session-store metadata file(s).`
+          : "Session store metadata is already current.",
+    });
+    return {
+      schema: "office-ai/session-store-migration@1",
+      dataDir: this.dataDir,
+      migratedAt,
+      migrations,
+      diagnostics,
+    };
+  }
+
+  async cleanupTemporaryArtifacts(): Promise<SessionStoreCleanupResult> {
+    const cleanedAt = new Date().toISOString();
+    const removed: string[] = [];
+    const diagnostics: StoredDiagnostic[] = [];
+    await this.cleanupTemporaryFilesInDir(this.dataDir, removed);
+    const sessionEntries = await this.storage.list(this.sessionsDir());
+    for (const sessionId of sessionEntries) {
+      const sessionDir = this.sessionDir(sessionId);
+      await this.cleanupTemporaryFilesInDir(sessionDir, removed);
+      const documentsDir = this.storage.join(sessionDir, "documents");
+      for (const documentId of await this.storage.list(documentsDir)) {
+        const documentDir = this.documentDir(sessionId, documentId);
+        await this.cleanupTemporaryFilesInDir(documentDir, removed);
+        await this.cleanupTemporaryFilesInDir(this.storage.join(documentDir, "artifacts"), removed);
+      }
+    }
+    diagnostics.push({
+      level: "info",
+      code: "session-store-cleanup",
+      message: `Removed ${removed.length} temporary session-store file(s); original and working artifacts are preserved.`,
+    });
+    return {
+      schema: "office-ai/session-store-cleanup@1",
+      dataDir: this.dataDir,
+      cleanedAt,
+      removed,
+      diagnostics,
+    };
+  }
+
   async clear(): Promise<void> {
     await this.storage.remove(this.dataDir, { recursive: true, force: true });
   }
@@ -392,6 +610,15 @@ export class LocalSessionStore {
 
   private documentJsonPath(sessionId: string, documentId: string): string {
     return this.storage.join(this.documentDir(sessionId, documentId), "document.json");
+  }
+
+  private async cleanupTemporaryFilesInDir(dir: string, removed: string[]): Promise<void> {
+    for (const entry of await this.storage.list(dir)) {
+      if (!isTemporaryStoreFile(entry)) continue;
+      const path = this.storage.join(dir, entry);
+      await this.storage.remove(path, { force: true });
+      removed.push(path);
+    }
   }
 }
 
@@ -431,6 +658,148 @@ async function readStoredJson<T extends { readonly schema?: string }>(
     throw new SessionStoreCorruptError(path, `Metadata schema mismatch, expected ${schema}`);
   }
   return parsed as T;
+}
+
+async function readLooseJson(storage: SessionStorageAdapter, path: string): Promise<unknown> {
+  try {
+    return JSON.parse(Buffer.from(await storage.readBytes(path)).toString("utf8"));
+  } catch (err) {
+    if (isEnoent(err)) throw err;
+    if (err instanceof SessionStoreStorageError) throw err;
+    throw new SessionStoreCorruptError(path, "Corrupt metadata file", err);
+  }
+}
+
+async function copyStoredFile(
+  storage: SessionStorageAdapter,
+  sourcePath: string,
+  targetPath: string
+): Promise<void> {
+  await storage.writeBytesAtomic(targetPath, await storage.readBytes(sourcePath));
+}
+
+function needsSessionMigration(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (
+    value.schema === "office-ai/session-record@1" &&
+    value.schemaVersion === SESSION_RECORD_SCHEMA_VERSION &&
+    value.version === 1
+  ) {
+    return false;
+  }
+  return isSessionLike(value);
+}
+
+function needsDocumentMigration(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (
+    value.schema === "office-ai/document-record@1" &&
+    value.schemaVersion === DOCUMENT_RECORD_SCHEMA_VERSION &&
+    value.version === 1
+  ) {
+    return false;
+  }
+  return isDocumentLike(value);
+}
+
+function migrateSessionRecord(value: unknown): StoredSessionRecord {
+  if (!isRecord(value) || !isSessionLike(value)) {
+    throw new SessionStoreCorruptError("<memory>", "Cannot migrate invalid session metadata");
+  }
+  const now = new Date().toISOString();
+  return {
+    schema: "office-ai/session-record@1",
+    schemaVersion: SESSION_RECORD_SCHEMA_VERSION,
+    version: 1,
+    id: String(value.id),
+    title: String(value.title),
+    createdAt: String(value.createdAt),
+    updatedAt: String(value.updatedAt),
+    documentIds: Array.isArray(value.documentIds) ? value.documentIds.map(String) : [],
+    lease: isRecord(value.lease)
+      ? {
+          pid: typeof value.lease.pid === "number" ? value.lease.pid : process.pid,
+          host: typeof value.lease.host === "string" ? value.lease.host : "local",
+          updatedAt: typeof value.lease.updatedAt === "string" ? value.lease.updatedAt : now,
+        }
+      : {
+          pid: process.pid,
+          host: "local",
+          updatedAt: now,
+        },
+  };
+}
+
+function migrateDocumentRecord(value: unknown): StoredDocumentRecord {
+  if (!isRecord(value) || !isDocumentLike(value)) {
+    throw new SessionStoreCorruptError("<memory>", "Cannot migrate invalid document metadata");
+  }
+  const artifacts = isRecord(value.artifacts) ? value.artifacts : {};
+  return {
+    schema: "office-ai/document-record@1",
+    schemaVersion: DOCUMENT_RECORD_SCHEMA_VERSION,
+    version: 1,
+    id: String(value.id),
+    sessionId: String(value.sessionId),
+    format: value.format as StoredOfficeFormat,
+    name: String(value.name),
+    status: value.status === "error" ? "error" : "ready",
+    ...(typeof value.sourcePath === "string" ? { sourcePath: value.sourcePath } : {}),
+    createdAt: String(value.createdAt),
+    updatedAt: String(value.updatedAt),
+    revision: typeof value.revision === "number" ? value.revision : 0,
+    diagnostics: Array.isArray(value.diagnostics) ? (value.diagnostics as StoredDiagnostic[]) : [],
+    exportHistory: Array.isArray(value.exportHistory) ? (value.exportHistory as StoredExportRecord[]) : [],
+    artifacts: {
+      ...(typeof artifacts.originalPath === "string" ? { originalPath: artifacts.originalPath } : {}),
+      ...(typeof artifacts.workingPath === "string" ? { workingPath: artifacts.workingPath } : {}),
+    },
+    pendingChanges: Array.isArray(value.pendingChanges)
+      ? (value.pendingChanges as StoredPendingChange[])
+      : [],
+    commandLog: Array.isArray(value.commandLog) ? (value.commandLog as StoredCommandLogEntry[]) : [],
+  };
+}
+
+function isSessionLike(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.id === "string" &&
+    typeof value.title === "string" &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string" &&
+    Array.isArray(value.documentIds)
+  );
+}
+
+function isDocumentLike(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.id === "string" &&
+    typeof value.sessionId === "string" &&
+    isStoredOfficeFormat(value.format) &&
+    typeof value.name === "string" &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string"
+  );
+}
+
+function isStoredOfficeFormat(value: unknown): value is StoredOfficeFormat {
+  return value === "docx" || value === "xlsx" || value === "pptx" || value === "pdf";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function objectString(value: unknown, key: string): string | undefined {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : undefined;
+}
+
+function objectNumber(value: unknown, key: string): number | undefined {
+  return isRecord(value) && typeof value[key] === "number" ? value[key] : undefined;
+}
+
+function isTemporaryStoreFile(name: string): boolean {
+  return name.startsWith(".") && name.endsWith(".tmp");
 }
 
 function isEnoent(err: unknown): boolean {

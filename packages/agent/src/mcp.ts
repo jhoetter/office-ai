@@ -921,7 +921,7 @@ async function persistCurrentDocument(
 
 function storedSessionRecord(
   session: SessionRecord
-): Omit<StoredSessionRecord, "schema" | "version" | "lease"> {
+): Omit<StoredSessionRecord, "schema" | "schemaVersion" | "version" | "lease"> {
   return {
     id: session.id,
     title: session.title,
@@ -1021,6 +1021,7 @@ async function hydrateDocumentRecord(stored: StoredDocumentRecord): Promise<Docu
         .getSession(stored.sessionId)
         .catch(() => ({
           schema: "office-ai/session-record@1" as const,
+          schemaVersion: 1 as const,
           version: 1 as const,
           id: stored.sessionId,
           title: "OfficeAI session",

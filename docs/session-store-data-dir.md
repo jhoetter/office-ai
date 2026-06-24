@@ -92,6 +92,26 @@ Metadata is versioned and schema-tagged. Invalid JSON or schema mismatch
 raises `SessionStoreCorruptError`; API callers surface a clear
 `corrupt-session-store` error instead of silently dropping records.
 
+Session metadata, document metadata and the data-dir manifest carry a
+`schemaVersion`. `LocalSessionStore.inspectDataDir()` reports old or
+corrupt metadata without mutating files. `migrateDataDir()` backs up
+each changed metadata file under `backups/migration-*/...` before
+rewriting it to the current schema. `cleanupTemporaryArtifacts()`
+removes only atomic-write temp files (`.*.tmp`) from known store
+directories and preserves `original.*` / `working.*` artifacts.
+
+CLI maintenance commands:
+
+```bash
+office-agent sessions inspect --json --pretty
+office-agent sessions migrate --json --pretty
+office-agent sessions cleanup --json --pretty
+```
+
+`office-agent doctor` also inspects the store. Old metadata is reported
+as a warning with a migration hint; corrupt metadata is reported as an
+error.
+
 The web route deliberately omits `sourcePath`, exported paths,
 `dataDir`, and artifact paths. Local paths remain available to the local
 MCP/CLI process where they are needed for import/export, but browser

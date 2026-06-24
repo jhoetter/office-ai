@@ -5,7 +5,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { resolveOfficeAiDataDir } from "./session-store.js";
+import { createLocalSessionStore, resolveOfficeAiDataDir } from "./session-store.js";
 
 const execFileAsync = promisify(execFile);
 const requireFromHere = createRequire(import.meta.url);
@@ -117,6 +117,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
     )
   );
   checks.push(await checkDataDir(dataDir));
+  checks.push(await checkSessionStore(dataDir));
 
   const summary: Record<DoctorStatus, number> = { ok: 0, warning: 0, error: 0, optional: 0 };
   for (const check of checks) summary[check.status] += 1;
@@ -359,6 +360,49 @@ async function checkDataDir(dataDir: string): Promise<DoctorCheck> {
     };
   } finally {
     await rm(probe, { force: true }).catch(() => undefined);
+  }
+}
+
+async function checkSessionStore(dataDir: string): Promise<DoctorCheck> {
+  try {
+    const inspection = await createLocalSessionStore({ dataDir }).inspectDataDir();
+    const errors = inspection.diagnostics.filter((diagnostic) => diagnostic.level === "error");
+    if (errors.length > 0) {
+      return {
+        code: "session-store",
+        label: "Session store",
+        status: "error",
+        message: `Session store has ${errors.length} metadata error(s).`,
+        hint: "Inspect the data-dir or restore from backup before using persisted sessions.",
+        details: { diagnostics: inspection.diagnostics },
+      };
+    }
+    if (inspection.needsMigration) {
+      return {
+        code: "session-store",
+        label: "Session store",
+        status: "warning",
+        message: "Session store metadata needs migration.",
+        hint: "Run `office-agent sessions migrate` to back up and migrate old metadata.",
+        details: { diagnostics: inspection.diagnostics },
+      };
+    }
+    return {
+      code: "session-store",
+      label: "Session store",
+      status: "ok",
+      message: "Session store metadata is current.",
+      details: { dataDir },
+    };
+  } catch (err) {
+    return {
+      code: "session-store",
+      label: "Session store",
+      status: "error",
+      message: "Session store inspection failed.",
+      hint: "Check OFFICEAI_DATA_DIR permissions and rerun doctor.",
+      details: { error: err instanceof Error ? err.message : String(err) },
+    };
   }
 }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -75,6 +75,35 @@ describe("doctor", () => {
       status: "warning",
     });
     expect(report.checks.find((check) => check.code === "ocr")).toMatchObject({ status: "optional" });
+  });
+
+  it("warns when persisted sessions need migration", async () => {
+    const dataDir = tempDir();
+    const sessionDir = join(dataDir, "sessions", "session_legacy");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "session.json"),
+      JSON.stringify({
+        id: "session_legacy",
+        title: "Legacy",
+        createdAt: "2026-06-24T09:00:00.000Z",
+        updatedAt: "2026-06-24T09:00:00.000Z",
+        documentIds: [],
+      })
+    );
+
+    const report = await runDoctor({
+      cwd: process.cwd(),
+      dataDir,
+      nodeVersion: "v20.11.1",
+      commandRunner: async () => ({ ok: true, stdout: "ok\n" }),
+      portChecker: async () => ({ available: true }),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks.find((check) => check.code === "session-store")).toMatchObject({
+      status: "warning",
+    });
   });
 
   it("renders a compact human report", async () => {
