@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createLocalSessionStore, type LocalSessionStore } from "@officeai/agent/session-store";
+import type { ProjectionSource } from "@officeai/agent/projections";
 import { DocxAgent } from "@officeai/docx";
 import { PdfAgent } from "@officeai/pdf";
 import { PptxAgent } from "@officeai/pptx";
@@ -82,6 +83,22 @@ export async function createBlankDocumentBytes(format: WebOfficeFormat): Promise
       const bytes = asUint8Array(await agent.exportFile());
       return { bytes, revision: agent.getSnapshot().revision };
     }
+  }
+}
+
+export async function projectionSourceFromBytes(
+  format: WebOfficeFormat,
+  bytes: Uint8Array
+): Promise<ProjectionSource> {
+  switch (format) {
+    case "docx":
+      return { format, agent: await DocxAgent.fromBuffer(bytes) };
+    case "xlsx":
+      return { format, agent: await XlsxAgent.fromBuffer(bytes) };
+    case "pptx":
+      return { format, agent: await PptxAgent.fromBuffer(bytes) };
+    case "pdf":
+      return { format, agent: await PdfAgent.fromBuffer(bytes) };
   }
 }
 

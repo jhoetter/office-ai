@@ -65,6 +65,7 @@ import {
   type StoredPendingChange,
   type StoredSessionRecord,
 } from "./session-store.js";
+import { projectOfficeDocument, type ProjectionKind } from "./projections.js";
 import {
   diffSnapshots as pptxDiffSnapshots,
   inspectSnapshot as pptxInspectSnapshot,
@@ -1117,22 +1118,6 @@ function documentEnvelope(record: DocumentRecord): Record<string, unknown> {
   };
 }
 
-function docxPlainText(agent: DocxAgent): string {
-  const lines: string[] = [];
-  for (const b of agent.getSnapshot().root.body) {
-    if (b.kind === "paragraph") {
-      lines.push(
-        b.children
-          .map((c) =>
-            c.kind === "run" ? c.children.map((g) => (g.kind === "text" ? g.text : "")).join("") : ""
-          )
-          .join("")
-      );
-    }
-  }
-  return lines.join("\n");
-}
-
 function projectionFor(
   record: DocumentRecord,
   opts: {
@@ -1145,66 +1130,56 @@ function projectionFor(
     readonly maxCols?: number;
   }
 ): Record<string, unknown> {
-  const base = documentEnvelope(record);
-  if (opts.projection === "summary") {
-    return { ...base, projection: "summary", summary: summaryFor(record) };
-  }
-
+  const meta = {
+    documentId: record.id,
+    sessionId: record.sessionId,
+    format: record.format,
+    name: record.name,
+    status: record.status,
+    revision: revisionFor(record),
+    ...(record.sourcePath ? { sourcePath: record.sourcePath } : {}),
+    diagnostics: record.diagnostics,
+    exportHistory: record.exportHistory,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
   switch (record.format) {
-    case "docx": {
-      const agent = lookupAgent(record.id);
-      if (opts.projection === "json") {
-        return { ...base, projection: "json", content: snapshotToJsonProjection(agent.getSnapshot()) };
-      }
-      if (opts.projection === "text") {
-        return { ...base, projection: "text", content: docxPlainText(agent) };
-      }
-      if (opts.projection === "page") {
-        const page = opts.page ?? 1;
-        return { ...base, projection: "page", page, content: agent.getPageMarkdown(page) };
-      }
-      return { ...base, projection: "markdown", content: agent.toMarkdown() };
-    }
-    case "xlsx": {
-      const agent = lookupXlsxAgent(record.id);
-      if (opts.projection === "json") {
-        return { ...base, projection: "json", content: xlsxRangeToJson(agent, opts.sheet, opts.range) };
-      }
-      return {
-        ...base,
-        projection: "markdown",
-        content: agent.toMarkdown({
-          ...(opts.sheet ? { sheet: opts.sheet } : {}),
-          ...(opts.maxRows !== undefined ? { maxRows: opts.maxRows } : {}),
-          ...(opts.maxCols !== undefined ? { maxCols: opts.maxCols } : {}),
-        }),
-      };
-    }
-    case "pptx": {
-      const agent = lookupPptxAgent(record.id);
-      const snap = agent.getSnapshot();
-      const range =
-        opts.slide !== undefined ? { startSlide: opts.slide, endSlide: opts.slide + 1 } : undefined;
-      if (opts.projection === "json" || opts.projection === "page") {
-        return { ...base, projection: opts.projection, content: pptxSnapshotToJsonProjection(snap, range) };
-      }
-      return {
-        ...base,
-        projection: "markdown",
-        content: range ? pptxSnapshotToJsonProjection(snap, range) : agent.toMarkdown(),
-      };
-    }
-    case "pdf": {
-      const session = lookupPdfSession(record.id);
-      if (opts.projection === "json") {
-        return { ...base, projection: "json", content: projectMetadata(session.agent.getSnapshot()) };
-      }
-      if (opts.projection === "page") {
-        const page = opts.page ?? 1;
-        return { ...base, projection: "page", page, content: projectPage(session.agent.getSnapshot(), page) };
-      }
-      return { ...base, projection: "markdown", content: session.agent.toMarkdown() };
-    }
+    case "docx":
+      return projectOfficeDocument(
+        meta,
+        { format: "docx", agent: lookupAgent(record.id) },
+        {
+          ...opts,
+          projection: opts.projection as ProjectionKind,
+        }
+      );
+    case "xlsx":
+      return projectOfficeDocument(
+        meta,
+        { format: "xlsx", agent: lookupXlsxAgent(record.id) },
+        {
+          ...opts,
+          projection: opts.projection as ProjectionKind,
+        }
+      );
+    case "pptx":
+      return projectOfficeDocument(
+        meta,
+        { format: "pptx", agent: lookupPptxAgent(record.id) },
+        {
+          ...opts,
+          projection: opts.projection as ProjectionKind,
+        }
+      );
+    case "pdf":
+      return projectOfficeDocument(
+        meta,
+        { format: "pdf", agent: lookupPdfSession(record.id).agent },
+        {
+          ...opts,
+          projection: opts.projection as ProjectionKind,
+        }
+      );
   }
 }
 

@@ -15,6 +15,7 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
+      "@officeai/agent/projections": ["../../packages/agent/src/projections.ts"],
       "@/*": ["./app/*"]
     }
   },

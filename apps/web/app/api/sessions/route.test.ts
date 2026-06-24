@@ -9,6 +9,7 @@ import { PptxAgent } from "@officeai/pptx";
 import { XlsxAgent } from "@officeai/xlsx";
 import { GET as GET_DOCUMENT } from "./[documentId]/route";
 import { POST as EXPORT_DOCUMENT } from "./[documentId]/export/route";
+import { GET as PROJECT_DOCUMENT } from "./[documentId]/projection/route";
 import { POST as CREATE_DOCUMENT } from "./create/route";
 import { POST as IMPORT_DOCUMENT } from "./import/route";
 import { GET } from "./route";
@@ -339,6 +340,120 @@ describe("POST /api/sessions/create and /api/sessions/:documentId/export", () =>
       expect(JSON.stringify(created)).not.toContain(dataDir);
     });
   }
+});
+
+describe("GET /api/sessions/:documentId/projection", () => {
+  it("returns a path-free projection for a large persisted document", async () => {
+    const bytes = readFileSync(
+      new URL("../../../../../fixtures/docx/synthetic/05-long-body.docx", import.meta.url)
+    );
+    const agent = await DocxAgent.fromBuffer(bytes);
+    const store = createLocalSessionStore();
+    await store.putSession({
+      id: "session_projection",
+      title: "Projection",
+      createdAt: "2026-06-24T13:00:00.000Z",
+      updatedAt: "2026-06-24T13:00:00.000Z",
+      documentIds: ["doc_projection"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_projection",
+        sessionId: "session_projection",
+        format: "docx",
+        name: "long.docx",
+        status: "ready",
+        sourcePath: "/very/local/long.docx",
+        createdAt: "2026-06-24T13:00:00.000Z",
+        updatedAt: "2026-06-24T13:00:00.000Z",
+        revision: agent.getSnapshot().revision,
+        diagnostics: [],
+        exportHistory: [
+          { path: "/very/local/long-export.docx", bytes: 1234, exportedAt: "2026-06-24T13:01:00.000Z" },
+        ],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      { originalBytes: bytes, workingBytes: bytes }
+    );
+
+    const response = await PROJECT_DOCUMENT(
+      new Request(
+        `http://localhost/api/sessions/doc_projection/projection?projection=text&revision=${agent.getSnapshot().revision}`
+      ),
+      { params: Promise.resolve({ documentId: "doc_projection" }) }
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      schema: string;
+      documentId: string;
+      revision: number;
+      projection: string;
+      content: string;
+      document: { documentId: string; exportHistory: Array<{ bytes: number; exportedAt: string }> };
+    };
+
+    expect(payload.schema).toBe("office-ai/document-projection@1");
+    expect(payload.documentId).toBe("doc_projection");
+    expect(payload.document.documentId).toBe("doc_projection");
+    expect(payload.revision).toBe(agent.getSnapshot().revision);
+    expect(payload.projection).toBe("text");
+    expect(payload.content.length).toBeGreaterThan(100);
+    expect(payload.document.exportHistory).toEqual([{ bytes: 1234, exportedAt: "2026-06-24T13:01:00.000Z" }]);
+    expect(JSON.stringify(payload)).not.toContain("/very/local");
+    expect(JSON.stringify(payload)).not.toContain(dataDir);
+  });
+
+  it("rejects stale revisions and invalid window parameters", async () => {
+    const store = createLocalSessionStore();
+    const agent = await DocxAgent.empty();
+    const bytes = new Uint8Array(await agent.exportFile());
+    await store.putSession({
+      id: "session_projection",
+      title: "Projection",
+      createdAt: "2026-06-24T13:00:00.000Z",
+      updatedAt: "2026-06-24T13:00:00.000Z",
+      documentIds: ["doc_projection"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_projection",
+        sessionId: "session_projection",
+        format: "docx",
+        name: "blank.docx",
+        status: "ready",
+        createdAt: "2026-06-24T13:00:00.000Z",
+        updatedAt: "2026-06-24T13:00:00.000Z",
+        revision: agent.getSnapshot().revision,
+        diagnostics: [],
+        exportHistory: [],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      { workingBytes: bytes }
+    );
+
+    const stale = await PROJECT_DOCUMENT(
+      new Request("http://localhost/api/sessions/doc_projection/projection?revision=999"),
+      { params: Promise.resolve({ documentId: "doc_projection" }) }
+    );
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { code: string }).code).toBe("stale-revision");
+
+    const invalidPage = await PROJECT_DOCUMENT(
+      new Request("http://localhost/api/sessions/doc_projection/projection?projection=page&page=0"),
+      { params: Promise.resolve({ documentId: "doc_projection" }) }
+    );
+    expect(invalidPage.status).toBe(400);
+    expect(((await invalidPage.json()) as { code: string }).code).toBe("invalid-page");
+
+    const missingAnchor = await PROJECT_DOCUMENT(
+      new Request("http://localhost/api/sessions/doc_projection/projection?anchor=paragraph:99"),
+      { params: Promise.resolve({ documentId: "doc_projection" }) }
+    );
+    expect(missingAnchor.status).toBe(404);
+    expect(((await missingAnchor.json()) as { code: string }).code).toBe("anchor-not-found");
+  });
 });
 
 async function reopenExportedBytes(format: WebOfficeFormat, bytes: Uint8Array): Promise<void> {

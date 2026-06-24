@@ -14,6 +14,10 @@
     "./session-store": {
       "types": "./dist/session-store.d.ts",
       "import": "./dist/session-store.js"
+    },
+    "./projections": {
+      "types": "./dist/projections.d.ts",
+      "import": "./dist/projections.js"
     }
   },
   "bin": {

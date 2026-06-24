@@ -18,3 +18,12 @@ export {
   type StoredPendingChange,
   type StoredSessionRecord,
 } from "./session-store.js";
+export {
+  projectOfficeDocument,
+  projectionDocumentEnvelope,
+  type ProjectionDocumentMeta,
+  type ProjectionFormat,
+  type ProjectionKind,
+  type ProjectionOptions,
+  type ProjectionSource,
+} from "./projections.js";

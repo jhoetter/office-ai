@@ -540,6 +540,8 @@ describe("OfficeAI MCP server", () => {
         })
       );
       expect(summary.documentId).toBe(document.documentId);
+      expect(summary.schema).toBe("office-ai/document-projection@1");
+      expect((summary.document as { documentId: string }).documentId).toBe(document.documentId);
       expect(summary.summary).toBeTruthy();
 
       const exported = structured(
