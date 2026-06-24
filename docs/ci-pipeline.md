@@ -14,10 +14,10 @@ run a specific check.
 The pipeline splits into two tiers so a slow heavy gate never blocks
 the inner-loop quality signal.
 
-| Tier             | What it covers                                             | Local entry point            | CI job(s)                                                                             |
-| ---------------- | ---------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
-| **Quality gate** | format / lint / arch / typecheck / test / build            | `make verify` (or `make ci`) | `verify`                                                                              |
-| **Heavy gates**  | LibreOffice roundtrip, perf budgets, OOXML XSD, Playwright | `make heavy`, `make e2e-web` | `*-libreoffice-roundtrip`, `*-perf`, `*-schema-validation`, `web-e2e`, `license-scan` |
+| Tier             | What it covers                                                                        | Local entry point            | CI job(s)                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
+| **Quality gate** | format / lint / actions / fixtures / arch / typecheck / test / build / fast roundtrip | `make verify` (or `make ci`) | `verify`                                                                              |
+| **Heavy gates**  | LibreOffice roundtrip, perf budgets, OOXML XSD, Playwright                            | `make heavy`, `make e2e-web` | `*-libreoffice-roundtrip`, `*-perf`, `*-schema-validation`, `web-e2e`, `license-scan` |
 
 `make heavy` runs every per-format heavy gate locally
 (roundtrip + schema + perf for docx/xlsx/pptx). It's the local
@@ -31,10 +31,19 @@ equivalent of "what every CI heavy job runs", in one command.
    step** so a single unescaped JSX entity fails in seconds rather than
    cascading into the slow build phase. (`next build` itself has
    `eslint.ignoreDuringBuilds: true` for the same reason.)
-4. `architecture` — package dep-graph guard.
-5. `typecheck` — `tsc --noEmit` across the workspace.
-6. `test` — every `*.test.ts(x)` via Vitest.
-7. `build` — turbo build of every package + the Next.js web host.
+4. `actions` — command-bus handler coverage in the MCP/CLI/palette
+   action catalogue.
+5. `fixtures-check` — `fixtures/MATRIX.json` coverage and policy
+   validation.
+6. `architecture` — package dep-graph guard.
+7. `typecheck` — `tsc --noEmit` across the workspace.
+8. `test` — every `*.test.ts(x)` via Vitest.
+9. `build` — turbo build of every package + the Next.js web host.
+10. `roundtrip-gate` — matrix-selected import → projection → no-op
+    or mutation → export → validation → reimport. Writes
+    `.tmp/roundtrip-gate/summary.json`; on failure it also writes
+    the input, output when available, `diagnostics.json`, and
+    `diff-hint.txt` under `.tmp/roundtrip-gate/failures/...`.
 
 If any step fails, the gate stops there. Total wall time: ~30–60 s on
 a warm cache.
@@ -46,7 +55,7 @@ same three heavy gates wired up.
 
 | Job                          | Make target                 | Format | Notes                                                                                                                       |
 | ---------------------------- | --------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `verify`                     | `make verify`               | -      | Quality gate above.                                                                                                         |
+| `verify`                     | `make verify`               | -      | Quality gate above, including the fast matrix-driven roundtrip gate.                                                        |
 | `docx-libreoffice-roundtrip` | `make roundtrip-libre-docx` | docx   | Roundtrips every fixture through `soffice`, asserts no repair text.                                                         |
 | `xlsx-libreoffice-roundtrip` | `make roundtrip-libre-xlsx` | xlsx   | Same, with `libreoffice-calc`.                                                                                              |
 | `pptx-libreoffice-roundtrip` | `make roundtrip-libre-pptx` | pptx   | Same, with `libreoffice-impress`. Skips fixtures whose input PDF is dirty before our roundtrip (e.g. corrupt embedded PNG). |
@@ -90,6 +99,7 @@ may not have `soffice` / `xmllint` installed:
 | ----------------------------------------------- | ---------------------------- |
 | Mirror what CI's `verify` job runs              | `make verify`                |
 | Lighter pre-push gate (skip arch/build/format)  | `make precommit`             |
+| Run only the fast roundtrip release gate        | `make roundtrip-gate`        |
 | Run every heavy gate (3 formats × 3 gate types) | `make heavy`                 |
 | Run a single heavy gate for one product         | `make perf-xlsx` (etc.)      |
 | Just run one product's tests                    | `make test-docx` (etc.)      |

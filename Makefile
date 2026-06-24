@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions fixtures-check \
+.PHONY: help install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions fixtures-check roundtrip-gate \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -80,6 +80,7 @@ help:
 	@echo "  architecture   Validate package dep graph (separation of concerns)"
 	@echo "  actions        Validate CLI/palette/UI action parity (every bus handler is catalogued)"
 	@echo "  fixtures-check Validate fixtures/MATRIX.json and fixture file coverage"
+	@echo "  roundtrip-gate Matrix-driven import/project/export/reimport release gate"
 	@echo "  typecheck      Typecheck all packages"
 	@echo "  test           Run every test in the workspace (turbo)"
 	@echo "  test-docx      Run only @officeai/docx tests"
@@ -295,7 +296,11 @@ test-web:
 #   7. typecheck      — catches type-system violations
 #   8. test           — catches behavioural regressions
 #   9. build          — catches build-time/integration issues
-verify: format-check lint-root lint-web actions fixtures-check architecture typecheck test build
+#  10. roundtrip-gate — import/project/export/reimport checks with artifacts
+roundtrip-gate: build
+	pnpm roundtrip:gate
+
+verify: format-check lint-root lint-web actions fixtures-check architecture typecheck test roundtrip-gate
 	@echo ""
 	@echo "✅ verify: all quality gates passed."
 

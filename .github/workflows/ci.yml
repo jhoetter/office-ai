@@ -45,6 +45,14 @@ jobs:
       - name: Run quality gate
         run: make verify
 
+      - name: Upload roundtrip gate artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roundtrip-gate
+          path: .tmp/roundtrip-gate
+          if-no-files-found: ignore
+
       # Surface helpful diffs when format-check fails — makes the failure
       # easy to act on without re-running locally.
       - name: Show prettier diff on failure
