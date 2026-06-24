@@ -19,6 +19,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   createCommandEnvelope,
+  normalizeDocumentDiff,
   previewCommandEnvelope,
   resolveReviewPolicy,
   validateCommandEnvelope,
@@ -28,8 +29,10 @@ import {
   type CommandHandler,
   type CommandPolicyMode,
   type CommandSource,
+  type DocumentDiff,
   type DocumentSnapshot,
   type Mutation,
+  type SemanticDiff,
 } from "@officeai/core";
 import { DocxAgent, allDocxHandlers, docxActions } from "@officeai/docx";
 import { XlsxAgent, allXlsxHandlers, diffXlsxSnapshots, xlsxActions } from "@officeai/xlsx";
@@ -859,6 +862,35 @@ function mutationSummary(mutation: AnyMutation): Record<string, unknown> {
   };
 }
 
+function semanticDiffPayload(diff: DocumentDiff, operation?: string): SemanticDiff {
+  return normalizeDocumentDiff(diff, { operation, maxChanges: 25 });
+}
+
+function maybeSemanticDiffPayload(diff: unknown, operation?: string): SemanticDiff | undefined {
+  if (isSemanticDiff(diff)) return diff;
+  if (isDocumentDiff(diff)) return semanticDiffPayload(diff, operation);
+  return undefined;
+}
+
+function isSemanticDiff(value: unknown): value is SemanticDiff {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    (value as { schema?: unknown }).schema === "office-ai/semantic-diff@1"
+  );
+}
+
+function isDocumentDiff(value: unknown): value is DocumentDiff {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    typeof (value as { format?: unknown }).format === "string" &&
+    typeof (value as { fromRevision?: unknown }).fromRevision === "number" &&
+    typeof (value as { toRevision?: unknown }).toRevision === "number" &&
+    Array.isArray((value as { changes?: unknown }).changes)
+  );
+}
+
 function commandEnvelopePayload(envelope: CommandEnvelope): Record<string, unknown> {
   return {
     schema: "office-ai/command@1",
@@ -952,7 +984,7 @@ function storedPendingChange(mutation: AnyMutation): StoredPendingChange {
     source: mutation.command.source,
     ...(mutation.command.agentId ? { actorId: mutation.command.agentId } : {}),
     timestamp: mutation.command.timestamp,
-    diff: mutation.diff,
+    diff: semanticDiffPayload(mutation.diff, mutation.command.type),
     ...(mutation.rejection ? { rejection: mutation.rejection } : {}),
   };
 }
@@ -977,7 +1009,7 @@ function storedCommandLogEntry(args: {
     source,
     ...(actorId ? { actorId } : {}),
     recordedAt: nowIso(),
-    ...(args.mutation?.diff ? { diff: args.mutation.diff } : {}),
+    ...(args.mutation?.diff ? { diff: semanticDiffPayload(args.mutation.diff, operation) } : {}),
     ...(args.diagnostics ? { diagnostics: args.diagnostics.map(storedDiagnostic) } : {}),
   };
 }
@@ -1110,6 +1142,7 @@ async function pendingChangesPayload(
       documentName: record.name,
       mutation: mutationSummary(mutation),
       diff: mutation.diff,
+      semanticDiff: semanticDiffPayload(mutation.diff, mutation.command.type),
     }));
   }
   const stored = await localSessionStore()
@@ -1130,6 +1163,7 @@ async function pendingChangesPayload(
       ...(pending.rejection ? { rejection: pending.rejection } : {}),
     },
     ...(pending.diff ? { diff: pending.diff } : {}),
+    ...(pending.diff ? { semanticDiff: maybeSemanticDiffPayload(pending.diff, pending.operation) } : {}),
   }));
 }
 
@@ -1420,6 +1454,7 @@ function registerCommandLifecycleTools(server: McpServer): void {
           document: documentEnvelope(record),
           diagnostics: mergedDiagnostics,
           ...(preview.diff ? { diff: preview.diff } : {}),
+          ...(preview.diff ? { semanticDiff: semanticDiffPayload(preview.diff, envelope.operation) } : {}),
         });
       } catch (err) {
         return fail(`preview_command failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1517,6 +1552,7 @@ function registerCommandLifecycleTools(server: McpServer): void {
           diagnostics: finalDiagnostics,
           mutation: mutationSummary(mutation),
           diff: mutation.diff,
+          semanticDiff: semanticDiffPayload(mutation.diff, envelope.operation),
           nextActions:
             mutation.status === "pending" ? ["list_pending_changes", "approve_change"] : ["export_document"],
         });
@@ -1556,7 +1592,13 @@ function registerCommandLifecycleTools(server: McpServer): void {
           didUndo: Boolean(mutation),
           document: documentEnvelope(record),
           diagnostics,
-          ...(mutation ? { mutation: mutationSummary(mutation), diff: mutation.diff } : {}),
+          ...(mutation
+            ? {
+                mutation: mutationSummary(mutation),
+                diff: mutation.diff,
+                semanticDiff: semanticDiffPayload(mutation.diff, mutation.command.type),
+              }
+            : {}),
         });
       } catch (err) {
         return fail(`undo_command failed: ${err instanceof Error ? err.message : String(err)}`);

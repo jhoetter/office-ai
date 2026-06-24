@@ -88,7 +88,7 @@ test("home page lists local sessions, documents, pending changes and diagnostics
               actorId: "assistant",
               timestamp: 1782295380000,
               hasDiff: true,
-              diffSummary: "Structured diff available",
+              diffSummary: "docx.replace-text: 1 DOCX change; low review risk.",
             },
           ],
           commandLog: [
@@ -189,7 +189,7 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.getByText("MCP review")).toBeVisible();
   await expect(page.getByText("docx.replace-text · previewed")).toBeVisible();
   await expect(page.getByText("needs-review")).toBeVisible();
-  await expect(page.getByText("Structured diff available")).toBeVisible();
+  await expect(page.getByText("docx.replace-text: 1 DOCX change; low review risk.")).toBeVisible();
   await expect(page.getByText("4.0 KB")).toBeVisible();
 
   await page.getByRole("button", { name: "Approve" }).click();
@@ -278,7 +278,7 @@ test("document detail rejects a pending change and can undo the review decision"
               actorId: "assistant",
               timestamp: 1782309600000,
               hasDiff: true,
-              diffSummary: "Structured diff available",
+              diffSummary: "docx.replace-text: 1 DOCX change; low review risk.",
               ...(reviewState === "rejected"
                 ? { rejection: { code: "human-rejected", message: "Rejected in web review." } }
                 : {}),

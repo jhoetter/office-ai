@@ -96,6 +96,27 @@ at least:
 - `unreviewed-pending-export`
 - `change-review-undone`
 
+## Semantic diffs
+
+Command handlers continue to emit the compact core `DocumentDiff`
+shape. MCP review surfaces additionally normalize that raw diff into
+`office-ai/semantic-diff@1`:
+
+- `summary`: short text, change count and aggregate review risk.
+- `anchors`: format-aware anchors derived from changed paths or node IDs.
+- `changes`: per-change kind, summary, risk, anchor and optional
+  before/after values from diff metadata.
+- `diagnostics`: diff-specific warnings such as
+  `semantic-diff-fallback` or `semantic-diff-truncated`.
+- `fallback`: true when the command changed revisions but no structured
+  per-node diff was available.
+
+`preview_command`, `apply_command`, `undo_command` and
+`list_pending_changes` expose `semanticDiff` where a command diff is
+available. Persisted pending-change and command-log metadata stores the
+semantic diff so the web session inspector can render a safe summary
+without exposing raw local paths or oversized internal diff payloads.
+
 ## Current integration
 
 The lifecycle contract is typed and tested in core. The canonical MCP

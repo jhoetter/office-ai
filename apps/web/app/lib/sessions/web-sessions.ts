@@ -169,7 +169,7 @@ function toWebPendingChangeEntry(change: StoredPendingChange): WebPendingChangeE
     ...(change.actorId ? { actorId: change.actorId } : {}),
     ...(change.timestamp !== undefined ? { timestamp: change.timestamp } : {}),
     hasDiff: change.diff !== undefined,
-    ...(change.diff !== undefined ? { diffSummary: "Structured diff available" } : {}),
+    ...(change.diff !== undefined ? { diffSummary: diffSummary(change.diff) } : {}),
     ...(change.rejection ? { rejection: change.rejection } : {}),
   };
 }
@@ -187,4 +187,16 @@ function toWebCommandLogEntry(entry: StoredCommandLogEntry): WebCommandLogEntry 
     hasDiff: entry.diff !== undefined,
     diagnostics: entry.diagnostics ?? [],
   };
+}
+
+function diffSummary(diff: unknown): string {
+  if (
+    diff &&
+    typeof diff === "object" &&
+    (diff as { schema?: unknown }).schema === "office-ai/semantic-diff@1" &&
+    typeof (diff as { summary?: { text?: unknown } }).summary?.text === "string"
+  ) {
+    return (diff as { summary: { text: string } }).summary.text;
+  }
+  return "Structured diff available";
 }

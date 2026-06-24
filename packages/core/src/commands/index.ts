@@ -33,3 +33,12 @@ export {
   type ReviewPolicyInput,
   type ReviewPolicyResolution,
 } from "./review-policy.js";
+export {
+  normalizeDocumentDiff,
+  type NormalizeDocumentDiffOptions,
+  type SemanticDiff,
+  type SemanticDiffAnchor,
+  type SemanticDiffChange,
+  type SemanticDiffRisk,
+  type SemanticDiffSummary,
+} from "./semantic-diff.js";

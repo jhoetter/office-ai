@@ -185,7 +185,10 @@ describe("GET /api/sessions/:documentId", () => {
             source: "agent",
             actorId: "assistant",
             timestamp: 1782295440000,
-            diff: { path: "/very/local/diff.json", secret: "raw-diff" },
+            diff: {
+              schema: "office-ai/semantic-diff@1",
+              summary: { text: "docx.replace-text: 1 DOCX change; low review risk." },
+            },
           },
         ],
         commandLog: [
@@ -217,7 +220,7 @@ describe("GET /api/sessions/:documentId", () => {
         documentId: string;
         exportCount: number;
         exports: Array<{ bytes: number; exportedAt: string }>;
-        pendingChanges: Array<{ operation: string; hasDiff: boolean }>;
+        pendingChanges: Array<{ operation: string; hasDiff: boolean; diffSummary?: string }>;
         commandLog: Array<{ stage: string; hasDiff: boolean; diagnostics: Array<{ code: string }> }>;
       };
     };
@@ -228,7 +231,13 @@ describe("GET /api/sessions/:documentId", () => {
       documentId: "doc_1",
       exportCount: 1,
       exports: [{ bytes: 4096, exportedAt: "2026-06-24T10:05:00.000Z" }],
-      pendingChanges: [{ operation: "docx.replace-text", hasDiff: true }],
+      pendingChanges: [
+        {
+          operation: "docx.replace-text",
+          hasDiff: true,
+          diffSummary: "docx.replace-text: 1 DOCX change; low review risk.",
+        },
+      ],
       commandLog: [{ stage: "previewed", hasDiff: true, diagnostics: [{ code: "preview-ready" }] }],
     });
     expect(JSON.stringify(payload)).not.toContain("/very/local");

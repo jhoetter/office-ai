@@ -315,6 +315,11 @@ describe("OfficeAI MCP server", () => {
       );
       expect(preview.ok, `${entry.format} preview failed`).toBe(true);
       expect(((preview.diff as { changes?: unknown[] }).changes ?? []).length).toBeGreaterThan(0);
+      expect(preview.semanticDiff).toMatchObject({
+        schema: "office-ai/semantic-diff@1",
+        format: entry.format,
+        summary: { changeCount: expect.any(Number), text: expect.any(String) },
+      });
       expect((preview.diagnostics as unknown[]).length).toBeGreaterThan(0);
 
       const applied = structured(
@@ -324,6 +329,10 @@ describe("OfficeAI MCP server", () => {
       expect(applied.stage).toBe("applied");
       expect((applied.mutation as { status: string }).status).toBe("approved");
       expect(((applied.diff as { changes?: unknown[] }).changes ?? []).length).toBeGreaterThan(0);
+      expect(applied.semanticDiff).toMatchObject({
+        schema: "office-ai/semantic-diff@1",
+        format: entry.format,
+      });
 
       const exported = structured(
         await client.callTool({
