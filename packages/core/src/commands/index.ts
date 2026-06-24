@@ -10,3 +10,20 @@ export {
   type Mutation,
   type MutationStatus,
 } from "./types.js";
+export {
+  applyCommandEnvelope,
+  createCommandEnvelope,
+  hasBlockingDiagnostics,
+  previewCommandEnvelope,
+  validateCommandEnvelope,
+  type CommandDiagnostic,
+  type CommandDiagnosticLevel,
+  type CommandEnvelope,
+  type CommandLifecycleResult,
+  type CommandLifecycleStage,
+  type CommandPolicyMode,
+  type CommandSurface,
+  type CommandTarget,
+  type CreateCommandEnvelopeInput,
+  type PreviewCommandOptions,
+} from "./lifecycle.js";

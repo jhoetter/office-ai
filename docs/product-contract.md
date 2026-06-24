@@ -80,8 +80,10 @@ Long pitch:
 - Session and document IDs are not yet the canonical MCP entry point;
   current MCP handles are in-process and path-loaded.
 - Action metadata now separates `agentCallable`, `webCallable`, and
-  `cliCallable`; the next gap is policy depth around review levels and
-  dry-run semantics.
+  `cliCallable`.
+- Command lifecycle types now cover envelope, validation, preview,
+  apply/queue and diagnostics; MCP Plan/Apply tools and web pending
+  review still need to consume that contract directly.
 - The web editor has strong per-format editors, but no unified session
   browser or pending-changes panel.
 - PDF has real packages and tools, but older docs under-described it

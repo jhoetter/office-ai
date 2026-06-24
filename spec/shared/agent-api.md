@@ -61,6 +61,28 @@ export interface SearchResult {
 }
 ```
 
+## Command envelope lifecycle
+
+Direct `applyCommand(command)` remains the low-level agent API, but MCP,
+web and CLI surfaces should model user-visible mutations as a
+`CommandEnvelope` from `@officeai/core/commands`.
+
+The shared lifecycle is:
+
+1. `createCommandEnvelope` with explicit `format`, `operation`,
+   `arguments`, `target`, `source` and `policy`.
+2. `validateCommandEnvelope` against the current snapshot. Format
+   mismatch and stale revision fail before handlers run.
+3. `previewCommandEnvelope` to get diagnostics and a diff without
+   mutating the bus or writing files.
+4. `applyCommandEnvelope` to either queue (`policy.mode: "pending"`) or
+   apply (`policy.mode: "auto_apply"`) through the `CommandBus`.
+
+`policy.mode: "dry_run"` is preview-only and fails if passed to apply.
+Handler failures, including invalid anchors surfaced as `CommandError`,
+return structured diagnostics. See
+[`../../docs/command-lifecycle.md`](../../docs/command-lifecycle.md).
+
 ## Construction
 
 Each format exposes a factory:
