@@ -620,8 +620,8 @@ function XlsxEditorInner({
       try {
         // Four bootstrap paths, picked in priority order:
         //   1. `initialBytes` — host streams the workbook straight
-        //      in (used when the editor is embedded by hof-os and
-        //      the bytes already came back from S3).
+        //      in (used when the editor is embedded and the bytes
+        //      already came back from host storage).
         //   2. `initialSource` — fetch a pre-existing .xlsx.
         //   3. `initialBlank` — build an empty workbook.
         //   4. Default — build the synthetic sample.

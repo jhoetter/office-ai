@@ -2001,8 +2001,8 @@ async function dispatchAndWrite(
   for (const id of ids) agent.approveMutation(id);
 
   // See cli.ts docx-apply rationale: publish to Yjs first so editor
-  // peers see the morph BEFORE any S3-backed iframe could possibly
-  // refresh. Only the explicit `pptx apply` surface threads
+  // peers see the morph BEFORE any object-storage-backed embed could
+  // possibly refresh. Only the explicit `pptx apply` surface threads
   // realtime opts in; per-command typed writes leave realtime off.
   const approved = muts
     .filter((m) => m.status !== "rejected")

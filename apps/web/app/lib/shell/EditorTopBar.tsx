@@ -45,9 +45,9 @@ export interface EditorTopBarProps {
    * Optional override for the back button. When provided, the back
    * button becomes a `<button>` that calls this callback (instead of
    * the default `<Link href="/">` which only makes sense in the
-   * standalone office-ai web app). Embedding hosts (e.g. hof-os'
-   * `/edit-asset`) pass this so back returns to the surrounding app's
-   * previous route rather than the office-ai standalone home.
+   * standalone office-ai web app). Embedding hosts pass this so back
+   * returns to the surrounding app's previous route rather than the
+   * office-ai standalone home.
    */
   readonly onBack?: () => void;
 }

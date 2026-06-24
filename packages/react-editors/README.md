@@ -1,9 +1,8 @@
 # `@officeai/react-editors`
 
 Embeddable office-ai editor surfaces and blank-file builders for React
-hosts (e.g. [hof-os](https://github.com/jhoetter/hof-os)) that want
-office-ai's DOCX / XLSX / PPTX / PDF editing UX without standing up the
-`apps/web` Next.js shell.
+hosts that want office-ai's DOCX / XLSX / PPTX / PDF editing UX without
+standing up the `apps/web` Next.js shell.
 
 ## Phase 1 — what ships today
 
@@ -46,7 +45,7 @@ import { makeBlankDocx, makeBlankXlsx, makeBlankPptx, makeBlankPdf } from "@offi
 import { DOCX_MIME, XLSX_MIME, PPTX_MIME, PDF_MIME } from "@officeai/react-editors/mime";
 
 // Mint blank bytes in the browser, hand them to the host's existing
-// upload pipeline (presigned S3 PUT, FileSystemAccess, …).
+// upload pipeline (presigned object-storage PUT, FileSystemAccess, …).
 const bytes = await makeBlankDocx();
 const file = new File([bytes], "Untitled.docx", { type: DOCX_MIME });
 await uploadToS3(file);
@@ -57,4 +56,4 @@ await uploadToS3(file);
 This package is published as a tarball asset alongside `@officeai/agent`
 on every push to `office-ai/main` — see the
 [release pipeline doc](../../docs/release-pipeline.md). Hosts pin the
-URL in their lockfile (e.g. `infra/officeai.lock.json` in hof-os).
+URL in their own lockfile.

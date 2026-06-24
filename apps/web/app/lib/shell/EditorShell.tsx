@@ -53,9 +53,8 @@ export interface EditorShellProps {
   /**
    * Optional override for the back button. When provided, the back
    * button calls this callback (instead of the default `<Link href="/">`).
-   * Hosts that embed the editor (hof-os' `/edit-asset`, etc.) pass this
-   * to navigate back to the *embedding* app rather than the standalone
-   * office-ai home.
+   * Hosts that embed the editor pass this to navigate back to the
+   * *embedding* app rather than the standalone office-ai home.
    */
   readonly onBack?: () => void;
 }
@@ -122,8 +121,8 @@ export function EditorShell({
       if (!mod) return;
       const key = e.key.toLowerCase();
       // Cmd+S — save (calls product adapter's onSave; in embedded hosts
-      // like hof-os this routes to the host's S3 PUT, not the browser's
-      // built-in "Save Page" dialog which would otherwise capture this).
+      // this routes to host storage, not the browser's built-in "Save
+      // Page" dialog which would otherwise capture this).
       if (key === "s" && !e.shiftKey && !e.altKey) {
         if (!adapter.canSave) return;
         e.preventDefault();

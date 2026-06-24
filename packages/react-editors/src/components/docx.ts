@@ -2,7 +2,7 @@
  * Public entry for the embeddable DOCX editor.
  *
  * The implementation lives in `apps/web/app/editor/DocxEditor.tsx` so
- * Next's editor route and the bundled-for-hof-os build both ship the
+ * Next's editor route and the bundled-for-embedding host build both ship the
  * exact same component (single source of truth, no copy/paste drift).
  * The esbuild step in this package resolves the `@/` alias against
  * `apps/web/app` and aliases the lone `next/link` import in

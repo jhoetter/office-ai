@@ -85,7 +85,7 @@ const ALLOWED_INTERNAL_DEPS = {
   // build.mjs).
   //
   // All @officeai/* deps are declared explicitly because Vite hosts
-  // that set `resolve.preserveSymlinks: true` (data-app/ui in hof-os)
+  // that set `resolve.preserveSymlinks: true`
   // can't see through pnpm's nested .pnpm/ store — declaring them as
   // direct deps makes pnpm hoist a top-level symlink at
   // `react-editors/node_modules/@officeai/<name>` where the resolver

@@ -588,7 +588,7 @@ worksheet entirely, so neither can survive.
 
 `customXml/item*.xml`, `customXml/itemProps*.xml`, their `_rels`, and the
 workbook → custom-xml rels are all unhandled. Breaks
-SharePoint/InfoPath/content-type metadata.
+document-host metadata, InfoPath metadata, and content-type bindings.
 
 ### 8.8 VBA
 

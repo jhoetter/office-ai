@@ -1,7 +1,7 @@
 name: Auto Release
 
-# Mirrors hof-engine's auto-release flow, adapted for a Node monorepo
-# distributed via GitHub Releases (NOT npm — see docs/release-pipeline.md):
+# GitHub-Release based distribution flow for the OfficeAI workspace
+# (NOT npm — see docs/release-pipeline.md):
 #
 #   1. CI gate (`pnpm verify`) on every push to main.
 #   2. If green, compute the next patch version from the latest `vX.Y.Z`
@@ -10,10 +10,10 @@ name: Auto Release
 #      (resolves all `workspace:*` deps), tar it, and attach the tarball
 #      to a new GitHub Release vX.Y.Z. Uses the standard GITHUB_TOKEN —
 #      no npm org, no Trusted Publishers, no GHCR.
-#   4. Notify hof-os by committing the new version into
-#      `infra/officeai.lock.json` on jhoetter/hof-os, which kicks off
-#      hof-os's own deploy pipeline (which curls the tarball from the
-#      Release URL when building hof-skill-base-officeai).
+#   4. Optionally notify one downstream host repository by committing
+#      a version lockfile. Configure this with
+#      OFFICEAI_DOWNSTREAM_REPOSITORY + OFFICEAI_SYNC_TOKEN; without
+#      those settings the release remains standalone.
 #
 # To bypass a release for a doc-only commit, append `[skip ci]` or
 # `[skip release]` to the commit message.
@@ -158,7 +158,7 @@ jobs:
 
       # Resolve every `workspace:*` dep of @officeai/agent into a fully
       # self-contained directory (with populated node_modules/) and tar it.
-      # This is what the hof-os sandbox Dockerfile downloads + extracts —
+      # This is what a downstream sandbox Dockerfile downloads + extracts —
       # no npm registry interaction needed at consume time.
       - name: Build release bundle (officeai-agent)
         if: steps.check_tag.outputs.already_tagged == 'false'
@@ -174,10 +174,10 @@ jobs:
           tar czf "officeai-agent-${VERSION}.tgz" -C "${RUNNER_TEMP}" officeai-agent
           ls -lh "officeai-agent-${VERSION}.tgz"
 
-      # Same pattern for the React-editors / blanks bundle that hof-os
-      # consumes inside its data-app SPA. `pnpm deploy` inlines the
+      # Same pattern for the React-editors / blanks bundle that an
+      # embedding host consumes inside its app. `pnpm deploy` inlines the
       # @officeai/{docx,xlsx,pptx,pdf} deps so the tarball is fully
-      # self-contained — hof-os doesn't need access to office-ai's
+      # self-contained — the host doesn't need access to office-ai's
       # workspace at install time.
       - name: Build release bundle (officeai-react-editors)
         if: steps.check_tag.outputs.already_tagged == 'false'
@@ -187,7 +187,7 @@ jobs:
           DEPLOY_DIR="${RUNNER_TEMP}/officeai-react-editors"
           rm -rf "${DEPLOY_DIR}"
           pnpm --filter @officeai/react-editors --prod deploy "${DEPLOY_DIR}"
-          # Sanity check: every subpath entry point hof-os imports
+          # Sanity check: every documented subpath entry point
           # from must exist after the deploy.
           test -f "${DEPLOY_DIR}/dist/index.js"
           test -f "${DEPLOY_DIR}/dist/blanks/index.js"
@@ -198,7 +198,7 @@ jobs:
           test -f "${DEPLOY_DIR}/dist/mime.js"
           test -f "${DEPLOY_DIR}/dist/contract.js"
           # Phase-1.5 bundled editor components — required for the
-          # inline editor surface in hof-os' data-app SPA.
+          # inline editor surface in a non-Next embedding host.
           test -f "${DEPLOY_DIR}/dist/components/docx.js"
           test -f "${DEPLOY_DIR}/dist/components/xlsx.js"
           test -f "${DEPLOY_DIR}/dist/components/pptx.js"
@@ -275,7 +275,7 @@ jobs:
           test -d "${DEPLOY_DIR}/node_modules/@officeai/pptx"
           test -d "${DEPLOY_DIR}/node_modules/@officeai/pdf"
           # Shamefully-hoist the deploy output so consumers running with
-          # `resolve.preserveSymlinks: true` (e.g. hof-os data-app/ui's
+          # `resolve.preserveSymlinks: true` (common in Vite host apps'
           # Vite) can resolve transitive deps. pnpm deploy nests them
           # under `.pnpm/<entry>/node_modules/<pkg>` and only hoists
           # declared direct deps — under preserveSymlinks the resolver
@@ -285,8 +285,8 @@ jobs:
           # `pnpm install --shamefully-hoist`'s effect by symlinking
           # every package found under `.pnpm/.../node_modules/` at the
           # top of `node_modules/`. Idempotent / first-wins on dupes.
-          # Mirrors the self-healing fallback in hof-os's
-          # `data-app/ui/scripts/ensure-officeai-react-editors.cjs`.
+          # Mirrors the self-healing fallback recommended for host apps
+          # that pin the release tarball directly.
           node -e '
             const fs = require("node:fs");
             const path = require("node:path");
@@ -363,31 +363,51 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes
 
-  notify-hof-os:
-    name: Notify hof-os of new release
+  notify-downstream-host:
+    name: Notify downstream host of new release
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: needs.release.outputs.new_version != ''
     steps:
-      - name: Checkout hof-os
+      - name: Check downstream sync config
+        id: sync_config
+        env:
+          DOWNSTREAM_REPOSITORY: ${{ vars.OFFICEAI_DOWNSTREAM_REPOSITORY }}
+          DOWNSTREAM_LOCKFILE: ${{ vars.OFFICEAI_DOWNSTREAM_LOCKFILE }}
+          DOWNSTREAM_TOKEN: ${{ secrets.OFFICEAI_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOWNSTREAM_REPOSITORY}" ] || [ -z "${DOWNSTREAM_TOKEN}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Downstream host sync not configured; release remains standalone."
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "repository=${DOWNSTREAM_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "lockfile=${DOWNSTREAM_LOCKFILE:-infra/officeai.lock.json}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout downstream host
+        if: steps.sync_config.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
-          repository: jhoetter/hof-os
+          repository: ${{ steps.sync_config.outputs.repository }}
           token: ${{ secrets.OFFICEAI_SYNC_TOKEN }}
           ref: main
 
       - name: Update officeai lockfile
+        if: steps.sync_config.outputs.enabled == 'true'
         env:
           NEW_VERSION: ${{ needs.release.outputs.new_version }}
           GIT_SHA: ${{ github.sha }}
+          LOCKFILE: ${{ steps.sync_config.outputs.lockfile }}
         run: |
           set -euo pipefail
-          mkdir -p infra
+          mkdir -p "$(dirname "${LOCKFILE}")"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           AGENT_TARBALL="https://github.com/jhoetter/office-ai/releases/download/v${NEW_VERSION}/officeai-agent-${NEW_VERSION}.tgz"
           REACT_TARBALL="https://github.com/jhoetter/office-ai/releases/download/v${NEW_VERSION}/officeai-react-editors-${NEW_VERSION}.tgz"
-          cat > infra/officeai.lock.json <<EOF
+          cat > "${LOCKFILE}" <<EOF
           {
             "version": "${NEW_VERSION}",
             "agent_version": "${NEW_VERSION}",
@@ -399,21 +419,22 @@ jobs:
             "source_sha": "${GIT_SHA}"
           }
           EOF
-          cat infra/officeai.lock.json
+          cat "${LOCKFILE}"
 
       - name: Commit and push
+        if: steps.sync_config.outputs.enabled == 'true'
         env:
           NEW_VERSION: ${{ needs.release.outputs.new_version }}
+          LOCKFILE: ${{ steps.sync_config.outputs.lockfile }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add infra/officeai.lock.json
+          git add "${LOCKFILE}"
           if git diff --cached --quiet; then
-            echo "officeai.lock.json already at ${NEW_VERSION}; nothing to commit"
+            echo "${LOCKFILE} already at ${NEW_VERSION}; nothing to commit"
             exit 0
           fi
           git commit -m "chore(officeai): bump to ${NEW_VERSION}"
           git pull --rebase origin main
           git push origin main
-

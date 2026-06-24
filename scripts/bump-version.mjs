@@ -6,11 +6,10 @@
  *
  * Usage: node scripts/bump-version.mjs <new-version>
  *
- * The list of publishable packages is the canonical npm bundle that the
- * hof-os agent sandbox image consumes via `npm install -g
- * @officeai/agent`. Anything not in this list (`apps/web`, UI-only
- * packages, integration test harness) stays out of the bump because it
- * is intentionally `private: true`.
+ * The list of publishable packages is the canonical bundle set for the
+ * agent sandbox image and embeddable editors. Anything not in this list
+ * (`apps/web`, UI-only packages, integration test harness) stays out of
+ * the bump because it is intentionally `private: true`.
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";

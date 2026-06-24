@@ -25,7 +25,7 @@ export interface RoomClientOptions {
   /**
    * Optional host-supplied identity. When provided, replaces the
    * default anonymous "Adjective Animal" identity for this peer. The
-   * embedding host (e.g. hof-os) populates this from its auth layer
+   * embedding host populates this from its auth layer
    * so multi-user presence shows real names instead of "Quick Quokka".
    *
    * Field semantics mirror `PresenceUser` from
@@ -129,7 +129,7 @@ class RoomClientImpl implements RoomClient {
     this.product = opts.product;
     this.peerId = loadOrMintPeerId();
     if (opts.identity && opts.identity.id && opts.identity.name) {
-      // Host-supplied identity (hof-os authenticated user). We trust
+      // Host-supplied identity (authenticated user). We trust
       // the host on stability of `id`; using it directly for both the
       // awareness `user.id` and the per-user dedupe key in
       // `getRemoteStates` means two tabs of the same human still

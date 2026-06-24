@@ -1,11 +1,11 @@
 /**
  * Yjs room publishing for `apply` subcommands.
  *
- * Why this exists: when the office-agent CLI runs inside the hof-os
- * sub-agent sandbox, the user is watching the same document in their
- * browser through `@officeai/react-editors` joined to room
- * `hofos/asset/<key>`. Saving the result to S3 and bumping a presigned
- * URL makes the editor full-remount on every checkpoint — a janky
+ * Why this exists: when the office-agent CLI runs inside an embedding
+ * host's agent sandbox, the user may be watching the same document in
+ * their browser through `@officeai/react-editors` joined to a stable
+ * document room. Saving the result to object storage and bumping a
+ * presigned URL makes the editor full-remount on every checkpoint — a janky
  * "F5" flash that breaks the "watching a coworker edit" feel.
  *
  * The fix is to push the same `CommandLite` envelopes the agent just
@@ -23,7 +23,7 @@
  *     because the CLI only writes; it doesn't read.
  *
  *   - Optional `--clear-room-after`: with the file save complete, the
- *     baseline OOXML on S3 already encodes every command in the room.
+ *     baseline OOXML/PDF artifact already encodes every command in the room.
  *     Late-joining browsers refetch S3 + only need fresh commands
  *     after the save, so wiping the Y.Array keeps the invariant
  *     "room.commands == ops not yet baked into latest S3 save". Without
@@ -83,8 +83,7 @@ function encodeCommand<TPayload>(envelope: CommandEnvelope<TPayload>): CommandEn
 }
 
 /**
- * Default agent-cursor color: `bit-orange` from the hofOS palette
- * (`AGENTS.md` brand section). Picked so the editor's PresenceStack
+ * Default agent-cursor color picked so the editor's PresenceStack
  * visually distinguishes the office-agent from anonymous human peers
  * (which use the FNV-1a-derived peer palette).
  */
@@ -154,7 +153,7 @@ export interface RealtimePublishOptions extends RealtimeFlags {
  * preserving the legacy "write file, that's it" behaviour.
  *
  * The realtime URL falls back to `OAI_REALTIME_URL` env so the
- * sub-agent host can pin the relay endpoint once on the sandbox
+ * embedding host can pin the relay endpoint once on the sandbox
  * environment instead of asking the LLM to thread it through every
  * apply call.
  */
@@ -162,7 +161,7 @@ export function attachRealtimeFlags(cmd: Command): Command {
   return cmd
     .option(
       "--room <id>",
-      "Yjs room id to publish into (e.g. hofos/asset/<encoded-key>). " +
+      "Yjs room id to publish into (e.g. officeai/document/<encoded-id>). " +
         "Falls back to OAI_ROOM_ID env. When absent, realtime publishing is skipped."
     )
     .option(
@@ -186,7 +185,7 @@ export function attachRealtimeFlags(cmd: Command): Command {
       "--clear-room-after",
       "After publishing, transactionally clear the Y.Array<CommandEnvelope>. Use when the " +
         "file save has already baked every published command into the canonical artifact " +
-        "(see hof-os office sub-agent).",
+        "(typical for checkpointed agent runs).",
       false
     )
     .option(

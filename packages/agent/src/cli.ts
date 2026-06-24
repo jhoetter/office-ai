@@ -1005,8 +1005,8 @@ function registerDocxSubcommands(docx: Command, io: IO): void {
       for (const id of ids) agent.approveMutation(id);
 
       // Publish to Yjs BEFORE writing the file so editor peers see
-      // live updates a few hundred ms before any S3-backed iframe
-      // could refresh — that's the entire point of the room. Failures
+      // live updates a few hundred ms before any object-storage-backed
+      // embed could refresh — that's the entire point of the room. Failures
       // here never block the file write (publishCommandsToRealtime
       // swallows + reports its own errors).
       const approved = muts

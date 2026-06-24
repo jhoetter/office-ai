@@ -2,7 +2,7 @@
  * Smoke tests for `@officeai/react-editors/blanks`.
  *
  * The intent is to lock in the bytes-out contract embedding hosts
- * (hof-os) rely on for the "Create new" dropdown — each builder
+ * (embedding host) rely on for the "Create new" dropdown — each builder
  * returns a non-empty Uint8Array with the expected file-format
  * magic bytes, and the runtime dispatcher routes correctly.
  */

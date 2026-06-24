@@ -16,7 +16,7 @@
  * The Next.js host (apps/web) resolves `pdfjs-dist`'s worker with
  * `new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url)`
  * and serves `/pdfjs/` from `apps/web/public/pdfjs/`. Embedding hosts
- * (e.g. hof-os, Vite-based) can't reliably do either — the bundled
+ * (e.g. embedding host, Vite-based) can't reliably do either — the bundled
  * chunk's `import.meta.url` doesn't yield a fetchable worker URL
  * inside `node_modules/.vite/deps/`, and the host has no static
  * `/pdfjs/` directory. We side-step both problems by setting the

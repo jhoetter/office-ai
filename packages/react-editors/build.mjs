@@ -31,7 +31,7 @@
  *         jszip, yjs, y-websocket). They reach the consumer through
  *         pnpm's normal dependency resolution + the shameful-hoist
  *         step that the auto-release workflow runs (so the tarball
- *         that hof-os' postinstall fetches has every external
+ *         that a downstream host's postinstall fetches has every external
  *         resolvable from the deploy root, even with Vite's
  *         `resolve.preserveSymlinks: true`).
  *
@@ -200,9 +200,7 @@ const cssInjectPlugin = {
         // Bare specifier (e.g. `prosemirror-view/style/prosemirror.css`).
         // Anchor the resolver at the importer's directory so pnpm's
         // nested layout finds the right copy.
-        const requireFromImporter = createRequire(
-          path.join(args.resolveDir, "package.json"),
-        );
+        const requireFromImporter = createRequire(path.join(args.resolveDir, "package.json"));
         absPath = requireFromImporter.resolve(args.path);
       }
       return { path: absPath, namespace: "css-inject" };

@@ -12,8 +12,9 @@
  *                                this. Must have a runnable
  *                                dist/cli.js with a node shebang.
  *   • @officeai/react-editors  — React component / blanks bundle that
- *                                hof-os pulls into apps/web. Must have
- *                                dist/index.js + dist/blanks/*.js.
+ *                                embedding hosts pull into their web
+ *                                apps. Must have dist/index.js +
+ *                                dist/blanks/*.js.
  *
  * Used by `pnpm verify` so a broken `pnpm deploy` (workspace dep
  * cycle, missing build output, broken CLI shebang) is caught locally
@@ -95,9 +96,9 @@ function checkAgentBundle(out) {
 /**
  * Mirror the shameful-hoist step in `auto-release.yml`'s
  * `Build release bundle (officeai-react-editors)` job and the
- * fallback in hof-os's `ensure-officeai-react-editors.cjs`. Required
+ * fallback recommended for host postinstall checks. Required
  * because consumers running with `resolve.preserveSymlinks: true`
- * (hof-os data-app/ui's Vite) can't see through pnpm's `.pnpm/`
+ * (common in Vite host apps) can't see through pnpm's `.pnpm/`
  * tree, so every transitive dep needs a top-level symlink at
  * `node_modules/<pkg>`. Keeping the dry-run in sync means any
  * regression in the deploy shape is caught locally before CI.
@@ -144,10 +145,10 @@ function shamefullyHoist(deployRoot) {
 }
 
 function checkReactEditorsBundle(out) {
-  // Top-level barrel + each blanks entry point that hof-os reaches
-  // for. Catches a regressed exports map or a missing dist/.
+  // Top-level barrel + each blanks entry point documented for hosts.
+  // Catches a regressed exports map or a missing dist/.
   // The components/ entries are the Phase-1.5 bundled editors and
-  // are required for the inline editor surface in hof-os.
+  // are required for the inline editor surface in embedding hosts.
   for (const rel of [
     join("dist", "index.js"),
     join("dist", "blanks", "index.js"),
@@ -218,7 +219,7 @@ function checkReactEditorsBundle(out) {
       if (!blob.includes(needle)) {
         throw new Error(
           `react-editors bundle: ${label} entry did not ship "${needle}" — ` +
-            `officeai-css-inject plugin or component .css imports regressed`,
+            `officeai-css-inject plugin or component .css imports regressed`
         );
       }
     }
@@ -231,17 +232,11 @@ function checkReactEditorsBundle(out) {
   // DOCX additionally needs prosemirror-view's runtime sheet
   // (selection / atom outline / hideselection caret). Without it
   // the editor still types but loses Word-style selection feedback.
-  assertCssShipped("dist/components/docx.js", "DOCX", [
-    ".xlsx-grid-cell",
-    ".ProseMirror-selectednode",
-  ]);
+  assertCssShipped("dist/components/docx.js", "DOCX", [".xlsx-grid-cell", ".ProseMirror-selectednode"]);
   // PDF additionally needs the text-layer stylesheet from
   // apps/web/app/pdf-viewer/textLayer.css (absolute positioning +
   // transparent glyphs required for selection over rendered pages).
-  assertCssShipped("dist/components/pdf.js", "PDF", [
-    ".xlsx-grid-cell",
-    ".officeai-pdf-text-layer",
-  ]);
+  assertCssShipped("dist/components/pdf.js", "PDF", [".xlsx-grid-cell", ".officeai-pdf-text-layer"]);
   const nm = join(out, "node_modules");
   let nmStat;
   try {
@@ -252,8 +247,8 @@ function checkReactEditorsBundle(out) {
   if (!nmStat.isDirectory()) {
     throw new Error("react-editors bundle: node_modules is not a directory");
   }
-  // The four agent packages must be inlined; hof-os runs the bundle
-  // standalone with no access to office-ai's workspace.
+  // The four agent packages must be inlined; embedding hosts run the
+  // bundle standalone with no access to office-ai's workspace.
   for (const dep of ["@officeai/docx", "@officeai/xlsx", "@officeai/pptx", "@officeai/pdf"]) {
     const depDir = join(nm, dep);
     let depStat;

@@ -1,6 +1,6 @@
 /**
  * Replacement for `next/link` used when the editor bundle runs inside a
- * non-Next host (e.g. hof-os' Vite SPA). The real `next/link` enables
+ * non-Next host (e.g. embedding host' Vite SPA). The real `next/link` enables
  * client-side navigation in Next's app router, which is irrelevant
  * outside Next — a plain `<a>` is the safe lowest-common-denominator
  * and keeps `EditorTopBar` rendering correctly without dragging the

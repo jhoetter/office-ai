@@ -2,7 +2,7 @@
  * Canonical MIME constants for the four office-ai-supported formats.
  *
  * Hosts use these when handing bytes back to their own upload
- * pipelines (e.g. hof-os's presigned S3 PUT). Centralising them here
+ * pipelines (e.g. embedding host's presigned object-storage PUT). Centralising them here
  * keeps the contract that both `@officeai/react-editors`'s editor
  * components and any host code agree on the same content-type strings.
  */

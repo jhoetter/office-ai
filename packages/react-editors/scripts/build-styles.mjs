@@ -11,7 +11,7 @@
  *   the host page doesn't know about. Without those rules the
  *   editor JSX renders but every cell collapses to `position:
  *   static` and the whole grid stacks at one pixel — exactly the
- *   "all cells overlap" bug we hit in hof-os.
+ *   "all cells overlap" bug we hit in a Vite embedding host.
  *
  *   apps/web/app/globals.css already owns the canonical version of
  *   all of these. Copying-and-trimming it at build time keeps the
@@ -130,7 +130,11 @@ function dropTopLevelBlocks(css, selectorsToDrop) {
       .trim();
     if (kind === "stmt") {
       const stmtEnd = j + 1;
-      if (drop.has(header) || (header.startsWith("@import") && /tailwindcss/.test(header)) || header.startsWith("@source")) {
+      if (
+        drop.has(header) ||
+        (header.startsWith("@import") && /tailwindcss/.test(header)) ||
+        header.startsWith("@source")
+      ) {
         // skip
       } else {
         out.push(css.slice(headerStart, stmtEnd));
@@ -195,9 +199,13 @@ const finalCss = banner + trimmed.trim() + "\n";
 
 mkdirSync(DIST, { recursive: true });
 writeFileSync(OUT_PUBLIC, finalCss);
-console.log(`[react-editors:build-styles] wrote ${path.relative(PKG_ROOT, OUT_PUBLIC)} (${finalCss.length.toLocaleString()} bytes)`);
+console.log(
+  `[react-editors:build-styles] wrote ${path.relative(PKG_ROOT, OUT_PUBLIC)} (${finalCss.length.toLocaleString()} bytes)`
+);
 
 // Also drop a copy into src/ so each component entry can `import` it
 // and esbuild will emit per-entry CSS sidecars that Vite auto-loads.
 writeFileSync(OUT_SRC, finalCss);
-console.log(`[react-editors:build-styles] wrote ${path.relative(PKG_ROOT, OUT_SRC)} (${finalCss.length.toLocaleString()} bytes)`);
+console.log(
+  `[react-editors:build-styles] wrote ${path.relative(PKG_ROOT, OUT_SRC)} (${finalCss.length.toLocaleString()} bytes)`
+);

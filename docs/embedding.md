@@ -1,9 +1,9 @@
 # Embedding office-ai editors in a host app
 
 The `@officeai/react-editors` package is the supported way for
-external React apps (today: hof-os; in principle any React 19+ host)
-to embed the office-ai editing surfaces — without standing up the
-`apps/web` Next.js shell and without re-implementing OOXML / PDF I/O.
+external React 19+ apps to embed the office-ai editing surfaces —
+without standing up the `apps/web` Next.js shell and without
+re-implementing OOXML / PDF I/O.
 
 This doc is the contract — what the package exports today (Phase 1),
 what's coming (Phase 1.5), and what assumptions hosts can rely on.
@@ -23,7 +23,7 @@ Subpath exports:
 | `@officeai/react-editors/mime`            | `DOCX_MIME`, `XLSX_MIME`, `PPTX_MIME`, `PDF_MIME`, `MIME_BY_FORMAT`, `detectFormatFromFilename`                                           | Wherever you need the canonical OOXML / PDF MIME strings (presigned PUT `Content-Type`, `<File>` constructor, server allowlists).         |
 | `@officeai/react-editors/contract`        | Type-only `EmbeddedEditorProps`, `Locale`, `Theme`, `EmbeddedEditorOnSave`                                                                | For typing the future editor mounts; the editor _components_ themselves ship in Phase 1.5.                                                |
 
-Example — Create-new + presigned PUT, the pattern hof-os uses:
+Example — Create-new + presigned object-storage PUT:
 
 ```ts
 import { makeBlankXlsx } from "@officeai/react-editors/blanks/xlsx";
@@ -42,7 +42,7 @@ and satisfy the `EmbeddedEditorProps` contract typed under `./contract`:
 
 ```ts
 interface EmbeddedEditorProps {
-  initialBytes?: Uint8Array; // host streams S3 bytes straight in
+  initialBytes?: Uint8Array; // host streams object bytes straight in
   initialFilename?: string; // shown in the editor titlebar
   onSave?: EmbeddedEditorOnSave; // (bytes, mime, filename) => Promise<void>
   onClose?: () => void;
@@ -51,7 +51,7 @@ interface EmbeddedEditorProps {
 }
 ```
 
-Example — open an `.xlsx`, edit, persist back to S3:
+Example — open an `.xlsx`, edit, persist back to object storage:
 
 ```tsx
 import { XlsxEditor } from "@officeai/react-editors/components/xlsx";
@@ -105,8 +105,8 @@ at the consumer's deploy root (required for Vite's
 
 The package version is bumped in lockstep with `@officeai/agent` by
 [`scripts/bump-version.mjs`](../scripts/bump-version.mjs). Hosts pin
-both via the same `infra/officeai.lock.json` entry; there is no
-separate version axis for editors vs CLI.
+both via their own lockfile; there is no separate version axis for
+editors vs CLI.
 
 ## What stays out
 
@@ -115,5 +115,5 @@ separate version axis for editors vs CLI.
   loop. iframes are not supported.
 - **No standalone Next.js bundle** — `apps/web` is the developer
   reference shell, not an embedding target.
-- **No Tailwind v3 backport** — the editors target Tailwind v4
-  (matching hof-os). Older hosts must upgrade.
+- **No Tailwind v3 backport** — the editors target Tailwind v4. Older
+  hosts must upgrade.

@@ -4,7 +4,7 @@
  * Wraps `DocxAgent.empty()` from `@officeai/docx` so callers don't
  * have to know about the agent layer — they just `await
  * makeBlankDocx()` and get bytes ready to upload to their own storage
- * (e.g. hof-os's presigned S3 PUT path). The result is the exact
+ * (for example a presigned object-storage PUT path). The result is the exact
  * same bytes the office-ai apps/web "New document" action produces.
  */
 import { DocxAgent } from "@officeai/docx";

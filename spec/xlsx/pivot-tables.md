@@ -15,8 +15,8 @@ Pivot tables are the #1 reason analysts open Excel. Today our
 blobs that round-trip but render as static cell values frozen at
 the time the source workbook was last saved. Editing the source
 data leaves the pivot stale. There is no way to create a new
-pivot from the UI. SharePoint-class document hosts are
-unacceptable here.
+pivot from the UI. Spreadsheet users expect this to work inside any
+credible document workspace.
 
 ## OOXML mapping
 

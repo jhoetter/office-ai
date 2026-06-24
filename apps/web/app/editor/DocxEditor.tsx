@@ -243,7 +243,7 @@ export interface DocxEditorProps {
   /** Host save handler. When provided the editor's Save action
    * invokes this with the freshly-exported bytes, the OOXML MIME,
    * and the working filename — instead of reaching into the browser
-   * `saveFile` File-System-Access fallback. Hosts (e.g. hof-os)
+   * `saveFile` File-System-Access fallback. Embedding hosts
    * wire this up to push the bytes back to their own storage. */
   readonly onSave?: (bytes: Uint8Array, mime: string, filename: string) => Promise<void>;
   /** Host close handler. When provided, surfaces a "Back" affordance
@@ -520,8 +520,8 @@ function DocxEditorInner({
       try {
         // Four bootstrap paths, picked in priority order:
         //   1. `initialBytes` — host streams the document straight
-        //      in (used when the editor is embedded by hof-os and
-        //      the bytes already came back from S3).
+        //      in (used when the editor is embedded and the bytes
+        //      already came back from host storage).
         //   2. `initialSource` — fetch a pre-existing .docx (sample
         //      files listing on the home page).
         //   3. `initialBlank` — build a truly empty document (the
@@ -638,7 +638,7 @@ function DocxEditorInner({
       const buf = await agent.exportFile();
       const bytes = new Uint8Array(buf);
       const mime = PRODUCT_FILE_TYPES.docx.primaryMime;
-      // Embedding hosts (hof-os) get first dibs — when `onSave` is
+      // Embedding hosts get first dibs — when `onSave` is
       // provided we hand bytes back to the host instead of going
       // through the browser File-System-Access fallback.
       if (onSaveProp) {

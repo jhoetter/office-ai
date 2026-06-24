@@ -2,7 +2,7 @@
 
 > Strategic brainstorm: which file types should `office-ai` support next, and _why_?
 >
-> **Context.** We already ship first-class, AI-native packages for **DOCX, XLSX, PPTX, and PDF**. The product is positioned as an **S3-backed, AI-native alternative to SharePoint** for SMEs. SharePoint's moat is not its editors — Microsoft's editors are objectively excellent. SharePoint's moat is _being the place where every business file lives_. To displace it (or even credibly sit beside it) we have to handle **the long tail of file types SMEs actually deal with every day**, not just the Office four.
+> **Context.** We already ship first-class, AI-native packages for **DOCX, XLSX, PPTX, and PDF**. The product is positioned as an **object-storage-backed, AI-native document workspace** for SMEs. Incumbent document hosts have a durable moat: not their editors, but _being the place where every business file lives_. To credibly sit beside or replace them, we have to handle **the long tail of file types SMEs actually deal with every day**, not just the Office four.
 >
 > This document captures the candidate file types, grouped by strategic value, with the reasoning behind each. It is meant to drive prioritisation discussions, not to be a commitment.
 
@@ -13,7 +13,7 @@
 Before the list, the lenses we use to rank a format:
 
 1. **Frequency in the SME workday.** Does the average 5–200 person business touch this file weekly? Daily? Hourly?
-2. **Pain with incumbents.** Is SharePoint / OneDrive / Google Drive / Dropbox _bad_ at this format today? Pain = wedge.
+2. **Pain with incumbents.** Are incumbent document suites bad at this format today? Pain = wedge.
 3. **AI leverage.** Does this format _unlock_ something that is structurally impossible without AI (transcription, OCR, semantic search, summarisation)? AI-shaped problems are where we can build a moat that Microsoft's 30-year editor lead doesn't matter.
 4. **Adjacency to what we already have.** Does it pull users deeper into our existing DOCX/XLSX/PPTX/PDF surface area? E.g. opening an attached invoice from an `.eml` directly in our PDF editor.
 5. **Build cost vs. payoff.** A `.txt` viewer is trivial; a `.dwg` viewer is a quarter of engineering. Cost matters.
@@ -23,13 +23,13 @@ Before the list, the lenses we use to rank a format:
 
 ## Tier 1 — Build next: high value, high frequency, AI-shaped
 
-These are the formats where we believe there is a real wedge against SharePoint _today_, and where AI gives us an unfair advantage.
+These are the formats where we believe there is a real wedge against incumbent document suites _today_, and where AI gives us an unfair advantage.
 
 ### 1. Email — `.eml`, `.msg`, `.mbox`, `.pst`
 
 **Why this is #1.**
 
-Email is the _real_ document management system of every SME on earth. Contracts, signed offers, NDAs, invoices, supplier confirmations, HR conversations, board updates — they all live as `.msg` files dragged into Outlook folders or forwarded into shared mailboxes. SharePoint is famously poor at email: `.msg` previews are inconsistent, attachment extraction is clunky, full-text search across body + attachments is unreliable, and threading is non-existent.
+Email is the _real_ document management system of every SME on earth. Contracts, signed offers, NDAs, invoices, supplier confirmations, HR conversations, board updates — they all live as `.msg` files dragged into Outlook folders or forwarded into shared mailboxes. Incumbent document suites are famously poor at email: `.msg` previews are inconsistent, attachment extraction is clunky, full-text search across body + attachments is unreliable, and threading is non-existent.
 
 **What we'd build.**
 
@@ -41,7 +41,7 @@ Email is the _real_ document management system of every SME on earth. Contracts,
 
 **Why now.**
 
-- Zero serious competition in the SME segment that combines `.msg` parsing + AI summarisation + S3 storage.
+- Zero serious competition in the SME segment that combines `.msg` parsing + AI summarisation + object storage.
 - Pulls value from every other package we already have.
 - Migration story is easy: "drag your Outlook archive folder in."
 
@@ -51,7 +51,7 @@ Email is the _real_ document management system of every SME on earth. Contracts,
 
 **Why.**
 
-Receipts, ID scans, whiteboard photos, product shots, screenshots, logos, signatures, before/after photos for trades businesses, damage photos for insurance claims — SMEs _generate_ images constantly and have nowhere good to put them. SharePoint treats them as opaque blobs.
+Receipts, ID scans, whiteboard photos, product shots, screenshots, logos, signatures, before/after photos for trades businesses, damage photos for insurance claims — SMEs _generate_ images constantly and have nowhere good to put them. Incumbent document suites often treat them as opaque blobs.
 
 **HEIC specifically matters** because every iPhone since 2017 produces them by default, and the Microsoft / Windows ecosystem still trips over them regularly. Owning HEIC well is a small, concrete differentiator.
 
@@ -93,7 +93,7 @@ Markdown is now the lingua franca of:
 
 **Why.**
 
-These sit awkwardly between "spreadsheet" and "data". Every SaaS export, every Stripe report, every Shopify dump, every CRM extract is a CSV. SharePoint shows them as raw text. Excel mangles them on open (date coercion, scientific notation on long IDs, encoding bugs).
+These sit awkwardly between "spreadsheet" and "data". Every SaaS export, every Stripe report, every Shopify dump, every CRM extract is a CSV. Incumbent document suites often show them as raw text. Excel mangles them on open (date coercion, scientific notation on long IDs, encoding bugs).
 
 A great CSV experience is a **bridge into the XLSX product**: open a CSV, optionally promote to XLSX, edit, save back as either.
 
@@ -118,7 +118,7 @@ These are formats with strong demand but either narrower personas or higher buil
 
 **Why.**
 
-Voice memos, Zoom / Teams / Meet recordings, sales calls, training videos, customer support recordings, podcasts. SharePoint treats these as 200 MB blobs. The actual _value_ of these files is the _transcript_, the _summary_, the _searchable knowledge_ inside them — and that is impossible without AI.
+Voice memos, Zoom / Teams / Meet recordings, sales calls, training videos, customer support recordings, podcasts. Incumbent document suites often treat these as 200 MB blobs. The actual _value_ of these files is the _transcript_, the _summary_, the _searchable knowledge_ inside them — and that is impossible without AI.
 
 This is potentially **a wedge product on its own**, the way Otter, Fireflies, Granola, and Fathom have built standalone businesses just on call recordings. We can offer it as a feature of the file system, not a separate $25/seat tool.
 
@@ -161,7 +161,7 @@ Tiny formats, but extremely "businessy". Every meeting invite that lands in an i
 
 - In-browser tree view of archive contents without extraction.
 - Stream individual files into the right editor (PDF → PDF editor, etc.).
-- "Extract to folder" into the user's S3.
+- "Extract to folder" into the user's object storage.
 - Optional AI: "summarise the 80 PDFs in this zip".
 
 **Why now-ish.** Real value, modest cost.
@@ -177,13 +177,13 @@ We pick these on a per-vertical basis when we have a beachhead.
 ### 8. CAD & engineering drawings — `.dwg`, `.dxf`, `.dwf`, `.stp`/`.step`, `.iges`, `.stl`, `.3mf`
 
 - **Who:** architecture, construction, manufacturing, industrial design, prototyping.
-- **Why:** SharePoint is brutal here — these files are heavy, version-sensitive, and reference-laden. A web viewer + version diff + AI bill-of-materials extraction would be a real product.
+- **Why:** incumbent document suites are weak here — these files are heavy, version-sensitive, and reference-laden. A web viewer + version diff + AI bill-of-materials extraction would be a real product.
 - **Cost:** high. Likely partner with an existing renderer (Autodesk Forge / equivalent) rather than build.
 
 ### 9. Design files — `.psd`, `.ai`, `.indd`, `.fig`, `.sketch`, `.xd`, `.afdesign`, `.afphoto`
 
 - **Who:** marketing agencies, brand teams, in-house design.
-- **Why:** these are the most-shared, least-previewable files in any agency Drive/SharePoint. Even just **rendering a faithful preview without Photoshop** is valuable. AI: "extract palette", "extract copy", "find all assets using this logo".
+- **Why:** these are the most-shared, least-previewable files in many agency drives. Even just **rendering a faithful preview without Photoshop** is valuable. AI: "extract palette", "extract copy", "find all assets using this logo".
 - **Cost:** medium-to-high (especially `.psd`/`.ai`).
 
 ### 10. Geospatial — `.kml`, `.kmz`, `.geojson`, `.gpx`, `.shp`, `.gpkg`
@@ -236,15 +236,15 @@ To be disciplined, here is what we explicitly de-prioritise:
 - **Proprietary game / 3D engine formats** — wrong audience.
 - **Legacy Microsoft formats older than `.docx`/`.xlsx`/`.ppt`** (`.wpd`, `.pub`, `.mdb`) — long tail, low frequency, high parser pain. Convert-on-import only.
 - **Encrypted containers we can't unlock without user keys** (`.kdbx`, `.gpg`, `.age`) — store, don't decrypt. Privacy story matters more than features here.
-- **Anything that requires shipping a desktop runtime to render faithfully** — breaks the "browser-first, S3-backed" thesis.
+- **Anything that requires shipping a desktop runtime to render faithfully** — breaks the "browser-first, object-storage-backed" thesis.
 
 ---
 
 ## Recommended sequencing
 
-Given our existing surface (DOCX / XLSX / PPTX / PDF) and our positioning (S3-backed, AI-native, SME-focused), the recommended order is:
+Given our existing surface (DOCX / XLSX / PPTX / PDF) and our positioning (object-storage-backed, AI-native, SME-focused), the recommended order is:
 
-1. **Email (`.msg` / `.eml`)** — biggest single wedge against SharePoint, pulls users into the existing editors via attachment hand-off. _This is the next package._
+1. **Email (`.msg` / `.eml`)** — biggest single wedge against incumbent document suites, pulls users into the existing editors via attachment hand-off. _This is the next package._
 2. **Images with OCR + AI captioning** — broad, daily, AI-leveraged, cheap-ish.
 3. **Markdown / plain text** — trivial cost, big completeness perception.
 4. **CSV / TSV / JSONL** — natural extension of XLSX, closes a real pain.

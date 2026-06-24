@@ -19,7 +19,7 @@
  *
  * Together these assertions lock in the contract the
  * `@officeai/react-editors` package will publish in Phase 1: hosts
- * (hof-os) can call `*Agent.empty()` in-browser, hand the bytes to
+ * (embedding host) can call `*Agent.empty()` in-browser, hand the bytes to
  * the matching editor via `initialBytes`, and receive bytes back
  * from `onSave` without ever touching disk.
  */

@@ -1,12 +1,10 @@
-# Release pipeline (office-ai → GitHub Releases → hof-os)
+# Release pipeline (office-ai → GitHub Releases → optional host sync)
 
 > Auto-publishes every push to `main` as a new patch release: builds a
 > self-contained `@officeai/agent` bundle via `pnpm deploy`, attaches it
-> to a GitHub Release, then commits the new version pin into hof-os.
-> Mirrors the [hof-engine ↔ hof-os
-> pattern](https://github.com/jhoetter/hof-engine/blob/main/.github/workflows/auto-release.yml)
-> — but adapted for a Node monorepo: the artefact is a tarball on a
-> GitHub Release instead of a wheel on PyPI / a tarball on npm. **No npm
+> to a GitHub Release, then optionally commits the new version pin into
+> a configured downstream host repository. The artifact is a tarball on
+> a GitHub Release instead of a package registry publish. **No npm
 > registry, no Trusted Publishers, no GHCR** — pure GitHub.
 
 ## Flow
@@ -27,11 +25,11 @@ release: bump every publishable package via scripts/bump-version.mjs
    ↓ tar czf officeai-react-editors-X.Y.Z.tgz …
    ↓ gh release create vX.Y.Z {agent,react-editors}-X.Y.Z.tgz
    ↓
-notify-hof-os: rewrite infra/officeai.lock.json → push to hof-os/main
+notify-downstream-host: rewrite configured officeai lockfile
    ↓
-hof-os sandbox build  curls officeai-agent-X.Y.Z.tgz       (CLI for agents)
-hof-os data-app/ui    postinstall pulls
-                      officeai-react-editors-X.Y.Z.tgz     (browser editors)
+downstream sandbox build  curls officeai-agent-X.Y.Z.tgz       (CLI for agents)
+downstream web app        postinstall pulls
+                          officeai-react-editors-X.Y.Z.tgz     (browser editors)
 ```
 
 To skip a release for a doc-only change, append `[skip ci]` or
@@ -42,16 +40,16 @@ To skip a release for a doc-only change, append `[skip ci]` or
 `@officeai/agent` is a Node CLI with 9 internal `workspace:*` deps. The
 `pnpm --filter @officeai/agent --prod deploy <out>` step resolves every
 workspace dep into a fully populated `node_modules/` inside `<out>`, so
-the resulting tarball is **self-contained** — the consumer (the hof-os
-sandbox Dockerfile) just downloads it and extracts; it never needs to
-reach a registry.
+the resulting tarball is **self-contained** — the consumer sandbox
+Dockerfile just downloads it and extracts; it never needs to reach a
+registry.
 
 Trade-off vs. publishing each `@officeai/*` package separately to npm:
 
 - ✅ Zero external account claims (no npm org, no Trusted Publishers).
 - ✅ One artefact per release instead of 12.
 - ✅ Stays valid even if office-ai is private (just pass an
-  `OFFICEAI_DOWNLOAD_TOKEN` to docker build — see hof-os deployer).
+  `OFFICEAI_DOWNLOAD_TOKEN` to docker build in the downstream deployer).
 - ⚠️ Tarball is larger than 12 individual npm packages
   (~150 MB self-contained vs. summing-to-similar split tarballs).
   Only matters during the docker build's `RUN curl …` step, which
@@ -76,9 +74,10 @@ Two packages are actually packaged for release — `@officeai/agent`
 
 ### Lockfile schema
 
-The `notify-hof-os` job writes both pins into
-`infra/officeai.lock.json` so a single bump informs the backend (CLI)
-and the data-app UI (editors) at once:
+The optional `notify-downstream-host` job writes both pins into the
+configured lockfile path, defaulting to `infra/officeai.lock.json`, so
+a single bump informs the backend CLI and web editor integration at
+once:
 
 ```json
 {
@@ -104,22 +103,23 @@ Two GitHub-side actions, no third-party accounts:
 
 `office-ai` repo → **Settings → General → Danger Zone → Change
 visibility → Public**. With the repo public, the GitHub Releases
-download URLs are anonymous — hof-os's sandbox Dockerfile can `curl`
+download URLs are anonymous — downstream sandbox Dockerfiles can `curl`
 them with no auth header.
 
 (If you must keep office-ai private: skip this step and add
-`OFFICEAI_DOWNLOAD_TOKEN` as a secret on hof-os; the `Dockerfile.officeai-sandbox`
-will need a one-line tweak to forward it as `Authorization: Bearer …`.
-Asks for a separate plan if you want this branch wired up.)
+`OFFICEAI_DOWNLOAD_TOKEN` as a secret on the downstream host; its
+Dockerfile will need a one-line tweak to forward it as
+`Authorization: Bearer …`. Ask for a separate plan if you want this
+branch wired up.)
 
-### 2. Cross-repo PAT for hof-os bump
+### 2. Optional cross-repo PAT for downstream host bump
 
 Generate a fine-grained PAT (`Settings → Developer settings →
 Personal access tokens → Fine-grained tokens`) named
 `OFFICEAI_SYNC_TOKEN`:
 
-- Resource owner: `jhoetter`
-- Repository access: only `jhoetter/hof-os`
+- Resource owner: downstream repository owner
+- Repository access: only the downstream host repository
 - Permissions: `Contents: Read and write`, `Metadata: Read-only`
 - Expiration: 1 year (renew via reminder)
 
@@ -127,8 +127,16 @@ Add it as a repository secret on `office-ai`:
 **Settings → Secrets and variables → Actions → New repository
 secret** named `OFFICEAI_SYNC_TOKEN`.
 
-The `notify-hof-os` job uses this token to push the
-`infra/officeai.lock.json` bump.
+Add these repository variables on `office-ai` when you want the sync:
+
+- `OFFICEAI_DOWNSTREAM_REPOSITORY=owner/repo`
+- `OFFICEAI_DOWNSTREAM_LOCKFILE=infra/officeai.lock.json` (optional;
+  this is the default)
+
+The `notify-downstream-host` job uses this token and variables to push
+the configured lockfile bump. If either the repository variable or token
+is missing, the job exits cleanly and the GitHub Release remains the
+complete standalone distribution artifact.
 
 That's the entire external setup — no PyPI, no npm, no GHCR, no
 GitHub Environment, no Trusted Publishers.

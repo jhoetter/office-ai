@@ -1,25 +1,24 @@
-# Reference Dockerfile for the office-ai flavour of hof-engine's agent
-# terminal sandbox. Layers Node 20 + the published `@officeai/agent`
-# CLI on top of `hof-skill-base` so the LLM agent can call
+# Reference Dockerfile for the office-ai agent terminal sandbox.
+# Layers Node 20 + the published `@officeai/agent` CLI on top of a
+# host-provided base image so the LLM agent can call
 # `office-agent docx|xlsx|pptx|pdf …` from the terminal alongside the
 # existing Python skill set (openpyxl, python-pptx, pdfplumber, …).
 #
-# hof-os mirrors this Dockerfile inline (no build context needed) in
-# backend/app/services/deployer/compose.py so each Hetzner host can
-# build the image locally during deploy. This file is the canonical
-# spec — keep the two in sync.
+# Downstream hosts may mirror this Dockerfile inline when they need a
+# no-build-context deploy path. This file is the canonical spec — keep
+# any mirrored copy in sync.
 #
 # Build args:
-#   HOF_SKILL_BASE     base image to extend (default: hof-skill-base:latest)
-#   OFFICEAI_VERSION   exact npm version of @officeai/agent to install
+#   OFFICEAI_AGENT_BASE   base image to extend (default: officeai-agent-base:latest)
+#   OFFICEAI_VERSION      exact npm version of @officeai/agent to install
 #
 # Local build:
 #   docker build \
-#     --build-arg HOF_SKILL_BASE=hof-skill-base:latest \
+#     --build-arg OFFICEAI_AGENT_BASE=officeai-agent-base:latest \
 #     --build-arg OFFICEAI_VERSION=0.1.0 \
-#     -t hof-skill-base-officeai:0.1.0 .
-ARG HOF_SKILL_BASE=hof-skill-base:latest
-FROM ${HOF_SKILL_BASE}
+#     -t officeai-agent-sandbox:0.1.0 .
+ARG OFFICEAI_AGENT_BASE=officeai-agent-base:latest
+FROM ${OFFICEAI_AGENT_BASE}
 
 USER root
 RUN apt-get update \
@@ -29,7 +28,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned npm install — placed last so a version bump only re-runs this
-# layer; the heavy Node + apt layer is cached forever per HOF_SKILL_BASE.
+# layer; the heavy Node + apt layer is cached forever per OFFICEAI_AGENT_BASE.
 ARG OFFICEAI_VERSION
 RUN test -n "${OFFICEAI_VERSION}" \
  && npm install -g @officeai/agent@${OFFICEAI_VERSION} \

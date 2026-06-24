@@ -3,7 +3,7 @@
  *
  *   1. `NEXT_PUBLIC_OAI_REALTIME_URL` (Next.js / standalone web app).
  *   2. `import.meta.env.VITE_OAI_REALTIME_URL` (Vite-bundled hosts that
- *      embed `@officeai/react-editors`, e.g. hof-os' data-app).
+ *      embed `@officeai/react-editors`).
  *   3. Same-host `ws://<location.hostname>:1234`.
  *   4. `ws://localhost:1234` (SSR / tests).
  *

@@ -23,10 +23,9 @@ export type Theme = "light" | "dark";
  * authorship show the *real* logged-in user (e.g. "Johannes Hötter")
  * instead of a generated handle.
  *
- * Embedding hosts that already have an authentication layer
- * (hof-os, internal portals, etc.) should always pass this — the
- * anonymous fallback is intended for the standalone office-ai web app
- * where users may not be signed in.
+ * Embedding hosts that already have an authentication layer should
+ * always pass this — the anonymous fallback is intended for the
+ * standalone office-ai web app where users may not be signed in.
  *
  *   - `id`     stable per human (NOT per tab). Used to dedupe
  *              multi-tab presence and to attribute commands. We
@@ -48,10 +47,11 @@ export interface PresenceUser {
  * bytes, the canonical MIME (one of the constants in
  * `@officeai/react-editors/mime`), and the working filename.
  *
- * The host is responsible for persistence (presigned S3 PUT, an HTTP
- * PUT to its own backend, FileSystemAccess, etc). The editor will
- * await the returned promise and surface a toast based on the outcome
- * (success when the promise resolves, error when it rejects).
+ * The host is responsible for persistence (presigned object-storage
+ * PUT, an HTTP PUT to its own backend, FileSystemAccess, etc). The
+ * editor will await the returned promise and surface a toast based on
+ * the outcome (success when the promise resolves, error when it
+ * rejects).
  */
 export type EmbeddedEditorOnSave = (bytes: Uint8Array, mime: string, filename: string) => Promise<void>;
 
@@ -127,16 +127,15 @@ export interface EmbeddedEditorProps {
    * Hide affordances that load a *local* file into the editor (the
    * 📁 Open toolbar button, the matching Cmd+O / drag-drop
    * shortcuts). Embedded hosts manage their own document corpus
-   * (S3 / DB / etc.) so a local-file open is a foot-gun: the user
+   * (object storage / DB / etc.) so a local-file open is a foot-gun: the user
    * loads bytes from their disk into the editor, edits, hits Save,
    * and the host's `onSave` writes those bytes back to the wrong
-   * S3 key (or, before this flag, sometimes back to the local file
-   * via the File System Access fallback).
+   * wrong host-side object (or, before this flag, sometimes back to
+   * the local file via the File System Access fallback).
    *
    * Defaults to `false` so the standalone office-ai web app keeps
-   * its current behavior. Hosts with their own asset browser
-   * (hof-os' `/edit-asset`, customer portals, …) should set this to
-   * `true`.
+   * its current behavior. Hosts with their own document or asset
+   * browser should set this to `true`.
    */
   readonly hideLocalFileOpen?: boolean;
 }
