@@ -40,7 +40,7 @@ pending-change review panel.
 | `packages/pdf-annotations`                   | Typed annotation model, writer, XFDF/FDF I/O.                             | Writer tests and annotation fixture tests.                                                                                                                                                                        | Review/diff semantics for annotation changes need a shared command lifecycle.                                                                 |
 | `packages/pdf-forms`                         | AcroForm list/fill/reset/flatten.                                         | Forms tests and CLI/MCP projections.                                                                                                                                                                              | Form edits bypass the same command catalogue shape used by OOXML formats.                                                                     |
 | `packages/pdf-engine`                        | PDF.js/PDFium read/render abstraction.                                    | Engine selection tests and PDF viewer integration.                                                                                                                                                                | Fidelity fallback is optional; diagnostics need to surface chosen engine and limitations uniformly.                                           |
-| `packages/pdf-ocr`                           | OCR text-layer bridge.                                                    | Text-layer tests and PDF action entry.                                                                                                                                                                            | OCR runtime prereqs need `doctor` coverage.                                                                                                   |
+| `packages/pdf-ocr`                           | OCR text-layer bridge.                                                    | Text-layer tests, PDF action entry and `office-agent doctor` optional OCR check.                                                                                                                                  | OCR remains optional; missing runtime is surfaced as an `optional` doctor result.                                                             |
 | `packages/agent`                             | MCP server and CLI wrapper.                                               | `office-agent mcp`, local data-dir session store, canonical session/document MCP tools, cross-format Plan/Preview/Apply tools, review tools, format subcommands, action-to-CLI and action-to-MCP adapters, tests. | Pending-review replay after a full restart is explicit-not-supported; review must happen while the live mutation stack exists.                |
 | `packages/react-editors`                     | Embeddable React editor surfaces and blank-file builders.                 | Blank builder tests, bundle dry-run, component entry points.                                                                                                                                                      | Embedding docs still need a generic adapter contract and removal of old host-specific assumptions.                                            |
 | `packages/realtime` + `apps/realtime-server` | Yjs-backed realtime substrate.                                            | Command codec tests, identity tests, local server health endpoint.                                                                                                                                                | Realtime identity/session state is not yet integrated with canonical document sessions.                                                       |
@@ -216,8 +216,8 @@ three complex fixtures per core format.
    product layer.
 5. Several docs and comments still describe specific embedding or release
    environments instead of an optional adapter boundary.
-6. Runtime prereqs for PDF rendering/OCR, LibreOffice roundtrip and
-   Playwright are not discoverable through a single `doctor` command.
+6. Runtime prereqs are now discoverable through `office-agent doctor`,
+   but repair automation remains intentionally manual.
 
 ## Fastest wins
 
@@ -226,5 +226,5 @@ three complex fixtures per core format.
 2. Normalize PDF diagnostics and export envelopes.
 3. Replace environment-specific docs with generic adapter language and
    move old release notes into historical context.
-4. Add one `doctor` command that reports runtime prereqs for PDF
-   rendering/OCR, LibreOffice roundtrip and Playwright.
+4. Use `office-agent doctor --json` in local install and release docs so
+   agents can plan around missing optional runtimes.

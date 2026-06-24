@@ -41,9 +41,28 @@ subcommand are silently skipped, so the wiring is additive.
 ```bash
 pnpm --filter @officeai/agent build
 pnpm --filter @officeai/agent exec office-agent --help
+pnpm --filter @officeai/agent exec office-agent doctor --json --pretty
 ```
 
 Or, when published, `npm i -g @officeai/agent` and call `office-agent`.
+
+## Runtime doctor
+
+```text
+office-agent doctor [--json] [--pretty] [--data-dir <path>]
+```
+
+The doctor emits an `office-ai/doctor@1` report covering Node, pnpm,
+build artifacts, local web/realtime ports, LibreOffice, Playwright,
+PDF dependencies, optional OCR and the session data directory.
+
+Severity is intentionally feature-scoped:
+
+- `error` means the local checkout/package is not usable for the core
+  CLI/MCP path until repaired.
+- `warning` means a heavier gate or dev profile may be unavailable.
+- `optional` means a feature such as OCR is absent but the core product
+  remains usable.
 
 ## DOCX commands
 

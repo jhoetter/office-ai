@@ -151,6 +151,23 @@ describe("office-agent CLI", () => {
     expect(parsed.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("doctor prints a machine-readable runtime report", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "office-agent-doctor-"));
+    const { io, stdout } = makeIO();
+    const code = await runCli(["doctor", "--json", "--data-dir", dir], io);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout.text()) as {
+      schema: string;
+      ok: boolean;
+      checks: Array<{ code: string; status: string }>;
+    };
+    expect(parsed.schema).toBe("office-ai/doctor@1");
+    expect(parsed.ok).toBe(true);
+    expect(parsed.checks.map((check) => check.code)).toEqual(
+      expect.arrayContaining(["node", "package-manager", "data-dir"])
+    );
+  });
+
   it("insert-text writes a modified file that re-reads with the new text", async () => {
     const input = await makeFixture();
     const dir = mkdtempSync(join(tmpdir(), "office-agent-out-"));

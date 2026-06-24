@@ -26,6 +26,7 @@ import { pptxActions } from "@officeai/pptx";
 import { xlsxActions } from "@officeai/xlsx";
 import { pdfActions } from "@officeai/pdf";
 import { registerActionsAsSubcommands, type AgentDispatchContext } from "./actions-to-cli.js";
+import { renderDoctorReport, runDoctor } from "./doctor.js";
 
 const defaultIO: IO = { stdout: process.stdout, stderr: process.stderr };
 
@@ -173,6 +174,26 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       }
       const text = JSON.stringify({ groups }, null, opts.pretty === true ? 2 : 0);
       io.stdout.write(text + "\n");
+    });
+
+  program
+    .command("doctor")
+    .description("Check local runtime prerequisites for MCP, Web, CLI, roundtrip and optional OCR flows.")
+    .option("--json", "Emit the machine-readable office-ai/doctor@1 JSON envelope.", false)
+    .option("--pretty", "Pretty-print JSON output.", false)
+    .option("--data-dir <path>", "Override OFFICEAI_DATA_DIR for the data-dir permission check.")
+    .action(async (opts: Record<string, unknown>) => {
+      const report = await runDoctor({
+        dataDir: typeof opts.dataDir === "string" ? opts.dataDir : undefined,
+      });
+      if (opts.json === true) {
+        io.stdout.write(stringifyJson(report, opts.pretty === true) + "\n");
+      } else {
+        io.stdout.write(renderDoctorReport(report));
+      }
+      if (!report.ok) {
+        throw new CliError(1, "doctor found errors", { silent: true });
+      }
     });
 
   try {

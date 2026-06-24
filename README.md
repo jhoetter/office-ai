@@ -78,6 +78,7 @@ office-ai/
 
 ```bash
 make install         # install workspace deps
+make doctor          # check local runtime prerequisites and repair hints
 make dev             # Next.js editor host on :3100, realtime on :1234
 make dev-forwarded   # tunnel-friendly ports :23003 and :21234
 make dev-forwarded-fugu  # Fugu ports :63003 and :61234
@@ -106,10 +107,14 @@ The gate is fail-fast and ordered cheapest → most expensive:
 | -------------- | -------------------------------- | ----------------------------------------------------------------------- |
 | `format-check` | Prettier                         | Inconsistent formatting (run `make format` to fix)                      |
 | `lint`         | ESLint (root flat config + Next) | Unused vars, deep `src/` imports, banned syntax, import boundaries      |
+| `actions`      | Action parity scanner            | Missing or stale action catalogue entries across handlers/UI/CLI        |
+| `scorecard`    | Surface scorecard check          | Stale generated MCP/Web/CLI parity matrix                               |
+| `fixtures`     | Fixture matrix scanner           | Missing or unindexed real/synthetic fixture files                       |
 | `architecture` | `scripts/check-architecture.mjs` | Forbidden cross-package deps in `package.json` (separation of concerns) |
 | `typecheck`    | `tsc --noEmit` (per package)     | TypeScript errors                                                       |
 | `test`         | Vitest                           | Behavioural regressions across every package                            |
 | `build`        | Turbo + Next + tsc               | Build / integration regressions                                         |
+| `roundtrip`    | Matrix roundtrip gate            | Import/project/export/reimport regressions across DOCX/XLSX/PPTX/PDF    |
 
 The architecture check enforces this dep graph (see
 [`scripts/check-architecture.mjs`](scripts/check-architecture.mjs) for

@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions fixtures-check roundtrip-gate \
+.PHONY: help install doctor dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions scorecard fixtures-check roundtrip-gate \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -64,6 +64,7 @@ help:
 	@echo "office-ai — available targets (see docs/ci-pipeline.md for the full map)"
 	@echo ""
 	@echo "  install        Install all dependencies"
+	@echo "  doctor         Check local runtime prerequisites for MCP, Web, CLI and heavy gates"
 	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100)"
 	@echo "  dev-forwarded  Start web/realtime on tunnel-friendly ports $(FORWARDED_PORT)/$(FORWARDED_RT_PORT)"
 	@echo "  dev-forwarded-fugu"
@@ -79,6 +80,7 @@ help:
 	@echo "  lint           Lint root + apps/web (== lint-root + lint-web)"
 	@echo "  architecture   Validate package dep graph (separation of concerns)"
 	@echo "  actions        Validate CLI/palette/UI action parity (every bus handler is catalogued)"
+	@echo "  scorecard      Check generated MCP/Web/CLI parity scorecard"
 	@echo "  fixtures-check Validate fixtures/MATRIX.json and fixture file coverage"
 	@echo "  roundtrip-gate Matrix-driven import/project/export/reimport release gate"
 	@echo "  typecheck      Typecheck all packages"
@@ -125,6 +127,10 @@ help:
 
 install:
 	pnpm install
+
+doctor:
+	pnpm --filter @officeai/agent build
+	node packages/agent/dist/cli.js doctor
 
 # `make dev` must build the workspace packages first, otherwise Next.js
 # loads STALE `dist/` artifacts for @officeai/{core,docx,xlsx,pptx} —
@@ -257,6 +263,9 @@ architecture:
 actions:
 	pnpm actions
 
+scorecard:
+	pnpm scorecard:check
+
 fixtures-check:
 	pnpm fixtures:check
 
@@ -291,16 +300,17 @@ test-web:
 #   3. lint-web      — apps/web lint (Next.js config). Split out so an apps/web
 #                       regression fails in seconds, before the slower steps.
 #   4. actions       — catches CLI/palette parity drift (every bus handler is catalogued)
-#   5. fixtures-check — catches missing/unindexed real document fixtures
-#   6. architecture   — catches package-level dep-graph violations
-#   7. typecheck      — catches type-system violations
-#   8. test           — catches behavioural regressions
-#   9. build          — catches build-time/integration issues
-#  10. roundtrip-gate — import/project/export/reimport checks with artifacts
+#   5. scorecard      — ensures the generated MCP/Web/CLI parity matrix is current
+#   6. fixtures-check — catches missing/unindexed real document fixtures
+#   7. architecture   — catches package-level dep-graph violations
+#   8. typecheck      — catches type-system violations
+#   9. test           — catches behavioural regressions
+#  10. build          — catches build-time/integration issues
+#  11. roundtrip-gate — import/project/export/reimport checks with artifacts
 roundtrip-gate: build
 	pnpm roundtrip:gate
 
-verify: format-check lint-root lint-web actions fixtures-check architecture typecheck test roundtrip-gate
+verify: format-check lint-root lint-web actions scorecard fixtures-check architecture typecheck test roundtrip-gate
 	@echo ""
 	@echo "✅ verify: all quality gates passed."
 
