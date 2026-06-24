@@ -25,7 +25,11 @@ new `documentId` as their matching legacy handle.
    - reads `summary`, `markdown`, `json`, `text` or `page` projections.
    - supports format-specific windowing fields such as `sheet`,
      `range`, `slide`, `page`, `max_rows` and `max_cols`.
-6. `export_document`
+6. `plan_command` / `preview_command` / `apply_command`
+   - mutates canonical documents through a shared command envelope,
+     diagnostics, diff and review lifecycle.
+   - see [`mcp-command-lifecycle-tools.md`](mcp-command-lifecycle-tools.md).
+7. `export_document`
    - writes a real Office/PDF file.
    - defaults to the original import path when available; otherwise pass
      `out_path`.
@@ -71,6 +75,20 @@ get_document_projection({
   "projection": "markdown"
 })
 → { "projection": "markdown", "content": "# ..." }
+
+plan_command({
+  "document_id": "doc_...",
+  "operation": "docx:insert-text",
+  "arguments": { "at": { "paragraph": 0 }, "text": "Draft " },
+  "policy": { "mode": "auto_apply" }
+})
+→ { "commandId": "..." }
+
+preview_command({ "command_id": "..." })
+→ { "diff": { "changes": [ ... ] }, "diagnostics": [ ... ] }
+
+apply_command({ "command_id": "..." })
+→ { "stage": "applied", "mutation": { "status": "approved" } }
 
 export_document({
   "document_id": "doc_...",

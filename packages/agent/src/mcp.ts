@@ -17,10 +17,23 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { DocxAgent, docxActions } from "@officeai/docx";
-import { XlsxAgent, diffXlsxSnapshots, xlsxActions } from "@officeai/xlsx";
-import { PptxAgent, pptxActions } from "@officeai/pptx";
-import { PdfAgent } from "@officeai/pdf";
+import {
+  createCommandEnvelope,
+  previewCommandEnvelope,
+  validateCommandEnvelope,
+  type ActionDescriptor,
+  type CommandDiagnostic,
+  type CommandEnvelope,
+  type CommandHandler,
+  type CommandPolicyMode,
+  type CommandSource,
+  type DocumentSnapshot,
+  type Mutation,
+} from "@officeai/core";
+import { DocxAgent, allDocxHandlers, docxActions } from "@officeai/docx";
+import { XlsxAgent, allXlsxHandlers, diffXlsxSnapshots, xlsxActions } from "@officeai/xlsx";
+import { PptxAgent, allPptxHandlers, pptxActions } from "@officeai/pptx";
+import { PdfAgent, allPdfHandlers, pdfActions } from "@officeai/pdf";
 import { registerActionsAsMcpTools, type McpDispatchContext } from "./actions-to-mcp.js";
 import {
   addPageNumbers,
@@ -60,9 +73,11 @@ const pdfSessionPaths = new Map<string, string>();
 
 type OfficeFormat = "docx" | "xlsx" | "pptx" | "pdf";
 type DocumentStatus = "ready" | "error";
+type OfficeAgent = DocxAgent | XlsxAgent | PptxAgent | PdfAgent;
+type AnyMutation = Mutation<DocumentSnapshot>;
 
 interface McpDiagnostic {
-  readonly level: "info" | "warning" | "error";
+  readonly level: "info" | "warning" | "error" | "destructive";
   readonly code: string;
   readonly message: string;
 }
@@ -96,6 +111,7 @@ interface DocumentRecord {
 
 const mcpSessions = new Map<string, SessionRecord>();
 const mcpDocuments = new Map<string, DocumentRecord>();
+const plannedCommands = new Map<string, CommandEnvelope>();
 
 /** Test hook: drop in-memory state between test cases. */
 export function __resetMcpSessionsForTests(): void {
@@ -109,6 +125,7 @@ export function __resetMcpSessionsForTests(): void {
   pdfSessionPaths.clear();
   mcpSessions.clear();
   mcpDocuments.clear();
+  plannedCommands.clear();
 }
 
 function lookupAgent(handle: string): DocxAgent {
@@ -273,6 +290,509 @@ function revisionFor(record: DocumentRecord): number {
   }
 }
 
+function snapshotFor(record: DocumentRecord): DocumentSnapshot {
+  switch (record.format) {
+    case "docx":
+      return lookupAgent(record.id).getSnapshot();
+    case "xlsx":
+      return lookupXlsxAgent(record.id).getSnapshot();
+    case "pptx":
+      return lookupPptxAgent(record.id).getSnapshot();
+    case "pdf":
+      return lookupPdfSession(record.id).agent.getSnapshot();
+  }
+}
+
+function agentFor(record: DocumentRecord): OfficeAgent {
+  switch (record.format) {
+    case "docx":
+      return lookupAgent(record.id);
+    case "xlsx":
+      return lookupXlsxAgent(record.id);
+    case "pptx":
+      return lookupPptxAgent(record.id);
+    case "pdf":
+      return lookupPdfSession(record.id).agent;
+  }
+}
+
+function handlersFor(format: OfficeFormat): ReadonlyArray<CommandHandler<unknown, DocumentSnapshot>> {
+  switch (format) {
+    case "docx":
+      return allDocxHandlers as ReadonlyArray<CommandHandler<unknown, DocumentSnapshot>>;
+    case "xlsx":
+      return allXlsxHandlers as ReadonlyArray<CommandHandler<unknown, DocumentSnapshot>>;
+    case "pptx":
+      return allPptxHandlers as ReadonlyArray<CommandHandler<unknown, DocumentSnapshot>>;
+    case "pdf":
+      return allPdfHandlers as ReadonlyArray<CommandHandler<unknown, DocumentSnapshot>>;
+  }
+}
+
+function handlerFor(
+  format: OfficeFormat,
+  operation: string
+): CommandHandler<unknown, DocumentSnapshot> | null {
+  return handlersFor(format).find((handler) => handler.type === operation) ?? null;
+}
+
+function allActionDescriptors(): ReadonlyArray<ActionDescriptor> {
+  return [...docxActions, ...xlsxActions, ...pptxActions, ...pdfActions];
+}
+
+function actionById(actionId: string): ActionDescriptor | undefined {
+  return allActionDescriptors().find((action) => action.id === actionId);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringField(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function commandPolicyFrom(input: Record<string, unknown>): Partial<CommandEnvelope["policy"]> {
+  const raw = input.policy;
+  if (!isRecord(raw)) return {};
+  const mode = raw.mode;
+  const requiresReview = raw.requires_review ?? raw.requiresReview;
+  return {
+    ...(mode === "dry_run" || mode === "auto_apply" || mode === "pending"
+      ? { mode: mode satisfies CommandPolicyMode }
+      : {}),
+    ...(typeof requiresReview === "boolean" ? { requiresReview } : {}),
+  };
+}
+
+function commandSourceFrom(input: Record<string, unknown>): CommandEnvelope["source"] {
+  const actorId = stringField(input, "actor_id") ?? stringField(input, "actorId");
+  return {
+    surface: "mcp",
+    ...(actorId ? { actorId } : {}),
+  };
+}
+
+function resolveCommandOperation(
+  input: Record<string, unknown>,
+  record: DocumentRecord
+): {
+  readonly operation: string;
+  readonly args: unknown;
+  readonly action?: Pick<
+    ActionDescriptor,
+    "id" | "label" | "requiresReview" | "supportsDiff" | "supportsDryRun"
+  >;
+} {
+  const actionId = stringField(input, "action_id") ?? stringField(input, "actionId");
+  const directOperation = stringField(input, "operation");
+  const rawArgs = input.arguments ?? {};
+
+  if (!actionId) {
+    if (!directOperation) throw new Error("operation is required when action_id is not supplied.");
+    return { operation: directOperation, args: rawArgs };
+  }
+
+  const action = actionById(actionId);
+  if (!action) throw new Error(`Unknown action_id "${actionId}".`);
+  if (action.format !== record.format) {
+    throw new Error(
+      `Action ${actionId} targets ${action.format}, but document ${record.id} is ${record.format}.`
+    );
+  }
+  if (!action.commandType) {
+    throw new Error(`Action ${actionId} does not map to a document command.`);
+  }
+  if (directOperation && directOperation !== action.commandType) {
+    throw new Error(`Action ${actionId} maps to ${action.commandType}, not ${directOperation}.`);
+  }
+
+  const parsedArgs = isRecord(rawArgs) ? rawArgs : {};
+  return {
+    operation: action.commandType,
+    args: action.buildPayload ? action.buildPayload(parsedArgs) : rawArgs,
+    action: {
+      id: action.id,
+      label: action.label,
+      requiresReview: action.requiresReview,
+      supportsDiff: action.supportsDiff,
+      supportsDryRun: action.supportsDryRun,
+    },
+  };
+}
+
+function commandEnvelopeFromInput(input: Record<string, unknown>): {
+  readonly envelope: CommandEnvelope;
+  readonly record: DocumentRecord;
+  readonly action?: Pick<
+    ActionDescriptor,
+    "id" | "label" | "requiresReview" | "supportsDiff" | "supportsDryRun"
+  >;
+} {
+  const documentId = stringField(input, "document_id") ?? stringField(input, "documentId");
+  if (!documentId) throw new Error("document_id is required.");
+  const record = lookupDocument(documentId);
+  const resolved = resolveCommandOperation(input, record);
+  const target = isRecord(input.target) ? input.target : {};
+  const revision =
+    typeof target.revision === "number" && Number.isInteger(target.revision)
+      ? target.revision
+      : revisionFor(record);
+  const requestedFormat = stringField(input, "format") as OfficeFormat | undefined;
+  const mode = commandPolicyFrom(input).mode;
+
+  const envelope = createCommandEnvelope({
+    id: stringField(input, "command_id") ?? stringField(input, "commandId"),
+    format: requestedFormat ?? record.format,
+    operation: resolved.operation,
+    arguments: resolved.args,
+    target: {
+      sessionId: record.sessionId,
+      documentId: record.id,
+      revision,
+      ...(target.anchor !== undefined ? { anchor: target.anchor } : {}),
+    },
+    source: commandSourceFrom(input),
+    policy: {
+      ...commandPolicyFrom(input),
+      ...(resolved.action?.requiresReview !== undefined
+        ? { requiresReview: resolved.action.requiresReview }
+        : {}),
+      ...(mode ? { mode } : {}),
+    },
+  });
+
+  return { envelope, record, ...(resolved.action ? { action: resolved.action } : {}) };
+}
+
+function commandEnvelopeFromRaw(raw: Record<string, unknown>): CommandEnvelope {
+  const targetRaw = isRecord(raw.target) ? raw.target : {};
+  const sourceRaw = isRecord(raw.source) ? raw.source : {};
+  const policyRaw = isRecord(raw.policy) ? raw.policy : {};
+  const documentId = stringField(targetRaw, "documentId") ?? stringField(targetRaw, "document_id");
+  const sessionId = stringField(targetRaw, "sessionId") ?? stringField(targetRaw, "session_id");
+  const revision = targetRaw.revision;
+  const operation = stringField(raw, "operation");
+  const format = stringField(raw, "format") as OfficeFormat | undefined;
+  const id = stringField(raw, "id");
+  if (!id) throw new Error("command.id is required.");
+  if (!format) throw new Error("command.format is required.");
+  if (!operation) throw new Error("command.operation is required.");
+  if (!documentId) throw new Error("command.target.documentId is required.");
+  if (!sessionId) throw new Error("command.target.sessionId is required.");
+  if (typeof revision !== "number" || !Number.isInteger(revision)) {
+    throw new Error("command.target.revision must be an integer.");
+  }
+  const mode = policyRaw.mode;
+  const surface = sourceRaw.surface;
+  return {
+    id,
+    format,
+    operation,
+    arguments: raw.arguments ?? {},
+    target: {
+      sessionId,
+      documentId,
+      revision,
+      ...(targetRaw.anchor !== undefined ? { anchor: targetRaw.anchor } : {}),
+    },
+    source: {
+      surface:
+        surface === "web" || surface === "cli" || surface === "internal" || surface === "mcp"
+          ? surface
+          : "mcp",
+      ...(typeof sourceRaw.actorId === "string" ? { actorId: sourceRaw.actorId } : {}),
+    },
+    policy: {
+      mode: mode === "dry_run" || mode === "auto_apply" || mode === "pending" ? mode : "pending",
+      requiresReview:
+        typeof policyRaw.requiresReview === "boolean"
+          ? policyRaw.requiresReview
+          : typeof policyRaw.requires_review === "boolean"
+            ? policyRaw.requires_review
+            : true,
+    },
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+  };
+}
+
+function resolveCommandReference(input: Record<string, unknown>): {
+  readonly envelope: CommandEnvelope;
+  readonly record: DocumentRecord;
+} {
+  const commandId = stringField(input, "command_id") ?? stringField(input, "commandId");
+  if (commandId) {
+    const envelope = plannedCommands.get(commandId);
+    if (!envelope) throw new Error(`Unknown command_id "${commandId}". Call plan_command first.`);
+    return { envelope, record: lookupDocument(envelope.target.documentId) };
+  }
+
+  if (isRecord(input.command)) {
+    const envelope = commandEnvelopeFromRaw(input.command);
+    return { envelope, record: lookupDocument(envelope.target.documentId) };
+  }
+
+  return commandEnvelopeFromInput(input);
+}
+
+function commandDiagnostics(record: DocumentRecord, envelope: CommandEnvelope): CommandDiagnostic[] {
+  const diagnostics: CommandDiagnostic[] = [
+    ...validateCommandEnvelope(envelope, snapshotFor(record)).diagnostics,
+    ...anchorDiagnostics(record, envelope.target.anchor),
+  ];
+  if (!handlerFor(envelope.format as OfficeFormat, envelope.operation)) {
+    diagnostics.push({
+      level: "error",
+      code: "unsupported-operation",
+      message: `${envelope.operation} is not registered for ${envelope.format}.`,
+    });
+  }
+  if (diagnostics.length === 0) {
+    diagnostics.push({
+      level: "info",
+      code: "command-valid",
+      message: `${envelope.operation} is valid for ${record.format} revision ${revisionFor(record)}.`,
+    });
+  }
+  return diagnostics;
+}
+
+function anchorDiagnostics(record: DocumentRecord, anchor: unknown): CommandDiagnostic[] {
+  if (anchor === undefined) {
+    return [
+      {
+        level: "info",
+        code: "anchor-default",
+        message: "No anchor supplied; command payload owns targeting.",
+      },
+    ];
+  }
+  if (!isRecord(anchor)) {
+    return [{ level: "error", code: "invalid-anchor", message: "target.anchor must be an object." }];
+  }
+  const kind = stringField(anchor, "kind");
+  switch (record.format) {
+    case "docx":
+      return validateDocxAnchor(record, kind, anchor);
+    case "xlsx":
+      return validateXlsxAnchor(record, kind, anchor);
+    case "pptx":
+      return validatePptxAnchor(record, kind, anchor);
+    case "pdf":
+      return validatePdfAnchor(record, kind, anchor);
+  }
+}
+
+function validateDocxAnchor(
+  record: DocumentRecord,
+  kind: string | undefined,
+  anchor: Record<string, unknown>
+): CommandDiagnostic[] {
+  if (kind !== "paragraph") {
+    return [
+      { level: "error", code: "invalid-anchor-kind", message: "DOCX anchors must use kind='paragraph'." },
+    ];
+  }
+  const index = anchor.index;
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    return [
+      { level: "error", code: "invalid-anchor-index", message: "DOCX paragraph anchor requires index >= 0." },
+    ];
+  }
+  const body = (snapshotFor(record).root as { body?: unknown }).body;
+  if (!Array.isArray(body) || !body[index] || (body[index] as { kind?: unknown }).kind !== "paragraph") {
+    return [{ level: "error", code: "anchor-not-found", message: `DOCX paragraph ${index} was not found.` }];
+  }
+  return [{ level: "info", code: "anchor-resolved", message: `Resolved DOCX paragraph ${index}.` }];
+}
+
+function validateXlsxAnchor(
+  record: DocumentRecord,
+  kind: string | undefined,
+  anchor: Record<string, unknown>
+): CommandDiagnostic[] {
+  if (kind !== "range") {
+    return [{ level: "error", code: "invalid-anchor-kind", message: "XLSX anchors must use kind='range'." }];
+  }
+  const sheet = stringField(anchor, "sheet");
+  const range = stringField(anchor, "range");
+  if (!sheet || !range) {
+    return [
+      {
+        level: "error",
+        code: "invalid-anchor-range",
+        message: "XLSX range anchor requires sheet and range.",
+      },
+    ];
+  }
+  const sheets = (snapshotFor(record).root as { sheets?: ReadonlyArray<{ name?: string }> }).sheets ?? [];
+  if (!sheets.some((s) => s.name === sheet)) {
+    return [{ level: "error", code: "anchor-not-found", message: `XLSX sheet "${sheet}" was not found.` }];
+  }
+  return [{ level: "info", code: "anchor-resolved", message: `Resolved XLSX range ${sheet}!${range}.` }];
+}
+
+function validatePptxAnchor(
+  record: DocumentRecord,
+  kind: string | undefined,
+  anchor: Record<string, unknown>
+): CommandDiagnostic[] {
+  if (kind !== "slide_shape" && kind !== "slide-shape") {
+    return [
+      { level: "error", code: "invalid-anchor-kind", message: "PPTX anchors must use kind='slide_shape'." },
+    ];
+  }
+  const slideIndex = anchor.slideIndex ?? anchor.slide_index;
+  if (typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0) {
+    return [
+      { level: "error", code: "invalid-anchor-slide", message: "PPTX anchor requires slideIndex >= 0." },
+    ];
+  }
+  const slides = (snapshotFor(record).root as { slides?: ReadonlyArray<{ shapes?: unknown }> }).slides ?? [];
+  const slide = slides[slideIndex];
+  if (!slide) {
+    return [{ level: "error", code: "anchor-not-found", message: `PPTX slide ${slideIndex} was not found.` }];
+  }
+  const shapeId = stringField(anchor, "shapeId") ?? stringField(anchor, "shape_id");
+  if (shapeId && !shapeExists((slide as { shapes?: unknown }).shapes, shapeId)) {
+    return [
+      {
+        level: "error",
+        code: "anchor-not-found",
+        message: `PPTX shape "${shapeId}" was not found on slide ${slideIndex}.`,
+      },
+    ];
+  }
+  return [
+    {
+      level: "info",
+      code: "anchor-resolved",
+      message: shapeId
+        ? `Resolved PPTX slide ${slideIndex} shape ${shapeId}.`
+        : `Resolved PPTX slide ${slideIndex}.`,
+    },
+  ];
+}
+
+function validatePdfAnchor(
+  record: DocumentRecord,
+  kind: string | undefined,
+  anchor: Record<string, unknown>
+): CommandDiagnostic[] {
+  if (kind !== "page_region" && kind !== "page-region") {
+    return [
+      { level: "error", code: "invalid-anchor-kind", message: "PDF anchors must use kind='page_region'." },
+    ];
+  }
+  const page = anchor.page;
+  const rect = anchor.rect;
+  if (typeof page !== "number" || !Number.isInteger(page) || page < 1) {
+    return [
+      { level: "error", code: "invalid-anchor-page", message: "PDF page-region anchor requires page >= 1." },
+    ];
+  }
+  if (!isRecord(rect) || !["x", "y", "width", "height"].every((key) => typeof rect[key] === "number")) {
+    return [
+      {
+        level: "error",
+        code: "invalid-anchor-rect",
+        message: "PDF page-region anchor requires rect { x, y, width, height }.",
+      },
+    ];
+  }
+  const pages = (snapshotFor(record).root as { pages?: ReadonlyArray<unknown> }).pages ?? [];
+  if (page > pages.length) {
+    return [{ level: "error", code: "anchor-not-found", message: `PDF page ${page} was not found.` }];
+  }
+  return [{ level: "info", code: "anchor-resolved", message: `Resolved PDF page ${page} region.` }];
+}
+
+function shapeExists(shapes: unknown, shapeId: string): boolean {
+  if (!Array.isArray(shapes)) return false;
+  for (const shape of shapes) {
+    if (!isRecord(shape)) continue;
+    if (shape.id === shapeId) return true;
+    if (shapeExists(shape.children, shapeId)) return true;
+  }
+  return false;
+}
+
+function hasBlockingCommandDiagnostics(diagnostics: ReadonlyArray<CommandDiagnostic>): boolean {
+  return diagnostics.some((d) => d.level === "error" || d.level === "destructive");
+}
+
+function commandSourceForEnvelope(envelope: CommandEnvelope): CommandSource {
+  if (envelope.policy.mode === "pending") return "agent";
+  if (envelope.source.surface === "internal") return "system";
+  if (envelope.source.surface === "mcp") return "agent";
+  return "human";
+}
+
+async function dispatchCommand(record: DocumentRecord, envelope: CommandEnvelope): Promise<AnyMutation> {
+  const command = {
+    type: envelope.operation,
+    payload: envelope.arguments,
+    source: commandSourceForEnvelope(envelope),
+    ...(envelope.source.actorId ? { agentId: envelope.source.actorId } : {}),
+  };
+  switch (record.format) {
+    case "docx":
+      return (await lookupAgent(record.id).applyCommand(command)) as unknown as AnyMutation;
+    case "xlsx":
+      return (await lookupXlsxAgent(record.id).applyCommand(command)) as unknown as AnyMutation;
+    case "pptx":
+      return (await lookupPptxAgent(record.id).applyCommand(command)) as unknown as AnyMutation;
+    case "pdf":
+      return (await lookupPdfSession(record.id).agent.applyCommand(command)) as unknown as AnyMutation;
+  }
+}
+
+function pendingMutationsFor(record: DocumentRecord): ReadonlyArray<AnyMutation> {
+  return agentFor(record).getPendingMutations() as ReadonlyArray<AnyMutation>;
+}
+
+function approveMutationFor(record: DocumentRecord, mutationId: string): void {
+  agentFor(record).approveMutation(mutationId);
+  touchDocument(record);
+}
+
+function rejectMutationFor(record: DocumentRecord, mutationId: string): void {
+  agentFor(record).rejectMutation(mutationId);
+  touchDocument(record);
+}
+
+function undoFor(record: DocumentRecord): AnyMutation | null {
+  const mutation = agentFor(record).undo() as AnyMutation | null;
+  if (mutation) touchDocument(record);
+  return mutation;
+}
+
+function touchDocument(record: DocumentRecord, diagnostics?: ReadonlyArray<McpDiagnostic>): void {
+  record.updatedAt = nowIso();
+  if (diagnostics) record.diagnostics = [...diagnostics];
+  touchSession(getOrCreateSession(record.sessionId));
+}
+
+function mutationSummary(mutation: AnyMutation): Record<string, unknown> {
+  return {
+    id: mutation.id,
+    operation: mutation.command.type,
+    source: mutation.command.source,
+    ...(mutation.command.agentId ? { actorId: mutation.command.agentId } : {}),
+    status: mutation.status,
+    timestamp: mutation.command.timestamp,
+    ...(mutation.rejection ? { rejection: mutation.rejection } : {}),
+  };
+}
+
+function commandEnvelopePayload(envelope: CommandEnvelope): Record<string, unknown> {
+  return {
+    schema: "office-ai/command@1",
+    ...envelope,
+  };
+}
+
 function summaryFor(record: DocumentRecord): unknown {
   switch (record.format) {
     case "docx":
@@ -431,6 +951,329 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
   record.updatedAt = exported.exportedAt;
   touchSession(getOrCreateSession(record.sessionId));
   return exported;
+}
+
+function registerCommandLifecycleTools(server: McpServer): void {
+  const commandInputSchema = {
+    document_id: z.string().describe("documentId returned by import_document or create_document."),
+    format: z.enum(["docx", "xlsx", "pptx", "pdf"]).optional().describe("Optional format guard."),
+    action_id: z
+      .string()
+      .optional()
+      .describe("Optional action catalogue id such as xlsx.set-cell; maps to operation/payload."),
+    operation: z.string().optional().describe("Command operation such as docx:insert-text."),
+    arguments: z.record(z.string(), z.unknown()).optional().describe("Command payload."),
+    target: z
+      .object({
+        revision: z.number().int().nonnegative().optional(),
+        anchor: z.unknown().optional(),
+      })
+      .optional()
+      .describe("Optional revision and format-specific anchor."),
+    policy: z
+      .object({
+        mode: z.enum(["dry_run", "auto_apply", "pending"]).optional(),
+        requires_review: z.boolean().optional(),
+      })
+      .optional(),
+    actor_id: z.string().optional().describe("Optional actor id recorded on the command source."),
+  };
+
+  const commandReferenceSchema = {
+    command_id: z.string().optional().describe("Command id returned by plan_command."),
+    command: z.record(z.string(), z.unknown()).optional().describe("Full office-ai/command@1 envelope."),
+    ...Object.fromEntries(
+      Object.entries(commandInputSchema).map(([key, value]) => [
+        key,
+        key === "document_id" ? value.optional() : value,
+      ])
+    ),
+  };
+
+  server.registerTool(
+    "plan_command",
+    {
+      description:
+        "Create and validate a structured office-ai/command@1 envelope for a DOCX/XLSX/PPTX/PDF document. No mutation is applied.",
+      inputSchema: commandInputSchema,
+    },
+    async (input) => {
+      try {
+        const { envelope, record, action } = commandEnvelopeFromInput(input);
+        const diagnostics = commandDiagnostics(record, envelope);
+        plannedCommands.set(envelope.id, envelope);
+        touchDocument(record, diagnostics);
+        return ok({
+          schema: "office-ai/command-plan@1",
+          ok: !hasBlockingCommandDiagnostics(diagnostics),
+          commandId: envelope.id,
+          command: commandEnvelopePayload(envelope),
+          document: documentEnvelope(record),
+          ...(action ? { action } : {}),
+          diagnostics,
+          nextActions: ["preview_command", "apply_command"],
+        });
+      } catch (err) {
+        return fail(`plan_command failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "preview_command",
+    {
+      description:
+        "Preview a planned or inline office-ai/command@1 envelope. Returns diagnostics and a structured diff without applying the mutation.",
+      inputSchema: commandReferenceSchema,
+    },
+    async (input) => {
+      try {
+        const { envelope, record } = resolveCommandReference(input);
+        const diagnostics = commandDiagnostics(record, envelope);
+        if (hasBlockingCommandDiagnostics(diagnostics)) {
+          touchDocument(record, diagnostics);
+          return ok({
+            schema: "office-ai/command-preview@1",
+            ok: false,
+            stage: "failed",
+            commandId: envelope.id,
+            command: commandEnvelopePayload(envelope),
+            document: documentEnvelope(record),
+            diagnostics,
+          });
+        }
+        const handler = handlerFor(record.format, envelope.operation);
+        if (!handler) throw new Error(`${envelope.operation} is not registered for ${record.format}.`);
+        const preview = previewCommandEnvelope(envelope, snapshotFor(record), handler);
+        const mergedDiagnostics =
+          preview.diagnostics.length > 0
+            ? preview.diagnostics
+            : [
+                {
+                  level: "info" as const,
+                  code: "preview-ready",
+                  message: `${envelope.operation} preview produced ${preview.diff?.changes.length ?? 0} change(s).`,
+                },
+              ];
+        touchDocument(record, mergedDiagnostics);
+        return ok({
+          schema: "office-ai/command-preview@1",
+          ok: preview.ok,
+          stage: preview.stage,
+          commandId: envelope.id,
+          command: commandEnvelopePayload(envelope),
+          document: documentEnvelope(record),
+          diagnostics: mergedDiagnostics,
+          ...(preview.diff ? { diff: preview.diff } : {}),
+        });
+      } catch (err) {
+        return fail(`preview_command failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "apply_command",
+    {
+      description:
+        "Apply a planned or inline office-ai/command@1 envelope. policy.mode=auto_apply approves immediately; pending leaves the mutation for review; dry_run is rejected.",
+      inputSchema: commandReferenceSchema,
+    },
+    async (input) => {
+      try {
+        const { envelope, record } = resolveCommandReference(input);
+        const diagnostics = commandDiagnostics(record, envelope);
+        if (envelope.policy.mode === "dry_run") {
+          diagnostics.push({
+            level: "error",
+            code: "dry-run-apply",
+            message: "Dry-run commands must be previewed; apply requires policy.mode auto_apply or pending.",
+          });
+        }
+        if (hasBlockingCommandDiagnostics(diagnostics)) {
+          touchDocument(record, diagnostics);
+          return ok({
+            schema: "office-ai/command-apply@1",
+            ok: false,
+            stage: "failed",
+            commandId: envelope.id,
+            command: commandEnvelopePayload(envelope),
+            document: documentEnvelope(record),
+            diagnostics,
+          });
+        }
+
+        const mutation = await dispatchCommand(record, envelope);
+        if (envelope.policy.mode === "auto_apply" && mutation.status === "pending") {
+          approveMutationFor(record, mutation.id);
+        }
+        const finalDiagnostics: CommandDiagnostic[] =
+          mutation.status === "rejected"
+            ? [
+                {
+                  level: "error",
+                  code: mutation.rejection?.code ?? "command-rejected",
+                  message: mutation.rejection?.message ?? `${envelope.operation} was rejected.`,
+                },
+              ]
+            : [
+                {
+                  level: "info",
+                  code: mutation.status === "pending" ? "command-pending" : "command-applied",
+                  message:
+                    mutation.status === "pending"
+                      ? `${envelope.operation} is pending review.`
+                      : `${envelope.operation} was applied.`,
+                },
+              ];
+        touchDocument(record, finalDiagnostics);
+        return ok({
+          schema: "office-ai/command-apply@1",
+          ok: mutation.status !== "rejected",
+          stage:
+            mutation.status === "pending" ? "queued" : mutation.status === "rejected" ? "failed" : "applied",
+          commandId: envelope.id,
+          command: commandEnvelopePayload(envelope),
+          document: documentEnvelope(record),
+          diagnostics: finalDiagnostics,
+          mutation: mutationSummary(mutation),
+          diff: mutation.diff,
+          nextActions:
+            mutation.status === "pending" ? ["list_pending_changes", "approve_change"] : ["export_document"],
+        });
+      } catch (err) {
+        return fail(`apply_command failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "undo_command",
+    {
+      description: "Undo the most recent approved mutation for a canonical OfficeAI document.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document or create_document."),
+      },
+    },
+    async ({ document_id }) => {
+      try {
+        const record = lookupDocument(document_id);
+        const mutation = undoFor(record);
+        const diagnostics: CommandDiagnostic[] = mutation
+          ? [{ level: "info", code: "undo-applied", message: `Undid mutation ${mutation.id}.` }]
+          : [{ level: "info", code: "undo-empty", message: "No approved mutation is available to undo." }];
+        touchDocument(record, diagnostics);
+        return ok({
+          schema: "office-ai/command-undo@1",
+          ok: true,
+          didUndo: Boolean(mutation),
+          document: documentEnvelope(record),
+          diagnostics,
+          ...(mutation ? { mutation: mutationSummary(mutation), diff: mutation.diff } : {}),
+        });
+      } catch (err) {
+        return fail(`undo_command failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_pending_changes",
+    {
+      description: "List pending review mutations for one canonical document or for all canonical documents.",
+      inputSchema: {
+        document_id: z.string().optional().describe("Optional documentId; omit to list all pending changes."),
+      },
+    },
+    async ({ document_id }) => {
+      try {
+        const records = document_id ? [lookupDocument(document_id)] : [...mcpDocuments.values()];
+        return ok({
+          schema: "office-ai/pending-changes@1",
+          pending: records.flatMap((record) =>
+            pendingMutationsFor(record).map((mutation) => ({
+              documentId: record.id,
+              sessionId: record.sessionId,
+              format: record.format,
+              documentName: record.name,
+              mutation: mutationSummary(mutation),
+              diff: mutation.diff,
+            }))
+          ),
+        });
+      } catch (err) {
+        return fail(`list_pending_changes failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "approve_change",
+    {
+      description: "Approve a pending mutation by id for a canonical OfficeAI document.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document or create_document."),
+        mutation_id: z.string().describe("Mutation id returned by apply_command or list_pending_changes."),
+      },
+    },
+    async ({ document_id, mutation_id }) => {
+      try {
+        const record = lookupDocument(document_id);
+        approveMutationFor(record, mutation_id);
+        const diagnostics: CommandDiagnostic[] = [
+          { level: "info", code: "change-approved", message: `Approved mutation ${mutation_id}.` },
+        ];
+        touchDocument(record, diagnostics);
+        return ok({
+          schema: "office-ai/change-review@1",
+          ok: true,
+          approved: mutation_id,
+          document: documentEnvelope(record),
+          diagnostics,
+        });
+      } catch (err) {
+        return fail(`approve_change failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "reject_change",
+    {
+      description: "Reject a pending mutation by id for a canonical OfficeAI document.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document or create_document."),
+        mutation_id: z.string().describe("Mutation id returned by apply_command or list_pending_changes."),
+        reason: z.string().optional().describe("Optional human-readable rejection reason."),
+      },
+    },
+    async ({ document_id, mutation_id, reason }) => {
+      try {
+        const record = lookupDocument(document_id);
+        rejectMutationFor(record, mutation_id);
+        const diagnostics: CommandDiagnostic[] = [
+          {
+            level: "info",
+            code: "change-rejected",
+            message: reason
+              ? `Rejected mutation ${mutation_id}: ${reason}`
+              : `Rejected mutation ${mutation_id}.`,
+          },
+        ];
+        touchDocument(record, diagnostics);
+        return ok({
+          schema: "office-ai/change-review@1",
+          ok: true,
+          rejected: mutation_id,
+          ...(reason ? { reason } : {}),
+          document: documentEnvelope(record),
+          diagnostics,
+        });
+      } catch (err) {
+        return fail(`reject_change failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
 }
 
 function registerSessionDocumentTools(server: McpServer): void {
@@ -730,11 +1573,12 @@ export function createMcpServer(): McpServer {
     {
       capabilities: { tools: {} },
       instructions:
-        "MCP-first document tools for DOCX, XLSX, PPTX and PDF. Prefer create_session/import_document/create_document/get_document_projection/export_document for canonical cross-format flows. Legacy docx_*/xlsx_*/pptx_*/pdf_* tools remain available; canonical documentId values also work as the matching legacy handles.",
+        "MCP-first document tools for DOCX, XLSX, PPTX and PDF. Prefer create_session/import_document/create_document/get_document_projection plus plan_command/preview_command/apply_command/export_document for canonical cross-format flows. Legacy docx_*/xlsx_*/pptx_*/pdf_* tools remain available; canonical documentId values also work as the matching legacy handles.",
     }
   );
 
   registerSessionDocumentTools(server);
+  registerCommandLifecycleTools(server);
 
   // ── docx_load ─────────────────────────────────────────────────────────
   server.registerTool(

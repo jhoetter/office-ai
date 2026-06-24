@@ -172,6 +172,269 @@ describe("OfficeAI MCP server", () => {
     }
   });
 
+  it("registers canonical command lifecycle tools", async () => {
+    const client = await makeClient();
+    const list = await client.listTools();
+    const names = new Set(list.tools.map((t) => t.name));
+    for (const expected of [
+      "plan_command",
+      "preview_command",
+      "apply_command",
+      "undo_command",
+      "list_pending_changes",
+      "approve_change",
+      "reject_change",
+    ]) {
+      expect(names.has(expected), `missing command lifecycle tool ${expected}`).toBe(true);
+    }
+  });
+
+  it("plans an office-ai/command@1 envelope with stable command-schema fields", async () => {
+    const client = await makeClient();
+    const created = structured(
+      await client.callTool({ name: "create_document", arguments: { format: "xlsx", name: "schema.xlsx" } })
+    );
+    const document = created.document as { documentId: string; sessionId: string; revision: number };
+    const planned = structured(
+      await client.callTool({
+        name: "plan_command",
+        arguments: {
+          document_id: document.documentId,
+          action_id: "xlsx.set-cell",
+          arguments: { sheet: "Sheet1", ref: "A1", value: "schema" },
+          target: { anchor: { kind: "range", sheet: "Sheet1", range: "A1:A1" } },
+          policy: { mode: "auto_apply" },
+          actor_id: "mcp-test",
+        },
+      })
+    );
+    expect(planned.ok).toBe(true);
+    expect(planned.schema).toBe("office-ai/command-plan@1");
+    expect(planned.commandId).toBeTruthy();
+    expect(planned.command).toMatchObject({
+      schema: "office-ai/command@1",
+      format: "xlsx",
+      operation: "xlsx:set-cell-value",
+      arguments: { sheet: "Sheet1", ref: "A1", value: "schema" },
+      target: {
+        documentId: document.documentId,
+        sessionId: document.sessionId,
+        revision: document.revision,
+        anchor: { kind: "range", sheet: "Sheet1", range: "A1:A1" },
+      },
+      source: { surface: "mcp", actorId: "mcp-test" },
+      policy: { mode: "auto_apply", requiresReview: true },
+    });
+    expect((planned.diagnostics as Array<{ level: string; code: string }>).length).toBeGreaterThan(0);
+    expect((planned.diagnostics as Array<{ level: string }>).every((d) => d.level)).toBe(true);
+  });
+
+  it("runs DOCX, XLSX, PPTX and PDF commands through plan -> preview -> apply -> export", async () => {
+    const client = await makeClient();
+    const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-command-"));
+    const cases = [
+      {
+        format: "docx",
+        operation: "docx:insert-text",
+        args: { at: { paragraph: 0 }, text: "MCP DOCX " },
+        anchor: { kind: "paragraph", index: 0 },
+        out: "out.docx",
+      },
+      {
+        format: "xlsx",
+        operation: "xlsx:set-cell-value",
+        args: { sheet: "Sheet1", ref: "A1", value: "MCP XLSX" },
+        anchor: { kind: "range", sheet: "Sheet1", range: "A1:A1" },
+        out: "out.xlsx",
+      },
+      {
+        format: "pptx",
+        operation: "pptx:add-slide",
+        args: {},
+        anchor: { kind: "slide_shape", slideIndex: 0 },
+        out: "out.pptx",
+      },
+      {
+        format: "pdf",
+        actionId: "pdf.rotate-pages",
+        operation: "pdf:rotate-pages",
+        args: { pages: [1], delta: 90 },
+        anchor: { kind: "page_region", page: 1, rect: { x: 0, y: 0, width: 10, height: 10 } },
+        out: "out.pdf",
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const created = structured(
+        await client.callTool({
+          name: "create_document",
+          arguments: { format: entry.format, name: `command.${entry.format}` },
+        })
+      );
+      const document = created.document as { documentId: string };
+      const planned = structured(
+        await client.callTool({
+          name: "plan_command",
+          arguments: {
+            document_id: document.documentId,
+            ...(entry.actionId ? { action_id: entry.actionId } : { operation: entry.operation }),
+            arguments: entry.args,
+            target: { anchor: entry.anchor },
+            policy: { mode: "auto_apply" },
+          },
+        })
+      );
+      expect(planned.ok, `${entry.format} plan failed`).toBe(true);
+      expect((planned.command as { operation: string }).operation).toBe(entry.operation);
+
+      const preview = structured(
+        await client.callTool({ name: "preview_command", arguments: { command_id: planned.commandId } })
+      );
+      expect(preview.ok, `${entry.format} preview failed`).toBe(true);
+      expect(((preview.diff as { changes?: unknown[] }).changes ?? []).length).toBeGreaterThan(0);
+      expect((preview.diagnostics as unknown[]).length).toBeGreaterThan(0);
+
+      const applied = structured(
+        await client.callTool({ name: "apply_command", arguments: { command_id: planned.commandId } })
+      );
+      expect(applied.ok, `${entry.format} apply failed`).toBe(true);
+      expect(applied.stage).toBe("applied");
+      expect((applied.mutation as { status: string }).status).toBe("approved");
+      expect(((applied.diff as { changes?: unknown[] }).changes ?? []).length).toBeGreaterThan(0);
+
+      const exported = structured(
+        await client.callTool({
+          name: "export_document",
+          arguments: { document_id: document.documentId, out_path: join(tmp, entry.out) },
+        })
+      );
+      expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("supports generic pending review with list, approve and reject", async () => {
+    const client = await makeClient();
+    const created = structured(
+      await client.callTool({ name: "create_document", arguments: { format: "docx", name: "review.docx" } })
+    );
+    const document = created.document as { documentId: string };
+    const first = structured(
+      await client.callTool({
+        name: "apply_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "docx:insert-text",
+          arguments: { at: { paragraph: 0 }, text: "approved " },
+          target: { anchor: { kind: "paragraph", index: 0 } },
+          policy: { mode: "pending" },
+        },
+      })
+    );
+    expect(first.stage).toBe("queued");
+    const firstId = (first.mutation as { id: string }).id;
+
+    const listed = structured(
+      await client.callTool({ name: "list_pending_changes", arguments: { document_id: document.documentId } })
+    );
+    expect((listed.pending as Array<{ mutation: { id: string } }>).map((p) => p.mutation.id)).toContain(
+      firstId
+    );
+
+    const approved = structured(
+      await client.callTool({
+        name: "approve_change",
+        arguments: { document_id: document.documentId, mutation_id: firstId },
+      })
+    );
+    expect(approved.approved).toBe(firstId);
+
+    const second = structured(
+      await client.callTool({
+        name: "apply_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "docx:insert-text",
+          arguments: { at: { paragraph: 0 }, text: "rejected " },
+          target: { anchor: { kind: "paragraph", index: 0 } },
+          policy: { mode: "pending" },
+        },
+      })
+    );
+    const secondId = (second.mutation as { id: string }).id;
+    const rejected = structured(
+      await client.callTool({
+        name: "reject_change",
+        arguments: { document_id: document.documentId, mutation_id: secondId, reason: "test rejection" },
+      })
+    );
+    expect(rejected.rejected).toBe(secondId);
+    expect(rejected.reason).toBe("test rejection");
+
+    const pendingAfter = structured(
+      await client.callTool({ name: "list_pending_changes", arguments: { document_id: document.documentId } })
+    );
+    expect(pendingAfter.pending).toEqual([]);
+  });
+
+  it("fails loud for unsupported operations, invalid anchors and stale revisions", async () => {
+    const client = await makeClient();
+    const created = structured(
+      await client.callTool({ name: "create_document", arguments: { format: "docx", name: "negative.docx" } })
+    );
+    const document = created.document as { documentId: string; revision: number };
+
+    const unsupported = structured(
+      await client.callTool({
+        name: "plan_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "docx:nope",
+          arguments: {},
+        },
+      })
+    );
+    expect(unsupported.ok).toBe(false);
+    expect((unsupported.diagnostics as Array<{ code: string }>).map((d) => d.code)).toContain(
+      "unsupported-operation"
+    );
+
+    const invalidAnchor = structured(
+      await client.callTool({
+        name: "plan_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "docx:insert-text",
+          arguments: { at: { paragraph: 0 }, text: "x" },
+          target: { anchor: { kind: "range", sheet: "Sheet1", range: "A1" } },
+        },
+      })
+    );
+    expect(invalidAnchor.ok).toBe(false);
+    expect((invalidAnchor.diagnostics as Array<{ code: string }>).map((d) => d.code)).toContain(
+      "invalid-anchor-kind"
+    );
+
+    const stale = structured(
+      await client.callTool({
+        name: "apply_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "docx:insert-text",
+          arguments: { at: { paragraph: 0 }, text: "x" },
+          target: { revision: document.revision + 99, anchor: { kind: "paragraph", index: 0 } },
+          policy: { mode: "auto_apply" },
+        },
+      })
+    );
+    expect(stale.ok).toBe(false);
+    expect(stale.stage).toBe("failed");
+    expect((stale.diagnostics as Array<{ code: string }>).map((d) => d.code)).toContain("stale-revision");
+    const after = structured(
+      await client.callTool({ name: "get_document", arguments: { document_id: document.documentId } })
+    );
+    expect((after.document as { revision: number }).revision).toBe(document.revision);
+  });
+
   it("canonical session flow imports, projects and exports every core format", async () => {
     const client = await makeClient();
     const session = structured(

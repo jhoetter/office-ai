@@ -83,9 +83,13 @@ at least:
 
 ## Current integration
 
-The lifecycle contract is now typed and tested in core. Existing DOCX,
-XLSX, PPTX and PDF agents still expose their older direct
-`applyCommand` APIs, and existing MCP tools still call them directly.
-The next integration step is to make MCP Plan/Apply tools and the web
-pending-changes panel consume `CommandEnvelope` instead of ad hoc tool
-payloads.
+The lifecycle contract is typed and tested in core. The canonical MCP
+surface now exposes `plan_command`, `preview_command`, `apply_command`,
+`undo_command`, `list_pending_changes`, `approve_change` and
+`reject_change` over the same `CommandEnvelope` shape for DOCX, XLSX,
+PPTX and PDF.
+
+Existing format-specific MCP and CLI tools remain compatibility
+wrappers; new agent workflows should prefer the canonical lifecycle
+tools. The remaining integration step is the web pending-changes panel
+and session browser consuming the same envelope and review state.

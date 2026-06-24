@@ -173,15 +173,32 @@ Protocol (stdio transport). The canonical cross-format entry points are:
 | `list_documents`          | list canonical documents, optionally scoped to one session     |
 | `get_document`            | metadata, diagnostics, export history and format summary       |
 | `get_document_projection` | summary / markdown / json / text / page projections            |
+| `plan_command`            | create and validate an `office-ai/command@1` envelope          |
+| `preview_command`         | return diagnostics and diff without mutating the session       |
+| `apply_command`           | apply, queue or reject the envelope according to policy        |
+| `undo_command`            | undo the most recent approved mutation for one document        |
+| `list_pending_changes`    | list pending review mutations and their diffs                  |
+| `approve_change`          | approve a pending mutation                                     |
+| `reject_change`           | reject a pending mutation                                      |
 | `export_document`         | write a real Office/PDF file                                   |
 
 Canonical `documentId` values are also valid handles for the matching
 legacy tools (`docx_*`, `xlsx_*`, `pptx_*`, `pdf_*`). Those tools remain
 available for format-specific operations and compatibility.
 
+The command lifecycle tools accept direct `operation` + `arguments`
+input or an `action_id` from the action catalogue. They return command
+diagnostics on every response, enforce revision checks before mutation,
+and validate format-specific anchors:
+
+- DOCX: `{ kind: "paragraph", index }`
+- XLSX: `{ kind: "range", sheet, range }`
+- PPTX: `{ kind: "slide_shape", slideIndex, shapeId? }`
+- PDF: `{ kind: "page_region", page, rect }`
+
 `docx_apply_command` / `xlsx_apply_command` / `pptx_apply_command`
 accept `auto_approve` (default `true`). Setting it `false` stages a
 write and hands control back to a human reviewer who calls the matching
 approve/reject tool after inspecting the snapshot diff. The generic
-Plan/Preview/Apply tools are tracked separately by the command lifecycle
-workstream.
+Plan/Preview/Apply tools are preferred for new MCP clients because the
+same contract also covers PDF and canonical document sessions.

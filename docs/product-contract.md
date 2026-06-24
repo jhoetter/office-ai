@@ -82,9 +82,10 @@ Long pitch:
   in-process until the local session-store/data-dir workstream lands.
 - Action metadata now separates `agentCallable`, `webCallable`, and
   `cliCallable`.
-- Command lifecycle types now cover envelope, validation, preview,
-  apply/queue and diagnostics; MCP Plan/Apply tools and web pending
-  review still need to consume that contract directly.
+- MCP now exposes canonical Plan/Preview/Apply tools for structured
+  command envelopes across DOCX, XLSX, PPTX and PDF, including
+  diagnostics, pending review, approve/reject and undo. The backing
+  registry is still in-process.
 - The web editor has strong per-format editors, but no unified session
   browser or pending-changes panel.
 - PDF has real packages and tools, but older docs under-described it
