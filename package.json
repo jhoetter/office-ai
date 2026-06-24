@@ -2,7 +2,7 @@
   "name": "office-ai",
   "version": "0.1.10",
   "private": true,
-  "description": "office-ai — AI-native, browser-embeddable editors for DOCX, XLSX and PPTX",
+  "description": "office-ai — MCP-first document engine and web editor for DOCX, XLSX, PPTX and PDF",
   "scripts": {
     "predev": "lsof -ti :3000 | xargs kill -9 2>/dev/null; true",
     "dev": "turbo dev",

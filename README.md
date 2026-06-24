@@ -1,9 +1,23 @@
 # office-ai
 
-Browser-embeddable, AI-native document editors for **DOCX** and **XLSX**
-(PPTX deferred) — built per [`prompt.md`](prompt.md). Every edit (human or
-AI) flows through a single command bus, the editor runs **headless-first**,
-and the OOXML file is the source of truth.
+office-ai is an **MCP-first document engine and web editor** for real
+**DOCX, XLSX, PPTX and PDF** artifacts. Agents use MCP to inspect, plan,
+apply, diff and export document changes; people use the web editor to
+open the same files, review pending changes and save real Office/PDF
+outputs.
+
+The product contract is deliberately narrow:
+
+- **OOXML and PDF files remain the source of truth.**
+- **MCP is the primary agent API.** CLI commands are wrappers around the
+  same headless document capabilities, not a separate product path.
+- **The web editor is a complete human surface.** It should import,
+  create, edit, review and export without requiring terminal access.
+- **Every mutation must be visible as a command, diff, review decision
+  and exportable artifact.**
+
+See [`docs/product-contract.md`](docs/product-contract.md) for the
+canonical terms and boundaries.
 
 ## Status
 
@@ -12,14 +26,16 @@ and the OOXML file is the source of truth.
 | DOCX   | active | Spec complete. Parser/serializer with opaque-blob preservation. Agent commands + tracked changes. ProseMirror renderer. CLI + MCP. **Footnotes (Fußnoten)** typed model + insert/edit/delete commands (F1).                                                                                                                                                                                                                                                                             |
 | XLSX   | active | Spec complete. SheetJS-backed parser/serializer with opaque-blob preservation. **All 13 P0 commands** + column/row sizing. Sync formula engine (89 functions + GETPIVOTDATA / CUBE\* stubs). **Pivot tables** preserved end-to-end (Phase 1; render in grid is Phase 2). Excel-flavoured `/xlsx-editor`: open .xlsx from disk, multi-cell selection, type-to-edit, click-to-insert-ref, formula autocomplete, styling toolbar, merge / insert / delete, drag-resize headers. CLI + MCP. |
 | PPTX   | active | Parser/serializer with opaque-blob preservation. Slide model (text shapes, tables, charts, **media — video/audio**, masters/layouts/themes). Headless agent commands incl. **shape geometry adjustments** (corner radius, etc.) and **animations with surgical timing-tail merge**. SVG renderer with HTML edit overlay. **Slide transitions** in Present mode. Shared text-formatting toolbar with B/I/U/S, font family/size/color/highlight pickers and real text-range selection.    |
+| PDF    | active | Headless PDF model, PDF.js-backed read projections, pdf-lib-backed page edits, metadata, forms, annotations, OCR text-layer bridge, PDF viewer, CLI and MCP coverage. PDF is a first-class product format, not a side utility.                                                                                                                                                                                                                                                          |
 
 ## Stack
 
-- **TypeScript everywhere.** No backend; the agent runs as a Node CLI and an in-process API.
+- **TypeScript everywhere.** Headless format engines, MCP server, CLI wrapper and Next.js web editor share one workspace.
 - **Editing substrate**: ProseMirror (MIT)
 - **OOXML container**: JSZip (MIT)
 - **XML**: fast-xml-parser (MIT) with order/attribute preservation
-- **CLI**: commander (MIT)
+- **MCP**: `@modelcontextprotocol/sdk`
+- **CLI wrapper**: commander (MIT)
 - **Frontend**: Next.js 15, React 19, Tailwind CSS 4
 - **Design system**: `@officeai/design-tokens` + `@officeai/ui` (Notion-like aesthetic, light/dark)
 - **Monorepo**: Turborepo + pnpm workspaces
@@ -28,27 +44,34 @@ and the OOXML file is the source of truth.
 
 ```
 office-ai/
-├── apps/web/                    # Next.js host: DOCX editor + XLSX editor surfaces
+├── apps/web/                    # Next.js web editor for DOCX, XLSX, PPTX and PDF
 ├── packages/
 │   ├── core/                    # command bus, plugin registry, OOXML utils, model abstractions
 │   ├── docx/                    # DOCX parser, model, serializer, agent, ProseMirror renderer
 │   ├── xlsx/                    # XLSX parser, model, serializer, agent, formula engine, virtualized grid
 │   ├── pptx/                    # PPTX parser, model, serializer, agent, SVG renderer
+│   ├── pdf/                     # PDF model, parser facade, command handlers, agent API
+│   ├── pdf-edit/                # page-level PDF operations
+│   ├── pdf-annotations/         # annotation model and writer
+│   ├── pdf-forms/               # AcroForm helpers
+│   ├── pdf-engine/              # PDF.js/PDFium read/render abstraction
+│   ├── pdf-ocr/                 # OCR text-layer bridge
 │   ├── text-formatting/         # shared run-level formatting contract (TextFormat, units, MIXED, providers)
-│   ├── agent/                   # office-agent CLI + MCP server (docx_* + xlsx_* tools)
+│   ├── agent/                   # office-agent MCP server + CLI wrapper
 │   ├── ui/                      # shared React primitives
 │   └── design-tokens/           # brand colors, typography, spacing
 ├── spec/                        # the contract for the build
 │   ├── shared/                  # format-agnostic spec
 │   ├── docx/                    # DOCX spec
 │   ├── xlsx/                    # XLSX spec
-│   ├── pptx/                    # PPTX spec (skeleton)
-│   └── agent/                   # CLI / programmatic agent spec
-├── fixtures/{docx,xlsx}/        # real-world + synthetic test files
+│   ├── pptx/                    # PPTX spec
+│   ├── pdf/                     # PDF spec
+│   └── agent/                   # agent surface spec
+├── fixtures/{docx,xlsx,pptx,pdf}/ # real-world + synthetic test files
 ├── tests/
-│   ├── roundtrip/{docx,xlsx}/   # parse → serialize → re-parse invariants
-│   └── agent/{docx,xlsx}/       # CLI + agent-API smoke tests
-└── docs/build-log/{docx,xlsx}.md  # decisions, deviations, deferrals
+│   ├── roundtrip/{docx,xlsx,pptx,pdf}/ # parse/edit/export invariants
+│   └── agent/{docx,pdf}/        # agent/MCP-adjacent smoke tests
+└── docs/                        # product docs, inventory, build logs
 ```
 
 ## Quick start
@@ -104,28 +127,42 @@ additionally banned from importing `react` / `react-dom` / `next` —
 both at the manifest level (architecture check) and at the import
 level (ESLint `no-restricted-imports`).
 
-## CLI
+## MCP and CLI
 
 After `make cli`:
 
 ```bash
-# DOCX
-pnpm --filter @officeai/agent exec office-agent docx read --file fixtures/docx/01-letter.docx --format markdown
-pnpm --filter @officeai/agent exec office-agent docx write --file fixtures/docx/01-letter.docx \
+# MCP server
+pnpm --filter @officeai/agent exec office-agent mcp
+
+# DOCX via CLI wrapper
+pnpm --filter @officeai/agent exec office-agent docx read \
+  --file fixtures/docx/real-world/01-styled-letter.docx --format markdown
+pnpm --filter @officeai/agent exec office-agent docx write \
+  --file fixtures/docx/real-world/01-styled-letter.docx \
   --at "paragraph:0" --text "Updated heading"
-pnpm --filter @officeai/agent exec office-agent docx comment --file fixtures/docx/01-letter.docx \
+pnpm --filter @officeai/agent exec office-agent docx comment \
+  --file fixtures/docx/real-world/01-styled-letter.docx \
   --range "paragraph:1" --text "Please review" --author "AI Agent"
 
 # XLSX
-pnpm --filter @officeai/agent exec office-agent xlsx inspect --file fixtures/xlsx/01-basic-grid.xlsx
-pnpm --filter @officeai/agent exec office-agent xlsx read --file fixtures/xlsx/01-basic-grid.xlsx \
+pnpm --filter @officeai/agent exec office-agent xlsx inspect \
+  --file fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx
+pnpm --filter @officeai/agent exec office-agent xlsx read \
+  --file fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx \
   --sheet Sheet1 --range A1:D10 --format markdown
-pnpm --filter @officeai/agent exec office-agent xlsx set-formula --file fixtures/xlsx/01-basic-grid.xlsx \
+pnpm --filter @officeai/agent exec office-agent xlsx set-formula \
+  --file fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx \
   --sheet Sheet1 --cell B5 --formula "=SUM(B1:B4)" --out updated.xlsx
+
+# PDF
+pnpm --filter @officeai/agent exec office-agent pdf read-metadata fixtures/pdf/simple-text-1page.pdf
+pnpm --filter @officeai/agent exec office-agent pdf read-page fixtures/pdf/simple-text-1page.pdf --page 1
 ```
 
-The same surface is exposed over MCP via `office-agent mcp`, with
-`docx_*` and `xlsx_*` tool families that share one transport.
+The same document engine is exposed over MCP via `office-agent mcp`,
+with `docx_*`, `xlsx_*`, `pptx_*`, `pdf_*` tools plus catalogue-driven
+mutation tools where the action metadata is complete.
 
 ## Design principles
 
@@ -133,16 +170,16 @@ Pulled from [`prompt.md`](prompt.md) §Architecture Principles:
 
 1. **Headless-first.** Core, parser, serializer, model, command bus run in Node with zero DOM.
 2. **Commands are the only mutation path.** The bus is the invariant.
-3. **OOXML is the source of truth.** Opaque blobs preserve everything we don't understand.
-4. **Format-agnostic core.** `packages/core` knows nothing about DOCX, XLSX, or PPTX.
+3. **OOXML/PDF are the source of truth.** Opaque blobs preserve everything we don't understand.
+4. **Format-agnostic core.** `packages/core` knows nothing about DOCX, XLSX, PPTX or PDF internals.
 5. **Fail loudly.** Import errors and roundtrip anomalies surface as structured errors.
 
 ## Reading order
 
-1. [`prompt.md`](prompt.md) — the brief
-2. [`spec/shared/`](spec/shared) — what a "document" is in our system
-3. [`spec/docx/`](spec/docx) — the DOCX contract (start with `ooxml-mapping.md`)
-4. [`spec/xlsx/`](spec/xlsx) — the XLSX contract (start with `analysis.md`,
+1. [`docs/product-contract.md`](docs/product-contract.md) — the product contract
+2. [`docs/current-state-inventory.md`](docs/current-state-inventory.md) — current implementation inventory
+3. [`spec/shared/`](spec/shared) — what a "document" is in our system
+4. [`spec/docx/`](spec/docx) — the DOCX contract (start with `ooxml-mapping.md`)
+5. [`spec/xlsx/`](spec/xlsx) — the XLSX contract (start with `analysis.md`,
    then `agent-commands.md` + `formula-engine.md`)
-5. [`docs/build-log/docx.md`](docs/build-log/docx.md) — what shipped, what was deferred, why (DOCX)
-6. [`docs/build-log/xlsx.md`](docs/build-log/xlsx.md) — same, for XLSX
+6. [`spec/pptx/`](spec/pptx) and [`spec/pdf/`](spec/pdf) — PPTX/PDF contracts

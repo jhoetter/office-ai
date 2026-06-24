@@ -1,7 +1,7 @@
 {
   "name": "@officeai/agent",
   "version": "0.1.10",
-  "description": "office-agent CLI + programmatic API. DOCX, XLSX and PPTX wired through the same headless agents.",
+  "description": "office-agent MCP server and CLI wrapper for the shared DOCX, XLSX, PPTX and PDF document engine.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
