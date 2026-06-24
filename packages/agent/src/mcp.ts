@@ -1,10 +1,10 @@
 /**
  * OfficeAI Model Context Protocol server.
  *
- * Exposes the headless `DocxAgent` as a set of MCP tools. Sessions live
- * in-process; each successful `docx_load` mints an opaque `handle` that
- * other tools accept. Handles are intentionally short-lived (process
- * lifetime) — they are NOT persistent identifiers.
+ * Exposes OfficeAI document sessions as generic MCP tools, plus the legacy
+ * format-specific tools. Sessions live in-process today; canonical
+ * document IDs are stable across tool calls in one server lifetime and also
+ * work as handles for the matching docx_* / xlsx_* / pptx_* / pdf_* tools.
  *
  * Transport-agnostic: `runMcpStdioServer()` wires up `StdioServerTransport`
  * for the published binary, but tests use `InMemoryTransport` directly via
@@ -12,7 +12,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -58,6 +58,45 @@ const pptxSessionPaths = new Map<string, string>();
 const pdfSessions = new Map<string, { agent: PdfAgent; bytes: Uint8Array }>();
 const pdfSessionPaths = new Map<string, string>();
 
+type OfficeFormat = "docx" | "xlsx" | "pptx" | "pdf";
+type DocumentStatus = "ready" | "error";
+
+interface McpDiagnostic {
+  readonly level: "info" | "warning" | "error";
+  readonly code: string;
+  readonly message: string;
+}
+
+interface ExportRecord {
+  readonly path: string;
+  readonly bytes: number;
+  readonly exportedAt: string;
+}
+
+interface SessionRecord {
+  readonly id: string;
+  title: string;
+  readonly createdAt: string;
+  updatedAt: string;
+  readonly documentIds: Set<string>;
+}
+
+interface DocumentRecord {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly format: OfficeFormat;
+  name: string;
+  sourcePath?: string;
+  readonly createdAt: string;
+  updatedAt: string;
+  status: DocumentStatus;
+  diagnostics: McpDiagnostic[];
+  readonly exportHistory: ExportRecord[];
+}
+
+const mcpSessions = new Map<string, SessionRecord>();
+const mcpDocuments = new Map<string, DocumentRecord>();
+
 /** Test hook: drop in-memory state between test cases. */
 export function __resetMcpSessionsForTests(): void {
   sessions.clear();
@@ -68,6 +107,8 @@ export function __resetMcpSessionsForTests(): void {
   pptxSessionPaths.clear();
   pdfSessions.clear();
   pdfSessionPaths.clear();
+  mcpSessions.clear();
+  mcpDocuments.clear();
 }
 
 function lookupAgent(handle: string): DocxAgent {
@@ -123,6 +164,561 @@ function fail(message: string): {
   };
 }
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function createSessionRecord(title = "OfficeAI session"): SessionRecord {
+  const ts = nowIso();
+  const record: SessionRecord = {
+    id: `session_${randomUUID()}`,
+    title,
+    createdAt: ts,
+    updatedAt: ts,
+    documentIds: new Set(),
+  };
+  mcpSessions.set(record.id, record);
+  return record;
+}
+
+function getOrCreateSession(sessionId?: string, title?: string): SessionRecord {
+  if (!sessionId) return createSessionRecord(title);
+  const existing = mcpSessions.get(sessionId);
+  if (existing) return existing;
+  throw new Error(`Unknown session_id "${sessionId}". Call create_session first or omit session_id.`);
+}
+
+function ensureDefaultSession(): SessionRecord {
+  const first = mcpSessions.values().next();
+  if (!first.done) return first.value;
+  return createSessionRecord();
+}
+
+function touchSession(session: SessionRecord): void {
+  session.updatedAt = nowIso();
+}
+
+function inferFormatFromPath(path: string, requested?: OfficeFormat): OfficeFormat {
+  if (requested) return requested;
+  const ext = extname(path).toLowerCase();
+  switch (ext) {
+    case ".docx":
+      return "docx";
+    case ".xlsx":
+      return "xlsx";
+    case ".pptx":
+      return "pptx";
+    case ".pdf":
+      return "pdf";
+    default:
+      throw new Error(`Cannot infer document format from extension "${ext || "<none>"}". Pass format.`);
+  }
+}
+
+function registerDocumentRecord(opts: {
+  readonly id: string;
+  readonly sessionId?: string;
+  readonly format: OfficeFormat;
+  readonly name: string;
+  readonly sourcePath?: string;
+  readonly diagnostics?: McpDiagnostic[];
+}): DocumentRecord {
+  const session = opts.sessionId ? getOrCreateSession(opts.sessionId) : ensureDefaultSession();
+  const existing = mcpDocuments.get(opts.id);
+  const ts = nowIso();
+  const record: DocumentRecord =
+    existing ??
+    ({
+      id: opts.id,
+      sessionId: session.id,
+      format: opts.format,
+      name: opts.name,
+      sourcePath: opts.sourcePath,
+      createdAt: ts,
+      updatedAt: ts,
+      status: "ready",
+      diagnostics: [],
+      exportHistory: [],
+    } satisfies DocumentRecord);
+
+  record.name = opts.name;
+  record.sourcePath = opts.sourcePath;
+  record.status = "ready";
+  record.updatedAt = ts;
+  record.diagnostics = opts.diagnostics ?? [];
+  mcpDocuments.set(record.id, record);
+  session.documentIds.add(record.id);
+  touchSession(session);
+  return record;
+}
+
+function lookupDocument(documentId: string): DocumentRecord {
+  const record = mcpDocuments.get(documentId);
+  if (!record) {
+    throw new Error(`Unknown document_id "${documentId}". Call import_document or create_document first.`);
+  }
+  return record;
+}
+
+function revisionFor(record: DocumentRecord): number {
+  switch (record.format) {
+    case "docx":
+      return lookupAgent(record.id).getSnapshot().revision;
+    case "xlsx":
+      return lookupXlsxAgent(record.id).getSnapshot().revision;
+    case "pptx":
+      return lookupPptxAgent(record.id).getSnapshot().revision;
+    case "pdf":
+      return lookupPdfSession(record.id).agent.getSnapshot().revision;
+  }
+}
+
+function summaryFor(record: DocumentRecord): unknown {
+  switch (record.format) {
+    case "docx":
+      return inspectSnapshot(lookupAgent(record.id).getSnapshot());
+    case "xlsx":
+      return inspectXlsxSnapshot(lookupXlsxAgent(record.id).getSnapshot());
+    case "pptx":
+      return pptxInspectSnapshot(lookupPptxAgent(record.id).getSnapshot());
+    case "pdf":
+      return projectMetadata(lookupPdfSession(record.id).agent.getSnapshot());
+  }
+}
+
+function documentEnvelope(record: DocumentRecord): Record<string, unknown> {
+  return {
+    schema: "office-ai/document@1",
+    documentId: record.id,
+    sessionId: record.sessionId,
+    format: record.format,
+    name: record.name,
+    status: record.status,
+    revision: revisionFor(record),
+    ...(record.sourcePath ? { sourcePath: record.sourcePath } : {}),
+    diagnostics: record.diagnostics,
+    exportHistory: record.exportHistory,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function docxPlainText(agent: DocxAgent): string {
+  const lines: string[] = [];
+  for (const b of agent.getSnapshot().root.body) {
+    if (b.kind === "paragraph") {
+      lines.push(
+        b.children
+          .map((c) =>
+            c.kind === "run" ? c.children.map((g) => (g.kind === "text" ? g.text : "")).join("") : ""
+          )
+          .join("")
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+function projectionFor(
+  record: DocumentRecord,
+  opts: {
+    readonly projection: "summary" | "markdown" | "json" | "text" | "page";
+    readonly page?: number;
+    readonly sheet?: string;
+    readonly range?: string;
+    readonly slide?: number;
+    readonly maxRows?: number;
+    readonly maxCols?: number;
+  }
+): Record<string, unknown> {
+  const base = documentEnvelope(record);
+  if (opts.projection === "summary") {
+    return { ...base, projection: "summary", summary: summaryFor(record) };
+  }
+
+  switch (record.format) {
+    case "docx": {
+      const agent = lookupAgent(record.id);
+      if (opts.projection === "json") {
+        return { ...base, projection: "json", content: snapshotToJsonProjection(agent.getSnapshot()) };
+      }
+      if (opts.projection === "text") {
+        return { ...base, projection: "text", content: docxPlainText(agent) };
+      }
+      if (opts.projection === "page") {
+        const page = opts.page ?? 1;
+        return { ...base, projection: "page", page, content: agent.getPageMarkdown(page) };
+      }
+      return { ...base, projection: "markdown", content: agent.toMarkdown() };
+    }
+    case "xlsx": {
+      const agent = lookupXlsxAgent(record.id);
+      if (opts.projection === "json") {
+        return { ...base, projection: "json", content: xlsxRangeToJson(agent, opts.sheet, opts.range) };
+      }
+      return {
+        ...base,
+        projection: "markdown",
+        content: agent.toMarkdown({
+          ...(opts.sheet ? { sheet: opts.sheet } : {}),
+          ...(opts.maxRows !== undefined ? { maxRows: opts.maxRows } : {}),
+          ...(opts.maxCols !== undefined ? { maxCols: opts.maxCols } : {}),
+        }),
+      };
+    }
+    case "pptx": {
+      const agent = lookupPptxAgent(record.id);
+      const snap = agent.getSnapshot();
+      const range =
+        opts.slide !== undefined ? { startSlide: opts.slide, endSlide: opts.slide + 1 } : undefined;
+      if (opts.projection === "json" || opts.projection === "page") {
+        return { ...base, projection: opts.projection, content: pptxSnapshotToJsonProjection(snap, range) };
+      }
+      return {
+        ...base,
+        projection: "markdown",
+        content: range ? pptxSnapshotToJsonProjection(snap, range) : agent.toMarkdown(),
+      };
+    }
+    case "pdf": {
+      const session = lookupPdfSession(record.id);
+      if (opts.projection === "json") {
+        return { ...base, projection: "json", content: projectMetadata(session.agent.getSnapshot()) };
+      }
+      if (opts.projection === "page") {
+        const page = opts.page ?? 1;
+        return { ...base, projection: "page", page, content: projectPage(session.agent.getSnapshot(), page) };
+      }
+      return { ...base, projection: "markdown", content: session.agent.toMarkdown() };
+    }
+  }
+}
+
+async function exportDocument(record: DocumentRecord, outPath?: string): Promise<ExportRecord> {
+  const target = outPath ? resolve(outPath) : record.sourcePath;
+  if (!target) {
+    throw new Error("export_document requires out_path for documents created without a source path.");
+  }
+
+  let bytes: Uint8Array | Buffer;
+  switch (record.format) {
+    case "docx": {
+      const agent = lookupAgent(record.id);
+      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
+      bytes = Buffer.from(await agent.exportFile());
+      break;
+    }
+    case "xlsx": {
+      const agent = lookupXlsxAgent(record.id);
+      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
+      bytes = Buffer.from(await agent.exportFile());
+      break;
+    }
+    case "pptx": {
+      const agent = lookupPptxAgent(record.id);
+      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
+      bytes = Buffer.from(await agent.exportFile());
+      break;
+    }
+    case "pdf":
+      bytes = await lookupPdfSession(record.id).agent.exportFile();
+      break;
+  }
+
+  await writeFile(target, bytes);
+  const exported: ExportRecord = { path: target, bytes: bytes.byteLength, exportedAt: nowIso() };
+  record.exportHistory.push(exported);
+  record.updatedAt = exported.exportedAt;
+  touchSession(getOrCreateSession(record.sessionId));
+  return exported;
+}
+
+function registerSessionDocumentTools(server: McpServer): void {
+  server.registerTool(
+    "create_session",
+    {
+      description:
+        "Create an in-process OfficeAI session. Use the returned sessionId with import_document/create_document/list_documents.",
+      inputSchema: {
+        title: z.string().optional().describe("Optional human-readable session title."),
+      },
+    },
+    async ({ title }) => {
+      const session = createSessionRecord(title ?? "OfficeAI session");
+      return ok({
+        schema: "office-ai/session@1",
+        sessionId: session.id,
+        title: session.title,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        documentCount: session.documentIds.size,
+        nextActions: ["import_document", "create_document", "list_documents"],
+      });
+    }
+  );
+
+  server.registerTool(
+    "list_sessions",
+    {
+      description: "List in-process OfficeAI sessions and their document counts.",
+      inputSchema: {},
+    },
+    async () =>
+      ok({
+        schema: "office-ai/session-list@1",
+        sessions: [...mcpSessions.values()].map((session) => ({
+          sessionId: session.id,
+          title: session.title,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+          documentCount: session.documentIds.size,
+        })),
+      })
+  );
+
+  server.registerTool(
+    "import_document",
+    {
+      description:
+        "Import a DOCX/XLSX/PPTX/PDF from disk into a canonical OfficeAI document session. The returned documentId is also a compatible handle for the matching legacy format tools.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Absolute or workspace-relative path to a .docx, .xlsx, .pptx or .pdf file."),
+        session_id: z.string().optional().describe("Optional sessionId from create_session."),
+        format: z
+          .enum(["docx", "xlsx", "pptx", "pdf"])
+          .optional()
+          .describe("Override extension-based format detection."),
+        name: z.string().optional().describe("Optional display name. Defaults to the file basename."),
+      },
+    },
+    async ({ path, session_id, format, name }) => {
+      try {
+        const abs = resolve(path);
+        const detected = inferFormatFromPath(abs, format as OfficeFormat | undefined);
+        const buf = await readFile(abs);
+        const documentId = `doc_${randomUUID()}`;
+        const displayName = name ?? basename(abs);
+
+        switch (detected) {
+          case "docx": {
+            const agent = await DocxAgent.fromBuffer(buf);
+            sessions.set(documentId, agent);
+            sessionPaths.set(documentId, abs);
+            break;
+          }
+          case "xlsx": {
+            const agent = await XlsxAgent.fromBuffer(buf);
+            xlsxSessions.set(documentId, agent);
+            xlsxSessionPaths.set(documentId, abs);
+            break;
+          }
+          case "pptx": {
+            const agent = await PptxAgent.fromBuffer(buf);
+            pptxSessions.set(documentId, agent);
+            pptxSessionPaths.set(documentId, abs);
+            break;
+          }
+          case "pdf": {
+            const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+            const agent = await PdfAgent.fromBuffer(bytes);
+            pdfSessions.set(documentId, { agent, bytes });
+            pdfSessionPaths.set(documentId, abs);
+            break;
+          }
+        }
+
+        const record = registerDocumentRecord({
+          id: documentId,
+          sessionId: session_id,
+          format: detected,
+          name: displayName,
+          sourcePath: abs,
+          diagnostics: [
+            { level: "info", code: "imported", message: `Imported ${displayName} as ${detected}.` },
+          ],
+        });
+        return ok({
+          schema: "office-ai/import-document@1",
+          document: documentEnvelope(record),
+          summary: summaryFor(record),
+          nextActions: ["get_document_projection", "export_document"],
+        });
+      } catch (err) {
+        return fail(`import_document failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_document",
+    {
+      description:
+        "Create a blank DOCX/XLSX/PPTX/PDF document in a canonical OfficeAI session. The returned documentId is also a compatible handle for the matching legacy format tools.",
+      inputSchema: {
+        format: z.enum(["docx", "xlsx", "pptx", "pdf"]),
+        session_id: z.string().optional().describe("Optional sessionId from create_session."),
+        name: z.string().optional().describe("Optional display name. Defaults to untitled.<format>."),
+      },
+    },
+    async ({ format, session_id, name }) => {
+      try {
+        const documentId = `doc_${randomUUID()}`;
+        const detected = format as OfficeFormat;
+        const displayName = name ?? `untitled.${detected}`;
+
+        switch (detected) {
+          case "docx":
+            sessions.set(documentId, await DocxAgent.empty());
+            break;
+          case "xlsx":
+            xlsxSessions.set(documentId, await XlsxAgent.empty());
+            break;
+          case "pptx":
+            pptxSessions.set(documentId, await PptxAgent.empty());
+            break;
+          case "pdf": {
+            const agent = await PdfAgent.empty();
+            const bytes = await agent.exportFile();
+            pdfSessions.set(documentId, { agent, bytes });
+            break;
+          }
+        }
+
+        const record = registerDocumentRecord({
+          id: documentId,
+          sessionId: session_id,
+          format: detected,
+          name: displayName,
+          diagnostics: [{ level: "info", code: "created", message: `Created blank ${detected} document.` }],
+        });
+        return ok({
+          schema: "office-ai/create-document@1",
+          document: documentEnvelope(record),
+          summary: summaryFor(record),
+          nextActions: ["get_document_projection", "export_document"],
+        });
+      } catch (err) {
+        return fail(`create_document failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_documents",
+    {
+      description: "List canonical OfficeAI documents, optionally restricted to one session.",
+      inputSchema: {
+        session_id: z.string().optional().describe("Optional sessionId from create_session."),
+      },
+    },
+    async ({ session_id }) => {
+      try {
+        const records = session_id
+          ? (() => {
+              const session = mcpSessions.get(session_id);
+              if (!session) throw new Error(`Unknown session_id "${session_id}".`);
+              return [...session.documentIds].map((id) => lookupDocument(id));
+            })()
+          : [...mcpDocuments.values()];
+        return ok({
+          schema: "office-ai/document-list@1",
+          documents: records.map((record) => documentEnvelope(record)),
+        });
+      } catch (err) {
+        return fail(`list_documents failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_document",
+    {
+      description: "Return canonical document metadata, diagnostics, export history and a format summary.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document or create_document."),
+      },
+    },
+    async ({ document_id }) => {
+      try {
+        const record = lookupDocument(document_id);
+        return ok({
+          schema: "office-ai/get-document@1",
+          document: documentEnvelope(record),
+          summary: summaryFor(record),
+        });
+      } catch (err) {
+        return fail(`get_document failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_document_projection",
+    {
+      description:
+        "Read a canonical document projection without moving binary bytes. Supports summary/markdown/json/text/page, with format-specific windowing fields.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document or create_document."),
+        projection: z.enum(["summary", "markdown", "json", "text", "page"]).optional().default("markdown"),
+        page: z.number().int().positive().optional().describe("1-based DOCX/PDF page for projection='page'."),
+        sheet: z.string().optional().describe("XLSX sheet name for markdown/json projections."),
+        range: z.string().optional().describe("XLSX A1 range for json projections; requires sheet."),
+        slide: z.number().int().min(0).optional().describe("0-based PPTX slide for json/page projections."),
+        max_rows: z.number().int().positive().optional().describe("XLSX markdown row limit."),
+        max_cols: z.number().int().positive().optional().describe("XLSX markdown column limit."),
+      },
+    },
+    async ({ document_id, projection, page, sheet, range, slide, max_rows, max_cols }) => {
+      try {
+        return ok(
+          projectionFor(lookupDocument(document_id), {
+            projection: projection ?? "markdown",
+            ...(page !== undefined ? { page } : {}),
+            ...(sheet !== undefined ? { sheet } : {}),
+            ...(range !== undefined ? { range } : {}),
+            ...(slide !== undefined ? { slide } : {}),
+            ...(max_rows !== undefined ? { maxRows: max_rows } : {}),
+            ...(max_cols !== undefined ? { maxCols: max_cols } : {}),
+          })
+        );
+      } catch (err) {
+        return fail(`get_document_projection failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "export_document",
+    {
+      description:
+        "Export a canonical OfficeAI document as a real DOCX/XLSX/PPTX/PDF file. Defaults to the original import path when available; pass out_path for created documents or copy-style exports.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document or create_document."),
+        out_path: z
+          .string()
+          .optional()
+          .describe("Optional output path. Required for documents created without a source path."),
+      },
+    },
+    async ({ document_id, out_path }) => {
+      try {
+        const record = lookupDocument(document_id);
+        const exported = await exportDocument(record, out_path);
+        return ok({
+          schema: "office-ai/export-document@1",
+          document: documentEnvelope(record),
+          exported,
+          nextActions: ["get_document", "get_document_projection"],
+        });
+      } catch (err) {
+        return fail(`export_document failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+}
+
 /**
  * Build a fresh MCP server with all OfficeAI tools registered. Exposed for
  * tests so they can wire it to an in-memory transport pair without touching
@@ -134,9 +730,11 @@ export function createMcpServer(): McpServer {
     {
       capabilities: { tools: {} },
       instructions:
-        "Tools for parsing, inspecting, and editing OOXML DOCX, XLSX and PPTX files. Always start with `docx_load` (DOCX), `xlsx_load` (XLSX), or `pptx_load` (PPTX) to obtain a handle, then pass that handle to other tools. Call `docx_save` / `xlsx_save` / `pptx_save` (or pass `out_path`) to persist edits.",
+        "MCP-first document tools for DOCX, XLSX, PPTX and PDF. Prefer create_session/import_document/create_document/get_document_projection/export_document for canonical cross-format flows. Legacy docx_*/xlsx_*/pptx_*/pdf_* tools remain available; canonical documentId values also work as the matching legacy handles.",
     }
   );
+
+  registerSessionDocumentTools(server);
 
   // ── docx_load ─────────────────────────────────────────────────────────
   server.registerTool(
@@ -154,6 +752,12 @@ export function createMcpServer(): McpServer {
         const handle = randomUUID();
         sessions.set(handle, agent);
         sessionPaths.set(handle, resolve(path));
+        registerDocumentRecord({
+          id: handle,
+          format: "docx",
+          name: basename(resolve(path)),
+          sourcePath: resolve(path),
+        });
         return ok({ handle, path: resolve(path), summary: inspectSnapshot(agent.getSnapshot()) });
       } catch (err) {
         return fail(`docx_load failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -529,6 +1133,12 @@ export function createMcpServer(): McpServer {
         const handle = randomUUID();
         pptxSessions.set(handle, agent);
         pptxSessionPaths.set(handle, resolve(path));
+        registerDocumentRecord({
+          id: handle,
+          format: "pptx",
+          name: basename(resolve(path)),
+          sourcePath: resolve(path),
+        });
         return ok({ handle, path: resolve(path), summary: pptxInspectSnapshot(agent.getSnapshot()) });
       } catch (err) {
         return fail(`pptx_load failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -816,6 +1426,12 @@ function registerXlsxTools(server: McpServer): void {
         const handle = randomUUID();
         xlsxSessions.set(handle, agent);
         xlsxSessionPaths.set(handle, resolve(path));
+        registerDocumentRecord({
+          id: handle,
+          format: "xlsx",
+          name: basename(resolve(path)),
+          sourcePath: resolve(path),
+        });
         return ok({ handle, path: resolve(path), summary: inspectXlsxSnapshot(agent.getSnapshot()) });
       } catch (err) {
         return fail(`xlsx_load failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1510,6 +2126,12 @@ function registerPdfTools(server: McpServer): void {
         const handle = randomUUID();
         pdfSessions.set(handle, { agent, bytes });
         pdfSessionPaths.set(handle, resolve(path));
+        registerDocumentRecord({
+          id: handle,
+          format: "pdf",
+          name: basename(resolve(path)),
+          sourcePath: resolve(path),
+        });
         return ok({ handle, path: resolve(path), summary: projectMetadata(agent.getSnapshot()) });
       } catch (err) {
         return fail(`pdf_load failed: ${err instanceof Error ? err.message : String(err)}`);

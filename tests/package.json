@@ -21,6 +21,7 @@
     "@officeai/xlsx": "workspace:*"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22",
     "pdf-lib": "^1.17.1",
     "typescript": "^5",

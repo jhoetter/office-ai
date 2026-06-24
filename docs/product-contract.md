@@ -77,8 +77,9 @@ Long pitch:
 
 ## Immediate product gaps
 
-- Session and document IDs are not yet the canonical MCP entry point;
-  current MCP handles are in-process and path-loaded.
+- Session and document IDs are now the canonical MCP entry point for
+  create/import/project/export flows, but the backing registry is still
+  in-process until the local session-store/data-dir workstream lands.
 - Action metadata now separates `agentCallable`, `webCallable`, and
   `cliCallable`.
 - Command lifecycle types now cover envelope, validation, preview,

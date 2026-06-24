@@ -154,6 +154,137 @@ describe("OfficeAI MCP server", () => {
     }
   });
 
+  it("registers canonical session/document tools", async () => {
+    const client = await makeClient();
+    const list = await client.listTools();
+    const names = new Set(list.tools.map((t) => t.name));
+    for (const expected of [
+      "create_session",
+      "list_sessions",
+      "import_document",
+      "create_document",
+      "list_documents",
+      "get_document",
+      "get_document_projection",
+      "export_document",
+    ]) {
+      expect(names.has(expected), `missing canonical tool ${expected}`).toBe(true);
+    }
+  });
+
+  it("canonical session flow imports, projects and exports every core format", async () => {
+    const client = await makeClient();
+    const session = structured(
+      await client.callTool({ name: "create_session", arguments: { title: "matrix smoke" } })
+    );
+    const sessionId = session.sessionId as string;
+    const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-docs-"));
+    const extByFormat: Record<FixtureFormat, string> = {
+      docx: "docx",
+      xlsx: "xlsx",
+      pptx: "pptx",
+      pdf: "pdf",
+    };
+
+    for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+      const imported = structured(
+        await client.callTool({
+          name: "import_document",
+          arguments: { session_id: sessionId, path: matrixPath(format) },
+        })
+      );
+      const document = imported.document as { documentId: string; sessionId: string; format: string };
+      expect(document.sessionId).toBe(sessionId);
+      expect(document.format).toBe(format);
+
+      const summary = structured(
+        await client.callTool({
+          name: "get_document_projection",
+          arguments: { document_id: document.documentId, projection: "summary" },
+        })
+      );
+      expect(summary.documentId).toBe(document.documentId);
+      expect(summary.summary).toBeTruthy();
+
+      const exported = structured(
+        await client.callTool({
+          name: "export_document",
+          arguments: { document_id: document.documentId, out_path: join(tmp, `out.${extByFormat[format]}`) },
+        })
+      );
+      expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+
+      const legacyInspectTool =
+        format === "docx"
+          ? "docx_inspect"
+          : format === "xlsx"
+            ? "xlsx_inspect"
+            : format === "pptx"
+              ? "pptx_inspect"
+              : "pdf_metadata";
+      const legacy = structured(
+        await client.callTool({ name: legacyInspectTool, arguments: { handle: document.documentId } })
+      );
+      expect(legacy).toBeTruthy();
+    }
+
+    const listed = structured(
+      await client.callTool({ name: "list_documents", arguments: { session_id: sessionId } })
+    );
+    expect((listed.documents as unknown[]).length).toBe(4);
+  });
+
+  it("canonical create_document exports blank documents for every core format", async () => {
+    const client = await makeClient();
+    const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-create-"));
+    const extByFormat: Record<FixtureFormat, string> = {
+      docx: "docx",
+      xlsx: "xlsx",
+      pptx: "pptx",
+      pdf: "pdf",
+    };
+
+    for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+      const created = structured(
+        await client.callTool({ name: "create_document", arguments: { format, name: `blank.${format}` } })
+      );
+      const document = created.document as { documentId: string; format: string };
+      expect(document.format).toBe(format);
+
+      const projected = structured(
+        await client.callTool({
+          name: "get_document_projection",
+          arguments: { document_id: document.documentId, projection: "summary" },
+        })
+      );
+      expect(projected.summary).toBeTruthy();
+
+      const exported = structured(
+        await client.callTool({
+          name: "export_document",
+          arguments: {
+            document_id: document.documentId,
+            out_path: join(tmp, `blank.${extByFormat[format]}`),
+          },
+        })
+      );
+      expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("canonical import_document reports invalid extensions as tool errors", async () => {
+    const client = await makeClient();
+    const dir = mkdtempSync(join(tmpdir(), "officeai-mcp-invalid-"));
+    const path = join(dir, "not-a-document.txt");
+    writeFileSync(path, "hello");
+    const result = (await client.callTool({ name: "import_document", arguments: { path } })) as {
+      isError?: boolean;
+      content?: Array<{ text: string }>;
+    };
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text ?? "").toContain("Cannot infer document format");
+  });
+
   it("loads matrix-selected fixtures for every core format", async () => {
     const client = await makeClient();
 

@@ -161,23 +161,27 @@ JSON/markdown/CSV. See [`spec/agent/cli.md`](../agent/cli.md).
 
 ## MCP surface
 
-`office-agent mcp` exposes the same agent over the Model Context Protocol
-(stdio transport). Tools registered today:
+`office-agent mcp` exposes the same agents over the Model Context
+Protocol (stdio transport). The canonical cross-format entry points are:
 
-| Tool                 | Maps to                               |
-| -------------------- | ------------------------------------- |
-| `docx_load`          | `DocxAgent.fromBuffer` + handle mint  |
-| `docx_save`          | `DocxAgent.exportFile` + writeFile    |
-| `docx_inspect`       | structural counts and OPC parts       |
-| `docx_get_text`      | markdown / json / plain text          |
-| `docx_search`        | `DocumentAgent.search`                |
-| `docx_apply_command` | `DocumentAgent.applyCommand`          |
-| `docx_diff`          | `DocumentAgent.getDiff` (two handles) |
-| `docx_list_pending`  | `DocumentAgent.getPendingMutations`   |
-| `docx_approve`       | `DocumentAgent.approveMutation`       |
-| `docx_reject`        | `DocumentAgent.rejectMutation`        |
+| Tool                      | Maps to                                                        |
+| ------------------------- | -------------------------------------------------------------- |
+| `create_session`          | mint an in-process OfficeAI working session                    |
+| `list_sessions`           | inspect in-process sessions and document counts                |
+| `import_document`         | load DOCX/XLSX/PPTX/PDF bytes and mint a canonical document ID |
+| `create_document`         | create a blank document for one core format                    |
+| `list_documents`          | list canonical documents, optionally scoped to one session     |
+| `get_document`            | metadata, diagnostics, export history and format summary       |
+| `get_document_projection` | summary / markdown / json / text / page projections            |
+| `export_document`         | write a real Office/PDF file                                   |
 
-`docx_apply_command` accepts `auto_approve` (default `true`). Setting it
-`false` is the canonical way for an LLM to stage a write and hand control
-back to a human reviewer who calls `docx_approve` / `docx_reject` after
-inspecting the snapshot diff.
+Canonical `documentId` values are also valid handles for the matching
+legacy tools (`docx_*`, `xlsx_*`, `pptx_*`, `pdf_*`). Those tools remain
+available for format-specific operations and compatibility.
+
+`docx_apply_command` / `xlsx_apply_command` / `pptx_apply_command`
+accept `auto_approve` (default `true`). Setting it `false` stages a
+write and hands control back to a human reviewer who calls the matching
+approve/reject tool after inspecting the snapshot diff. The generic
+Plan/Preview/Apply tools are tracked separately by the command lifecycle
+workstream.
