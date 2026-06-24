@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  Check,
   Clock3,
   Database,
   Download,
@@ -13,6 +14,7 @@ import {
   History,
   Loader2,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { downloadBlob } from "@/lib/files/file-service";
@@ -94,13 +96,15 @@ function DocumentDetail({
 }: {
   readonly payload: WebDocumentPayload;
   readonly locale?: string;
-  readonly onRefresh: () => void;
+  readonly onRefresh: () => Promise<void>;
   readonly loading: boolean;
 }) {
   const { t } = useTranslator();
   const { document, session } = payload;
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [reviewingChangeId, setReviewingChangeId] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const exportDocument = useCallback(async () => {
     setExporting(true);
     setExportError(null);
@@ -126,6 +130,35 @@ function DocumentDetail({
       setExporting(false);
     }
   }, [document.documentId, document.name, onRefresh]);
+
+  const reviewChange = useCallback(
+    async (mutationId: string, decision: "approve" | "reject") => {
+      setReviewingChangeId(mutationId);
+      setReviewError(null);
+      try {
+        const res = await fetch(
+          `/api/sessions/${encodeURIComponent(document.documentId)}/changes/${encodeURIComponent(mutationId)}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ decision }),
+          }
+        );
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { readonly message?: string };
+          throw new Error(
+            "message" in data && data.message ? data.message : `Change review failed (${res.status})`
+          );
+        }
+        await onRefresh();
+      } catch (err) {
+        setReviewError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setReviewingChangeId(null);
+      }
+    },
+    [document.documentId, onRefresh]
+  );
 
   return (
     <>
@@ -211,10 +244,21 @@ function DocumentDetail({
 
         <div className="space-y-4">
           <Panel title={t("sessionDetail.pendingChanges")} icon={<Activity size={14} />}>
+            {reviewError ? (
+              <div className="mb-3 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+                <AlertTriangle size={15} />
+                {t("sessionDetail.reviewError")}: {reviewError}
+              </div>
+            ) : null}
             {document.pendingChanges.length === 0 ? (
               <Empty>{t("sessionDetail.noPendingChanges")}</Empty>
             ) : (
-              <PendingList entries={document.pendingChanges} locale={locale} />
+              <PendingList
+                entries={document.pendingChanges}
+                locale={locale}
+                reviewingChangeId={reviewingChangeId}
+                onReview={reviewChange}
+              />
             )}
           </Panel>
 
@@ -293,24 +337,67 @@ function ArtifactState({ label, available }: { readonly label: string; readonly 
 function PendingList({
   entries,
   locale,
+  reviewingChangeId,
+  onReview,
 }: {
   readonly entries: ReadonlyArray<WebPendingChangeEntry>;
   readonly locale?: string;
+  readonly reviewingChangeId: string | null;
+  readonly onReview: (mutationId: string, decision: "approve" | "reject") => void;
 }) {
+  const { t } = useTranslator();
   return (
     <div className="divide-y divide-divider text-sm">
-      {entries.map((entry) => (
-        <OperationRow
-          key={entry.id}
-          title={entry.operation}
-          status={entry.status}
-          source={entry.source}
-          actorId={entry.actorId}
-          timestamp={entry.timestamp ? new Date(entry.timestamp).toISOString() : undefined}
-          hasDiff={entry.hasDiff}
-          locale={locale}
-        />
-      ))}
+      {entries.map((entry) => {
+        const isReviewing = reviewingChangeId === entry.id;
+        const isBlocked = reviewingChangeId !== null;
+        return (
+          <OperationRow
+            key={entry.id}
+            title={entry.operation}
+            status={entry.status}
+            source={entry.source}
+            actorId={entry.actorId}
+            timestamp={entry.timestamp ? new Date(entry.timestamp).toISOString() : undefined}
+            hasDiff={entry.hasDiff}
+            diffSummary={entry.diffSummary}
+            rejection={entry.rejection?.message}
+            locale={locale}
+            actions={
+              entry.status === "pending" ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => onReview(entry.id, "approve")}
+                    disabled={isBlocked}
+                  >
+                    {isReviewing ? (
+                      <Loader2 size={14} className="mr-1.5 animate-spin" />
+                    ) : (
+                      <Check size={14} className="mr-1.5" />
+                    )}
+                    {t("sessionDetail.approveChange")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onReview(entry.id, "reject")}
+                    disabled={isBlocked}
+                  >
+                    {isReviewing ? (
+                      <Loader2 size={14} className="mr-1.5 animate-spin" />
+                    ) : (
+                      <X size={14} className="mr-1.5" />
+                    )}
+                    {t("sessionDetail.rejectChange")}
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          />
+        );
+      })}
     </div>
   );
 }
@@ -348,8 +435,11 @@ function OperationRow({
   actorId,
   timestamp,
   hasDiff,
+  diffSummary,
+  rejection,
   diagnosticCount,
   locale,
+  actions,
 }: {
   readonly title: string;
   readonly status: string;
@@ -357,8 +447,11 @@ function OperationRow({
   readonly actorId?: string;
   readonly timestamp?: string;
   readonly hasDiff: boolean;
+  readonly diffSummary?: string;
+  readonly rejection?: string;
   readonly diagnosticCount?: number;
   readonly locale?: string;
+  readonly actions?: React.ReactNode;
 }) {
   const { t } = useTranslator();
   return (
@@ -386,6 +479,13 @@ function OperationRow({
           </span>
         ) : null}
       </div>
+      {diffSummary ? <p className="mt-1 text-xs text-secondary">{diffSummary}</p> : null}
+      {rejection ? (
+        <p className="mt-1 text-xs text-secondary">
+          {t("sessionDetail.rejection")}: {rejection}
+        </p>
+      ) : null}
+      {actions}
     </div>
   );
 }

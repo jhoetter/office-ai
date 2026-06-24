@@ -24,6 +24,7 @@ test("home page shows an empty local workspace state", async ({ page }) => {
 });
 
 test("home page lists local sessions, documents, pending changes and diagnostics", async ({ page }) => {
+  let changeApproved = false;
   await page.route("**/api/sessions/doc_1/export", async (route) => {
     expect(route.request().method()).toBe("POST");
     await route.fulfill({
@@ -33,6 +34,18 @@ test("home page lists local sessions, documents, pending changes and diagnostics
         "content-disposition": 'attachment; filename="proposal.docx"',
       },
       body: Buffer.from("exported-docx"),
+    });
+  });
+  await page.route("**/api/sessions/doc_1/changes/mut_1", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ decision: "approve" });
+    changeApproved = true;
+    await route.fulfill({
+      json: {
+        schema: "office-ai/web-change-review@1",
+        decision: "approved",
+        mutationId: "mut_1",
+      },
     });
   });
   await page.route("**/api/sessions/doc_1", async (route) => {
@@ -55,21 +68,27 @@ test("home page lists local sessions, documents, pending changes and diagnostics
           createdAt: "2026-06-24T10:00:00.000Z",
           updatedAt: "2026-06-24T10:03:00.000Z",
           revision: 4,
-          diagnostics: [{ level: "warning", code: "needs-review", message: "Review layout." }],
+          diagnostics: changeApproved
+            ? [
+                { level: "warning", code: "needs-review", message: "Review layout." },
+                { level: "info", code: "change-approved", message: "Approved change mut_1." },
+              ]
+            : [{ level: "warning", code: "needs-review", message: "Review layout." }],
           exportCount: 1,
-          pendingChangeCount: 2,
-          commandLogCount: 4,
+          pendingChangeCount: changeApproved ? 0 : 1,
+          commandLogCount: changeApproved ? 5 : 4,
           artifacts: { hasOriginal: true, hasWorking: true },
           exports: [{ bytes: 4096, exportedAt: "2026-06-24T10:03:00.000Z" }],
           pendingChanges: [
             {
               id: "mut_1",
               operation: "docx.replace-text",
-              status: "pending",
+              status: changeApproved ? "approved" : "pending",
               source: "agent",
               actorId: "assistant",
               timestamp: 1782295380000,
               hasDiff: true,
+              diffSummary: "Structured diff available",
             },
           ],
           commandLog: [
@@ -85,6 +104,23 @@ test("home page lists local sessions, documents, pending changes and diagnostics
               hasDiff: true,
               diagnostics: [{ level: "info", code: "preview-ready", message: "Preview is ready." }],
             },
+            ...(changeApproved
+              ? [
+                  {
+                    id: "log_approved",
+                    operation: "docx.replace-text",
+                    status: "approved",
+                    stage: "reviewed",
+                    source: "web",
+                    actorId: "assistant",
+                    recordedAt: "2026-06-24T10:04:00.000Z",
+                    hasDiff: false,
+                    diagnostics: [
+                      { level: "info", code: "change-approved", message: "Approved change mut_1." },
+                    ],
+                  },
+                ]
+              : []),
           ],
         },
       },
@@ -115,7 +151,7 @@ test("home page lists local sessions, documents, pending changes and diagnostics
             revision: 4,
             diagnostics: [{ level: "info", code: "command-pending", message: "Pending review." }],
             exportCount: 1,
-            pendingChangeCount: 2,
+            pendingChangeCount: 1,
             commandLogCount: 4,
             artifacts: { hasOriginal: true, hasWorking: true },
           },
@@ -144,7 +180,7 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.getByText("MCP review")).toBeVisible();
   await expect(page.getByText("proposal.docx")).toBeVisible();
   await expect(page.getByText("appendix.pdf")).toBeVisible();
-  await expect(page.getByText("Pending: 2")).toBeVisible();
+  await expect(page.getByText("Pending: 1")).toBeVisible();
   await expect(page.getByText("command-pending")).toBeVisible();
 
   await page.getByRole("link", { name: "proposal.docx" }).click();
@@ -153,12 +189,123 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.getByText("MCP review")).toBeVisible();
   await expect(page.getByText("docx.replace-text · previewed")).toBeVisible();
   await expect(page.getByText("needs-review")).toBeVisible();
+  await expect(page.getByText("Structured diff available")).toBeVisible();
   await expect(page.getByText("4.0 KB")).toBeVisible();
+
+  await page.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByText("change-approved")).toBeVisible();
+  await expect(page.getByText("approved", { exact: true }).first()).toBeVisible();
+  expect(changeApproved).toBe(true);
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("proposal.docx");
+});
+
+test("document detail rejects a pending change and keeps the rejection visible", async ({ page }) => {
+  let changeRejected = false;
+  await page.route("**/api/sessions/doc_reject/changes/mut_reject", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ decision: "reject" });
+    changeRejected = true;
+    await route.fulfill({
+      json: {
+        schema: "office-ai/web-change-review@1",
+        decision: "rejected",
+        mutationId: "mut_reject",
+      },
+    });
+  });
+  await page.route("**/api/sessions/doc_reject", async (route) => {
+    await route.fulfill({
+      json: {
+        schema: "office-ai/web-document@1",
+        session: {
+          sessionId: "session_reject",
+          title: "Rejected edits",
+          createdAt: "2026-06-24T14:00:00.000Z",
+          updatedAt: "2026-06-24T14:00:00.000Z",
+          documentCount: 1,
+        },
+        document: {
+          documentId: "doc_reject",
+          sessionId: "session_reject",
+          format: "docx",
+          name: "reject.docx",
+          status: "ready",
+          createdAt: "2026-06-24T14:00:00.000Z",
+          updatedAt: "2026-06-24T14:00:00.000Z",
+          revision: 2,
+          diagnostics: changeRejected
+            ? [{ level: "info", code: "change-rejected", message: "Rejected change mut_reject." }]
+            : [],
+          exportCount: 0,
+          pendingChangeCount: changeRejected ? 0 : 1,
+          commandLogCount: changeRejected ? 2 : 1,
+          artifacts: { hasOriginal: true, hasWorking: true },
+          exports: [],
+          pendingChanges: [
+            {
+              id: "mut_reject",
+              operation: "docx.replace-text",
+              status: changeRejected ? "rejected" : "pending",
+              source: "mcp",
+              actorId: "assistant",
+              timestamp: 1782309600000,
+              hasDiff: true,
+              diffSummary: "Structured diff available",
+              ...(changeRejected
+                ? { rejection: { code: "human-rejected", message: "Rejected in web review." } }
+                : {}),
+            },
+          ],
+          commandLog: [
+            {
+              id: "log_preview",
+              operation: "docx.replace-text",
+              status: "pending",
+              stage: "previewed",
+              source: "mcp",
+              actorId: "assistant",
+              recordedAt: "2026-06-24T14:00:00.000Z",
+              hasDiff: true,
+              diagnostics: [],
+            },
+            ...(changeRejected
+              ? [
+                  {
+                    id: "log_rejected",
+                    operation: "docx.replace-text",
+                    status: "rejected",
+                    stage: "reviewed",
+                    source: "web",
+                    actorId: "assistant",
+                    recordedAt: "2026-06-24T14:01:00.000Z",
+                    hasDiff: false,
+                    diagnostics: [
+                      { level: "info", code: "change-rejected", message: "Rejected change mut_reject." },
+                    ],
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+    });
+  });
+
+  await page.goto("/sessions/doc_reject");
+
+  await expect(page.getByRole("heading", { name: "reject.docx" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reject" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Reject" }).click();
+
+  await expect(page.getByText("change-rejected")).toBeVisible();
+  await expect(page.getByText("Rejection: Rejected in web review.")).toBeVisible();
+  await expect(page.getByText("rejected", { exact: true }).first()).toBeVisible();
+  expect(changeRejected).toBe(true);
 });
 
 test("home page imports an uploaded document into the local workspace", async ({ page }) => {

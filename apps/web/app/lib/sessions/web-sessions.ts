@@ -54,6 +54,7 @@ export interface WebPendingChangeEntry {
   readonly actorId?: string;
   readonly timestamp?: number;
   readonly hasDiff: boolean;
+  readonly diffSummary?: string;
   readonly rejection?: {
     readonly code: string;
     readonly message: string;
@@ -134,7 +135,7 @@ export function toWebDocumentEntry(document: StoredDocumentRecord): WebDocumentE
     revision: document.revision,
     diagnostics: document.diagnostics,
     exportCount: document.exportHistory.length,
-    pendingChangeCount: document.pendingChanges.length,
+    pendingChangeCount: document.pendingChanges.filter((change) => change.status === "pending").length,
     commandLogCount: document.commandLog.length,
     artifacts: {
       hasOriginal: Boolean(document.artifacts.originalPath),
@@ -168,6 +169,7 @@ function toWebPendingChangeEntry(change: StoredPendingChange): WebPendingChangeE
     ...(change.actorId ? { actorId: change.actorId } : {}),
     ...(change.timestamp !== undefined ? { timestamp: change.timestamp } : {}),
     hasDiff: change.diff !== undefined,
+    ...(change.diff !== undefined ? { diffSummary: "Structured diff available" } : {}),
     ...(change.rejection ? { rejection: change.rejection } : {}),
   };
 }

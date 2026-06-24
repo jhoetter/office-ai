@@ -8,6 +8,7 @@ import { PdfAgent } from "@officeai/pdf";
 import { PptxAgent } from "@officeai/pptx";
 import { XlsxAgent } from "@officeai/xlsx";
 import { GET as GET_DOCUMENT } from "./[documentId]/route";
+import { POST as REVIEW_CHANGE } from "./[documentId]/changes/[mutationId]/route";
 import { POST as EXPORT_DOCUMENT } from "./[documentId]/export/route";
 import { GET as PROJECT_DOCUMENT } from "./[documentId]/projection/route";
 import { POST as CREATE_DOCUMENT } from "./create/route";
@@ -227,6 +228,132 @@ describe("GET /api/sessions/:documentId", () => {
     expect(response.status).toBe(404);
     expect(payload.code).toBe("document-not-found");
     expect(payload.message).toContain("missing");
+  });
+});
+
+describe("POST /api/sessions/:documentId/changes/:mutationId", () => {
+  it("approves a persisted MCP-style pending change without returning raw diffs or changing bytes", async () => {
+    const store = createLocalSessionStore();
+    const workingBytes = await seedReviewDocument(store);
+
+    const response = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "approve" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      schema: string;
+      decision: string;
+      document: {
+        pendingChangeCount: number;
+        pendingChanges: Array<{ id: string; status: string; diffSummary?: string }>;
+        commandLog: Array<{ operation: string; status: string; stage: string; source: string }>;
+        diagnostics: Array<{ code: string }>;
+      };
+    };
+
+    expect(payload.schema).toBe("office-ai/web-change-review@1");
+    expect(payload.decision).toBe("approved");
+    expect(payload.document.pendingChangeCount).toBe(0);
+    expect(payload.document.pendingChanges[0]).toMatchObject({
+      id: "mut_1",
+      status: "approved",
+      diffSummary: "Structured diff available",
+    });
+    expect(payload.document.commandLog.at(-1)).toMatchObject({
+      operation: "docx.replace-text",
+      status: "approved",
+      stage: "reviewed",
+      source: "web",
+    });
+    expect(payload.document.diagnostics.at(-1)).toMatchObject({ code: "change-approved" });
+    expect(JSON.stringify(payload)).not.toContain("raw-diff");
+    expect(JSON.stringify(payload)).not.toContain(dataDir);
+
+    const stored = await store.getDocument("doc_review");
+    if (!stored) throw new Error("Expected review fixture to be persisted.");
+    expect(stored.pendingChanges[0]?.status).toBe("approved");
+    expect(Buffer.from(await store.readWorkingBytes(stored)).toString("utf8")).toBe(
+      workingBytes.toString("utf8")
+    );
+  });
+
+  it("rejects a pending change, preserves the rejection in the audit trail and leaves bytes unchanged", async () => {
+    const store = createLocalSessionStore();
+    const workingBytes = await seedReviewDocument(store);
+
+    const response = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "reject", reason: "wrong customer name" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      decision: string;
+      document: {
+        pendingChangeCount: number;
+        pendingChanges: Array<{ status: string; rejection?: { code: string; message: string } }>;
+        commandLog: Array<{ status: string; stage: string }>;
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+    };
+
+    expect(payload.decision).toBe("rejected");
+    expect(payload.document.pendingChangeCount).toBe(0);
+    expect(payload.document.pendingChanges[0]).toMatchObject({
+      status: "rejected",
+      rejection: { code: "human-rejected", message: "wrong customer name" },
+    });
+    expect(payload.document.commandLog.at(-1)).toMatchObject({ status: "rejected", stage: "reviewed" });
+    expect(payload.document.diagnostics.at(-1)).toMatchObject({
+      code: "change-rejected",
+      message: "Rejected change mut_1: wrong customer name",
+    });
+
+    const stored = await store.getDocument("doc_review");
+    if (!stored) throw new Error("Expected review fixture to be persisted.");
+    expect(stored.pendingChanges[0]).toMatchObject({
+      status: "rejected",
+      rejection: { code: "human-rejected", message: "wrong customer name" },
+    });
+    expect(Buffer.from(await store.readWorkingBytes(stored)).toString("utf8")).toBe(
+      workingBytes.toString("utf8")
+    );
+  });
+
+  it("refuses to review the same change twice", async () => {
+    const store = createLocalSessionStore();
+    await seedReviewDocument(store);
+
+    const first = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "approve" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    expect(first.status).toBe(200);
+
+    const second = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "reject" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    const payload = (await second.json()) as { code: string; message: string };
+    expect(second.status).toBe(409);
+    expect(payload.code).toBe("change-already-reviewed");
+    expect(payload.message).toContain("approved");
   });
 });
 
@@ -471,4 +598,57 @@ async function reopenExportedBytes(format: WebOfficeFormat, bytes: Uint8Array): 
       await PdfAgent.fromBuffer(bytes);
       return;
   }
+}
+
+async function seedReviewDocument(store: ReturnType<typeof createLocalSessionStore>): Promise<Buffer> {
+  const workingBytes = Buffer.from("review-working");
+  await store.putSession({
+    id: "session_review",
+    title: "Review",
+    createdAt: "2026-06-24T12:00:00.000Z",
+    updatedAt: "2026-06-24T12:00:00.000Z",
+    documentIds: ["doc_review"],
+  });
+  await store.putDocument(
+    {
+      id: "doc_review",
+      sessionId: "session_review",
+      format: "docx",
+      name: "review.docx",
+      status: "ready",
+      sourcePath: "/very/local/review.docx",
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:00:00.000Z",
+      revision: 3,
+      diagnostics: [],
+      exportHistory: [],
+      pendingChanges: [
+        {
+          id: "mut_1",
+          operation: "docx.replace-text",
+          status: "pending",
+          source: "agent",
+          actorId: "mcp-test",
+          timestamp: 1782302400000,
+          diff: { secret: "raw-diff", ops: [{ replace: "Acme" }] },
+        },
+      ],
+      commandLog: [
+        {
+          id: "log_preview",
+          commandId: "cmd_review",
+          operation: "docx.replace-text",
+          status: "pending",
+          stage: "previewed",
+          source: "mcp",
+          actorId: "mcp-test",
+          recordedAt: "2026-06-24T12:00:00.000Z",
+          diff: { secret: "raw-command-diff" },
+          diagnostics: [{ level: "info", code: "preview-ready", message: "Preview is ready." }],
+        },
+      ],
+    },
+    { originalBytes: Buffer.from("review-original"), workingBytes }
+  );
+  return workingBytes;
 }

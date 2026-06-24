@@ -163,10 +163,14 @@
     "commandLog": "Command Log",
     "noCommandLog": "Keine Command-Aktivität erfasst.",
     "exportError": "Export fehlgeschlagen",
+    "reviewError": "Review fehlgeschlagen",
     "source": "Quelle",
     "actor": "Actor",
     "diffAvailable": "Diff verfügbar",
-    "noDiff": "kein Diff"
+    "noDiff": "kein Diff",
+    "approveChange": "Freigeben",
+    "rejectChange": "Ablehnen",
+    "rejection": "Ablehnung"
   },
   "shell": {
     "openTooltip": "Öffnen",
