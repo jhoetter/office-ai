@@ -133,6 +133,23 @@ describe("GET /api/sessions", () => {
     expect(payload.code).toBe("corrupt-session-store");
     expect(payload.message).toContain("Corrupt metadata file");
   });
+
+  it("reports storage adapter diagnostics clearly", async () => {
+    rmSync(dataDir, { recursive: true, force: true });
+    writeFileSync(dataDir, "not a directory");
+
+    const response = await GET();
+    const payload = (await response.json()) as {
+      code: string;
+      diagnostic: { level: string; code: string; message: string };
+    };
+    expect(response.status).toBe(500);
+    expect(payload.code).toBe("session-store-storage-error");
+    expect(payload.diagnostic).toMatchObject({
+      level: "error",
+      code: "storage-ensure-dir",
+    });
+  });
 });
 
 describe("GET /api/sessions/:documentId", () => {

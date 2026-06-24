@@ -7,7 +7,11 @@
  */
 
 import { NextResponse } from "next/server";
-import { createLocalSessionStore, SessionStoreCorruptError } from "@officeai/agent/session-store";
+import {
+  createLocalSessionStore,
+  SessionStoreCorruptError,
+  SessionStoreStorageError,
+} from "@officeai/agent/session-store";
 import { toWebDocumentEntry, toWebSessionEntry } from "@/lib/sessions/web-sessions";
 
 export const runtime = "nodejs";
@@ -32,6 +36,17 @@ export async function GET(): Promise<NextResponse> {
           message,
         },
         { status: 409 }
+      );
+    }
+    if (err instanceof SessionStoreStorageError) {
+      return NextResponse.json(
+        {
+          schema: "office-ai/web-sessions-error@1",
+          code: "session-store-storage-error",
+          message,
+          diagnostic: err.diagnostic,
+        },
+        { status: 500 }
       );
     }
     return NextResponse.json(

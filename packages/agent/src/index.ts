@@ -7,9 +7,16 @@ export {
 } from "./selector.js";
 export {
   createLocalSessionStore,
+  createLocalFilesystemSessionStorageAdapter,
+  LocalFilesystemSessionStorageAdapter,
   resolveOfficeAiDataDir,
   SessionStoreCorruptError,
+  SessionStoreStorageError,
   type LocalSessionStoreOptions,
+  type SessionStorageAdapter,
+  type SessionStorageCapabilities,
+  type SessionStorageOperation,
+  type SessionStorageRemoveOptions,
   type StoredCommandLogEntry,
   type StoredDiagnostic,
   type StoredDocumentRecord,

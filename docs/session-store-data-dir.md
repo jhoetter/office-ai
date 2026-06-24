@@ -57,6 +57,35 @@ Session metadata records a lightweight local lease (`pid`, host marker,
 timestamp) so future cleanup/inspect tooling can reason about stale
 writers without changing the file contract.
 
+## Storage adapter boundary
+
+`LocalSessionStore` is backed by a `SessionStorageAdapter` port. The
+default implementation is `LocalFilesystemSessionStorageAdapter`, which
+maps the store to the data-dir layout above. Tests and future
+integrations can pass their own adapter through
+`new LocalSessionStore({ storage })`.
+
+The adapter contract covers the storage primitives the session layer
+needs:
+
+- resolve logical child paths or keys;
+- create directories/containers;
+- list artifact and metadata entries;
+- check existence;
+- read and atomically write bytes;
+- copy a local source file into the store;
+- remove a subtree during cleanup.
+
+Adapter capabilities also describe whether writes are atomic, whether
+paths are local filesystem paths, and whether locks or watch/refresh are
+available. The current local adapter advertises atomic writes, advisory
+leases and no watcher.
+
+Storage failures surface as `SessionStoreStorageError` with a structured
+diagnostic (`level`, `code`, `message`) so MCP/web callers can report
+environment or adapter failures without treating them as corrupt
+document metadata.
+
 ## Corruption and privacy
 
 Metadata is versioned and schema-tagged. Invalid JSON or schema mismatch
