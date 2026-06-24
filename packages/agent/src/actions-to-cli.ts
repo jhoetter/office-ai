@@ -3,8 +3,8 @@
  *
  * Exposes `registerActionsAsSubcommands(parent, actions, ctx)` which
  * walks an `ActionDescriptor[]` and registers a commander subcommand
- * for every entry whose `surfaces` includes `"cli"`, has a non-null
- * `commandType`, and declares its `args`.
+ * for every entry whose `cliCallable` is true, has a non-null
+ * `commandType`, and declares catalogue-owned args/payload metadata.
  *
  * Design intent: the catalogue file in
  * `packages/{format}/src/actions/catalogue.ts` is the single source
@@ -20,7 +20,7 @@
  *      the result back to disk.
  *   4. Prints a JSON summary of the mutation.
  *
- * Subcommands can declare `cliKind: "custom"` (or omit args /
+ * Subcommands can declare `commandSchema: "custom"` (or omit args /
  * buildPayload) to opt out of auto-generation; the existing
  * hand-rolled commander block in cli.ts / cli-xlsx.ts / pptx-cli.ts /
  * pdf-cli.ts retains ownership for those (typically because they need
@@ -69,7 +69,7 @@ export interface AgentDispatchContext {
 }
 
 /**
- * Register every catalogue entry that opted into the `cli` surface
+ * Register every catalogue entry that opted into the terminal CLI
  * AND has the metadata needed for auto-generation. Returns the list
  * of action ids that were skipped, so the host can decide whether to
  * fall back to a hand-rolled commander block for them.
@@ -84,18 +84,8 @@ export function registerActionsAsSubcommands(
   const skipped: string[] = [];
 
   for (const action of actions) {
-    if (!action.surfaces.includes("cli")) continue;
-    if (action.hidden) continue;
-    if (action.commandType === null || action.commandType === undefined) {
-      // Non-mutating CLI commands (read-*, inspect, search, diff)
-      // need bespoke output formatting that the generic adapter can't
-      // synthesise. Leave them to the hand-rolled block.
-      skipped.push(action.id);
-      continue;
-    }
-    if (!action.args || !action.buildPayload) {
-      // Mutation lacks the metadata to auto-generate — keep the
-      // hand-rolled block authoritative for now.
+    if (!action.cliCallable) continue;
+    if (!isCliAutoBindableAction(action)) {
       skipped.push(action.id);
       continue;
     }
@@ -104,6 +94,15 @@ export function registerActionsAsSubcommands(
   }
 
   return { registered, skipped };
+}
+
+export function isCliAutoBindableAction(action: ActionDescriptor): boolean {
+  if (!action.cliCallable) return false;
+  if (action.hidden) return false;
+  if (action.commandType === null || action.commandType === undefined) return false;
+  if (action.commandSchema !== "catalogue-args") return false;
+  if (!action.args || !action.buildPayload) return false;
+  return true;
 }
 
 function registerOne(parent: Command, action: ActionDescriptor, io: IO, ctx: AgentDispatchContext): void {

@@ -7,9 +7,8 @@
  * every command-bus handler registered in
  * `packages/F/src/commands/`. Catches the most expensive class of
  * drift in the codebase: a new bus command lands without a CLI
- * subcommand or a Cmd+K palette entry, so it's reachable by the
- * editor's own React code but invisible to humans (and AIs) outside
- * that one editor.
+ * subcommand, MCP tool, or Cmd+K palette entry, so it's reachable by
+ * one surface but invisible to humans or agents elsewhere.
  *
  * The script runs at the SOURCE level (no `dist/` dependency) so it
  * stays cheap (<200ms) and can run BEFORE `pnpm build` — which is
@@ -120,11 +119,11 @@ function extractHandlerTypes(format, handlerDirs) {
 }
 
 /**
- * Pull every catalogue entry's `id`, `commandType`, and `surfaces`
- * from a single catalogue.ts file. Uses a deliberately narrow regex
- * over the canonical declaration shape; if someone reformats the file
- * past what the regex matches, the parity check will yell with a
- * clear "could not parse" line so the regex can be tightened.
+ * Pull every catalogue entry's structural metadata from a single
+ * catalogue.ts file. Uses a deliberately narrow regex over the
+ * canonical declaration shape; if someone reformats the file past
+ * what the regex matches, the parity check will yell with a clear
+ * "missing action metadata" line so the regex can be tightened.
  */
 function extractCatalogueEntries(cataloguePath) {
   const abs = join(ROOT, cataloguePath);
@@ -145,9 +144,34 @@ function extractCatalogueEntries(cataloguePath) {
     const block = src.slice(start, end);
     const id = positions[i].id;
     const commandType = parseCommandType(block);
+    const declaredFormat = parseStringField(block, "format");
     const surfaces = parseSurfaces(block);
+    const agentCallable = parseBooleanField(block, "agentCallable");
+    const webCallable = parseBooleanField(block, "webCallable");
+    const cliCallable = parseBooleanField(block, "cliCallable");
+    const requiresReview = parseBooleanField(block, "requiresReview");
+    const supportsDryRun = parseBooleanField(block, "supportsDryRun");
+    const supportsDiff = parseBooleanField(block, "supportsDiff");
+    const commandSchema = parseStringField(block, "commandSchema");
     const hidden = /\bhidden\s*:\s*\{/.test(block);
-    entries.push({ id, commandType, surfaces, hidden });
+    const hasArgs = /\bargs\s*:/.test(block);
+    const hasBuildPayload = /\bbuildPayload\s*:/.test(block);
+    entries.push({
+      id,
+      commandType,
+      declaredFormat,
+      surfaces,
+      agentCallable,
+      webCallable,
+      cliCallable,
+      requiresReview,
+      supportsDryRun,
+      supportsDiff,
+      commandSchema,
+      hidden,
+      hasArgs,
+      hasBuildPayload,
+    });
   }
   return entries;
 }
@@ -159,10 +183,21 @@ function parseCommandType(block) {
 }
 
 function parseSurfaces(block) {
-  // surfaces: ["cli", "palette"]
+  // surfaces: ["palette", "toolbar"]
   const m = block.match(/\bsurfaces:\s*\[([^\]]*)\]/);
   if (!m) return [];
   return [...m[1].matchAll(/"([a-zA-Z]+)"/g)].map((x) => x[1]);
+}
+
+function parseBooleanField(block, field) {
+  const m = block.match(new RegExp(`\\b${field}:\\s*(true|false)`));
+  if (!m) return undefined;
+  return m[1] === "true";
+}
+
+function parseStringField(block, field) {
+  const m = block.match(new RegExp(`\\b${field}:\\s*"([^"]+)"`));
+  return m ? m[1] : undefined;
 }
 
 function walkTsFiles(dir, visit) {
@@ -263,16 +298,12 @@ function walkUiFiles(dir, visit) {
  *  2. No catalogue entry may declare a `commandType` that no handler
  *     actually serves (catches typos and stale renames).
  *  3. Every catalogue entry's `id` must be unique within the format.
- *  4. Every catalogue entry that lists `cli` in `surfaces` and is NOT
- *     `hidden` is expected to be reachable from `office-agent <fmt>`.
- *     We can't import the commander tree from this script (the CLI
- *     mounts everything in cli.ts); instead we treat the entry's
- *     declared `cli` membership as a signed contract — the CLI
- *     adapter / hand-rolled cli-*.ts is responsible for honouring it,
- *     and the test suite (cli.test.ts / pptx-cli.test.ts / …) has
- *     coverage that fails if the subcommand is missing. The parity
- *     gate's job here is structural: the catalogue declares the
- *     intent.
+ *  4. Every catalogue entry must make explicit agent/web/CLI,
+ *     review, dry-run, diff, format, and command-schema decisions.
+ *  5. UI surfaces stay UI-only: `surfaces` may not contain `cli`.
+ *  6. Generated MCP/CLI bindings require catalogue-owned args plus
+ *     buildPayload; terminal-only conveniences may remain
+ *     `cliCallable` without becoming `agentCallable`.
  */
 function checkFormat(format, handlerTypes, entries, i18nKeys, uiDispatchedTypes) {
   const violations = [];
@@ -287,6 +318,7 @@ function checkFormat(format, handlerTypes, entries, i18nKeys, uiDispatchedTypes)
       });
     }
     seenIds.add(e.id);
+    violations.push(...checkActionMetadata(format, e));
   }
 
   const cataloguedTypes = new Set();
@@ -316,6 +348,101 @@ function checkFormat(format, handlerTypes, entries, i18nKeys, uiDispatchedTypes)
     }
   }
 
+  function pushMetadataViolation(e, message) {
+    return {
+      format,
+      kind: "invalid-action-metadata",
+      message: `catalogue action "${e.id}" has invalid metadata — ${message}`,
+    };
+  }
+
+  function checkActionMetadata(formatName, e) {
+    const out = [];
+    const booleanFields = [
+      "agentCallable",
+      "webCallable",
+      "cliCallable",
+      "requiresReview",
+      "supportsDryRun",
+      "supportsDiff",
+    ];
+    const validUiSurfaces = new Set(["palette", "toolbar", "contextMenu"]);
+    const validSchemas = new Set(["catalogue-args", "custom", "none"]);
+    const isBusBacked = e.commandType !== null && e.commandType !== undefined;
+
+    if (e.declaredFormat !== formatName) {
+      out.push(pushMetadataViolation(e, `format must be "${formatName}"`));
+    }
+    for (const field of booleanFields) {
+      if (typeof e[field] !== "boolean") {
+        out.push(pushMetadataViolation(e, `${field} must be explicitly true or false`));
+      }
+    }
+    if (!validSchemas.has(e.commandSchema)) {
+      out.push(pushMetadataViolation(e, `commandSchema must be one of ${[...validSchemas].join(", ")}`));
+    }
+    for (const surface of e.surfaces) {
+      if (surface === "cli") {
+        out.push(pushMetadataViolation(e, 'surfaces is UI-only; use cliCallable instead of "cli"'));
+      } else if (!validUiSurfaces.has(surface)) {
+        out.push(pushMetadataViolation(e, `unknown UI surface "${surface}"`));
+      }
+    }
+
+    if (isBusBacked) {
+      if (e.requiresReview !== true) {
+        out.push(pushMetadataViolation(e, "bus-backed mutations must set requiresReview: true"));
+      }
+      if (e.supportsDiff !== true) {
+        out.push(pushMetadataViolation(e, "bus-backed mutations must set supportsDiff: true"));
+      }
+      if (e.commandSchema === "none") {
+        out.push(pushMetadataViolation(e, 'bus-backed actions cannot use commandSchema: "none"'));
+      }
+    } else {
+      if (e.requiresReview === true) {
+        out.push(pushMetadataViolation(e, "non-bus actions must set requiresReview: false"));
+      }
+      if (e.supportsDiff === true) {
+        out.push(pushMetadataViolation(e, "non-bus actions must set supportsDiff: false"));
+      }
+      if (e.commandSchema !== "none") {
+        out.push(pushMetadataViolation(e, 'non-bus actions must use commandSchema: "none"'));
+      }
+    }
+
+    if (e.commandSchema === "catalogue-args" && (!e.hasArgs || !e.hasBuildPayload)) {
+      out.push(
+        pushMetadataViolation(e, 'commandSchema: "catalogue-args" requires both args and buildPayload')
+      );
+    }
+    if (e.agentCallable) {
+      if (e.hidden) {
+        out.push(pushMetadataViolation(e, "hidden actions cannot be agentCallable"));
+      }
+      if (!isBusBacked) {
+        out.push(pushMetadataViolation(e, "agentCallable requires a bus commandType"));
+      }
+      if (e.commandSchema !== "catalogue-args") {
+        out.push(pushMetadataViolation(e, 'agentCallable requires commandSchema: "catalogue-args"'));
+      }
+    }
+    if (e.webCallable && e.hidden) {
+      out.push(pushMetadataViolation(e, "hidden actions cannot be webCallable"));
+    }
+    if (e.cliCallable && e.hidden) {
+      out.push(pushMetadataViolation(e, "hidden actions cannot be cliCallable"));
+    }
+    if (!e.hidden && e.surfaces.length > 0 && e.webCallable !== true) {
+      out.push(pushMetadataViolation(e, "actions with UI surfaces must set webCallable: true"));
+    }
+    if (e.webCallable && e.surfaces.length === 0) {
+      out.push(pushMetadataViolation(e, "webCallable actions must declare at least one UI surface"));
+    }
+
+    return out;
+  }
+
   // i18n parity: every palette-surfaced action must have an English
   // label + description in messages/en.json. Without these, the Cmd+K
   // palette would render the catalogue's English fallback even when
@@ -326,9 +453,7 @@ function checkFormat(format, handlerTypes, entries, i18nKeys, uiDispatchedTypes)
   for (const e of entries) {
     if (e.hidden) continue;
     if (!e.surfaces.includes("palette")) continue;
-    const localId = e.id.startsWith(`${format}.`)
-      ? e.id.slice(format.length + 1)
-      : e.id;
+    const localId = e.id.startsWith(`${format}.`) ? e.id.slice(format.length + 1) : e.id;
     const labelKey = `actions.${format}.${localId}.label`;
     const descKey = `actions.${format}.${localId}.description`;
     if (!i18nKeys.has(labelKey)) {
@@ -438,6 +563,9 @@ function main() {
       format: f.name,
       handlers: handlerTypes.size,
       catalogue: entries.length,
+      agentCallable: entries.filter((e) => e.agentCallable === true).length,
+      webCallable: entries.filter((e) => e.webCallable === true).length,
+      cliCallable: entries.filter((e) => e.cliCallable === true).length,
       uiDispatched: uiDispatchedTypes.size,
       violations: violations.length,
     });
@@ -448,7 +576,7 @@ function main() {
   console.log("───────────────────");
   for (const s of summary) {
     console.log(
-      `  ${s.format.padEnd(6)} handlers=${String(s.handlers).padStart(3)}  catalogue=${String(s.catalogue).padStart(3)}  ui-dispatched=${String(s.uiDispatched).padStart(3)}  violations=${String(s.violations).padStart(3)}`
+      `  ${s.format.padEnd(6)} handlers=${String(s.handlers).padStart(3)}  catalogue=${String(s.catalogue).padStart(3)}  agent=${String(s.agentCallable).padStart(3)}  web=${String(s.webCallable).padStart(3)}  cli=${String(s.cliCallable).padStart(3)}  ui-dispatched=${String(s.uiDispatched).padStart(3)}  violations=${String(s.violations).padStart(3)}`
     );
   }
   console.log("");

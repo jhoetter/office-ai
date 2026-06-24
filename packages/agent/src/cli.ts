@@ -4,7 +4,7 @@ import { extname, resolve } from "node:path";
 import { Command, Option } from "commander";
 import { DocxAgent, paragraphPlainText } from "@officeai/docx";
 import type { DocxComment, DocxPosition, DocxSnapshot, Paragraph } from "@officeai/docx";
-import type { CommandLite, DocumentDiff, Mutation } from "@officeai/core";
+import type { ActionDescriptor, CommandLite, DocumentDiff, Mutation } from "@officeai/core";
 import { parseSelector, SelectorError, type Selector } from "./selector.js";
 import { runMcpStdioServer } from "./mcp.js";
 import {
@@ -28,6 +28,24 @@ import { pdfActions } from "@officeai/pdf";
 import { registerActionsAsSubcommands, type AgentDispatchContext } from "./actions-to-cli.js";
 
 const defaultIO: IO = { stdout: process.stdout, stderr: process.stderr };
+
+function matchesActionSurface(action: ActionDescriptor, surface: string): boolean {
+  switch (surface) {
+    case "agent":
+    case "mcp":
+      return action.agentCallable;
+    case "cli":
+      return action.cliCallable;
+    case "web":
+      return action.webCallable;
+    case "palette":
+    case "toolbar":
+    case "contextMenu":
+      return action.surfaces.includes(surface);
+    default:
+      return false;
+  }
+}
 
 export async function runCli(argv: string[], io: IO = defaultIO): Promise<number> {
   const program = new Command();
@@ -96,15 +114,15 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
 
   // ── action discovery ─────────────────────────────────────────────────────
   // Emits a JSON manifest of every catalogue action (id, label, section,
-  // command type, surfaces, args). Useful for AI agents that want to
-  // probe what `office-agent` can do without parsing `--help` text.
+  // command type, callable surfaces, args). Useful for AI agents that want
+  // to probe what `office-agent` can do without parsing `--help` text.
   program
     .command("list-actions")
     .description("Print a JSON manifest of every catalogue action across docx / xlsx / pptx / pdf.")
     .option("--format <fmt>", "Restrict to one format")
     .option(
       "--surface <surface>",
-      "Restrict to actions exposing the given surface (cli, palette, toolbar, contextMenu, mcp)"
+      "Restrict to actions exposing the given surface (agent, mcp, cli, web, palette, toolbar, contextMenu)"
     )
     .option("--pretty", "Pretty-print JSON output", false)
     .action((opts: Record<string, unknown>) => {
@@ -119,14 +137,22 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
       ]) {
         if (filterFormat && filterFormat !== format) continue;
         const filtered = actions
-          .filter((a) => !filterSurface || a.surfaces.includes(filterSurface as never))
+          .filter((a) => !filterSurface || matchesActionSurface(a, filterSurface))
           .map((a) => ({
             id: a.id,
+            format: a.format,
             label: a.label,
             description: a.description,
             section: a.section,
             commandType: a.commandType,
             surfaces: a.surfaces,
+            agentCallable: a.agentCallable,
+            webCallable: a.webCallable,
+            cliCallable: a.cliCallable,
+            requiresReview: a.requiresReview,
+            supportsDryRun: a.supportsDryRun,
+            supportsDiff: a.supportsDiff,
+            commandSchema: a.commandSchema,
             hidden: a.hidden ? true : false,
             args: (a.args ?? []).map((arg) => ({
               name: arg.name,
@@ -137,7 +163,11 @@ export async function runCli(argv: string[], io: IO = defaultIO): Promise<number
               choices: arg.choices,
               default: arg.default,
             })),
-            autoBindable: a.commandType !== null && Boolean(a.args && a.buildPayload),
+            autoBindable: a.commandSchema === "catalogue-args" && Boolean(a.args && a.buildPayload),
+            agentAutoBindable:
+              a.agentCallable && a.commandSchema === "catalogue-args" && Boolean(a.args && a.buildPayload),
+            cliAutoBindable:
+              a.cliCallable && a.commandSchema === "catalogue-args" && Boolean(a.args && a.buildPayload),
           }));
         groups.push({ format, actions: filtered });
       }

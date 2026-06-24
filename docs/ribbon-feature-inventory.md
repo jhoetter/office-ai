@@ -37,15 +37,16 @@ Every shipped feature follows the same path (already wired end-to-end):
 
 ```
 catalogue.ts entry
-    ├─ args + buildPayload ──> actions-to-cli.ts ──> office-agent CLI
-    ├─ args + buildPayload ──> actions-to-mcp.ts ──> MCP tool (auto-bound)
+    ├─ cliCallable + commandSchema ──> actions-to-cli.ts ──> office-agent CLI
+    ├─ agentCallable + commandSchema ──> actions-to-mcp.ts ──> MCP tool (auto-bound)
     ├─ surfaces.includes("palette") ──> Cmd+K palette
     ├─ surfaces.includes("toolbar") ──> Ribbon button
     └─ commandType ──> packages/<f>/src/commands/<name>.ts handler ──> bus
 ```
 
 The MCP auto-binder (`packages/agent/src/actions-to-mcp.ts`) iterates every
-catalogue entry that has `commandType !== null && args && buildPayload`,
+catalogue entry that has `agentCallable`, `commandSchema: "catalogue-args"`,
+`commandType !== null`, `args`, and `buildPayload`,
 generates a Zod schema from the args, and registers a tool named
 `{format}_{action_id}`. Hand-rolled MCP tools for the same name win — the
 auto-binder swallows "already registered" errors so both can coexist.
@@ -436,14 +437,20 @@ cell selection.
 3. Append a unit test next to the handler.
 4. Append an `ActionDescriptor` to `packages/<f>/src/actions/catalogue.ts` with:
    - `commandType: "<f>:<name>"`
+   - `format: "<f>"`
+   - `agentCallable`, `webCallable`, `cliCallable`
+   - `requiresReview`, `supportsDryRun`, `supportsDiff`
+   - `commandSchema: "catalogue-args"` for generated adapters, `"custom"` for
+     hand-written bindings, or `"none"` for non-bus actions
    - `label`, `description`, `section`, `icon`
-   - `surfaces: ["cli", "palette", "toolbar"]` (subset as appropriate)
+   - `surfaces: ["palette", "toolbar"]` (UI subset as appropriate)
    - `args: [...]` matching the payload (`kind`, `required`, `description`,
      `choices`, `default`)
    - `buildPayload(parsed)` returning a typed payload
 5. Add `label` and `description` entries to
    `apps/web/app/lib/i18n/messages/{en,de}.json` under the action id.
 6. Run `node scripts/check-action-parity.mjs` — must stay green.
-7. CLI subcommand and MCP tool **fall out for free** via the auto-binders in
+7. CLI subcommand and MCP tool **fall out deliberately** via
+   `cliCallable` / `agentCallable` plus `commandSchema: "catalogue-args"` in
    `packages/agent/src/actions-to-cli.ts` and
    `packages/agent/src/actions-to-mcp.ts`.

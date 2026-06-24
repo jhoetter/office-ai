@@ -4,10 +4,10 @@
  * `PaletteCommand[]` the shell's Cmd+K palette consumes.
  *
  * The catalogue owns metadata (id, label, section, description,
- * shortcut) so the palette and CLI surfaces never drift. The product
- * editor (DocxEditor, XlsxEditor, …) supplies a `runners` map keyed by
- * action id with the closure-bound side effect for each entry whose
- * `surfaces` includes "palette".
+ * shortcut) so the palette and action metadata never drift. The
+ * product editor (DocxEditor, XlsxEditor, …) supplies a `runners` map
+ * keyed by action id with the closure-bound side effect for each entry
+ * whose `surfaces` includes "palette".
  *
  * The function:
  *   • silently skips catalogue entries not flagged with "palette"
@@ -19,11 +19,10 @@
  *   • respects per-runner `enabled` flags so the editor can gate by
  *     selection / cursor without re-listing the palette
  *
- * Intent: every palette item visible in Cmd+K is also a CLI subcommand
- * (when the catalogue entry declares `surfaces.includes("cli")`). The
- * inverse holds too — adding a CLI subcommand to the catalogue and
- * tagging it with "palette" automatically surfaces it in Cmd+K once the
- * editor wires the runner.
+ * Intent: every palette item visible in Cmd+K is a deliberately
+ * web-callable action. CLI and MCP exposure are separate descriptor
+ * decisions (`cliCallable`, `agentCallable`) so a terminal convenience
+ * command does not automatically become an agent tool.
  */
 
 import type { ActionDescriptor } from "@officeai/core";

@@ -79,8 +79,9 @@ Long pitch:
 
 - Session and document IDs are not yet the canonical MCP entry point;
   current MCP handles are in-process and path-loaded.
-- Action metadata still couples agent auto-binding to CLI surface
-  membership in parts of the stack.
+- Action metadata now separates `agentCallable`, `webCallable`, and
+  `cliCallable`; the next gap is policy depth around review levels and
+  dry-run semantics.
 - The web editor has strong per-format editors, but no unified session
   browser or pending-changes panel.
 - PDF has real packages and tools, but older docs under-described it

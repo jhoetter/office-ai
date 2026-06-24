@@ -3,9 +3,7 @@
  *
  * Counterpart to `actions-to-cli.ts`. Walks an `ActionDescriptor[]`
  * and registers an MCP tool for every entry that:
- *   • lists `"cli"` in `surfaces` (the CLI surface is our proxy for
- *     "agent-callable" — anything reachable from the CLI is by
- *     definition reachable headlessly), AND
+ *   • opts into `agentCallable`, AND
  *   • declares a non-null `commandType`, AND
  *   • declares its `args` and `buildPayload` (so we can synthesise a
  *     zod input schema and the bus payload mechanically).
@@ -58,7 +56,7 @@ export interface McpDispatchContext {
 }
 
 /**
- * Register every catalogue entry that opted into the `cli` surface
+ * Register every catalogue entry that opted into the agent surface
  * AND has the metadata needed for auto-generation. Returns the list
  * of action ids that were registered (for diagnostics / parity).
  */
@@ -71,20 +69,7 @@ export function registerActionsAsMcpTools(
   const skipped: string[] = [];
 
   for (const action of actions) {
-    if (!action.surfaces.includes("cli")) {
-      skipped.push(action.id);
-      continue;
-    }
-    if (action.hidden) {
-      skipped.push(action.id);
-      continue;
-    }
-    if (action.commandType === null || action.commandType === undefined) {
-      // Non-mutating reads are exposed by hand-rolled tools in mcp.ts.
-      skipped.push(action.id);
-      continue;
-    }
-    if (!action.args || !action.buildPayload) {
+    if (!isMcpBindableAction(action)) {
       skipped.push(action.id);
       continue;
     }
@@ -106,6 +91,15 @@ export function registerActionsAsMcpTools(
   }
 
   return { registered, skipped };
+}
+
+export function isMcpBindableAction(action: ActionDescriptor): boolean {
+  if (!action.agentCallable) return false;
+  if (action.hidden) return false;
+  if (action.commandType === null || action.commandType === undefined) return false;
+  if (action.commandSchema !== "catalogue-args") return false;
+  if (!action.args || !action.buildPayload) return false;
+  return true;
 }
 
 function registerOne(server: McpServer, action: ActionDescriptor, ctx: McpDispatchContext): void {

@@ -1946,8 +1946,8 @@ function registerPdfMutationTool(
 /**
  * Bridge each format's `ActionDescriptor[]` into the generic
  * `registerActionsAsMcpTools` adapter. Every catalogue entry that
- * declares `surfaces.includes("cli")`, has a non-null `commandType`,
- * and supplies `args` + `buildPayload` becomes an MCP tool of the
+ * declares `agentCallable`, has a non-null `commandType`, and supplies
+ * catalogue-owned `args` + `buildPayload` becomes an MCP tool of the
  * form `<format>_<verb>_<noun>` (e.g. `docx_delete_row`).
  *
  * Hand-rolled tools registered earlier in `createMcpServer` stay

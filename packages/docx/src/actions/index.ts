@@ -9,8 +9,8 @@ export const docxActionsById: ReadonlyMap<string, ActionDescriptor> = indexActio
 
 /**
  * Index from bus command type → catalogue entries. Multiple
- * descriptors may share a `commandType` (e.g. one CLI subcommand
- * plus a hidden palette wrapper). Used by the parity check.
+ * descriptors may share a `commandType` (e.g. one generated action
+ * plus a hidden wrapper). Used by the parity check.
  */
 export const docxActionsByCommandType: ReadonlyMap<
   string,

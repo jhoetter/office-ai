@@ -7,8 +7,8 @@
  * places:
  *
  *  1. a handler in `packages/{format}/src/commands/registry.ts`
- *  2. a commander subcommand in `packages/agent/src/cli*.ts`
- *  3. a `paletteCommands` entry in `apps/web/app/{format}-editor/*.tsx`
+ *  2. an agent / CLI binding in `packages/agent/src/actions-to-*.ts`
+ *  3. a palette entry in `apps/web/app/{format}-editor/*.tsx`
  *  4. bespoke JSX in `Toolbar.tsx`, context menus, and dialogs
  *
  * Drift between these surfaces was invisible — the docx CLI had ~32
@@ -17,7 +17,7 @@
  *
  * The action catalogue collapses surfaces 2 and 3 into one declarative
  * list per format (`packages/{format}/src/actions/catalogue.ts`),
- * which the CLI / palette / parity check all read from. Surface 4
+ * which the MCP adapter / CLI / palette / parity check all read from. Surface 4
  * (toolbar JSX) keeps its bespoke layout but pulls label/icon/shortcut
  * out of the same descriptor via `useAction(id)` so typos fail at
  * compile time.
@@ -29,11 +29,22 @@
  */
 
 /**
- * Where an action shows up. Each format declares the surfaces it
- * targets; the CLI / palette helpers iterate the catalogue and pick
- * up the entries that include their surface.
+ * Where an action shows up inside the human web editor. Headless
+ * surfaces (`agentCallable`, `cliCallable`) are explicit capability
+ * fields on the descriptor instead of being inferred from this UI list.
  */
-export type ActionSurface = "toolbar" | "palette" | "cli" | "contextMenu";
+export type ActionSurface = "toolbar" | "palette" | "contextMenu";
+
+/** File family this action targets. */
+export type ActionFormat = "docx" | "xlsx" | "pptx" | "pdf";
+
+/**
+ * How the action's command payload is described for generated
+ * surfaces. `catalogue-args` means the descriptor owns both `args`
+ * and `buildPayload`; `custom` means a hand-written adapter remains
+ * authoritative; `none` is for non-bus actions.
+ */
+export type ActionCommandSchema = "catalogue-args" | "custom" | "none";
 
 /**
  * Argument kind for CLI / palette form generation. Stays narrow on
@@ -64,9 +75,9 @@ export interface ActionArg {
 }
 
 /**
- * One user-facing action. The two driven surfaces (CLI subcommand,
- * Cmd+K palette entry) read directly from this; toolbar JSX reads
- * `label` / `icon` / `shortcut` via `useAction(id)`.
+ * One user-facing action. Agent, CLI and palette adapters read
+ * directly from this; toolbar JSX reads `label` / `icon` / `shortcut`
+ * via `useAction(id)`.
  */
 export interface ActionDescriptor {
   /**
@@ -82,6 +93,8 @@ export interface ActionDescriptor {
    * registered handler appears in some catalogue entry.
    */
   readonly commandType: string | null;
+  /** File family this action belongs to. */
+  readonly format: ActionFormat;
   /** Human-facing label — palette + CLI help summary. */
   readonly label: string;
   /** One-line description — palette hint + CLI `--help` body. */
@@ -102,6 +115,20 @@ export interface ActionDescriptor {
   readonly shortcut?: string;
   /** Surfaces this action wants to be on. */
   readonly surfaces: ReadonlyArray<ActionSurface>;
+  /** Expose this action through MCP / agent-facing tool adapters. */
+  readonly agentCallable: boolean;
+  /** Expose this action through the web editor. */
+  readonly webCallable: boolean;
+  /** Expose this action through the terminal CLI. */
+  readonly cliCallable: boolean;
+  /** Mutation requires an explicit review / approval affordance. */
+  readonly requiresReview: boolean;
+  /** Generated surfaces can evaluate the action without writing. */
+  readonly supportsDryRun: boolean;
+  /** Generated surfaces can show a before/after diff after running. */
+  readonly supportsDiff: boolean;
+  /** Payload-schema ownership for generated adapters. */
+  readonly commandSchema: ActionCommandSchema;
   /**
    * Declarative arg list. Used to:
    *   - register commander flags on the auto-generated subcommand
