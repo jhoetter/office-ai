@@ -17,7 +17,10 @@ The product contract is deliberately narrow:
   and exportable artifact.**
 
 See [`docs/product-contract.md`](docs/product-contract.md) for the
-canonical terms and boundaries.
+canonical terms and boundaries. The implementation sequence lives in
+[`docs/release-slices.md`](docs/release-slices.md): each slice must
+prove MCP, web review/editing, real file export and verification
+together.
 
 ## Status
 
