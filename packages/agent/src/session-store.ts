@@ -34,6 +34,8 @@ export interface StoredPendingChange {
 }
 
 export interface StoredCommandLogEntry {
+  readonly schema?: "office-ai/audit-log-entry@1";
+  readonly schemaVersion?: 1;
   readonly id: string;
   readonly commandId?: string;
   readonly operation: string;
@@ -44,6 +46,25 @@ export interface StoredCommandLogEntry {
   readonly recordedAt: string;
   readonly diff?: unknown;
   readonly diagnostics?: ReadonlyArray<StoredDiagnostic>;
+  readonly provenance?: StoredCommandProvenance;
+  readonly exportRef?: StoredCommandExportRef;
+}
+
+export interface StoredCommandProvenance {
+  readonly surface: string;
+  readonly actorId?: string;
+  readonly clientName?: string;
+  readonly sessionId?: string;
+  readonly documentId?: string;
+  readonly targetRevision?: number;
+  readonly anchor?: unknown;
+  readonly argumentsSummary?: string;
+}
+
+export interface StoredCommandExportRef {
+  readonly exportedAt: string;
+  readonly bytes: number;
+  readonly commandIds: ReadonlyArray<string>;
 }
 
 export interface StoredSessionRecord {

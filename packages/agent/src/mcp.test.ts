@@ -341,6 +341,22 @@ describe("OfficeAI MCP server", () => {
         })
       );
       expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+      expect(
+        (exported.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)
+      ).toContain("export-command-basis");
+
+      const activity = structured(
+        await client.callTool({
+          name: "list_activity",
+          arguments: { document_id: document.documentId },
+        })
+      );
+      expect(activity.schema).toBe("office-ai/activity-list@1");
+      expect(
+        (activity.activity as Array<{ stage: string; exportRef?: { commandIds: string[] } }>).some(
+          (item) => item.stage === "exported" && (item.exportRef?.commandIds.length ?? 0) > 0
+        )
+      ).toBe(true);
     }
   });
 

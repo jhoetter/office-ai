@@ -1,5 +1,7 @@
 import type {
+  StoredCommandExportRef,
   StoredCommandLogEntry,
+  StoredCommandProvenance,
   StoredDocumentRecord,
   StoredExportRecord,
   StoredPendingChange,
@@ -72,6 +74,8 @@ export interface WebCommandLogEntry {
   readonly recordedAt: string;
   readonly hasDiff: boolean;
   readonly diagnostics: ReadonlyArray<WebDiagnosticEntry>;
+  readonly provenance?: StoredCommandProvenance;
+  readonly exportRef?: StoredCommandExportRef;
 }
 
 export interface WebDocumentDetailEntry extends WebDocumentEntry {
@@ -186,6 +190,8 @@ function toWebCommandLogEntry(entry: StoredCommandLogEntry): WebCommandLogEntry 
     recordedAt: entry.recordedAt,
     hasDiff: entry.diff !== undefined,
     diagnostics: entry.diagnostics ?? [],
+    ...(entry.provenance ? { provenance: entry.provenance } : {}),
+    ...(entry.exportRef ? { exportRef: entry.exportRef } : {}),
   };
 }
 

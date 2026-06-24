@@ -65,6 +65,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         pendingChanges: [],
         commandLog: [
           {
+            schema: "office-ai/audit-log-entry@1",
+            schemaVersion: 1,
             id: `log_${randomUUID()}`,
             operation: "import_document",
             status: "applied",
@@ -72,6 +74,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             source: "web",
             recordedAt: now,
             diagnostics,
+            provenance: {
+              surface: "web",
+              sessionId: session.id,
+              documentId,
+              targetRevision: prepared.revision,
+            },
           },
         ],
       },

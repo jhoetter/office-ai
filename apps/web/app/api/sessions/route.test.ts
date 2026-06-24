@@ -534,6 +534,7 @@ describe("POST /api/sessions/create and /api/sessions/:documentId/export", () =>
           format: WebOfficeFormat;
           name: string;
           artifacts: { hasOriginal: boolean; hasWorking: boolean };
+          commandLog: Array<{ operation: string; stage: string; source: string; provenance?: unknown }>;
         };
       };
       expect(created.schema).toBe("office-ai/web-create@1");
@@ -541,6 +542,14 @@ describe("POST /api/sessions/create and /api/sessions/:documentId/export", () =>
         format,
         name: `blank.${format}`,
         artifacts: { hasOriginal: false, hasWorking: true },
+        commandLog: [
+          expect.objectContaining({
+            operation: "create_document",
+            stage: "created",
+            source: "web",
+            provenance: expect.objectContaining({ surface: "web" }),
+          }),
+        ],
       });
 
       const exportResponse = await EXPORT_DOCUMENT(
@@ -559,9 +568,15 @@ describe("POST /api/sessions/create and /api/sessions/:documentId/export", () =>
       const stored = await store.getDocument(created.document.documentId);
       expect(stored?.exportHistory).toHaveLength(1);
       expect(stored?.commandLog.at(-1)).toMatchObject({
+        schema: "office-ai/audit-log-entry@1",
         operation: "export_document",
         stage: "exported",
         source: "web",
+        exportRef: {
+          bytes: expect.any(Number),
+          commandIds: expect.arrayContaining([expect.any(String)]),
+        },
+        diagnostics: expect.arrayContaining([expect.objectContaining({ code: "export-command-basis" })]),
       });
       expect(JSON.stringify(created)).not.toContain(dataDir);
     });

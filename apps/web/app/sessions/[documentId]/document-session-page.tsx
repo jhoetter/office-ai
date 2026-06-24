@@ -438,6 +438,8 @@ function CommandLog({
           timestamp={entry.recordedAt}
           hasDiff={entry.hasDiff}
           diagnosticCount={entry.diagnostics.length}
+          targetRevision={entry.provenance?.targetRevision}
+          exportCommandIds={entry.exportRef?.commandIds}
           locale={locale}
         />
       ))}
@@ -455,6 +457,8 @@ function OperationRow({
   diffSummary,
   rejection,
   diagnosticCount,
+  targetRevision,
+  exportCommandIds,
   locale,
   actions,
 }: {
@@ -467,6 +471,8 @@ function OperationRow({
   readonly diffSummary?: string;
   readonly rejection?: string;
   readonly diagnosticCount?: number;
+  readonly targetRevision?: number;
+  readonly exportCommandIds?: ReadonlyArray<string>;
   readonly locale?: string;
   readonly actions?: React.ReactNode;
 }) {
@@ -494,6 +500,10 @@ function OperationRow({
           <span>
             {t("home.diagnostics")}: {diagnosticCount}
           </span>
+        ) : null}
+        {targetRevision !== undefined ? <span>rev {targetRevision}</span> : null}
+        {exportCommandIds && exportCommandIds.length > 0 ? (
+          <span>export basis: {exportCommandIds.join(", ")}</span>
         ) : null}
       </div>
       {diffSummary ? <p className="mt-1 text-xs text-secondary">{diffSummary}</p> : null}

@@ -125,6 +125,8 @@ export async function POST(
       commandLog: [
         ...document.commandLog,
         {
+          schema: "office-ai/audit-log-entry@1",
+          schemaVersion: 1,
           id: `log_${randomUUID()}`,
           operation: target.operation,
           status: decision,
@@ -133,6 +135,13 @@ export async function POST(
           ...(target.actorId ? { actorId: target.actorId } : {}),
           recordedAt: now,
           diagnostics,
+          provenance: {
+            surface: "web",
+            ...(target.actorId ? { actorId: target.actorId } : {}),
+            sessionId: document.sessionId,
+            documentId: document.id,
+            targetRevision: document.revision,
+          },
         },
       ],
     });

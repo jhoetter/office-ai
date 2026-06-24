@@ -35,8 +35,20 @@ export async function POST(
     const bytes = await store.readWorkingBytes(document);
     const now = new Date().toISOString();
     const filename = ensureExtension(document.name, document.format);
+    const commandBasis = document.commandLog
+      .filter((entry) => entry.stage !== "exported")
+      .map((entry) => entry.commandId ?? entry.id)
+      .slice(-20);
     const diagnostics = [
       { level: "info" as const, code: "exported", message: `Exported ${filename} as ${document.format}.` },
+      {
+        level: "info" as const,
+        code: "export-command-basis",
+        message:
+          commandBasis.length > 0
+            ? `Export command basis: ${commandBasis.join(", ")}.`
+            : "Export command basis is empty.",
+      },
     ];
     await store.putDocument({
       id: document.id,
@@ -61,6 +73,8 @@ export async function POST(
       commandLog: [
         ...document.commandLog,
         {
+          schema: "office-ai/audit-log-entry@1",
+          schemaVersion: 1,
           id: `log_${randomUUID()}`,
           operation: "export_document",
           status: "applied",
@@ -68,6 +82,17 @@ export async function POST(
           source: "web",
           recordedAt: now,
           diagnostics,
+          provenance: {
+            surface: "web",
+            sessionId: document.sessionId,
+            documentId: document.id,
+            targetRevision: document.revision,
+          },
+          exportRef: {
+            exportedAt: now,
+            bytes: bytes.byteLength,
+            commandIds: commandBasis,
+          },
         },
       ],
     });

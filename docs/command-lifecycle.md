@@ -117,6 +117,25 @@ available. Persisted pending-change and command-log metadata stores the
 semantic diff so the web session inspector can render a safe summary
 without exposing raw local paths or oversized internal diff payloads.
 
+## Provenance and activity
+
+Persisted command-log entries use `office-ai/audit-log-entry@1`. New
+lifecycle entries record:
+
+- operation, stage, status, source surface and optional actor id;
+- command id where an MCP command envelope exists;
+- provenance target: session id, document id, expected revision and
+  optional anchor;
+- a short argument summary capped for log safety;
+- diagnostics and semantic diff summary when available;
+- export metadata (`exportRef`) for export entries: exported timestamp,
+  byte count and the command ids that formed the export basis.
+
+The MCP `list_activity` tool returns a path-free activity feed over this
+log. Browser session detail pages consume the same store and show source,
+actor, diagnostics, diff summary, target revision and export basis
+without exposing local source or export paths.
+
 ## Current integration
 
 The lifecycle contract is typed and tested in core. The canonical MCP

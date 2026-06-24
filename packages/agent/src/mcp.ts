@@ -995,12 +995,21 @@ function storedCommandLogEntry(args: {
   readonly stage: string;
   readonly status: string;
   readonly diagnostics?: ReadonlyArray<CommandDiagnostic>;
+  readonly target?: CommandEnvelope["target"];
+  readonly exportRef?: {
+    readonly exportedAt: string;
+    readonly bytes: number;
+    readonly commandIds: ReadonlyArray<string>;
+  };
 }): StoredCommandLogEntry {
   const operation = args.mutation?.command.type ?? args.envelope?.operation ?? args.stage;
   const source =
     args.mutation?.command.source ?? (args.envelope ? commandSourceForEnvelope(args.envelope) : "system");
   const actorId = args.mutation?.command.agentId ?? args.envelope?.source.actorId;
+  const target = args.envelope?.target ?? args.target;
   return {
+    schema: "office-ai/audit-log-entry@1",
+    schemaVersion: 1,
     id: `log_${randomUUID()}`,
     ...(args.envelope ? { commandId: args.envelope.id } : {}),
     operation,
@@ -1011,7 +1020,23 @@ function storedCommandLogEntry(args: {
     recordedAt: nowIso(),
     ...(args.mutation?.diff ? { diff: semanticDiffPayload(args.mutation.diff, operation) } : {}),
     ...(args.diagnostics ? { diagnostics: args.diagnostics.map(storedDiagnostic) } : {}),
+    provenance: {
+      surface: args.envelope?.source.surface ?? source,
+      ...(actorId ? { actorId } : {}),
+      ...(target?.sessionId ? { sessionId: target.sessionId } : {}),
+      ...(target?.documentId ? { documentId: target.documentId } : {}),
+      ...(typeof target?.revision === "number" ? { targetRevision: target.revision } : {}),
+      ...(target?.anchor ? { anchor: target.anchor } : {}),
+      ...(args.envelope ? { argumentsSummary: summarizeCommandArguments(args.envelope.arguments) } : {}),
+    },
+    ...(args.exportRef ? { exportRef: args.exportRef } : {}),
   };
+}
+
+function summarizeCommandArguments(args: unknown): string {
+  const text = JSON.stringify(args);
+  if (!text) return "";
+  return text.length <= 240 ? text : `${text.slice(0, 237)}...`;
 }
 
 function storedDiagnostic(diagnostic: CommandDiagnostic | McpDiagnostic): StoredDiagnostic {
@@ -1282,11 +1307,20 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
   }
 
   const pendingCount = pendingMutationsFor(record).length;
+  const commandBasis = await recordCommandBasis(record);
   const diagnostics: CommandDiagnostic[] = [
     {
       level: "info",
       code: "exported",
       message: `Exported ${record.name} as ${record.format}.`,
+    },
+    {
+      level: "info",
+      code: "export-command-basis",
+      message:
+        commandBasis.length > 0
+          ? `Export command basis: ${commandBasis.join(", ")}.`
+          : "Export command basis is empty.",
     },
     ...(pendingCount > 0
       ? [
@@ -1311,9 +1345,29 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
       stage: "exported",
       status: "exported",
       diagnostics,
+      target: {
+        sessionId: record.sessionId,
+        documentId: record.id,
+        revision: revisionFor(record),
+      },
+      exportRef: {
+        exportedAt: exported.exportedAt,
+        bytes: exported.bytes,
+        commandIds: commandBasis,
+      },
     }),
   });
   return { exported, diagnostics };
+}
+
+async function recordCommandBasis(record: DocumentRecord): Promise<string[]> {
+  const stored = await localSessionStore()
+    .getDocument(record.id)
+    .catch(() => null);
+  return (stored?.commandLog ?? [])
+    .filter((entry) => entry.stage !== "exported")
+    .map((entry) => entry.commandId ?? entry.id)
+    .slice(-20);
 }
 
 function registerCommandLifecycleTools(server: McpServer): void {
@@ -1629,6 +1683,60 @@ function registerCommandLifecycleTools(server: McpServer): void {
         });
       } catch (err) {
         return fail(`list_pending_changes failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_activity",
+    {
+      description:
+        "List path-free command activity for local OfficeAI sessions/documents, including provenance, diagnostics and export command basis.",
+      inputSchema: {
+        session_id: z.string().optional().describe("Optional sessionId filter."),
+        document_id: z.string().optional().describe("Optional documentId filter."),
+        limit: z.number().int().positive().max(200).optional().describe("Maximum activity rows to return."),
+      },
+    },
+    async ({ session_id, document_id, limit }) => {
+      try {
+        const documents = document_id
+          ? (await localSessionStore().getDocument(document_id))
+            ? [await localSessionStore().getDocument(document_id)]
+            : []
+          : await localSessionStore().listDocuments(session_id);
+        const activity = documents
+          .filter((document): document is StoredDocumentRecord => Boolean(document))
+          .flatMap((document) =>
+            document.commandLog.map((entry) => ({
+              id: entry.id,
+              documentId: document.id,
+              sessionId: document.sessionId,
+              format: document.format,
+              documentName: document.name,
+              ...(entry.commandId ? { commandId: entry.commandId } : {}),
+              operation: entry.operation,
+              status: entry.status,
+              stage: entry.stage,
+              source: entry.source,
+              ...(entry.actorId ? { actorId: entry.actorId } : {}),
+              recordedAt: entry.recordedAt,
+              ...(entry.provenance ? { provenance: entry.provenance } : {}),
+              ...(entry.exportRef ? { exportRef: entry.exportRef } : {}),
+              hasDiff: entry.diff !== undefined,
+              ...(entry.diff ? { semanticDiff: maybeSemanticDiffPayload(entry.diff, entry.operation) } : {}),
+              diagnostics: entry.diagnostics ?? [],
+            }))
+          )
+          .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))
+          .slice(0, limit ?? 50);
+        return ok({
+          schema: "office-ai/activity-list@1",
+          activity,
+          count: activity.length,
+        });
+      } catch (err) {
+        return fail(`list_activity failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   );
