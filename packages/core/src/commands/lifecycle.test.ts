@@ -8,6 +8,7 @@ import {
   previewCommandEnvelope,
   validateCommandEnvelope,
 } from "./lifecycle.js";
+import { resolveReviewPolicy } from "./review-policy.js";
 
 interface ToySnapshot extends DocumentSnapshot<{ value: number }> {
   format: "docx";
@@ -177,5 +178,56 @@ describe("command lifecycle contract", () => {
     });
     expect(result.diff?.fromRevision).toBe(0);
     expect(result.diff?.toRevision).toBe(0);
+  });
+});
+
+describe("review policy", () => {
+  it("allows explicitly safe auto-apply commands", () => {
+    const policy = resolveReviewPolicy({
+      operation: "docx:insert-text",
+      requestedMode: "auto_apply",
+      requestedRequiresReview: false,
+      actionRequiresReview: false,
+      sourceSurface: "mcp",
+    });
+
+    expect(policy.mode).toBe("auto_apply");
+    expect(policy.requiresReview).toBe(false);
+    expect(policy.diagnostics).toEqual([]);
+  });
+
+  it("downgrades catalogue-required review from auto_apply to pending", () => {
+    const policy = resolveReviewPolicy({
+      operation: "pptx:set-slide-size",
+      requestedMode: "auto_apply",
+      requestedRequiresReview: false,
+      actionRequiresReview: true,
+      sourceSurface: "mcp",
+    });
+
+    expect(policy.mode).toBe("pending");
+    expect(policy.requiresReview).toBe(true);
+    expect(policy.diagnostics.map((d) => d.code)).toEqual([
+      "catalog-review-required",
+      "review-opt-out-ignored",
+      "auto-apply-downgraded-to-pending",
+    ]);
+  });
+
+  it("requires review for destructive operations even without catalogue metadata", () => {
+    const policy = resolveReviewPolicy({
+      operation: "pdf:delete-pages",
+      requestedMode: "auto_apply",
+      requestedRequiresReview: false,
+      sourceSurface: "mcp",
+    });
+
+    expect(policy.mode).toBe("pending");
+    expect(policy.requiresReview).toBe(true);
+    expect(policy.diagnostics.map((d) => d.code)).toEqual([
+      "destructive-command-review-required",
+      "review-opt-out-ignored",
+      "auto-apply-downgraded-to-pending",
+    ]);
   });
 });

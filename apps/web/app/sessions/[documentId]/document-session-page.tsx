@@ -14,6 +14,7 @@ import {
   History,
   Loader2,
   RefreshCw,
+  Undo2,
   X,
 } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
@@ -132,7 +133,7 @@ function DocumentDetail({
   }, [document.documentId, document.name, onRefresh]);
 
   const reviewChange = useCallback(
-    async (mutationId: string, decision: "approve" | "reject") => {
+    async (mutationId: string, decision: "approve" | "reject" | "undo") => {
       setReviewingChangeId(mutationId);
       setReviewError(null);
       try {
@@ -343,7 +344,7 @@ function PendingList({
   readonly entries: ReadonlyArray<WebPendingChangeEntry>;
   readonly locale?: string;
   readonly reviewingChangeId: string | null;
-  readonly onReview: (mutationId: string, decision: "approve" | "reject") => void;
+  readonly onReview: (mutationId: string, decision: "approve" | "reject" | "undo") => void;
 }) {
   const { t } = useTranslator();
   return (
@@ -393,7 +394,23 @@ function PendingList({
                     {t("sessionDetail.rejectChange")}
                   </Button>
                 </div>
-              ) : undefined
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onReview(entry.id, "undo")}
+                    disabled={isBlocked}
+                  >
+                    {isReviewing ? (
+                      <Loader2 size={14} className="mr-1.5 animate-spin" />
+                    ) : (
+                      <Undo2 size={14} className="mr-1.5" />
+                    )}
+                    {t("sessionDetail.undoReview")}
+                  </Button>
+                </div>
+              )
             }
           />
         );

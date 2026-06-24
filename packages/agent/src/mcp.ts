@@ -20,6 +20,7 @@ import { z } from "zod";
 import {
   createCommandEnvelope,
   previewCommandEnvelope,
+  resolveReviewPolicy,
   validateCommandEnvelope,
   type ActionDescriptor,
   type CommandDiagnostic,
@@ -96,6 +97,11 @@ interface ExportRecord {
   readonly path: string;
   readonly bytes: number;
   readonly exportedAt: string;
+}
+
+interface DocumentExportResult {
+  readonly exported: ExportRecord;
+  readonly diagnostics: ReadonlyArray<CommandDiagnostic>;
 }
 
 interface SessionRecord {
@@ -380,6 +386,31 @@ function commandPolicyFrom(input: Record<string, unknown>): Partial<CommandEnvel
   };
 }
 
+function resolveCommandPolicy(args: {
+  readonly operation: string;
+  readonly requested: Partial<CommandEnvelope["policy"]>;
+  readonly action?: Pick<ActionDescriptor, "requiresReview">;
+  readonly surface: CommandEnvelope["source"]["surface"];
+}): {
+  readonly policy: CommandEnvelope["policy"];
+  readonly diagnostics: ReadonlyArray<CommandDiagnostic>;
+} {
+  const resolved = resolveReviewPolicy({
+    operation: args.operation,
+    requestedMode: args.requested.mode,
+    requestedRequiresReview: args.requested.requiresReview,
+    actionRequiresReview: args.action?.requiresReview,
+    sourceSurface: args.surface,
+  });
+  return {
+    policy: {
+      mode: resolved.mode,
+      requiresReview: resolved.requiresReview,
+    },
+    diagnostics: resolved.diagnostics,
+  };
+}
+
 function commandSourceFrom(input: Record<string, unknown>): CommandEnvelope["source"] {
   const actorId = stringField(input, "actor_id") ?? stringField(input, "actorId");
   return {
@@ -439,6 +470,7 @@ function resolveCommandOperation(
 function commandEnvelopeFromInput(input: Record<string, unknown>): {
   readonly envelope: CommandEnvelope;
   readonly record: DocumentRecord;
+  readonly policyDiagnostics: ReadonlyArray<CommandDiagnostic>;
   readonly action?: Pick<
     ActionDescriptor,
     "id" | "label" | "requiresReview" | "supportsDiff" | "supportsDryRun"
@@ -454,7 +486,13 @@ function commandEnvelopeFromInput(input: Record<string, unknown>): {
       ? target.revision
       : revisionFor(record);
   const requestedFormat = stringField(input, "format") as OfficeFormat | undefined;
-  const mode = commandPolicyFrom(input).mode;
+  const source = commandSourceFrom(input);
+  const policy = resolveCommandPolicy({
+    operation: resolved.operation,
+    requested: commandPolicyFrom(input),
+    action: resolved.action,
+    surface: source.surface,
+  });
 
   const envelope = createCommandEnvelope({
     id: stringField(input, "command_id") ?? stringField(input, "commandId"),
@@ -467,17 +505,16 @@ function commandEnvelopeFromInput(input: Record<string, unknown>): {
       revision,
       ...(target.anchor !== undefined ? { anchor: target.anchor } : {}),
     },
-    source: commandSourceFrom(input),
-    policy: {
-      ...commandPolicyFrom(input),
-      ...(resolved.action?.requiresReview !== undefined
-        ? { requiresReview: resolved.action.requiresReview }
-        : {}),
-      ...(mode ? { mode } : {}),
-    },
+    source,
+    policy: policy.policy,
   });
 
-  return { envelope, record, ...(resolved.action ? { action: resolved.action } : {}) };
+  return {
+    envelope,
+    record,
+    policyDiagnostics: policy.diagnostics,
+    ...(resolved.action ? { action: resolved.action } : {}),
+  };
 }
 
 function commandEnvelopeFromRaw(raw: Record<string, unknown>): CommandEnvelope {
@@ -500,6 +537,23 @@ function commandEnvelopeFromRaw(raw: Record<string, unknown>): CommandEnvelope {
   }
   const mode = policyRaw.mode;
   const surface = sourceRaw.surface;
+  const sourceSurface =
+    surface === "web" || surface === "cli" || surface === "internal" || surface === "mcp" ? surface : "mcp";
+  const requestedMode = mode === "dry_run" || mode === "auto_apply" || mode === "pending" ? mode : undefined;
+  const requestedRequiresReview =
+    typeof policyRaw.requiresReview === "boolean"
+      ? policyRaw.requiresReview
+      : typeof policyRaw.requires_review === "boolean"
+        ? policyRaw.requires_review
+        : undefined;
+  const policy = resolveCommandPolicy({
+    operation,
+    requested: {
+      ...(requestedMode ? { mode: requestedMode } : {}),
+      ...(requestedRequiresReview !== undefined ? { requiresReview: requestedRequiresReview } : {}),
+    },
+    surface: sourceSurface,
+  }).policy;
   return {
     id,
     format,
@@ -512,21 +566,10 @@ function commandEnvelopeFromRaw(raw: Record<string, unknown>): CommandEnvelope {
       ...(targetRaw.anchor !== undefined ? { anchor: targetRaw.anchor } : {}),
     },
     source: {
-      surface:
-        surface === "web" || surface === "cli" || surface === "internal" || surface === "mcp"
-          ? surface
-          : "mcp",
+      surface: sourceSurface,
       ...(typeof sourceRaw.actorId === "string" ? { actorId: sourceRaw.actorId } : {}),
     },
-    policy: {
-      mode: mode === "dry_run" || mode === "auto_apply" || mode === "pending" ? mode : "pending",
-      requiresReview:
-        typeof policyRaw.requiresReview === "boolean"
-          ? policyRaw.requiresReview
-          : typeof policyRaw.requires_review === "boolean"
-            ? policyRaw.requires_review
-            : true,
-    },
+    policy,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
   };
 }
@@ -534,17 +577,26 @@ function commandEnvelopeFromRaw(raw: Record<string, unknown>): CommandEnvelope {
 async function resolveCommandReference(input: Record<string, unknown>): Promise<{
   readonly envelope: CommandEnvelope;
   readonly record: DocumentRecord;
+  readonly policyDiagnostics: ReadonlyArray<CommandDiagnostic>;
 }> {
   const commandId = stringField(input, "command_id") ?? stringField(input, "commandId");
   if (commandId) {
     const envelope = plannedCommands.get(commandId);
     if (!envelope) throw new Error(`Unknown command_id "${commandId}". Call plan_command first.`);
-    return { envelope, record: await ensureDocumentLoaded(envelope.target.documentId) };
+    return {
+      envelope,
+      record: await ensureDocumentLoaded(envelope.target.documentId),
+      policyDiagnostics: [],
+    };
   }
 
   if (isRecord(input.command)) {
     const envelope = commandEnvelopeFromRaw(input.command);
-    return { envelope, record: await ensureDocumentLoaded(envelope.target.documentId) };
+    return {
+      envelope,
+      record: await ensureDocumentLoaded(envelope.target.documentId),
+      policyDiagnostics: [],
+    };
   }
 
   const documentId = stringField(input, "document_id") ?? stringField(input, "documentId");
@@ -552,8 +604,13 @@ async function resolveCommandReference(input: Record<string, unknown>): Promise<
   return commandEnvelopeFromInput(input);
 }
 
-function commandDiagnostics(record: DocumentRecord, envelope: CommandEnvelope): CommandDiagnostic[] {
+function commandDiagnostics(
+  record: DocumentRecord,
+  envelope: CommandEnvelope,
+  policyDiagnostics: ReadonlyArray<CommandDiagnostic> = []
+): CommandDiagnostic[] {
   const diagnostics: CommandDiagnostic[] = [
+    ...policyDiagnostics,
     ...validateCommandEnvelope(envelope, snapshotFor(record)).diagnostics,
     ...anchorDiagnostics(record, envelope.target.anchor),
   ];
@@ -1183,49 +1240,45 @@ function projectionFor(
   }
 }
 
-async function exportDocument(record: DocumentRecord, outPath?: string): Promise<ExportRecord> {
+async function exportDocument(record: DocumentRecord, outPath?: string): Promise<DocumentExportResult> {
   const target = outPath ? resolve(outPath) : record.sourcePath;
   if (!target) {
     throw new Error("export_document requires out_path for documents created without a source path.");
   }
 
-  let bytes: Uint8Array | Buffer;
-  switch (record.format) {
-    case "docx": {
-      const agent = lookupAgent(record.id);
-      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
-      bytes = Buffer.from(await agent.exportFile());
-      break;
-    }
-    case "xlsx": {
-      const agent = lookupXlsxAgent(record.id);
-      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
-      bytes = Buffer.from(await agent.exportFile());
-      break;
-    }
-    case "pptx": {
-      const agent = lookupPptxAgent(record.id);
-      agent.getPendingMutations().forEach((m) => agent.approveMutation(m.id));
-      bytes = Buffer.from(await agent.exportFile());
-      break;
-    }
-    case "pdf":
-      bytes = await lookupPdfSession(record.id).agent.exportFile();
-      break;
-  }
+  const pendingCount = pendingMutationsFor(record).length;
+  const diagnostics: CommandDiagnostic[] = [
+    {
+      level: "info",
+      code: "exported",
+      message: `Exported ${record.name} as ${record.format}.`,
+    },
+    ...(pendingCount > 0
+      ? [
+          {
+            level: "warning" as const,
+            code: "unreviewed-pending-export",
+            message: `Export includes ${pendingCount} unreviewed pending change(s). Approve or reject them before final delivery.`,
+          },
+        ]
+      : []),
+  ];
+  const bytes = Buffer.from(await currentDocumentBytes(record));
 
   await writeFile(target, bytes);
   const exported: ExportRecord = { path: target, bytes: bytes.byteLength, exportedAt: nowIso() };
   record.exportHistory.push(exported);
   record.updatedAt = exported.exportedAt;
+  record.diagnostics = diagnostics;
   touchSession(getOrCreateSession(record.sessionId));
   await persistCurrentDocument(record, {
     commandLogEntry: storedCommandLogEntry({
       stage: "exported",
       status: "exported",
+      diagnostics,
     }),
   });
-  return exported;
+  return { exported, diagnostics };
 }
 
 function registerCommandLifecycleTools(server: McpServer): void {
@@ -1276,8 +1329,8 @@ function registerCommandLifecycleTools(server: McpServer): void {
       try {
         const documentId = stringField(input, "document_id") ?? stringField(input, "documentId");
         if (documentId) await ensureDocumentLoaded(documentId);
-        const { envelope, record, action } = commandEnvelopeFromInput(input);
-        const diagnostics = commandDiagnostics(record, envelope);
+        const { envelope, record, action, policyDiagnostics } = commandEnvelopeFromInput(input);
+        const diagnostics = commandDiagnostics(record, envelope, policyDiagnostics);
         plannedCommands.set(envelope.id, envelope);
         touchDocument(record, diagnostics);
         await persistDocumentRecord(record, {
@@ -1313,8 +1366,8 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        const { envelope, record } = await resolveCommandReference(input);
-        const diagnostics = commandDiagnostics(record, envelope);
+        const { envelope, record, policyDiagnostics } = await resolveCommandReference(input);
+        const diagnostics = commandDiagnostics(record, envelope, policyDiagnostics);
         if (hasBlockingCommandDiagnostics(diagnostics)) {
           touchDocument(record, diagnostics);
           await persistDocumentRecord(record, {
@@ -1382,8 +1435,8 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        const { envelope, record } = await resolveCommandReference(input);
-        const diagnostics = commandDiagnostics(record, envelope);
+        const { envelope, record, policyDiagnostics } = await resolveCommandReference(input);
+        const diagnostics = commandDiagnostics(record, envelope, policyDiagnostics);
         if (envelope.policy.mode === "dry_run") {
           diagnostics.push({
             level: "error",
@@ -1416,25 +1469,27 @@ function registerCommandLifecycleTools(server: McpServer): void {
         if (envelope.policy.mode === "auto_apply" && mutation.status === "pending") {
           approveMutationFor(record, mutation.id);
         }
-        const finalDiagnostics: CommandDiagnostic[] =
-          mutation.status === "rejected"
+        const finalDiagnostics: CommandDiagnostic[] = [
+          ...diagnostics,
+          ...(mutation.status === "rejected"
             ? [
                 {
-                  level: "error",
+                  level: "error" as const,
                   code: mutation.rejection?.code ?? "command-rejected",
                   message: mutation.rejection?.message ?? `${envelope.operation} was rejected.`,
                 },
               ]
             : [
                 {
-                  level: "info",
+                  level: "info" as const,
                   code: mutation.status === "pending" ? "command-pending" : "command-applied",
                   message:
                     mutation.status === "pending"
                       ? `${envelope.operation} is pending review.`
                       : `${envelope.operation} was applied.`,
                 },
-              ];
+              ]),
+        ];
         touchDocument(record, finalDiagnostics);
         await persistCurrentDocument(record, {
           commandLogEntry: storedCommandLogEntry({
@@ -1915,11 +1970,12 @@ function registerSessionDocumentTools(server: McpServer): void {
     async ({ document_id, out_path }) => {
       try {
         const record = await ensureDocumentLoaded(document_id);
-        const exported = await exportDocument(record, out_path);
+        const { exported, diagnostics } = await exportDocument(record, out_path);
         return ok({
           schema: "office-ai/export-document@1",
           document: documentEnvelope(record),
           exported,
+          diagnostics,
           dataDir: localSessionStore().dataDir,
           nextActions: ["get_document", "get_document_projection"],
         });

@@ -54,13 +54,20 @@ session.
 ### `apply_command`
 
 Dispatches the planned command through the format agent. Policy controls
-review state:
+review state, after the server normalizes it through the review policy:
 
-| Policy mode  | Behavior                                                                 |
-| ------------ | ------------------------------------------------------------------------ |
-| `dry_run`    | rejected by apply; use `preview_command` instead.                        |
-| `pending`    | stages an agent-authored mutation for review.                            |
-| `auto_apply` | applies and approves immediately when the command produces pending work. |
+| Policy mode  | Behavior                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| `dry_run`    | rejected by apply; use `preview_command` instead.                                            |
+| `pending`    | stages an agent-authored mutation for review.                                                |
+| `auto_apply` | applies and approves immediately only when the action catalogue and operation risk allow it. |
+
+If the catalogue marks an action `requiresReview`, or the operation is
+destructive (`delete`, `remove`, `reject`, `reset`, `flatten`, `clear`,
+etc.), requested `auto_apply` is downgraded to `pending`. The response
+diagnostics include `catalog-review-required` or
+`destructive-command-review-required` plus
+`auto-apply-downgraded-to-pending`.
 
 ### `list_pending_changes`
 
@@ -82,6 +89,13 @@ of silently accepting or rejecting a mutation it cannot replay.
 ### `undo_command`
 
 Undoes the most recent approved mutation for one canonical document.
+
+### `export_document`
+
+Exports the current working document. It does **not** silently approve
+pending changes. If pending mutations remain, the response and command
+log include `unreviewed-pending-export`; approve or reject those changes
+before final delivery.
 
 ## Command envelope
 
@@ -134,6 +148,9 @@ Every command lifecycle response includes diagnostics. Levels are:
 - `error`: blocks preview/apply or reports command rejection.
 - `destructive`: reserved for commands that require explicit destructive
   review.
+
+Policy downgrade diagnostics are warnings, not hard errors, so callers
+can continue through preview/apply while the command remains pending.
 
 ## Persistence
 

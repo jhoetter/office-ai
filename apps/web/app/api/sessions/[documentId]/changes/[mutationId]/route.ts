@@ -14,7 +14,7 @@ import { toWebDocumentDetailEntry, toWebSessionEntry } from "@/lib/sessions/web-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ReviewDecision = "approved" | "rejected";
+type ReviewDecision = "approved" | "rejected" | "pending";
 
 export async function POST(
   request: Request,
@@ -29,7 +29,10 @@ export async function POST(
         : {};
     const decision = reviewDecision(body.decision);
     if (!decision) {
-      return badRequest("invalid-review-decision", "decision must be approve, approved, reject or rejected.");
+      return badRequest(
+        "invalid-review-decision",
+        "decision must be approve, approved, reject, rejected, undo or pending."
+      );
     }
 
     const store = createLocalSessionStore();
@@ -55,12 +58,22 @@ export async function POST(
         { status: 404 }
       );
     }
-    if (target.status !== "pending") {
+    if (decision !== "pending" && target.status !== "pending") {
       return NextResponse.json(
         {
           schema: "office-ai/web-sessions-error@1",
           code: "change-already-reviewed",
           message: `Change ${mutationId} is already ${target.status}.`,
+        },
+        { status: 409 }
+      );
+    }
+    if (decision === "pending" && target.status === "pending") {
+      return NextResponse.json(
+        {
+          schema: "office-ai/web-sessions-error@1",
+          code: "change-review-not-reviewed",
+          message: `Change ${mutationId} is already pending review.`,
         },
         { status: 409 }
       );
@@ -71,22 +84,31 @@ export async function POST(
     const diagnostics = [
       {
         level: "info" as const,
-        code: decision === "approved" ? "change-approved" : "change-rejected",
+        code:
+          decision === "approved"
+            ? "change-approved"
+            : decision === "rejected"
+              ? "change-rejected"
+              : "change-review-undone",
         message:
           decision === "approved"
             ? `Approved change ${mutationId}.`
-            : reason
-              ? `Rejected change ${mutationId}: ${reason}`
-              : `Rejected change ${mutationId}.`,
+            : decision === "rejected"
+              ? reason
+                ? `Rejected change ${mutationId}: ${reason}`
+                : `Rejected change ${mutationId}.`
+              : `Moved change ${mutationId} back to pending review.`,
       },
     ];
     const reviewed = {
       ...target,
       status: decision,
-      ...(decision === "rejected"
-        ? { rejection: { code: "human-rejected", message: reason ?? "Rejected in web review." } }
-        : {}),
     };
+    if (decision === "rejected") {
+      reviewed.rejection = { code: "human-rejected", message: reason ?? "Rejected in web review." };
+    } else {
+      delete reviewed.rejection;
+    }
     const updatedDocument = await store.putDocument({
       id: document.id,
       sessionId: document.sessionId,
@@ -106,7 +128,7 @@ export async function POST(
           id: `log_${randomUUID()}`,
           operation: target.operation,
           status: decision,
-          stage: "reviewed",
+          stage: decision === "pending" ? "review-undone" : "reviewed",
           source: "web",
           ...(target.actorId ? { actorId: target.actorId } : {}),
           recordedAt: now,
@@ -160,5 +182,6 @@ function badRequest(code: string, message: string): NextResponse {
 function reviewDecision(value: unknown): ReviewDecision | null {
   if (value === "approve" || value === "approved") return "approved";
   if (value === "reject" || value === "rejected") return "rejected";
+  if (value === "undo" || value === "pending") return "pending";
   return null;
 }

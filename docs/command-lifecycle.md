@@ -16,6 +16,7 @@ preview it without side effects, then apply or queue it through the bus.
 - `CommandPolicyMode`
 - `CommandDiagnostic`
 - `CommandLifecycleResult`
+- `resolveReviewPolicy`
 
 Every envelope carries:
 
@@ -59,7 +60,16 @@ The current helpers implement the first hard gate:
 - `policy.mode: "dry_run"` cannot be applied. It must use preview.
 - `policy.mode: "pending"` queues via the bus as an agent mutation.
 - `policy.mode: "auto_apply"` dispatches through the bus and approves an
-  agent-authored pending mutation immediately.
+  agent-authored pending mutation immediately only when the review
+  policy allows it.
+- `resolveReviewPolicy` is the safety gate before envelope creation:
+  action-catalogue `requiresReview` entries and destructive operations
+  such as delete/remove/reset/flatten/clear are forced to `pending`
+  even if a caller requested `auto_apply`.
+- Export never silently approves pending changes. If a document still
+  has unreviewed pending mutations, `export_document` writes the
+  artifact from the working state and emits an
+  `unreviewed-pending-export` warning.
 - Handler failures, including invalid anchors surfaced as `CommandError`,
   return structured diagnostics instead of silent partial writes.
 
@@ -80,6 +90,11 @@ at least:
 - `dry-run-apply`
 - handler `CommandError.code` values such as `invalid-anchor`
 - `handler-threw` for non-`CommandError` exceptions
+- `catalog-review-required`
+- `destructive-command-review-required`
+- `auto-apply-downgraded-to-pending`
+- `unreviewed-pending-export`
+- `change-review-undone`
 
 ## Current integration
 
@@ -91,5 +106,8 @@ PPTX and PDF.
 
 Existing format-specific MCP and CLI tools remain compatibility
 wrappers; new agent workflows should prefer the canonical lifecycle
-tools. The remaining integration step is the web pending-changes panel
-and session browser consuming the same envelope and review state.
+tools. The web session browser consumes the same persisted pending
+change metadata for human review. Its persisted review surface can
+approve/reject pending metadata and undo a review decision back to
+pending; live document replay still requires a live pending mutation
+stack.

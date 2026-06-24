@@ -245,9 +245,11 @@ describe("OfficeAI MCP server", () => {
         anchor: { kind: "range", sheet: "Sheet1", range: "A1:A1" },
       },
       source: { surface: "mcp", actorId: "mcp-test" },
-      policy: { mode: "auto_apply", requiresReview: true },
+      policy: { mode: "pending", requiresReview: true },
     });
-    expect((planned.diagnostics as Array<{ level: string; code: string }>).length).toBeGreaterThan(0);
+    expect((planned.diagnostics as Array<{ level: string; code: string }>).map((d) => d.code)).toEqual(
+      expect.arrayContaining(["catalog-review-required", "auto-apply-downgraded-to-pending"])
+    );
     expect((planned.diagnostics as Array<{ level: string }>).every((d) => d.level)).toBe(true);
   });
 
@@ -278,7 +280,6 @@ describe("OfficeAI MCP server", () => {
       },
       {
         format: "pdf",
-        actionId: "pdf.rotate-pages",
         operation: "pdf:rotate-pages",
         args: { pages: [1], delta: 90 },
         anchor: { kind: "page_region", page: 1, rect: { x: 0, y: 0, width: 10, height: 10 } },
@@ -396,6 +397,136 @@ describe("OfficeAI MCP server", () => {
       await client.callTool({ name: "list_pending_changes", arguments: { document_id: document.documentId } })
     );
     expect(pendingAfter.pending).toEqual([]);
+  });
+
+  it("downgrades review-required actions to pending and warns when exporting unreviewed changes", async () => {
+    const client = await makeClient();
+    const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-policy-"));
+    const created = structured(
+      await client.callTool({ name: "create_document", arguments: { format: "pdf", name: "review.pdf" } })
+    );
+    const document = created.document as { documentId: string };
+    const planned = structured(
+      await client.callTool({
+        name: "plan_command",
+        arguments: {
+          document_id: document.documentId,
+          action_id: "pdf.rotate-pages",
+          arguments: { pages: [1], delta: 90 },
+          target: { anchor: { kind: "page_region", page: 1, rect: { x: 0, y: 0, width: 10, height: 10 } } },
+          policy: { mode: "auto_apply", requires_review: false },
+        },
+      })
+    );
+
+    expect(planned.ok).toBe(true);
+    expect(planned.command).toMatchObject({
+      operation: "pdf:rotate-pages",
+      policy: { mode: "pending", requiresReview: true },
+    });
+    expect((planned.diagnostics as Array<{ code: string }>).map((d) => d.code)).toEqual(
+      expect.arrayContaining([
+        "catalog-review-required",
+        "review-opt-out-ignored",
+        "auto-apply-downgraded-to-pending",
+      ])
+    );
+
+    const applied = structured(
+      await client.callTool({ name: "apply_command", arguments: { command_id: planned.commandId } })
+    );
+    expect(applied.stage).toBe("queued");
+    expect((applied.mutation as { status: string }).status).toBe("pending");
+
+    const exported = structured(
+      await client.callTool({
+        name: "export_document",
+        arguments: { document_id: document.documentId, out_path: join(tmp, "review.pdf") },
+      })
+    );
+    expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+    expect((exported.diagnostics as Array<{ code: string }>).map((d) => d.code)).toContain(
+      "unreviewed-pending-export"
+    );
+
+    const pendingAfterExport = structured(
+      await client.callTool({ name: "list_pending_changes", arguments: { document_id: document.documentId } })
+    );
+    expect(pendingAfterExport.pending as unknown[]).toHaveLength(1);
+  });
+
+  it("does not silently auto-apply destructive direct operations", async () => {
+    const client = await makeClient();
+    const imported = structured(
+      await client.callTool({
+        name: "import_document",
+        arguments: {
+          path: fixturePath(requiredMatrixFixture("pdf", { id: "pdf.synthetic.simple-text-3page" })),
+        },
+      })
+    );
+    const document = imported.document as { documentId: string };
+
+    const applied = structured(
+      await client.callTool({
+        name: "apply_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "pdf:delete-pages",
+          arguments: { pages: [1] },
+          target: { anchor: { kind: "page_region", page: 1, rect: { x: 0, y: 0, width: 10, height: 10 } } },
+          policy: { mode: "auto_apply", requires_review: false },
+        },
+      })
+    );
+
+    expect(applied.ok).toBe(true);
+    expect(applied.stage).toBe("queued");
+    expect((applied.mutation as { status: string }).status).toBe("pending");
+    expect((applied.command as { policy: { mode: string; requiresReview: boolean } }).policy).toEqual({
+      mode: "pending",
+      requiresReview: true,
+    });
+    expect((applied.diagnostics as Array<{ code: string }>).map((d) => d.code)).toEqual(
+      expect.arrayContaining([
+        "destructive-command-review-required",
+        "review-opt-out-ignored",
+        "auto-apply-downgraded-to-pending",
+      ])
+    );
+  });
+
+  it("supports canonical undo for approved commands", async () => {
+    const client = await makeClient();
+    const created = structured(
+      await client.callTool({ name: "create_document", arguments: { format: "xlsx", name: "undo.xlsx" } })
+    );
+    const document = created.document as { documentId: string };
+    const applied = structured(
+      await client.callTool({
+        name: "apply_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "xlsx:set-cell-value",
+          arguments: { sheet: "Sheet1", ref: "A1", value: "undo me" },
+          target: { anchor: { kind: "range", sheet: "Sheet1", range: "A1:A1" } },
+          policy: { mode: "auto_apply", requires_review: false },
+        },
+      })
+    );
+    expect(applied.stage).toBe("applied");
+
+    const undone = structured(
+      await client.callTool({ name: "undo_command", arguments: { document_id: document.documentId } })
+    );
+    expect(undone.didUndo).toBe(true);
+    expect((undone.diagnostics as Array<{ code: string }>).map((d) => d.code)).toContain("undo-applied");
+
+    const empty = structured(
+      await client.callTool({ name: "undo_command", arguments: { document_id: document.documentId } })
+    );
+    expect(empty.didUndo).toBe(false);
+    expect((empty.diagnostics as Array<{ code: string }>).map((d) => d.code)).toContain("undo-empty");
   });
 
   it("reloads persisted canonical documents after MCP server restart", async () => {

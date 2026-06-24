@@ -27,3 +27,9 @@ export {
   type CreateCommandEnvelopeInput,
   type PreviewCommandOptions,
 } from "./lifecycle.js";
+export {
+  operationLooksDestructive,
+  resolveReviewPolicy,
+  type ReviewPolicyInput,
+  type ReviewPolicyResolution,
+} from "./review-policy.js";

@@ -355,6 +355,79 @@ describe("POST /api/sessions/:documentId/changes/:mutationId", () => {
     expect(payload.code).toBe("change-already-reviewed");
     expect(payload.message).toContain("approved");
   });
+
+  it("undoes a persisted web review decision back to pending", async () => {
+    const store = createLocalSessionStore();
+    const workingBytes = await seedReviewDocument(store);
+
+    const rejected = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "reject", reason: "wrong customer name" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    expect(rejected.status).toBe(200);
+
+    const undone = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "undo" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    expect(undone.status).toBe(200);
+    const payload = (await undone.json()) as {
+      decision: string;
+      document: {
+        pendingChangeCount: number;
+        pendingChanges: Array<{ status: string; rejection?: { code: string; message: string } }>;
+        commandLog: Array<{ status: string; stage: string }>;
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+    };
+
+    expect(payload.decision).toBe("pending");
+    expect(payload.document.pendingChangeCount).toBe(1);
+    expect(payload.document.pendingChanges[0]).toMatchObject({ status: "pending" });
+    expect(payload.document.pendingChanges[0]?.rejection).toBeUndefined();
+    expect(payload.document.commandLog.at(-1)).toMatchObject({
+      status: "pending",
+      stage: "review-undone",
+    });
+    expect(payload.document.diagnostics.at(-1)).toMatchObject({
+      code: "change-review-undone",
+      message: "Moved change mut_1 back to pending review.",
+    });
+
+    const stored = await store.getDocument("doc_review");
+    if (!stored) throw new Error("Expected review fixture to be persisted.");
+    expect(stored.pendingChanges[0]).toMatchObject({ status: "pending" });
+    expect(stored.pendingChanges[0]?.rejection).toBeUndefined();
+    expect(Buffer.from(await store.readWorkingBytes(stored)).toString("utf8")).toBe(
+      workingBytes.toString("utf8")
+    );
+  });
+
+  it("refuses to undo a change that is already pending", async () => {
+    const store = createLocalSessionStore();
+    await seedReviewDocument(store);
+
+    const response = await REVIEW_CHANGE(
+      new Request("http://localhost/api/sessions/doc_review/changes/mut_1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "undo" }),
+      }),
+      { params: Promise.resolve({ documentId: "doc_review", mutationId: "mut_1" }) }
+    );
+    const payload = (await response.json()) as { code: string; message: string };
+    expect(response.status).toBe(409);
+    expect(payload.code).toBe("change-review-not-reviewed");
+    expect(payload.message).toContain("pending");
+  });
 });
 
 describe("POST /api/sessions/import", () => {

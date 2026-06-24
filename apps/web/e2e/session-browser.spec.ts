@@ -203,16 +203,31 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   expect(download.suggestedFilename()).toBe("proposal.docx");
 });
 
-test("document detail rejects a pending change and keeps the rejection visible", async ({ page }) => {
-  let changeRejected = false;
+test("document detail rejects a pending change and can undo the review decision", async ({ page }) => {
+  let reviewState: "pending" | "rejected" = "pending";
+  let reviewUndone = false;
   await page.route("**/api/sessions/doc_reject/changes/mut_reject", async (route) => {
     expect(route.request().method()).toBe("POST");
-    expect(route.request().postDataJSON()).toEqual({ decision: "reject" });
-    changeRejected = true;
+    if (reviewState === "pending") {
+      expect(route.request().postDataJSON()).toEqual({ decision: "reject" });
+      reviewState = "rejected";
+      await route.fulfill({
+        json: {
+          schema: "office-ai/web-change-review@1",
+          decision: "rejected",
+          mutationId: "mut_reject",
+        },
+      });
+      return;
+    }
+
+    expect(route.request().postDataJSON()).toEqual({ decision: "undo" });
+    reviewState = "pending";
+    reviewUndone = true;
     await route.fulfill({
       json: {
         schema: "office-ai/web-change-review@1",
-        decision: "rejected",
+        decision: "pending",
         mutationId: "mut_reject",
       },
     });
@@ -237,25 +252,34 @@ test("document detail rejects a pending change and keeps the rejection visible",
           createdAt: "2026-06-24T14:00:00.000Z",
           updatedAt: "2026-06-24T14:00:00.000Z",
           revision: 2,
-          diagnostics: changeRejected
-            ? [{ level: "info", code: "change-rejected", message: "Rejected change mut_reject." }]
-            : [],
+          diagnostics:
+            reviewState === "rejected"
+              ? [{ level: "info", code: "change-rejected", message: "Rejected change mut_reject." }]
+              : reviewUndone
+                ? [
+                    {
+                      level: "info",
+                      code: "change-review-undone",
+                      message: "Moved change mut_reject back to pending review.",
+                    },
+                  ]
+                : [],
           exportCount: 0,
-          pendingChangeCount: changeRejected ? 0 : 1,
-          commandLogCount: changeRejected ? 2 : 1,
+          pendingChangeCount: reviewState === "pending" ? 1 : 0,
+          commandLogCount: reviewUndone ? 3 : reviewState === "rejected" ? 2 : 1,
           artifacts: { hasOriginal: true, hasWorking: true },
           exports: [],
           pendingChanges: [
             {
               id: "mut_reject",
               operation: "docx.replace-text",
-              status: changeRejected ? "rejected" : "pending",
+              status: reviewState,
               source: "mcp",
               actorId: "assistant",
               timestamp: 1782309600000,
               hasDiff: true,
               diffSummary: "Structured diff available",
-              ...(changeRejected
+              ...(reviewState === "rejected"
                 ? { rejection: { code: "human-rejected", message: "Rejected in web review." } }
                 : {}),
             },
@@ -272,7 +296,7 @@ test("document detail rejects a pending change and keeps the rejection visible",
               hasDiff: true,
               diagnostics: [],
             },
-            ...(changeRejected
+            ...(reviewState === "rejected" || reviewUndone
               ? [
                   {
                     id: "log_rejected",
@@ -285,6 +309,27 @@ test("document detail rejects a pending change and keeps the rejection visible",
                     hasDiff: false,
                     diagnostics: [
                       { level: "info", code: "change-rejected", message: "Rejected change mut_reject." },
+                    ],
+                  },
+                ]
+              : []),
+            ...(reviewUndone
+              ? [
+                  {
+                    id: "log_undone",
+                    operation: "docx.replace-text",
+                    status: "pending",
+                    stage: "review-undone",
+                    source: "web",
+                    actorId: "assistant",
+                    recordedAt: "2026-06-24T14:02:00.000Z",
+                    hasDiff: false,
+                    diagnostics: [
+                      {
+                        level: "info",
+                        code: "change-review-undone",
+                        message: "Moved change mut_reject back to pending review.",
+                      },
                     ],
                   },
                 ]
@@ -305,7 +350,16 @@ test("document detail rejects a pending change and keeps the rejection visible",
   await expect(page.getByText("change-rejected")).toBeVisible();
   await expect(page.getByText("Rejection: Rejected in web review.")).toBeVisible();
   await expect(page.getByText("rejected", { exact: true }).first()).toBeVisible();
-  expect(changeRejected).toBe(true);
+  expect(reviewState).toBe("rejected");
+
+  await page.getByRole("button", { name: "Undo review" }).click();
+
+  await expect(page.getByText("change-review-undone")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reject" })).toBeVisible();
+  await expect(page.getByText("pending", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Rejection: Rejected in web review.")).toHaveCount(0);
+  expect(reviewState).toBe("pending");
+  expect(reviewUndone).toBe(true);
 });
 
 test("home page imports an uploaded document into the local workspace", async ({ page }) => {

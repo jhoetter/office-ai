@@ -170,6 +170,7 @@
     "noDiff": "kein Diff",
     "approveChange": "Freigeben",
     "rejectChange": "Ablehnen",
+    "undoReview": "Review zurücknehmen",
     "rejection": "Ablehnung"
   },
   "shell": {
