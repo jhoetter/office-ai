@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalSessionStore } from "@officeai/agent/session-store";
+import { GET as GET_DOCUMENT } from "./[documentId]/route";
+import { POST as IMPORT_DOCUMENT } from "./import/route";
 import { GET } from "./route";
 
 let previousOfficeAiDataDir: string | undefined;
@@ -121,5 +123,161 @@ describe("GET /api/sessions", () => {
     expect(response.status).toBe(409);
     expect(payload.code).toBe("corrupt-session-store");
     expect(payload.message).toContain("Corrupt metadata file");
+  });
+});
+
+describe("GET /api/sessions/:documentId", () => {
+  it("returns path-free document detail metadata from the local data-dir", async () => {
+    const store = createLocalSessionStore();
+    await store.putSession({
+      id: "session_1",
+      title: "Detail visible",
+      createdAt: "2026-06-24T10:00:00.000Z",
+      updatedAt: "2026-06-24T10:05:00.000Z",
+      documentIds: ["doc_1"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_1",
+        sessionId: "session_1",
+        format: "docx",
+        name: "proposal.docx",
+        status: "ready",
+        sourcePath: "/very/local/proposal.docx",
+        createdAt: "2026-06-24T10:00:00.000Z",
+        updatedAt: "2026-06-24T10:05:00.000Z",
+        revision: 7,
+        diagnostics: [{ level: "warning", code: "needs-review", message: "Layout needs review." }],
+        exportHistory: [
+          { path: "/very/local/proposal-export.docx", bytes: 4096, exportedAt: "2026-06-24T10:05:00.000Z" },
+        ],
+        pendingChanges: [
+          {
+            id: "mut_1",
+            operation: "docx.replace-text",
+            status: "pending",
+            source: "agent",
+            actorId: "assistant",
+            timestamp: 1782295440000,
+            diff: { path: "/very/local/diff.json", secret: "raw-diff" },
+          },
+        ],
+        commandLog: [
+          {
+            id: "log_1",
+            commandId: "cmd_1",
+            operation: "docx.replace-text",
+            status: "pending",
+            stage: "previewed",
+            source: "agent",
+            actorId: "assistant",
+            recordedAt: "2026-06-24T10:04:00.000Z",
+            diff: { path: "/very/local/command-diff.json", secret: "raw-command-diff" },
+            diagnostics: [{ level: "info", code: "preview-ready", message: "Preview is ready." }],
+          },
+        ],
+      },
+      { originalBytes: Buffer.from("docx-original"), workingBytes: Buffer.from("docx-working") }
+    );
+
+    const response = await GET_DOCUMENT(new Request("http://localhost/api/sessions/doc_1"), {
+      params: Promise.resolve({ documentId: "doc_1" }),
+    });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      schema: string;
+      session: { sessionId: string; title: string };
+      document: {
+        documentId: string;
+        exportCount: number;
+        exports: Array<{ bytes: number; exportedAt: string }>;
+        pendingChanges: Array<{ operation: string; hasDiff: boolean }>;
+        commandLog: Array<{ stage: string; hasDiff: boolean; diagnostics: Array<{ code: string }> }>;
+      };
+    };
+
+    expect(payload.schema).toBe("office-ai/web-document@1");
+    expect(payload.session).toMatchObject({ sessionId: "session_1", title: "Detail visible" });
+    expect(payload.document).toMatchObject({
+      documentId: "doc_1",
+      exportCount: 1,
+      exports: [{ bytes: 4096, exportedAt: "2026-06-24T10:05:00.000Z" }],
+      pendingChanges: [{ operation: "docx.replace-text", hasDiff: true }],
+      commandLog: [{ stage: "previewed", hasDiff: true, diagnostics: [{ code: "preview-ready" }] }],
+    });
+    expect(JSON.stringify(payload)).not.toContain("/very/local");
+    expect(JSON.stringify(payload)).not.toContain(dataDir);
+    expect(JSON.stringify(payload)).not.toContain("raw-diff");
+    expect(JSON.stringify(payload)).not.toContain("raw-command-diff");
+  });
+
+  it("reports a missing document as not found", async () => {
+    const response = await GET_DOCUMENT(new Request("http://localhost/api/sessions/missing"), {
+      params: Promise.resolve({ documentId: "missing" }),
+    });
+    const payload = (await response.json()) as { code: string; message: string };
+    expect(response.status).toBe(404);
+    expect(payload.code).toBe("document-not-found");
+    expect(payload.message).toContain("missing");
+  });
+});
+
+describe("POST /api/sessions/import", () => {
+  it("imports an uploaded document into the same local data-dir without returning local paths", async () => {
+    const bytes = readFileSync(
+      new URL("../../../../../fixtures/docx/synthetic/01-plain-paragraphs.docx", import.meta.url)
+    );
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([bytes], "upload.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      })
+    );
+
+    const response = await IMPORT_DOCUMENT(
+      new Request("http://localhost/api/sessions/import", { method: "POST", body: form })
+    );
+    expect(response.status).toBe(201);
+    const payload = (await response.json()) as {
+      schema: string;
+      session: { sessionId: string; documentCount: number };
+      document: {
+        documentId: string;
+        format: string;
+        name: string;
+        artifacts: { hasOriginal: boolean; hasWorking: boolean };
+        commandLog: Array<{ operation: string; stage: string; source: string }>;
+      };
+    };
+
+    expect(payload.schema).toBe("office-ai/web-import@1");
+    expect(payload.session.documentCount).toBe(1);
+    expect(payload.document).toMatchObject({
+      format: "docx",
+      name: "upload.docx",
+      artifacts: { hasOriginal: true, hasWorking: true },
+      commandLog: [{ operation: "import_document", stage: "imported", source: "web" }],
+    });
+
+    const store = createLocalSessionStore();
+    const documents = await store.listDocuments();
+    expect(documents).toHaveLength(1);
+    expect(documents[0]?.id).toBe(payload.document.documentId);
+    expect(JSON.stringify(payload)).not.toContain(dataDir);
+    expect(JSON.stringify(payload)).not.toContain("/fixtures/");
+  });
+
+  it("rejects unsupported upload extensions", async () => {
+    const form = new FormData();
+    form.set("file", new File([Buffer.from("plain")], "notes.txt", { type: "text/plain" }));
+
+    const response = await IMPORT_DOCUMENT(
+      new Request("http://localhost/api/sessions/import", { method: "POST", body: form })
+    );
+    const payload = (await response.json()) as { code: string; message: string };
+    expect(response.status).toBe(400);
+    expect(payload.code).toBe("unsupported-format");
+    expect(payload.message).toContain("notes.txt");
   });
 });

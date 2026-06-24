@@ -16,6 +16,7 @@ import {
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 import { openFile } from "@/lib/files/file-service";
+import { SessionBrowser } from "./session-browser";
 
 type Kind = "docx" | "xlsx" | "pptx" | "pdf";
 
@@ -249,6 +250,8 @@ export default function HomePage() {
           </button>
         </div>
       </section>
+
+      <SessionBrowser />
 
       <section className="mt-10 flex-1">
         <div className="mb-3 flex items-center justify-between">
