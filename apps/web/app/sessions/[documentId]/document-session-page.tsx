@@ -8,12 +8,14 @@ import {
   ArrowLeft,
   Clock3,
   Database,
+  Download,
   FileArchive,
   History,
   Loader2,
   RefreshCw,
 } from "lucide-react";
 import { Button, ThemeToggle } from "@officeai/ui";
+import { downloadBlob } from "@/lib/files/file-service";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 import type {
   WebCommandLogEntry,
@@ -97,6 +99,34 @@ function DocumentDetail({
 }) {
   const { t } = useTranslator();
   const { document, session } = payload;
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportDocument = useCallback(async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(document.documentId)}/export`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { readonly message?: string };
+        throw new Error(
+          "message" in data && data.message ? data.message : `Document export failed (${res.status})`
+        );
+      }
+      const blob = await res.blob();
+      downloadBlob(
+        blob,
+        filenameFromContentDisposition(res.headers.get("content-disposition"), document.name)
+      );
+      await onRefresh();
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }, [document.documentId, document.name, onRefresh]);
+
   return (
     <>
       <section className="mt-10 flex flex-col gap-3 border-b border-divider pb-6">
@@ -105,16 +135,32 @@ function DocumentDetail({
             <FileArchive size={13} />
             {document.format}
           </div>
-          <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading}>
-            {loading ? (
-              <Loader2 size={14} className="mr-1.5 animate-spin" />
-            ) : (
-              <RefreshCw size={14} className="mr-1.5" />
-            )}
-            {t("home.refresh")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => void exportDocument()} disabled={exporting}>
+              {exporting ? (
+                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              ) : (
+                <Download size={14} className="mr-1.5" />
+              )}
+              {t("common.export")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading || exporting}>
+              {loading ? (
+                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              ) : (
+                <RefreshCw size={14} className="mr-1.5" />
+              )}
+              {t("home.refresh")}
+            </Button>
+          </div>
         </div>
         <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{document.name}</h1>
+        {exportError ? (
+          <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+            <AlertTriangle size={15} />
+            {t("sessionDetail.exportError")}: {exportError}
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-secondary">
           <span className="inline-flex items-center gap-1.5">
             <Database size={14} />
@@ -364,4 +410,9 @@ function formatDateTime(iso: string, locale?: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function filenameFromContentDisposition(value: string | null, fallback: string): string {
+  const match = value?.match(/filename="([^"]+)"/);
+  return match?.[1] ?? fallback;
 }

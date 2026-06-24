@@ -3,9 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalSessionStore } from "@officeai/agent/session-store";
+import { DocxAgent } from "@officeai/docx";
+import { PdfAgent } from "@officeai/pdf";
+import { PptxAgent } from "@officeai/pptx";
+import { XlsxAgent } from "@officeai/xlsx";
 import { GET as GET_DOCUMENT } from "./[documentId]/route";
+import { POST as EXPORT_DOCUMENT } from "./[documentId]/export/route";
+import { POST as CREATE_DOCUMENT } from "./create/route";
 import { POST as IMPORT_DOCUMENT } from "./import/route";
 import { GET } from "./route";
+import type { WebOfficeFormat } from "@/lib/sessions/web-sessions";
 
 let previousOfficeAiDataDir: string | undefined;
 let dataDir: string;
@@ -281,3 +288,72 @@ describe("POST /api/sessions/import", () => {
     expect(payload.message).toContain("notes.txt");
   });
 });
+
+describe("POST /api/sessions/create and /api/sessions/:documentId/export", () => {
+  for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+    it(`creates and exports a blank ${format} document`, async () => {
+      const createResponse = await CREATE_DOCUMENT(
+        new Request("http://localhost/api/sessions/create", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ format, name: `blank.${format}` }),
+        })
+      );
+      expect(createResponse.status).toBe(201);
+      const created = (await createResponse.json()) as {
+        schema: string;
+        document: {
+          documentId: string;
+          format: WebOfficeFormat;
+          name: string;
+          artifacts: { hasOriginal: boolean; hasWorking: boolean };
+        };
+      };
+      expect(created.schema).toBe("office-ai/web-create@1");
+      expect(created.document).toMatchObject({
+        format,
+        name: `blank.${format}`,
+        artifacts: { hasOriginal: false, hasWorking: true },
+      });
+
+      const exportResponse = await EXPORT_DOCUMENT(
+        new Request(`http://localhost/api/sessions/${created.document.documentId}/export`, {
+          method: "POST",
+        }),
+        { params: Promise.resolve({ documentId: created.document.documentId }) }
+      );
+      expect(exportResponse.status).toBe(200);
+      expect(exportResponse.headers.get("content-disposition")).toContain(`blank.${format}`);
+      const bytes = new Uint8Array(await exportResponse.arrayBuffer());
+      expect(bytes.byteLength).toBeGreaterThan(0);
+      await reopenExportedBytes(format, bytes);
+
+      const store = createLocalSessionStore();
+      const stored = await store.getDocument(created.document.documentId);
+      expect(stored?.exportHistory).toHaveLength(1);
+      expect(stored?.commandLog.at(-1)).toMatchObject({
+        operation: "export_document",
+        stage: "exported",
+        source: "web",
+      });
+      expect(JSON.stringify(created)).not.toContain(dataDir);
+    });
+  }
+});
+
+async function reopenExportedBytes(format: WebOfficeFormat, bytes: Uint8Array): Promise<void> {
+  switch (format) {
+    case "docx":
+      await DocxAgent.fromBuffer(bytes);
+      return;
+    case "xlsx":
+      await XlsxAgent.fromBuffer(bytes);
+      return;
+    case "pptx":
+      await PptxAgent.fromBuffer(bytes);
+      return;
+    case "pdf":
+      await PdfAgent.fromBuffer(bytes);
+      return;
+  }
+}

@@ -24,6 +24,17 @@ test("home page shows an empty local workspace state", async ({ page }) => {
 });
 
 test("home page lists local sessions, documents, pending changes and diagnostics", async ({ page }) => {
+  await page.route("**/api/sessions/doc_1/export", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "content-disposition": 'attachment; filename="proposal.docx"',
+      },
+      body: Buffer.from("exported-docx"),
+    });
+  });
   await page.route("**/api/sessions/doc_1", async (route) => {
     await route.fulfill({
       json: {
@@ -143,6 +154,11 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.getByText("docx.replace-text · previewed")).toBeVisible();
   await expect(page.getByText("needs-review")).toBeVisible();
   await expect(page.getByText("4.0 KB")).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("proposal.docx");
 });
 
 test("home page imports an uploaded document into the local workspace", async ({ page }) => {
@@ -232,6 +248,89 @@ test("home page imports an uploaded document into the local workspace", async ({
   await expect(page.getByText("upload.docx")).toBeVisible();
   await expect(page.getByText("Web imports")).toBeVisible();
   expect(imported).toBe(true);
+});
+
+test("home page creates a persisted blank workspace document", async ({ page }) => {
+  let created = false;
+  const createdPayload = {
+    schema: "office-ai/web-sessions@1",
+    sessions: [
+      {
+        sessionId: "session_create",
+        title: "Web creates",
+        createdAt: "2026-06-24T11:30:00.000Z",
+        updatedAt: "2026-06-24T11:30:00.000Z",
+        documentCount: 1,
+      },
+    ],
+    documents: [
+      {
+        documentId: "doc_create",
+        sessionId: "session_create",
+        format: "docx",
+        name: "untitled.docx",
+        status: "ready",
+        createdAt: "2026-06-24T11:30:00.000Z",
+        updatedAt: "2026-06-24T11:30:00.000Z",
+        revision: 0,
+        diagnostics: [{ level: "info", code: "created", message: "Created blank docx document." }],
+        exportCount: 0,
+        pendingChangeCount: 0,
+        commandLogCount: 1,
+        artifacts: { hasOriginal: false, hasWorking: true },
+      },
+    ],
+  };
+
+  await page.route("**/api/sessions/create", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ format: "docx" });
+    created = true;
+    await route.fulfill({
+      status: 201,
+      json: {
+        schema: "office-ai/web-create@1",
+        session: createdPayload.sessions[0],
+        document: {
+          ...createdPayload.documents[0],
+          exports: [],
+          pendingChanges: [],
+          commandLog: [
+            {
+              id: "log_create",
+              operation: "create_document",
+              status: "applied",
+              stage: "created",
+              source: "web",
+              recordedAt: "2026-06-24T11:30:00.000Z",
+              hasDiff: false,
+              diagnostics: [{ level: "info", code: "created", message: "Created blank docx document." }],
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.route("**/api/sessions", async (route) => {
+    await route.fulfill({
+      json: created
+        ? createdPayload
+        : {
+            schema: "office-ai/web-sessions@1",
+            sessions: [],
+            documents: [],
+          },
+    });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("No local sessions yet")).toBeVisible();
+
+  await page.getByRole("button", { name: "DOCX" }).click();
+
+  await expect(page.getByText("untitled.docx")).toBeVisible();
+  await expect(page.getByText("Web creates")).toBeVisible();
+  expect(created).toBe(true);
 });
 
 test("home page keeps the local workspace readable on mobile width", async ({ page }) => {

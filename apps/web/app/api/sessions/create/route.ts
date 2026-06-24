@@ -1,52 +1,54 @@
 /**
- * POST /api/sessions/import
+ * POST /api/sessions/create
  *
- * Browser upload entry point for the same local OfficeAI data-dir used by MCP.
- * The response mirrors the web session detail payload and intentionally omits
- * server-local paths.
+ * Create a blank DOCX/XLSX/PPTX/PDF document in the same local data-dir used
+ * by MCP. This is the persisted web counterpart to the transient editor
+ * "new file" entry points.
  */
 
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createLocalSessionStore, SessionStoreCorruptError } from "@officeai/agent/session-store";
 import {
-  inferFormatFromName,
-  prepareImportedBytes,
+  createBlankDocumentBytes,
+  ensureExtension,
   sessionForNewDocument,
 } from "@/lib/sessions/server-documents";
-import { toWebDocumentDetailEntry, toWebSessionEntry } from "@/lib/sessions/web-sessions";
+import {
+  toWebDocumentDetailEntry,
+  toWebSessionEntry,
+  type WebOfficeFormat,
+} from "@/lib/sessions/web-sessions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const form = await request.formData();
-    const file = form.get("file");
-    if (!(file instanceof File) || file.size === 0) {
-      return badRequest("missing-file", "Upload a DOCX, XLSX, PPTX or PDF file.");
-    }
-
-    const format = inferFormatFromName(file.name);
+    const rawBody = await request.json().catch(() => ({}));
+    const body =
+      rawBody && typeof rawBody === "object" && !Array.isArray(rawBody)
+        ? (rawBody as Record<string, unknown>)
+        : {};
+    const format = isSupportedFormat(body.format) ? body.format : null;
     if (!format) {
-      return badRequest("unsupported-format", `Unsupported file type for ${file.name || "upload"}.`);
+      return badRequest("unsupported-format", "format must be one of docx, xlsx, pptx or pdf.");
     }
 
-    const prepared = await prepareImportedBytes(format, new Uint8Array(await file.arrayBuffer()));
     const now = new Date().toISOString();
     const store = createLocalSessionStore();
     const documentId = `doc_${randomUUID()}`;
-    const titleField = stringFormField(form, "title");
-    const sessionId = stringFormField(form, "session_id");
+    const name = ensureExtension(typeof body.name === "string" ? body.name : undefined, format);
     const session = await sessionForNewDocument({
       store,
-      sessionId,
+      sessionId: typeof body.session_id === "string" ? body.session_id : undefined,
       documentId,
-      title: titleField ?? "Web imports",
+      title: typeof body.title === "string" ? body.title : "Web creates",
       now,
     });
+    const prepared = await createBlankDocumentBytes(format);
     const diagnostics = [
-      { level: "info" as const, code: "imported", message: `Imported ${file.name} as ${format}.` },
+      { level: "info" as const, code: "created", message: `Created blank ${format} document.` },
     ];
 
     await store.putSession(session);
@@ -55,7 +57,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         id: documentId,
         sessionId: session.id,
         format,
-        name: file.name || `untitled.${format}`,
+        name,
         status: "ready",
         createdAt: now,
         updatedAt: now,
@@ -66,22 +68,22 @@ export async function POST(request: Request): Promise<NextResponse> {
         commandLog: [
           {
             id: `log_${randomUUID()}`,
-            operation: "import_document",
+            operation: "create_document",
             status: "applied",
-            stage: "imported",
+            stage: "created",
             source: "web",
             recordedAt: now,
             diagnostics,
           },
         ],
       },
-      { originalBytes: prepared.bytes, workingBytes: prepared.bytes }
+      { workingBytes: prepared.bytes }
     );
     const persistedSession = await store.getSession(session.id);
 
     return NextResponse.json(
       {
-        schema: "office-ai/web-import@1",
+        schema: "office-ai/web-create@1",
         session: toWebSessionEntry(persistedSession),
         document: toWebDocumentDetailEntry(document),
       },
@@ -102,7 +104,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       {
         schema: "office-ai/web-sessions-error@1",
-        code: "session-import-error",
+        code: "session-create-error",
         message,
       },
       { status: 500 }
@@ -121,7 +123,6 @@ function badRequest(code: string, message: string): NextResponse {
   );
 }
 
-function stringFormField(form: FormData, key: string): string | undefined {
-  const value = form.get(key);
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function isSupportedFormat(value: unknown): value is WebOfficeFormat {
+  return value === "docx" || value === "xlsx" || value === "pptx" || value === "pdf";
 }

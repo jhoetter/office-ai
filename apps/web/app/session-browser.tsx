@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Clock3, Database, FileArchive, Loader2, RefreshCw, Upload } from "lucide-react";
+import { AlertTriangle, Clock3, Database, FileArchive, Loader2, Plus, RefreshCw, Upload } from "lucide-react";
 import { Button } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
 import {
   documentsForSession,
   sessionBrowserCounts,
   type WebDocumentEntry,
+  type WebOfficeFormat,
   type WebSessionEntry,
   type WebSessionsPayload,
 } from "@/lib/sessions/web-sessions";
+
+const CREATE_FORMATS: ReadonlyArray<WebOfficeFormat> = ["docx", "xlsx", "pptx", "pdf"];
 
 export function SessionBrowser() {
   const { t, locale } = useTranslator();
@@ -19,6 +22,7 @@ export function SessionBrowser() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [creatingFormat, setCreatingFormat] = useState<WebOfficeFormat | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -78,6 +82,31 @@ export function SessionBrowser() {
     },
     [importFile]
   );
+  const createDocument = useCallback(
+    async (format: WebOfficeFormat) => {
+      setCreatingFormat(format);
+      setError(null);
+      try {
+        const res = await fetch("/api/sessions/create", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ format }),
+        });
+        const data = (await res.json()) as { readonly message?: string };
+        if (!res.ok) {
+          throw new Error(
+            "message" in data && data.message ? data.message : `Session create failed (${res.status})`
+          );
+        }
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCreatingFormat(null);
+      }
+    },
+    [refresh]
+  );
 
   return (
     <section className="mt-10">
@@ -87,6 +116,24 @@ export function SessionBrowser() {
           {t("home.workspace")}
         </h2>
         <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1">
+            {CREATE_FORMATS.map((format) => (
+              <Button
+                key={format}
+                variant="ghost"
+                size="sm"
+                onClick={() => void createDocument(format)}
+                disabled={creatingFormat !== null || importing}
+              >
+                {creatingFormat === format ? (
+                  <Loader2 size={14} className="mr-1.5 animate-spin" />
+                ) : (
+                  <Plus size={14} className="mr-1.5" />
+                )}
+                {format.toUpperCase()}
+              </Button>
+            ))}
+          </div>
           <input
             ref={fileInputRef}
             className="hidden"
@@ -98,7 +145,7 @@ export function SessionBrowser() {
             variant="secondary"
             size="sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
+            disabled={importing || creatingFormat !== null}
           >
             {importing ? (
               <Loader2 size={14} className="mr-1.5 animate-spin" />
@@ -107,7 +154,12 @@ export function SessionBrowser() {
             )}
             {t("home.importDocument")}
           </Button>
-          <Button variant="ghost" size="sm" onClick={refresh} disabled={loading || importing}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refresh}
+            disabled={loading || importing || creatingFormat !== null}
+          >
             {loading ? (
               <Loader2 size={14} className="mr-1.5 animate-spin" />
             ) : (

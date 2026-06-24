@@ -162,6 +162,7 @@
     "noPendingChanges": "Keine Pending Changes.",
     "commandLog": "Command Log",
     "noCommandLog": "Keine Command-Aktivität erfasst.",
+    "exportError": "Export fehlgeschlagen",
     "source": "Quelle",
     "actor": "Actor",
     "diffAvailable": "Diff verfügbar",
