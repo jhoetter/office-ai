@@ -8,8 +8,9 @@ new `documentId` as their matching legacy handle.
 ## Tool flow
 
 1. `create_session`
-   - creates an in-process working session.
-   - returns `sessionId`, timestamps and next actions.
+   - creates a local data-dir backed working session.
+   - returns `sessionId`, timestamps, data-dir location for local MCP
+     clients and next actions.
 2. `import_document`
    - reads a `.docx`, `.xlsx`, `.pptx` or `.pdf` from disk.
    - infers format from extension unless `format` is passed.
@@ -19,8 +20,8 @@ new `documentId` as their matching legacy handle.
    - returns a `documentId`; `export_document` requires `out_path` for
      newly created files.
 4. `list_sessions` / `list_documents` / `get_document`
-   - inspect current in-process sessions, document metadata,
-     diagnostics and export history.
+   - inspect data-dir backed sessions, document metadata, diagnostics
+     and export history.
 5. `get_document_projection`
    - reads `summary`, `markdown`, `json`, `text` or `page` projections.
    - supports format-specific windowing fields such as `sheet`,
@@ -54,9 +55,11 @@ Every canonical document response includes:
 }
 ```
 
-`documentId` is stable across tool calls in the same MCP server
-lifetime and can be passed to legacy tools such as `docx_inspect`,
-`xlsx_get_text`, `pptx_save` or `pdf_metadata` as `handle`.
+`documentId` is stable across MCP server restarts because canonical
+documents are persisted in the local data-dir. It can also be passed to
+legacy tools such as `docx_inspect`, `xlsx_get_text`, `pptx_save` or
+`pdf_metadata` as `handle` after the canonical document has been
+hydrated.
 
 ## Example transcript
 
@@ -97,8 +100,9 @@ export_document({
 → { "exported": { "path": "/workspace/output/report.docx", "bytes": 12345 } }
 ```
 
-## Current boundary
+## Store
 
-This is the canonical MCP contract, but the backing registry is still
-in-process. It gives agents stable IDs across tool calls; restart-safe
-storage belongs to the local session-store/data-dir workstream.
+Canonical session and document tools use the local session store
+described in [`session-store-data-dir.md`](session-store-data-dir.md).
+Set `OFFICEAI_DATA_DIR` to isolate one run, fixture suite or local
+workspace from another.

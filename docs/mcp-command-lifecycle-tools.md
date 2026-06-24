@@ -66,13 +66,18 @@ review state:
 
 Lists pending mutations for one canonical document or all canonical
 documents. The response includes document metadata, mutation metadata and
-the semantic diff.
+the semantic diff. Pending metadata is persisted in the local data-dir,
+so the review surface can still show unresolved work after restart.
 
 ### `approve_change` / `reject_change`
 
 Approves or rejects a pending mutation by `mutation_id` for a canonical
 document. Rejection can include a human-readable `reason` in the MCP
 response; the underlying bus records the rejected mutation status.
+
+Review requires the live pending mutation stack. If a server restart has
+left only persisted pending metadata, the tool fails explicitly instead
+of silently accepting or rejecting a mutation it cannot replay.
 
 ### `undo_command`
 
@@ -130,8 +135,9 @@ Every command lifecycle response includes diagnostics. Levels are:
 - `destructive`: reserved for commands that require explicit destructive
   review.
 
-## Current boundary
+## Persistence
 
-The lifecycle tools are backed by the in-process MCP session/document
-registry. They are stable across tool calls in one server lifetime, but
-restart-durable session storage is a separate workstream.
+The lifecycle tools are backed by the local session store documented in
+[`session-store-data-dir.md`](session-store-data-dir.md). Plan/preview
+write command-log metadata and diagnostics; apply/review/undo/export
+also write the current working artifact.

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,28 @@ import { fixturePath, requiredMatrixFixture, type FixtureFormat } from "../../..
 
 const here = dirname(fileURLToPath(import.meta.url));
 const xlsxFixtures = resolvePath(here, "../../../fixtures/xlsx/synthetic");
+let previousOfficeAiDataDir: string | undefined;
+let activeOfficeAiDataDir: string | undefined;
+
+beforeEach(() => {
+  previousOfficeAiDataDir = process.env.OFFICEAI_DATA_DIR;
+  activeOfficeAiDataDir = mkdtempSync(join(tmpdir(), "officeai-mcp-data-"));
+  process.env.OFFICEAI_DATA_DIR = activeOfficeAiDataDir;
+  __resetMcpSessionsForTests();
+});
+
+afterEach(() => {
+  __resetMcpSessionsForTests();
+  if (previousOfficeAiDataDir === undefined) {
+    delete process.env.OFFICEAI_DATA_DIR;
+  } else {
+    process.env.OFFICEAI_DATA_DIR = previousOfficeAiDataDir;
+  }
+  if (activeOfficeAiDataDir) {
+    rmSync(activeOfficeAiDataDir, { recursive: true, force: true });
+    activeOfficeAiDataDir = undefined;
+  }
+});
 
 function copyXlsxFixture(name: string, dest: string): string {
   const target = join(dest, name);
@@ -374,6 +396,57 @@ describe("OfficeAI MCP server", () => {
       await client.callTool({ name: "list_pending_changes", arguments: { document_id: document.documentId } })
     );
     expect(pendingAfter.pending).toEqual([]);
+  });
+
+  it("reloads persisted canonical documents after MCP server restart", async () => {
+    const firstClient = await makeClient();
+    const created = structured(
+      await firstClient.callTool({
+        name: "create_document",
+        arguments: { format: "xlsx", name: "restart.xlsx" },
+      })
+    );
+    const document = created.document as { documentId: string };
+    const applied = structured(
+      await firstClient.callTool({
+        name: "apply_command",
+        arguments: {
+          document_id: document.documentId,
+          operation: "xlsx:set-cell-value",
+          arguments: { sheet: "Sheet1", ref: "A1", value: "persisted after restart" },
+          target: { anchor: { kind: "range", sheet: "Sheet1", range: "A1:A1" } },
+          policy: { mode: "auto_apply" },
+        },
+      })
+    );
+    expect(applied.stage).toBe("applied");
+
+    __resetMcpSessionsForTests();
+
+    const restartedClient = await makeClient();
+    const loaded = structured(
+      await restartedClient.callTool({
+        name: "get_document",
+        arguments: { document_id: document.documentId },
+      })
+    );
+    expect((loaded.document as { documentId: string }).documentId).toBe(document.documentId);
+    const projected = structured(
+      await restartedClient.callTool({
+        name: "get_document_projection",
+        arguments: {
+          document_id: document.documentId,
+          projection: "json",
+          sheet: "Sheet1",
+          range: "A1:A1",
+        },
+      })
+    );
+    expect(JSON.stringify(projected)).toContain("persisted after restart");
+    const listed = structured(await restartedClient.callTool({ name: "list_documents", arguments: {} }));
+    expect((listed.documents as Array<{ documentId: string }>).map((doc) => doc.documentId)).toContain(
+      document.documentId
+    );
   });
 
   it("fails loud for unsupported operations, invalid anchors and stale revisions", async () => {

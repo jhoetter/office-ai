@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@officeai/ui", "@officeai/design-tokens"],
+  transpilePackages: ["@officeai/agent", "@officeai/ui", "@officeai/design-tokens"],
   devIndicators: false,
   outputFileTracingRoot: path.resolve(__dirname, "../.."),
   // ESLint runs as a dedicated step in `make verify` (`make lint-web`) so a

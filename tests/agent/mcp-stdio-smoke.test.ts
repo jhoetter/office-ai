@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,11 +32,19 @@ describe("office-agent mcp stdio", () => {
     if (!existsSync(cliPath)) {
       throw new Error(`Missing ${cliPath}; run pnpm --filter @officeai/agent build before this smoke.`);
     }
+    const dataDir = mkdtempSync(join(tmpdir(), "officeai-stdio-data-"));
+    const outDir = mkdtempSync(join(tmpdir(), "officeai-stdio-out-"));
+    const childEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) childEnv[key] = value;
+    }
+    childEnv.OFFICEAI_DATA_DIR = dataDir;
 
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [cliPath, "mcp"],
       cwd: repoRoot,
+      env: childEnv,
       stderr: "pipe",
     });
     const client = new Client({ name: "officeai-stdio-smoke", version: "0.0.0" }, { capabilities: {} });
@@ -71,7 +78,7 @@ describe("office-agent mcp stdio", () => {
       expect(typeof projection.content).toBe("string");
       expect((projection.content as string).length).toBeGreaterThan(20);
 
-      const out = join(mkdtempSync(join(tmpdir(), "officeai-stdio-")), "out.docx");
+      const out = join(outDir, "out.docx");
       const exported = structured(
         await client.callTool({
           name: "export_document",
@@ -81,6 +88,8 @@ describe("office-agent mcp stdio", () => {
       expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
     } finally {
       await client.close();
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(outDir, { recursive: true, force: true });
     }
   }, 20_000);
 });

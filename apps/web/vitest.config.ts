@@ -15,6 +15,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "app"),
+      "@officeai/agent/session-store": path.resolve(__dirname, "../../packages/agent/src/session-store.ts"),
     },
   },
   test: {

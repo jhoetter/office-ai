@@ -78,15 +78,16 @@ Long pitch:
 ## Immediate product gaps
 
 - Session and document IDs are now the canonical MCP entry point for
-  create/import/project/export flows, but the backing registry is still
-  in-process until the local session-store/data-dir workstream lands.
+  create/import/project/export flows and are backed by a local
+  session-store/data-dir.
 - Action metadata now separates `agentCallable`, `webCallable`, and
   `cliCallable`.
 - MCP now exposes canonical Plan/Preview/Apply tools for structured
   command envelopes across DOCX, XLSX, PPTX and PDF, including
-  diagnostics, pending review, approve/reject and undo. The backing
-  registry is still in-process.
-- The web editor has strong per-format editors, but no unified session
-  browser or pending-changes panel.
+  diagnostics, pending review, approve/reject, undo and command-log
+  persistence.
+- The web editor has strong per-format editors and a read-only
+  data-dir sessions API, but no unified in-product session browser or
+  pending-changes panel yet.
 - PDF has real packages and tools, but older docs under-described it
   compared with DOCX/XLSX/PPTX.

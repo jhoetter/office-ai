@@ -72,6 +72,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@officeai/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@officeai/comments':
         specifier: workspace:*
         version: link:../../packages/comments

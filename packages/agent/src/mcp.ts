@@ -2,9 +2,9 @@
  * OfficeAI Model Context Protocol server.
  *
  * Exposes OfficeAI document sessions as generic MCP tools, plus the legacy
- * format-specific tools. Sessions live in-process today; canonical
- * document IDs are stable across tool calls in one server lifetime and also
- * work as handles for the matching docx_* / xlsx_* / pptx_* / pdf_* tools.
+ * format-specific tools. Canonical sessions are backed by the local
+ * OfficeAI data-dir and also work as handles for the matching docx_* /
+ * xlsx_* / pptx_* / pdf_* tools.
  *
  * Transport-agnostic: `runMcpStdioServer()` wires up `StdioServerTransport`
  * for the published binary, but tests use `InMemoryTransport` directly via
@@ -56,6 +56,15 @@ import {
 } from "./pdf-cli.js";
 import { diffSnapshots, inspectSnapshot, snapshotToJsonProjection } from "./cli.js";
 import { inspectXlsxSnapshot, xlsxRangeToJson } from "./cli-xlsx.js";
+import {
+  createLocalSessionStore,
+  SessionStoreCorruptError,
+  type StoredCommandLogEntry,
+  type StoredDiagnostic,
+  type StoredDocumentRecord,
+  type StoredPendingChange,
+  type StoredSessionRecord,
+} from "./session-store.js";
 import {
   diffSnapshots as pptxDiffSnapshots,
   inspectSnapshot as pptxInspectSnapshot,
@@ -112,6 +121,10 @@ interface DocumentRecord {
 const mcpSessions = new Map<string, SessionRecord>();
 const mcpDocuments = new Map<string, DocumentRecord>();
 const plannedCommands = new Map<string, CommandEnvelope>();
+
+function localSessionStore() {
+  return createLocalSessionStore();
+}
 
 /** Test hook: drop in-memory state between test cases. */
 export function __resetMcpSessionsForTests(): void {
@@ -517,22 +530,24 @@ function commandEnvelopeFromRaw(raw: Record<string, unknown>): CommandEnvelope {
   };
 }
 
-function resolveCommandReference(input: Record<string, unknown>): {
+async function resolveCommandReference(input: Record<string, unknown>): Promise<{
   readonly envelope: CommandEnvelope;
   readonly record: DocumentRecord;
-} {
+}> {
   const commandId = stringField(input, "command_id") ?? stringField(input, "commandId");
   if (commandId) {
     const envelope = plannedCommands.get(commandId);
     if (!envelope) throw new Error(`Unknown command_id "${commandId}". Call plan_command first.`);
-    return { envelope, record: lookupDocument(envelope.target.documentId) };
+    return { envelope, record: await ensureDocumentLoaded(envelope.target.documentId) };
   }
 
   if (isRecord(input.command)) {
     const envelope = commandEnvelopeFromRaw(input.command);
-    return { envelope, record: lookupDocument(envelope.target.documentId) };
+    return { envelope, record: await ensureDocumentLoaded(envelope.target.documentId) };
   }
 
+  const documentId = stringField(input, "document_id") ?? stringField(input, "documentId");
+  if (documentId) await ensureDocumentLoaded(documentId);
   return commandEnvelopeFromInput(input);
 }
 
@@ -793,6 +808,285 @@ function commandEnvelopePayload(envelope: CommandEnvelope): Record<string, unkno
   };
 }
 
+async function persistSessionRecord(session: SessionRecord): Promise<void> {
+  await localSessionStore().putSession(storedSessionRecord(session));
+}
+
+async function persistDocumentRecord(
+  record: DocumentRecord,
+  opts: {
+    readonly originalBytes?: Uint8Array | Buffer;
+    readonly originalSourcePath?: string;
+    readonly workingBytes?: Uint8Array | Buffer;
+    readonly commandLogEntry?: StoredCommandLogEntry;
+  } = {}
+): Promise<void> {
+  const store = localSessionStore();
+  const session = getOrCreateSession(record.sessionId);
+  await store.putSession(storedSessionRecord(session));
+  const existing = await store.getDocument(record.id).catch((err: unknown) => {
+    if (err instanceof SessionStoreCorruptError) throw err;
+    return null;
+  });
+  const pendingChanges = pendingMutationsFor(record).map(storedPendingChange);
+  await store.putDocument(
+    {
+      id: record.id,
+      sessionId: record.sessionId,
+      format: record.format,
+      name: record.name,
+      status: record.status,
+      ...(record.sourcePath ? { sourcePath: record.sourcePath } : {}),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      revision: revisionFor(record),
+      diagnostics: record.diagnostics,
+      exportHistory: record.exportHistory,
+      pendingChanges,
+      commandLog: [...(existing?.commandLog ?? []), ...(opts.commandLogEntry ? [opts.commandLogEntry] : [])],
+    },
+    opts
+  );
+}
+
+async function persistCurrentDocument(
+  record: DocumentRecord,
+  opts: {
+    readonly commandLogEntry?: StoredCommandLogEntry;
+  } = {}
+): Promise<void> {
+  await persistDocumentRecord(record, {
+    workingBytes: Buffer.from(await currentDocumentBytes(record)),
+    ...(opts.commandLogEntry ? { commandLogEntry: opts.commandLogEntry } : {}),
+  });
+}
+
+function storedSessionRecord(
+  session: SessionRecord
+): Omit<StoredSessionRecord, "schema" | "version" | "lease"> {
+  return {
+    id: session.id,
+    title: session.title,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    documentIds: [...session.documentIds],
+  };
+}
+
+async function currentDocumentBytes(record: DocumentRecord): Promise<Uint8Array> {
+  switch (record.format) {
+    case "docx":
+      return new Uint8Array(await lookupAgent(record.id).exportFile());
+    case "xlsx":
+      return new Uint8Array(await lookupXlsxAgent(record.id).exportFile());
+    case "pptx":
+      return new Uint8Array(await lookupPptxAgent(record.id).exportFile());
+    case "pdf":
+      return lookupPdfSession(record.id).agent.exportFile();
+  }
+}
+
+function storedPendingChange(mutation: AnyMutation): StoredPendingChange {
+  return {
+    id: mutation.id,
+    operation: mutation.command.type,
+    status: mutation.status,
+    source: mutation.command.source,
+    ...(mutation.command.agentId ? { actorId: mutation.command.agentId } : {}),
+    timestamp: mutation.command.timestamp,
+    diff: mutation.diff,
+    ...(mutation.rejection ? { rejection: mutation.rejection } : {}),
+  };
+}
+
+function storedCommandLogEntry(args: {
+  readonly envelope?: CommandEnvelope;
+  readonly mutation?: AnyMutation;
+  readonly stage: string;
+  readonly status: string;
+  readonly diagnostics?: ReadonlyArray<CommandDiagnostic>;
+}): StoredCommandLogEntry {
+  const operation = args.mutation?.command.type ?? args.envelope?.operation ?? args.stage;
+  const source =
+    args.mutation?.command.source ?? (args.envelope ? commandSourceForEnvelope(args.envelope) : "system");
+  const actorId = args.mutation?.command.agentId ?? args.envelope?.source.actorId;
+  return {
+    id: `log_${randomUUID()}`,
+    ...(args.envelope ? { commandId: args.envelope.id } : {}),
+    operation,
+    status: args.status,
+    stage: args.stage,
+    source,
+    ...(actorId ? { actorId } : {}),
+    recordedAt: nowIso(),
+    ...(args.mutation?.diff ? { diff: args.mutation.diff } : {}),
+    ...(args.diagnostics ? { diagnostics: args.diagnostics.map(storedDiagnostic) } : {}),
+  };
+}
+
+function storedDiagnostic(diagnostic: CommandDiagnostic | McpDiagnostic): StoredDiagnostic {
+  return {
+    level: diagnostic.level,
+    code: diagnostic.code,
+    message: diagnostic.message,
+  };
+}
+
+async function hydratePersistedSessions(): Promise<void> {
+  for (const stored of await localSessionStore().listSessions()) {
+    hydrateSessionRecord(stored);
+  }
+}
+
+async function hydratePersistedDocuments(sessionId?: string): Promise<void> {
+  for (const stored of await localSessionStore().listDocuments(sessionId)) {
+    await hydrateDocumentRecord(stored);
+  }
+}
+
+async function ensureDocumentLoaded(documentId: string): Promise<DocumentRecord> {
+  const existing = mcpDocuments.get(documentId);
+  if (existing && hasLoadedAgent(existing)) return existing;
+  const stored = await localSessionStore().getDocument(documentId);
+  if (!stored) {
+    if (existing) return existing;
+    throw new Error(`Unknown document_id "${documentId}". Call import_document or create_document first.`);
+  }
+  return hydrateDocumentRecord(stored);
+}
+
+async function hydrateDocumentRecord(stored: StoredDocumentRecord): Promise<DocumentRecord> {
+  const session =
+    mcpSessions.get(stored.sessionId) ??
+    hydrateSessionRecord(
+      await localSessionStore()
+        .getSession(stored.sessionId)
+        .catch(() => ({
+          schema: "office-ai/session-record@1" as const,
+          version: 1 as const,
+          id: stored.sessionId,
+          title: "OfficeAI session",
+          createdAt: stored.createdAt,
+          updatedAt: stored.updatedAt,
+          documentIds: [stored.id],
+        }))
+    );
+  let record = mcpDocuments.get(stored.id);
+  if (!record) {
+    record = {
+      id: stored.id,
+      sessionId: stored.sessionId,
+      format: stored.format,
+      name: stored.name,
+      ...(stored.sourcePath ? { sourcePath: stored.sourcePath } : {}),
+      createdAt: stored.createdAt,
+      updatedAt: stored.updatedAt,
+      status: stored.status,
+      diagnostics: stored.diagnostics.map(storedDiagnostic),
+      exportHistory: [...stored.exportHistory],
+    };
+    mcpDocuments.set(record.id, record);
+    session.documentIds.add(record.id);
+  }
+  if (!hasLoadedAgent(record)) {
+    const bytes = await localSessionStore().readWorkingBytes(stored);
+    switch (record.format) {
+      case "docx":
+        sessions.set(record.id, await DocxAgent.fromBuffer(bytes));
+        if (record.sourcePath) sessionPaths.set(record.id, record.sourcePath);
+        break;
+      case "xlsx":
+        xlsxSessions.set(record.id, await XlsxAgent.fromBuffer(bytes));
+        if (record.sourcePath) xlsxSessionPaths.set(record.id, record.sourcePath);
+        break;
+      case "pptx":
+        pptxSessions.set(record.id, await PptxAgent.fromBuffer(bytes));
+        if (record.sourcePath) pptxSessionPaths.set(record.id, record.sourcePath);
+        break;
+      case "pdf":
+        pdfSessions.set(record.id, { agent: await PdfAgent.fromBuffer(bytes), bytes });
+        if (record.sourcePath) pdfSessionPaths.set(record.id, record.sourcePath);
+        break;
+    }
+  }
+  return record;
+}
+
+function hydrateSessionRecord(stored: StoredSessionRecord): SessionRecord {
+  const existing = mcpSessions.get(stored.id);
+  if (existing) return existing;
+  const session: SessionRecord = {
+    id: stored.id,
+    title: stored.title,
+    createdAt: stored.createdAt,
+    updatedAt: stored.updatedAt,
+    documentIds: new Set(stored.documentIds),
+  };
+  mcpSessions.set(session.id, session);
+  return session;
+}
+
+function hasLoadedAgent(record: DocumentRecord): boolean {
+  switch (record.format) {
+    case "docx":
+      return sessions.has(record.id);
+    case "xlsx":
+      return xlsxSessions.has(record.id);
+    case "pptx":
+      return pptxSessions.has(record.id);
+    case "pdf":
+      return pdfSessions.has(record.id);
+  }
+}
+
+async function pendingChangesPayload(
+  record: DocumentRecord
+): Promise<ReadonlyArray<Record<string, unknown>>> {
+  const live = pendingMutationsFor(record);
+  if (live.length > 0) {
+    return live.map((mutation) => ({
+      documentId: record.id,
+      sessionId: record.sessionId,
+      format: record.format,
+      documentName: record.name,
+      mutation: mutationSummary(mutation),
+      diff: mutation.diff,
+    }));
+  }
+  const stored = await localSessionStore()
+    .getDocument(record.id)
+    .catch(() => null);
+  return (stored?.pendingChanges ?? []).map((pending) => ({
+    documentId: record.id,
+    sessionId: record.sessionId,
+    format: record.format,
+    documentName: record.name,
+    mutation: {
+      id: pending.id,
+      operation: pending.operation,
+      source: pending.source,
+      ...(pending.actorId ? { actorId: pending.actorId } : {}),
+      status: pending.status,
+      ...(pending.timestamp ? { timestamp: pending.timestamp } : {}),
+      ...(pending.rejection ? { rejection: pending.rejection } : {}),
+    },
+    ...(pending.diff ? { diff: pending.diff } : {}),
+  }));
+}
+
+async function assertLivePendingMutation(record: DocumentRecord, mutationId: string): Promise<void> {
+  if (pendingMutationsFor(record).some((mutation) => mutation.id === mutationId)) return;
+  const stored = await localSessionStore()
+    .getDocument(record.id)
+    .catch(() => null);
+  if (stored?.pendingChanges.some((pending) => pending.id === mutationId)) {
+    throw new Error(
+      `Mutation ${mutationId} is only available as persisted pending metadata after restart; review replay is not yet supported. Re-run the command or export from the original live session.`
+    );
+  }
+  throw new Error(`Unknown pending mutation "${mutationId}" for document ${record.id}.`);
+}
+
 function summaryFor(record: DocumentRecord): unknown {
   switch (record.format) {
     case "docx":
@@ -950,6 +1244,12 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
   record.exportHistory.push(exported);
   record.updatedAt = exported.exportedAt;
   touchSession(getOrCreateSession(record.sessionId));
+  await persistCurrentDocument(record, {
+    commandLogEntry: storedCommandLogEntry({
+      stage: "exported",
+      status: "exported",
+    }),
+  });
   return exported;
 }
 
@@ -999,10 +1299,20 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async (input) => {
       try {
+        const documentId = stringField(input, "document_id") ?? stringField(input, "documentId");
+        if (documentId) await ensureDocumentLoaded(documentId);
         const { envelope, record, action } = commandEnvelopeFromInput(input);
         const diagnostics = commandDiagnostics(record, envelope);
         plannedCommands.set(envelope.id, envelope);
         touchDocument(record, diagnostics);
+        await persistDocumentRecord(record, {
+          commandLogEntry: storedCommandLogEntry({
+            envelope,
+            stage: hasBlockingCommandDiagnostics(diagnostics) ? "failed" : "validated",
+            status: hasBlockingCommandDiagnostics(diagnostics) ? "failed" : "planned",
+            diagnostics,
+          }),
+        });
         return ok({
           schema: "office-ai/command-plan@1",
           ok: !hasBlockingCommandDiagnostics(diagnostics),
@@ -1028,10 +1338,18 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        const { envelope, record } = resolveCommandReference(input);
+        const { envelope, record } = await resolveCommandReference(input);
         const diagnostics = commandDiagnostics(record, envelope);
         if (hasBlockingCommandDiagnostics(diagnostics)) {
           touchDocument(record, diagnostics);
+          await persistDocumentRecord(record, {
+            commandLogEntry: storedCommandLogEntry({
+              envelope,
+              stage: "failed",
+              status: "failed",
+              diagnostics,
+            }),
+          });
           return ok({
             schema: "office-ai/command-preview@1",
             ok: false,
@@ -1056,6 +1374,14 @@ function registerCommandLifecycleTools(server: McpServer): void {
                 },
               ];
         touchDocument(record, mergedDiagnostics);
+        await persistDocumentRecord(record, {
+          commandLogEntry: storedCommandLogEntry({
+            envelope,
+            stage: preview.stage,
+            status: preview.ok ? "previewed" : "failed",
+            diagnostics: mergedDiagnostics,
+          }),
+        });
         return ok({
           schema: "office-ai/command-preview@1",
           ok: preview.ok,
@@ -1081,7 +1407,7 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        const { envelope, record } = resolveCommandReference(input);
+        const { envelope, record } = await resolveCommandReference(input);
         const diagnostics = commandDiagnostics(record, envelope);
         if (envelope.policy.mode === "dry_run") {
           diagnostics.push({
@@ -1092,6 +1418,14 @@ function registerCommandLifecycleTools(server: McpServer): void {
         }
         if (hasBlockingCommandDiagnostics(diagnostics)) {
           touchDocument(record, diagnostics);
+          await persistDocumentRecord(record, {
+            commandLogEntry: storedCommandLogEntry({
+              envelope,
+              stage: "failed",
+              status: "failed",
+              diagnostics,
+            }),
+          });
           return ok({
             schema: "office-ai/command-apply@1",
             ok: false,
@@ -1127,6 +1461,20 @@ function registerCommandLifecycleTools(server: McpServer): void {
                 },
               ];
         touchDocument(record, finalDiagnostics);
+        await persistCurrentDocument(record, {
+          commandLogEntry: storedCommandLogEntry({
+            envelope,
+            mutation,
+            stage:
+              mutation.status === "pending"
+                ? "queued"
+                : mutation.status === "rejected"
+                  ? "failed"
+                  : "applied",
+            status: mutation.status,
+            diagnostics: finalDiagnostics,
+          }),
+        });
         return ok({
           schema: "office-ai/command-apply@1",
           ok: mutation.status !== "rejected",
@@ -1157,12 +1505,20 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async ({ document_id }) => {
       try {
-        const record = lookupDocument(document_id);
+        const record = await ensureDocumentLoaded(document_id);
         const mutation = undoFor(record);
         const diagnostics: CommandDiagnostic[] = mutation
           ? [{ level: "info", code: "undo-applied", message: `Undid mutation ${mutation.id}.` }]
           : [{ level: "info", code: "undo-empty", message: "No approved mutation is available to undo." }];
         touchDocument(record, diagnostics);
+        await persistCurrentDocument(record, {
+          commandLogEntry: storedCommandLogEntry({
+            mutation: mutation ?? undefined,
+            stage: "reviewed",
+            status: mutation ? "undone" : "noop",
+            diagnostics,
+          }),
+        });
         return ok({
           schema: "office-ai/command-undo@1",
           ok: true,
@@ -1187,19 +1543,16 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async ({ document_id }) => {
       try {
+        if (document_id) {
+          await ensureDocumentLoaded(document_id);
+        } else {
+          await hydratePersistedDocuments();
+        }
         const records = document_id ? [lookupDocument(document_id)] : [...mcpDocuments.values()];
+        const pending = await Promise.all(records.map((record) => pendingChangesPayload(record)));
         return ok({
           schema: "office-ai/pending-changes@1",
-          pending: records.flatMap((record) =>
-            pendingMutationsFor(record).map((mutation) => ({
-              documentId: record.id,
-              sessionId: record.sessionId,
-              format: record.format,
-              documentName: record.name,
-              mutation: mutationSummary(mutation),
-              diff: mutation.diff,
-            }))
-          ),
+          pending: pending.flat(),
         });
       } catch (err) {
         return fail(`list_pending_changes failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1218,12 +1571,20 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async ({ document_id, mutation_id }) => {
       try {
-        const record = lookupDocument(document_id);
+        const record = await ensureDocumentLoaded(document_id);
+        await assertLivePendingMutation(record, mutation_id);
         approveMutationFor(record, mutation_id);
         const diagnostics: CommandDiagnostic[] = [
           { level: "info", code: "change-approved", message: `Approved mutation ${mutation_id}.` },
         ];
         touchDocument(record, diagnostics);
+        await persistCurrentDocument(record, {
+          commandLogEntry: storedCommandLogEntry({
+            stage: "reviewed",
+            status: "approved",
+            diagnostics,
+          }),
+        });
         return ok({
           schema: "office-ai/change-review@1",
           ok: true,
@@ -1249,7 +1610,8 @@ function registerCommandLifecycleTools(server: McpServer): void {
     },
     async ({ document_id, mutation_id, reason }) => {
       try {
-        const record = lookupDocument(document_id);
+        const record = await ensureDocumentLoaded(document_id);
+        await assertLivePendingMutation(record, mutation_id);
         rejectMutationFor(record, mutation_id);
         const diagnostics: CommandDiagnostic[] = [
           {
@@ -1261,6 +1623,13 @@ function registerCommandLifecycleTools(server: McpServer): void {
           },
         ];
         touchDocument(record, diagnostics);
+        await persistCurrentDocument(record, {
+          commandLogEntry: storedCommandLogEntry({
+            stage: "reviewed",
+            status: "rejected",
+            diagnostics,
+          }),
+        });
         return ok({
           schema: "office-ai/change-review@1",
           ok: true,
@@ -1281,42 +1650,55 @@ function registerSessionDocumentTools(server: McpServer): void {
     "create_session",
     {
       description:
-        "Create an in-process OfficeAI session. Use the returned sessionId with import_document/create_document/list_documents.",
+        "Create a local OfficeAI session. Use the returned sessionId with import_document/create_document/list_documents.",
       inputSchema: {
         title: z.string().optional().describe("Optional human-readable session title."),
       },
     },
     async ({ title }) => {
-      const session = createSessionRecord(title ?? "OfficeAI session");
-      return ok({
-        schema: "office-ai/session@1",
-        sessionId: session.id,
-        title: session.title,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        documentCount: session.documentIds.size,
-        nextActions: ["import_document", "create_document", "list_documents"],
-      });
+      try {
+        const session = createSessionRecord(title ?? "OfficeAI session");
+        await persistSessionRecord(session);
+        return ok({
+          schema: "office-ai/session@1",
+          sessionId: session.id,
+          title: session.title,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+          documentCount: session.documentIds.size,
+          dataDir: localSessionStore().dataDir,
+          nextActions: ["import_document", "create_document", "list_documents"],
+        });
+      } catch (err) {
+        return fail(`create_session failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   );
 
   server.registerTool(
     "list_sessions",
     {
-      description: "List in-process OfficeAI sessions and their document counts.",
+      description: "List local OfficeAI sessions and their document counts.",
       inputSchema: {},
     },
-    async () =>
-      ok({
-        schema: "office-ai/session-list@1",
-        sessions: [...mcpSessions.values()].map((session) => ({
-          sessionId: session.id,
-          title: session.title,
-          createdAt: session.createdAt,
-          updatedAt: session.updatedAt,
-          documentCount: session.documentIds.size,
-        })),
-      })
+    async () => {
+      try {
+        await hydratePersistedSessions();
+        return ok({
+          schema: "office-ai/session-list@1",
+          dataDir: localSessionStore().dataDir,
+          sessions: [...mcpSessions.values()].map((session) => ({
+            sessionId: session.id,
+            title: session.title,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            documentCount: session.documentIds.size,
+          })),
+        });
+      } catch (err) {
+        return fail(`list_sessions failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   );
 
   server.registerTool(
@@ -1382,10 +1764,15 @@ function registerSessionDocumentTools(server: McpServer): void {
             { level: "info", code: "imported", message: `Imported ${displayName} as ${detected}.` },
           ],
         });
+        await persistDocumentRecord(record, {
+          originalBytes: buf,
+          workingBytes: buf,
+        });
         return ok({
           schema: "office-ai/import-document@1",
           document: documentEnvelope(record),
           summary: summaryFor(record),
+          dataDir: localSessionStore().dataDir,
           nextActions: ["get_document_projection", "export_document"],
         });
       } catch (err) {
@@ -1436,10 +1823,12 @@ function registerSessionDocumentTools(server: McpServer): void {
           name: displayName,
           diagnostics: [{ level: "info", code: "created", message: `Created blank ${detected} document.` }],
         });
+        await persistCurrentDocument(record);
         return ok({
           schema: "office-ai/create-document@1",
           document: documentEnvelope(record),
           summary: summaryFor(record),
+          dataDir: localSessionStore().dataDir,
           nextActions: ["get_document_projection", "export_document"],
         });
       } catch (err) {
@@ -1458,6 +1847,7 @@ function registerSessionDocumentTools(server: McpServer): void {
     },
     async ({ session_id }) => {
       try {
+        await hydratePersistedDocuments(session_id);
         const records = session_id
           ? (() => {
               const session = mcpSessions.get(session_id);
@@ -1467,6 +1857,7 @@ function registerSessionDocumentTools(server: McpServer): void {
           : [...mcpDocuments.values()];
         return ok({
           schema: "office-ai/document-list@1",
+          dataDir: localSessionStore().dataDir,
           documents: records.map((record) => documentEnvelope(record)),
         });
       } catch (err) {
@@ -1485,11 +1876,12 @@ function registerSessionDocumentTools(server: McpServer): void {
     },
     async ({ document_id }) => {
       try {
-        const record = lookupDocument(document_id);
+        const record = await ensureDocumentLoaded(document_id);
         return ok({
           schema: "office-ai/get-document@1",
           document: documentEnvelope(record),
           summary: summaryFor(record),
+          dataDir: localSessionStore().dataDir,
         });
       } catch (err) {
         return fail(`get_document failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1516,7 +1908,7 @@ function registerSessionDocumentTools(server: McpServer): void {
     async ({ document_id, projection, page, sheet, range, slide, max_rows, max_cols }) => {
       try {
         return ok(
-          projectionFor(lookupDocument(document_id), {
+          projectionFor(await ensureDocumentLoaded(document_id), {
             projection: projection ?? "markdown",
             ...(page !== undefined ? { page } : {}),
             ...(sheet !== undefined ? { sheet } : {}),
@@ -1547,12 +1939,13 @@ function registerSessionDocumentTools(server: McpServer): void {
     },
     async ({ document_id, out_path }) => {
       try {
-        const record = lookupDocument(document_id);
+        const record = await ensureDocumentLoaded(document_id);
         const exported = await exportDocument(record, out_path);
         return ok({
           schema: "office-ai/export-document@1",
           document: documentEnvelope(record),
           exported,
+          dataDir: localSessionStore().dataDir,
           nextActions: ["get_document", "get_document_projection"],
         });
       } catch (err) {

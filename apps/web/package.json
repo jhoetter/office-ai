@@ -18,6 +18,7 @@
     "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
+    "@officeai/agent": "workspace:*",
     "@officeai/comments": "workspace:*",
     "@officeai/core": "workspace:^",
     "@officeai/design-tokens": "workspace:*",

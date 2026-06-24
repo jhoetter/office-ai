@@ -22,28 +22,29 @@ XLSX, PPTX and PDF:
 
 The main product gap is not format substance. The gap is product shape:
 MCP now has canonical session/document tools and a shared
-Plan/Preview/Apply command lifecycle, but both are backed by an
-in-process registry. The web review surface still needs to consume the
-same session state and pending-change model end-to-end.
+Plan/Preview/Apply command lifecycle backed by a local
+session-store/data-dir. The web app can inspect that store through a
+path-free sessions API, but it still needs a unified session browser and
+pending-change review panel.
 
 ## Package map
 
-| Package/app                                  | Product function                                                          | Current evidence                                                                                                                                                                    | Gaps                                                                                                                                          |
-| -------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core`                              | Command bus, plugin registry, OOXML utilities, action types.              | `CommandLite`, mutation/diff types, action catalogue contracts, command lifecycle envelope/tests, architecture gate.                                                                | Lifecycle helpers are consumed by MCP; web surfaces do not yet route Plan/Preview/Apply through them uniformly.                               |
-| `packages/docx`                              | DOCX parser/model/serializer, commands, agent API, ProseMirror renderer.  | 60 command handlers, 90 catalogue entries, real-world fixtures, roundtrip tests, web editor route.                                                                                  | MCP/session tools still use format-specific path handles. Some command surfaces are intentionally hidden/no-surface.                          |
-| `packages/xlsx`                              | XLSX parser/model/serializer, formula engine, commands, virtualized grid. | 65 command handlers, 102 catalogue entries reported by `pnpm actions`, synthetic fixtures, grid/editor E2E tests.                                                                   | Real-world XLSX fixture coverage is thinner than DOCX/PPTX. Some image/paste/fill commands have no public surface.                            |
-| `packages/pptx`                              | PPTX parser/model/serializer, commands, agent API, SVG/HTML renderer.     | 60 command handlers, 80 catalogue entries, real and synthetic fixtures, web editor/present E2E tests.                                                                               | Toolbar surface is narrower than palette/CLI; MCP action auto-binding is explicit but only applies where payload metadata is catalogue-owned. |
-| `packages/pdf`                               | PDF document model, parser facade, command handlers, headless `PdfAgent`. | 14 command handlers, 47 catalogue entries, PDF tests, PDF viewer route.                                                                                                             | PDF MCP parity is mixed: many CLI helpers are hand-written and not command-bus actions.                                                       |
-| `packages/pdf-edit`                          | Page-level PDF operations.                                                | Rotate, reorder, delete, split, merge, extract, crop, watermark, page numbers, metadata tests.                                                                                      | Operations are service helpers, not uniformly command-bus-backed.                                                                             |
-| `packages/pdf-annotations`                   | Typed annotation model, writer, XFDF/FDF I/O.                             | Writer tests and annotation fixture tests.                                                                                                                                          | Review/diff semantics for annotation changes need a shared command lifecycle.                                                                 |
-| `packages/pdf-forms`                         | AcroForm list/fill/reset/flatten.                                         | Forms tests and CLI/MCP projections.                                                                                                                                                | Form edits bypass the same command catalogue shape used by OOXML formats.                                                                     |
-| `packages/pdf-engine`                        | PDF.js/PDFium read/render abstraction.                                    | Engine selection tests and PDF viewer integration.                                                                                                                                  | Fidelity fallback is optional; diagnostics need to surface chosen engine and limitations uniformly.                                           |
-| `packages/pdf-ocr`                           | OCR text-layer bridge.                                                    | Text-layer tests and PDF action entry.                                                                                                                                              | OCR runtime prereqs need `doctor` coverage.                                                                                                   |
-| `packages/agent`                             | MCP server and CLI wrapper.                                               | `office-agent mcp`, canonical session/document MCP tools, cross-format Plan/Preview/Apply tools, review tools, format subcommands, action-to-CLI and action-to-MCP adapters, tests. | Session/document IDs and planned commands are canonical in MCP but still in-process rather than restart-durable.                              |
-| `packages/react-editors`                     | Embeddable React editor surfaces and blank-file builders.                 | Blank builder tests, bundle dry-run, component entry points.                                                                                                                        | Embedding docs still need a generic adapter contract and removal of old host-specific assumptions.                                            |
-| `packages/realtime` + `apps/realtime-server` | Yjs-backed realtime substrate.                                            | Command codec tests, identity tests, local server health endpoint.                                                                                                                  | Realtime identity/session state is not yet integrated with canonical document sessions.                                                       |
-| `apps/web`                                   | Human web editor surface.                                                 | Routes for start page, DOCX, XLSX, PPTX, PDF; 52 E2E specs.                                                                                                                         | No unified session browser, no cross-format pending-changes panel, no shared export history UI.                                               |
+| Package/app                                  | Product function                                                          | Current evidence                                                                                                                                                                                                  | Gaps                                                                                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/core`                              | Command bus, plugin registry, OOXML utilities, action types.              | `CommandLite`, mutation/diff types, action catalogue contracts, command lifecycle envelope/tests, architecture gate.                                                                                              | Lifecycle helpers are consumed by MCP; web surfaces do not yet route Plan/Preview/Apply through them uniformly.                               |
+| `packages/docx`                              | DOCX parser/model/serializer, commands, agent API, ProseMirror renderer.  | 60 command handlers, 90 catalogue entries, real-world fixtures, roundtrip tests, web editor route.                                                                                                                | MCP/session tools still use format-specific path handles. Some command surfaces are intentionally hidden/no-surface.                          |
+| `packages/xlsx`                              | XLSX parser/model/serializer, formula engine, commands, virtualized grid. | 65 command handlers, 102 catalogue entries reported by `pnpm actions`, synthetic fixtures, grid/editor E2E tests.                                                                                                 | Real-world XLSX fixture coverage is thinner than DOCX/PPTX. Some image/paste/fill commands have no public surface.                            |
+| `packages/pptx`                              | PPTX parser/model/serializer, commands, agent API, SVG/HTML renderer.     | 60 command handlers, 80 catalogue entries, real and synthetic fixtures, web editor/present E2E tests.                                                                                                             | Toolbar surface is narrower than palette/CLI; MCP action auto-binding is explicit but only applies where payload metadata is catalogue-owned. |
+| `packages/pdf`                               | PDF document model, parser facade, command handlers, headless `PdfAgent`. | 14 command handlers, 47 catalogue entries, PDF tests, PDF viewer route.                                                                                                                                           | PDF MCP parity is mixed: many CLI helpers are hand-written and not command-bus actions.                                                       |
+| `packages/pdf-edit`                          | Page-level PDF operations.                                                | Rotate, reorder, delete, split, merge, extract, crop, watermark, page numbers, metadata tests.                                                                                                                    | Operations are service helpers, not uniformly command-bus-backed.                                                                             |
+| `packages/pdf-annotations`                   | Typed annotation model, writer, XFDF/FDF I/O.                             | Writer tests and annotation fixture tests.                                                                                                                                                                        | Review/diff semantics for annotation changes need a shared command lifecycle.                                                                 |
+| `packages/pdf-forms`                         | AcroForm list/fill/reset/flatten.                                         | Forms tests and CLI/MCP projections.                                                                                                                                                                              | Form edits bypass the same command catalogue shape used by OOXML formats.                                                                     |
+| `packages/pdf-engine`                        | PDF.js/PDFium read/render abstraction.                                    | Engine selection tests and PDF viewer integration.                                                                                                                                                                | Fidelity fallback is optional; diagnostics need to surface chosen engine and limitations uniformly.                                           |
+| `packages/pdf-ocr`                           | OCR text-layer bridge.                                                    | Text-layer tests and PDF action entry.                                                                                                                                                                            | OCR runtime prereqs need `doctor` coverage.                                                                                                   |
+| `packages/agent`                             | MCP server and CLI wrapper.                                               | `office-agent mcp`, local data-dir session store, canonical session/document MCP tools, cross-format Plan/Preview/Apply tools, review tools, format subcommands, action-to-CLI and action-to-MCP adapters, tests. | Pending-review replay after a full restart is explicit-not-supported; review must happen while the live mutation stack exists.                |
+| `packages/react-editors`                     | Embeddable React editor surfaces and blank-file builders.                 | Blank builder tests, bundle dry-run, component entry points.                                                                                                                                                      | Embedding docs still need a generic adapter contract and removal of old host-specific assumptions.                                            |
+| `packages/realtime` + `apps/realtime-server` | Yjs-backed realtime substrate.                                            | Command codec tests, identity tests, local server health endpoint.                                                                                                                                                | Realtime identity/session state is not yet integrated with canonical document sessions.                                                       |
+| `apps/web`                                   | Human web editor surface.                                                 | Routes for start page, DOCX, XLSX, PPTX, PDF; 52 E2E specs.                                                                                                                                                       | No unified session browser, no cross-format pending-changes panel, no shared export history UI.                                               |
 
 ## Format and surface inventory
 
@@ -92,7 +93,7 @@ Current model:
   `plan_command`, `preview_command`, `apply_command`,
   `undo_command`, `list_pending_changes`, `approve_change`,
   `reject_change`.
-- format-specific load tools create in-process handles:
+- format-specific load tools create compatibility handles:
   `docx_load`, `xlsx_load`, `pptx_load`, `pdf_load`.
 - format-specific read/projection tools expose text, JSON, pages,
   ranges, slides, metadata, outline, annotations, forms and search.
@@ -106,14 +107,13 @@ Current model:
 
 Gaps against MCP-first:
 
-- The canonical session/document registry is still process-lifetime,
-  not a restart-durable local data-dir.
 - Auto-generated MCP mutation tools now require explicit
   `agentCallable` metadata plus a catalogue-owned command schema; the
   canonical `plan_command` path can map `action_id` to command envelopes,
   but many catalogue actions still use custom payload adapters.
 - MCP responses now share canonical document IDs, diagnostics and
-  command lifecycle envelopes; restart-durable storage remains open.
+  command lifecycle envelopes. Pending metadata survives restart, but
+  approve/reject replay of a live pending mutation stack remains open.
 
 ## CLI inventory
 
@@ -204,8 +204,9 @@ three complex fixtures per core format.
 
 ## Biggest technical risks
 
-1. MCP-first contract now exposes sessions/documents as the primary
-   abstraction, but the backing store is still in-process.
+1. Pending-review metadata survives restart, but replaying the exact
+   live pending mutation stack for approve/reject after restart remains
+   open.
 2. The web surface still needs to adopt the shared command lifecycle
    end-to-end, including pending review and diagnostics.
 3. PDF helper packages still include operations outside the command bus,
@@ -220,12 +221,10 @@ three complex fixtures per core format.
 
 ## Fastest wins
 
-1. Add a local session store under a data-dir and move path-loaded handles
-   behind `import_document`.
-2. Add a web session browser and pending-changes panel backed by the same
+1. Add a web session browser and pending-changes panel backed by the same
    session state.
-3. Normalize PDF diagnostics and export envelopes.
-4. Replace environment-specific docs with generic adapter language and
+2. Normalize PDF diagnostics and export envelopes.
+3. Replace environment-specific docs with generic adapter language and
    move old release notes into historical context.
-5. Add one `doctor` command that reports runtime prereqs for PDF
+4. Add one `doctor` command that reports runtime prereqs for PDF
    rendering/OCR, LibreOffice roundtrip and Playwright.

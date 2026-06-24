@@ -92,6 +92,11 @@ Forwarded profiles need both the web and realtime ports tunnelled, for example:
 ssh -L 23003:127.0.0.1:23003 -L 21234:127.0.0.1:21234 <host>
 ```
 
+Canonical MCP sessions persist locally under `$XDG_DATA_HOME/office-ai`
+or `~/.local/share/office-ai`. Set `OFFICEAI_DATA_DIR` to isolate one
+workspace/test run; see
+[`docs/session-store-data-dir.md`](docs/session-store-data-dir.md).
+
 ## Quality gates
 
 `make verify` runs the same pipeline as CI (`.github/workflows/ci.yml`).
