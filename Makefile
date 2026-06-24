@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install dev dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions \
+.PHONY: help install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -25,8 +25,10 @@
 # the historical localhost:3000. The realtime ws server listens on
 # 1234 (override via OAI_RT_PORT) — never collides with hof-os.
 # ----------------------------------------------------------------------
-PORT    ?= 3100
-RT_PORT ?= 1234
+PORT           ?= 3100
+FORWARDED_PORT ?= 23003
+FUGU_PORT      ?= 63003
+RT_PORT        ?= 1234
 
 # ----------------------------------------------------------------------
 # Realtime-server reuse
@@ -60,6 +62,9 @@ help:
 	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100; coexists with hof-os on 3000)"
 	@echo "                   Reuses an existing healthy realtime server on \$$RT_PORT (e.g. one spawned by hof-os);"
 	@echo "                   set OAI_RT_REUSE=0 to force a clean restart of the realtime server."
+	@echo "  dev-forwarded  Start the editor host on \$$FORWARDED_PORT (default 23003; Sonaloop SSH tunnel)"
+	@echo "  dev-forwarded-fugu"
+	@echo "                 Start the editor host on \$$FUGU_PORT (default 63003; Fugu tunnel)"
 	@echo "  kill-ports     Free \$$PORT (default 3100) and \$$RT_PORT (default 1234, skipped when healthy) — auto-runs as a prereq of \`dev\`"
 	@echo "  build          Build all packages"
 	@echo ""
@@ -200,6 +205,16 @@ dev: kill-ports
 	  echo ""; \
 	  PORT=$(PORT) pnpm --parallel --filter @officeai/web --filter @officeai/realtime-server dev; \
 	fi
+
+# Forwarded dev profile for viewing this machine through a Sonaloop SSH tunnel.
+#   ssh -L $(FORWARDED_PORT):127.0.0.1:$(FORWARDED_PORT) <host>
+dev-forwarded:
+	$(MAKE) dev PORT=$(FORWARDED_PORT)
+
+# Same, but on the Fugu (non-EU) dev host's port range so it can be tunnelled
+# alongside the EU host without local port clashes (FUGU = FORWARDED + 40000).
+dev-forwarded-fugu:
+	$(MAKE) dev PORT=$(FUGU_PORT)
 
 dev-realtime: kill-ports
 	pnpm --filter @officeai/realtime-server dev
