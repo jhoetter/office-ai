@@ -161,6 +161,7 @@ re-tag if you want a different starting point.
 
 ```sh
 pnpm verify             # full quality gate, ends with bundle:dry-run
+pnpm scorecard:check    # confirm MCP/Web/CLI parity docs are regenerated
 pnpm bundle:dry-run     # only the bundle smoke-test
 ```
 

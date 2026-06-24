@@ -6,3 +6,5 @@ coverage
 pnpm-lock.yaml
 fixtures/**/*.xml
 **/*.docx
+docs/cross-surface-parity-scorecard.md
+docs/cross-surface-parity-scorecard.json
