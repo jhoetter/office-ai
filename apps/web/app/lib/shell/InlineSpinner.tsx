@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 
 /**

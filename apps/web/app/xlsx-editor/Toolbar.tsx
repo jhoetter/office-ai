@@ -49,7 +49,7 @@ import {
   Target,
   Wand2,
   Filter as FilterIcon,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { useRef, useState } from "react";
 import { TextFormatBar, cn } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Replace, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Replace, Search, X } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
 import type { FindAdapter, FindMatch, FindOptions } from "./types";

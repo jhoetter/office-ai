@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { Bold, Italic, Underline, Strikethrough, Palette, Highlighter } from "lucide-react";
+import { Bold, Italic, Underline, Strikethrough, Palette, Highlighter } from "../sonaloop-icons";
 import { isOnTruthy, type ActiveTextFormat, type TextFormatProvider } from "@officeai/text-formatting";
 import { ColorPicker } from "./color-picker";
 import { FontFamilyPicker } from "./font-family-picker";

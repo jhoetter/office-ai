@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Trash2, X } from "lucide-react";
+import { Trash2, X } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import type { ConditionalFormat, ConditionalFormatOverlay } from "@officeai/xlsx";
 

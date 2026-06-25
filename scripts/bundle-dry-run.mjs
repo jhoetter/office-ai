@@ -282,7 +282,6 @@ function checkReactEditorsBundle(out) {
     // Phase-1.5 editor third-party externals — must be hoisted so the
     // bundled editor JS files can resolve them in the host's Vite.
     "pdfjs-dist",
-    "lucide-react",
     "jszip",
     "yjs",
     "y-websocket",

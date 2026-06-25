@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowDownToLine, ArrowUpToLine, ArrowLeftToLine, ArrowRightToLine } from "lucide-react";
+import {
+  ArrowDownToLine,
+  ArrowUpToLine,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+} from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import type { EditorView } from "prosemirror-view";
 

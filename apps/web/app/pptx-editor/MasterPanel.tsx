@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { LayoutTemplate, Palette } from "lucide-react";
+import { LayoutTemplate, Palette } from "@officeai/ui/sonaloop-icons";
 import type { LayoutKindPayload, PptxSnapshot, SlideLayout, SlideMaster, Theme } from "@officeai/pptx";
 
 /**

@@ -54,7 +54,7 @@ import {
   Ungroup,
   Video,
   Wand2,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { TextFormatBar } from "@officeai/ui";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";
 import type {
@@ -68,7 +68,7 @@ import type {
 import { FillPicker } from "./FillPicker";
 
 export type TextAlignment = "left" | "center" | "right" | "justify";
-import { LayoutTemplate } from "lucide-react";
+import { LayoutTemplate } from "@officeai/ui/sonaloop-icons";
 import { Ribbon, ToolbarMenu, type RibbonCatalogue } from "../lib/shell";
 import { useTranslator } from "@/lib/i18n";
 

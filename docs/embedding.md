@@ -94,8 +94,8 @@ relocating the editor code because:
   `node_modules`. They're inlined into the bundle (~50 KB / editor)
   so hosts don't need to special-case them.
 
-Heavy third-party libs (`pdfjs-dist`, `prosemirror-*`, `lucide-react`,
-`jszip`, `yjs`, `y-websocket`) stay externalized for the same dedup
+Heavy third-party libs (`pdfjs-dist`, `prosemirror-*`, `jszip`, `yjs`,
+`y-websocket`) stay externalized for the same dedup
 reason and ship as direct deps in `package.json` so pnpm + the
 shameful-hoist step in `.github/workflows/auto-release.yml` puts them
 at the consumer's deploy root (required for Vite's

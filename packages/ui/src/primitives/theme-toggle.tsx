@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useTheme } from "next-themes";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "../sonaloop-icons";
 import { cn } from "../lib/cn";
 
 interface ThemeToggleProps {

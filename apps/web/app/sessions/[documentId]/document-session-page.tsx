@@ -16,7 +16,7 @@ import {
   RefreshCw,
   Undo2,
   X,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { downloadBlob } from "@/lib/files/file-service";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";

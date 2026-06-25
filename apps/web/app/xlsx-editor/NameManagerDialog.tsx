@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Trash2, X } from "@officeai/ui/sonaloop-icons";
 import { useFocusTrap } from "@officeai/ui";
 import type { DefinedName } from "@officeai/xlsx";
 

@@ -84,7 +84,6 @@
     "@officeai/ui": "workspace:*",
     "@officeai/xlsx": "workspace:*",
     "jszip": "^3.10.1",
-    "lucide-react": "^0.574.0",
     "pdfjs-dist": "^4.10.38",
     "prosemirror-model": "^1.24.1",
     "prosemirror-state": "^1.4.3",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { BookOpen, FileSpreadsheet, FileText, Presentation } from "lucide-react";
+import { BookOpen, FileSpreadsheet, FileText, Presentation } from "@officeai/ui/sonaloop-icons";
 import { InlineSpinner } from "./InlineSpinner";
 import { useTranslator } from "@/lib/i18n";
 import type { ProductKind } from "./types";

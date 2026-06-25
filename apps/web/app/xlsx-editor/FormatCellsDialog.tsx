@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { X } from "@officeai/ui/sonaloop-icons";
 import { cn, useFocusTrap } from "@officeai/ui";
 import type { CellFormatPatch, EffectiveStyle, StyleTable } from "@officeai/xlsx";
 import { flattenCellXf } from "@officeai/xlsx";

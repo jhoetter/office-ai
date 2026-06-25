@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import { ToolbarMenu } from "../ToolbarMenu";
 

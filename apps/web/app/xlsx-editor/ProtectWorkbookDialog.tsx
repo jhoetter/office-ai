@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { X } from "lucide-react";
+import { X } from "@officeai/ui/sonaloop-icons";
 import { useFocusTrap } from "@officeai/ui";
 
 export interface ProtectWorkbookValues {

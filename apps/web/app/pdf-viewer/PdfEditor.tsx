@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BookOpen, FolderOpen, MousePointer2 } from "lucide-react";
+import { BookOpen, FolderOpen, MousePointer2 } from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
 import { CommentsSidebar } from "@officeai/ui";
 import { loadDocument, type PdfEngineDocument } from "@officeai/pdf-engine";

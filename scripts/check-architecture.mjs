@@ -92,7 +92,7 @@ const ALLOWED_INTERNAL_DEPS = {
   // actually looks. The Phase-1.5 bundles externalize these packages
   // (so they're shared with the host) which would fail to resolve
   // without this hoist. Same story for the heavy third-party deps
-  // (pdfjs-dist, prosemirror-*, lucide-react, jszip, yjs, y-websocket)
+  // (pdfjs-dist, prosemirror-*, jszip, yjs, y-websocket)
   // which sit in package.json `dependencies` for the same reason.
   "@officeai/react-editors": [
     "@officeai/docx",
@@ -212,8 +212,8 @@ const FORBIDDEN_SOURCE_IMPORTS = {
 const SONALOOP_DESIGN_CONSUMERS = new Set(["@officeai/web", "@officeai/ui", "@officeai/react-editors"]);
 const MIGRATION_ONLY_DESIGN_DEPS = {
   "@officeai/design-tokens": new Set(["@officeai/ui", "@officeai/web", "@officeai/react-editors"]),
-  "lucide-react": new Set(["@officeai/ui", "@officeai/web", "@officeai/react-editors"]),
 };
+const FORBIDDEN_DESIGN_DEPS = new Set(["lucide-react"]);
 const DESIGN_DEPENDENCY_SOURCE = "sonaloop-design";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -355,6 +355,13 @@ function main() {
           message: `Forbidden design dependency: only app/UI shell packages may depend on "${DESIGN_DEPENDENCY_SOURCE}". Allowed consumers: [${[...SONALOOP_DESIGN_CONSUMERS].join(", ")}].`,
         });
       }
+      if (FORBIDDEN_DESIGN_DEPS.has(dep)) {
+        violations.push({
+          package: name,
+          file: relPath(join(dir, "package.json")),
+          message: `Forbidden design dependency "${dep}". Icons must flow through "@officeai/ui/sonaloop-icons" backed by "${DESIGN_DEPENDENCY_SOURCE}".`,
+        });
+      }
       const migrationAllowed = MIGRATION_ONLY_DESIGN_DEPS[dep];
       if (migrationAllowed && !migrationAllowed.has(name)) {
         violations.push({
@@ -395,6 +402,13 @@ function main() {
 
     for (const file of walkSourceFiles(dir)) {
       for (const specifier of sourceImportSpecifiers(file)) {
+        if (matchesImport(specifier, "lucide-react")) {
+          violations.push({
+            package: name,
+            file: relPath(file),
+            message: `Forbidden source import: use "@officeai/ui/sonaloop-icons" instead of "lucide-react".`,
+          });
+        }
         if (!matchesImport(specifier, DESIGN_DEPENDENCY_SOURCE)) continue;
         if (SONALOOP_DESIGN_CONSUMERS.has(name)) continue;
         violations.push({

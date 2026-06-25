@@ -12,7 +12,7 @@
  */
 
 import type { ReactNode } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 
 export interface SelectionPaneItem {

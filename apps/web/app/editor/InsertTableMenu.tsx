@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Table as TableIcon } from "lucide-react";
+import { ChevronDown, Table as TableIcon } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import { ToolbarMenu } from "../lib/shell";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Trash2, Pencil, Check, X } from "lucide-react";
+import { Trash2, Pencil, Check, X } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import type { DocxAgent, DocxSnapshot, Footnote } from "@officeai/docx";
 

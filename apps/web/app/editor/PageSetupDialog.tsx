@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { X } from "@officeai/ui/sonaloop-icons";
 import { useFocusTrap } from "@officeai/ui";
 import type { DocxSnapshot } from "@officeai/docx";
 

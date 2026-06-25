@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@officeai/ui";
-import { Asterisk, LayoutTemplate, ListTree, MessageSquare, Search, Sparkles, X } from "lucide-react";
+import {
+  Asterisk,
+  LayoutTemplate,
+  ListTree,
+  MessageSquare,
+  Search,
+  Sparkles,
+  X,
+} from "@officeai/ui/sonaloop-icons";
 import { useTranslator } from "@/lib/i18n";
 import type { OutlineEntry, ProductAdapter } from "./types";
 

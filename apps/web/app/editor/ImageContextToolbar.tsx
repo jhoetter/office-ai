@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Image as ImageIcon, Type, Trash2 } from "lucide-react";
+import { Image as ImageIcon, Type, Trash2 } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import type { EditorView } from "prosemirror-view";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X } from "@officeai/ui/sonaloop-icons";
 import { useFocusTrap } from "@officeai/ui";
 import {
   SHORTCUT_CATALOGS,

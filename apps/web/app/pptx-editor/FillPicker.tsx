@@ -27,7 +27,7 @@
  */
 
 import * as React from "react";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, X } from "@officeai/ui/sonaloop-icons";
 import { Popover } from "@officeai/ui";
 import type { FillSpec, GradientFillSpec, GradientStop } from "@officeai/pptx";
 

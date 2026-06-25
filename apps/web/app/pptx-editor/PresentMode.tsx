@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Monitor, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Monitor, X } from "@officeai/ui/sonaloop-icons";
 import {
   createPlayback,
   type ChartPart,

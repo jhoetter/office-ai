@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { FolderOpen, MousePointer2 } from "lucide-react";
+import { FolderOpen, MousePointer2 } from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
 

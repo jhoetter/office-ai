@@ -11,6 +11,7 @@ const OUT_PATH = join(ROOT, "docs", "sonaloop-design-adoption.md");
 const SOURCE_ROOTS = ["apps/web/app", "packages/ui/src", "packages/react-editors/src"];
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const SKIP_DIRS = new Set(["node_modules", "dist", ".next", "coverage", ".turbo"]);
+const ICON_IMPORT_SOURCES = new Set(["lucide-react", "@officeai/ui/sonaloop-icons", "../sonaloop-icons"]);
 
 const ICON_ALIASES = {
   AlertTriangle: "alert",
@@ -80,17 +81,18 @@ function extractLucideImports(file) {
 
     if (current.length === 0) continue;
     const block = current.join("\n");
-    if (/from\s*["']lucide-react["']/.test(block)) {
+    const source = block.match(/from\s*["']([^"']+)["']/)?.[1];
+    if (source && ICON_IMPORT_SOURCES.has(source)) {
       blocks.push(block);
       current = [];
-    } else if (/from\s*["'][^"']+["']/.test(block)) {
+    } else if (source) {
       current = [];
     }
   }
 
   for (const block of blocks) {
-    const match = /import\s*\{([\s\S]*?)\}\s*from\s*["']lucide-react["']/.exec(block);
-    if (!match) continue;
+    const match = /import\s*\{([\s\S]*?)\}\s*from\s*["']([^"']+)["']/.exec(block);
+    if (!match || !ICON_IMPORT_SOURCES.has(match[2])) continue;
     for (const raw of match[1].split(",")) {
       const item = raw.trim();
       if (!item || item.startsWith("type ")) continue;
@@ -207,7 +209,7 @@ async function main() {
   lines.push("");
   lines.push("## Summary");
   lines.push("");
-  lines.push(`- Office-AI lucide imports scanned: ${rows.length} unique icon names.`);
+  lines.push(`- Office-AI icon imports scanned: ${rows.length} unique icon names.`);
   lines.push(`- Already mapped to ` + "`sonaloop-design`" + `: ${mapped}.`);
   lines.push(`- Missing from ` + "`sonaloop-design`" + `: ${gaps.length}.`);
   lines.push(`- Source roots: ${SOURCE_ROOTS.map((root) => `\`${root}\``).join(", ")}.`);
@@ -220,7 +222,7 @@ async function main() {
     "| Data model | `PaletteCommand` from action catalogue | `CommandGroup` / `CommandItem` | Add adapter from catalogue actions to grouped command items. |"
   );
   lines.push(
-    "| Icons | Lucide components in app shell | `IconKey` strings rendered by `sonaloop-design` | Use the icon table below as the adapter mapping. |"
+    "| Icons | `@officeai/ui/sonaloop-icons` adapter components | `IconKey` strings rendered by `sonaloop-design` | Keep call-site names stable while the adapter maps to shared icons. |"
   );
   lines.push(
     "| Hotkey | Local shell handler | Built-in CMD+K/Ctrl-K in `CommandPalette` | Let the shared palette own the global hotkey. |"
@@ -278,7 +280,7 @@ async function main() {
   );
   lines.push("2. Generate and publish/consume the `sonaloop-design` React icon layer.");
   lines.push(
-    "3. Replace Office-AI Lucide imports with a small `IconKey` adapter, then remove `lucide-react` from app/UI dependencies."
+    "3. Keep Office-AI call sites on `@officeai/ui/sonaloop-icons`; add new glyph geometry only in `sonaloop-design/icons.data.mjs`."
   );
   lines.push(
     "4. Keep `@officeai/design-tokens` as a compatibility mapping only until app-shell and primitive classes consume `sonaloop-design` directly."

@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Trash2, X } from "lucide-react";
+import { Trash2, X } from "@officeai/ui/sonaloop-icons";
 import type { DataValidation } from "@officeai/xlsx";
 
 export interface DataValidationDialogProps {

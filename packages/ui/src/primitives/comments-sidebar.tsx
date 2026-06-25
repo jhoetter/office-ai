@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Check, CornerDownRight, MessageCircle, Trash2 } from "lucide-react";
+import { Check, CornerDownRight, MessageCircle, Trash2 } from "../sonaloop-icons";
 import {
   groupThreads,
   type CommentBody,

@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { FileCode, FileImage, FileSpreadsheet, FileText, FileType2, Presentation, X } from "lucide-react";
+import {
+  FileCode,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
+  Presentation,
+  X,
+} from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import { InlineSpinner } from "./InlineSpinner";
 import type {

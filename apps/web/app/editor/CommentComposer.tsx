@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { MessageSquarePlus, X } from "lucide-react";
+import { MessageSquarePlus, X } from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
 
 /**

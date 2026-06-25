@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, ListTree, MessageSquare, Plus } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  ListTree,
+  MessageSquare,
+  Plus,
+} from "@officeai/ui/sonaloop-icons";
 import type { PdfEngineDocument } from "@officeai/pdf-engine";
 import type { PdfAnnotation, PdfComment, PdfOutlineNode, PdfPage, PdfSnapshot } from "@officeai/pdf";
 import { useTranslator } from "@/lib/i18n";

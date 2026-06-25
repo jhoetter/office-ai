@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { Plus } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 

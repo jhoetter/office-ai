@@ -46,7 +46,7 @@ import {
   Quote,
   Link2,
   Palette,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { TextFormatBar, cn } from "@officeai/ui";
 import { InsertTableMenu } from "./InsertTableMenu";
 import type { ActiveTextFormat, TextFormatProvider } from "@officeai/text-formatting";

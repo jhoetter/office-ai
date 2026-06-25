@@ -12,7 +12,7 @@ import {
   Triangle,
   Unlink,
   X,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import type { ConnectorDashStyle, ConnectorEndShape, ConnectorShape, ConnectorType } from "@officeai/pptx";
 
 /**

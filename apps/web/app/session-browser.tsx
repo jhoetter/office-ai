@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Clock3, Database, FileArchive, Loader2, Plus, RefreshCw, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  Clock3,
+  Database,
+  FileArchive,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Upload,
+} from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
 import { formatParityDiagnostics, formatParityFor } from "@/lib/sessions/format-parity";

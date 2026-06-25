@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "../sonaloop-icons";
 import { cn } from "../lib/cn";
 
 export type ToastKind = "info" | "warn" | "error" | "success";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link as LinkIcon, Trash2, X } from "lucide-react";
+import { Link as LinkIcon, Trash2, X } from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
 
 /**

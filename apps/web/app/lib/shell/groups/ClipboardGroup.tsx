@@ -20,7 +20,7 @@
  */
 
 import type { ReactNode } from "react";
-import { Clipboard, ClipboardCopy, ClipboardPaste, Paintbrush, Scissors } from "lucide-react";
+import { Clipboard, ClipboardCopy, ClipboardPaste, Paintbrush, Scissors } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 
 export interface ClipboardGroupProps {

@@ -34,8 +34,9 @@ dialogs, command entry and icon vocabulary converge on Sonaloop.
 - `@officeai/design-tokens` is a migration shim only. Token values must
   converge on `sonaloop-design` and eventually become re-exports or
   aliases.
-- `lucide-react` is a migration dependency, not the long-term icon
-  source. New Office-domain icons belong in `sonaloop-design`.
+- `lucide-react` is not a product dependency. Office-AI call sites use
+  `@officeai/ui/sonaloop-icons`, backed by `sonaloop-design`; new
+  Office-domain icon geometry belongs in `sonaloop-design`.
 - CMD+K should use the `sonaloop-design` command palette with an
   Office-AI catalogue adapter.
 - The app shell may be local/offline, but its structure should match

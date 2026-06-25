@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Check, X } from "lucide-react";
+import { Check, X } from "@officeai/ui/sonaloop-icons";
 import { cn } from "@officeai/ui";
 import { collectRevisionsWithPreview, snippet } from "@/lib/format-helpers";
 import type { DocxSnapshot } from "@officeai/docx";

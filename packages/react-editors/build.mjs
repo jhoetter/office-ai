@@ -27,8 +27,8 @@
  *         bundle has zero Next runtime dependency.
  *
  *      3. We externalize React, the workspace packages, and the
- *         heavy third-party deps (pdfjs-dist, prosemirror-*, lucide,
- *         jszip, yjs, y-websocket). They reach the consumer through
+ *         heavy third-party deps (pdfjs-dist, prosemirror-*, jszip,
+ *         yjs, y-websocket). They reach the consumer through
  *         pnpm's normal dependency resolution + the shameful-hoist
  *         step that the auto-release workflow runs (so the tarball
  *         that a downstream host's postinstall fetches has every external
@@ -69,7 +69,7 @@ const NEXT_LINK_SHIM = path.join(SRC, "shims", "next-link.tsx");
 //      headless `@officeai/react-editors/blanks` entries.
 //
 //   2. React + heavy third-party libs (pdfjs-dist, prosemirror-*,
-//      lucide, jszip, yjs, y-websocket) — same reason: they're
+//      jszip, yjs, y-websocket) — same reason: they're
 //      already in the host's dep graph (most hosts pull React from
 //      somewhere), the bundler will dedupe, and inlining drags
 //      multi-MB worker code into every chunk.
@@ -98,7 +98,6 @@ const EXTERNAL = [
   "@officeai/pdf-annotations",
   "pdfjs-dist",
   "pdfjs-dist/legacy/build/pdf.mjs",
-  "lucide-react",
   "jszip",
   "yjs",
   "y-websocket",

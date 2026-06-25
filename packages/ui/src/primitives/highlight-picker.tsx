@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown } from "../sonaloop-icons";
 import {
   HIGHLIGHT_PALETTE,
   MIXED,

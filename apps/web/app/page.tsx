@@ -12,7 +12,7 @@ import {
   Plus,
   Presentation,
   Sparkles,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 import { openFile } from "@/lib/files/file-service";

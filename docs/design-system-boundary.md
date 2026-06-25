@@ -10,9 +10,9 @@ source is `sonaloop-design`, not another local Office-AI design system.
 - `@officeai/design-tokens`: temporary migration shim only. It may remain while
   app/editor CSS aliases converge on `sonaloop-design/styles/tokens.css` and
   `sonaloop-design/app.css`.
-- `lucide-react`: temporary migration dependency only. Existing imports are
-  being replaced by Sonaloop `IconKey` rendering; new Office-domain icons belong
-  in `sonaloop-design/icons.data.mjs`.
+- `@officeai/ui/sonaloop-icons`: the Office-AI icon adapter. It preserves the
+  existing component names at call sites while rendering `sonaloop-design`
+  icons.
 
 ## Allowed consumers
 
@@ -32,8 +32,8 @@ components, local token packages or Lucide icons.
 
 - no new local `@officeai/design-*` package may be introduced;
 - `sonaloop-design` imports are limited to the app/UI shell packages above;
-- `@officeai/design-tokens` and `lucide-react` remain limited to the migration
-  packages above.
+- `@officeai/design-tokens` remains limited to the migration packages above;
+- `lucide-react` is forbidden in package manifests and source imports.
 
 The long-term state is: Office-AI keeps document engines and format-specific UI
 logic locally, while shared app language comes from `sonaloop-design`.

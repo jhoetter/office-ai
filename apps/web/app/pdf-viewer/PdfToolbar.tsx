@@ -17,7 +17,7 @@ import {
   StickyNote,
   Trash2,
   Workflow,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { ToolbarMenu, ToolbarRow } from "@/lib/shell";
 import { useTranslator } from "@/lib/i18n";
 import type { PdfViewMode } from "./PdfCanvas";

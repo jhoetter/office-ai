@@ -15,7 +15,7 @@ import {
   Sparkles,
   Trash2,
   Zap,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import {
   presetsByCategory,
   type AnimationCategory,

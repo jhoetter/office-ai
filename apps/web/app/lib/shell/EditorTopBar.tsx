@@ -20,7 +20,7 @@ import {
   Search,
   Sliders,
   Undo2,
-} from "lucide-react";
+} from "@officeai/ui/sonaloop-icons";
 import { ThemeToggle, cn } from "@officeai/ui";
 import { ExportDialog } from "./ExportDialog";
 import { InlineSpinner } from "./InlineSpinner";
