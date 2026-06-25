@@ -66,7 +66,7 @@ export async function GET(
         { status: 409 }
       );
     }
-    if (document.format === "email" || document.format === "image") {
+    if (document.format === "image") {
       return badRequest(
         "unsupported-projection-format",
         `${document.format} documents use viewer routes and do not expose document projections.`

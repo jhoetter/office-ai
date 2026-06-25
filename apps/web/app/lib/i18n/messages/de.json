@@ -69,7 +69,6 @@
     "kindXlsx": "Excel-Arbeitsmappe",
     "kindPptx": "PowerPoint-Präsentation",
     "kindPdf": "PDF-Dokument",
-    "kindEmail": "E-Mail-Nachricht",
     "kindImage": "Bilddatei",
     "yes": "Ja",
     "no": "Nein",
@@ -190,17 +189,6 @@
     "loading": "Arbeitsbereich wird geladen",
     "loadError": "Dokument aus dem Arbeitsbereich konnte nicht geöffnet werden",
     "openInspector": "Prüfansicht öffnen"
-  },
-  "emailViewer": {
-    "title": "E-Mail-Ansicht",
-    "from": "Von",
-    "to": "An",
-    "date": "Datum",
-    "body": "Nachrichtentext",
-    "noBody": "Kein lesbarer Nachrichtentext.",
-    "attachments": "Anhänge",
-    "noAttachments": "Keine Anhänge.",
-    "openAttachment": "Anhang öffnen"
   },
   "imageViewer": {
     "title": "Bildansicht",

@@ -12,7 +12,7 @@ export const DATA_DIR_SCHEMA_VERSION = 1;
 export const SESSION_RECORD_SCHEMA_VERSION = 1;
 export const DOCUMENT_RECORD_SCHEMA_VERSION = 1;
 
-export type StoredOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf" | "email" | "image";
+export type StoredOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf" | "image";
 export type StoredDiagnosticLevel = "info" | "warning" | "error" | "destructive";
 
 export interface StoredDiagnostic {
@@ -1024,14 +1024,7 @@ function isDocumentLike(value: Record<string, unknown>): boolean {
 }
 
 function isStoredOfficeFormat(value: unknown): value is StoredOfficeFormat {
-  return (
-    value === "docx" ||
-    value === "xlsx" ||
-    value === "pptx" ||
-    value === "pdf" ||
-    value === "email" ||
-    value === "image"
-  );
+  return value === "docx" || value === "xlsx" || value === "pptx" || value === "pdf" || value === "image";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

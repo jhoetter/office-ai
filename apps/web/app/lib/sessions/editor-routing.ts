@@ -10,7 +10,6 @@ const EDITOR_PATH_BY_FORMAT: Record<WebOfficeFormat, string> = {
   xlsx: "/xlsx-editor",
   pptx: "/pptx-editor",
   pdf: "/pdf-viewer",
-  email: "/email-viewer",
   image: "/image-viewer",
 };
 

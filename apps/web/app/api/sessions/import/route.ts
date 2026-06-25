@@ -24,7 +24,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const form = await request.formData();
     const file = form.get("file");
     if (!(file instanceof File) || file.size === 0) {
-      return badRequest("missing-file", "Upload a supported office, PDF, email or image file.");
+      return badRequest("missing-file", "Upload a supported office, PDF or image file.");
     }
 
     const format = inferFormatFromName(file.name);

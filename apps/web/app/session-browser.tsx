@@ -201,7 +201,7 @@ export function SessionBrowser() {
             ref={fileInputRef}
             className="hidden"
             type="file"
-            accept=".docx,.xlsx,.pptx,.pdf,.eml,.msg,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.tif,.tiff,.heic,.heif,application/pdf,message/rfc822,image/*"
+            accept=".docx,.xlsx,.pptx,.pdf,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.tif,.tiff,.heic,.heif,application/pdf,image/*"
             onChange={onImportInput}
           />
           <Button

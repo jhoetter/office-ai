@@ -197,20 +197,20 @@ describe("LocalSessionStore", () => {
       {
         id: "doc_lifecycle",
         sessionId: "session_lifecycle",
-        format: "email",
-        name: "message.eml",
+        format: "image",
+        name: "scan.heic",
         status: "ready",
         createdAt: "2026-06-24T09:00:00.000Z",
         updatedAt: "2026-06-24T09:01:00.000Z",
         revision: 1,
         diagnostics: [],
-        exportHistory: [{ path: "/tmp/message.eml", bytes: 12, exportedAt: "2026-06-24T09:02:00.000Z" }],
+        exportHistory: [{ path: "/tmp/scan.heic", bytes: 12, exportedAt: "2026-06-24T09:02:00.000Z" }],
         pendingChanges: [],
         commandLog: [],
       },
       {
-        originalBytes: Buffer.from("original email"),
-        workingBytes: Buffer.from("working email"),
+        originalBytes: Buffer.from("original image"),
+        workingBytes: Buffer.from("working image"),
       }
     );
 
@@ -232,16 +232,16 @@ describe("LocalSessionStore", () => {
     expect(duplicated.documents[0]?.id).not.toBe("doc_lifecycle");
     expect(duplicated.documents[0]).toMatchObject({
       sessionId: duplicated.session.id,
-      format: "email",
-      name: "message.eml",
+      format: "image",
+      name: "scan.heic",
       exportHistory: [],
       artifacts: {
-        originalPath: expect.stringContaining("original.email"),
-        workingPath: expect.stringContaining("working.email"),
+        originalPath: expect.stringContaining("original.image"),
+        workingPath: expect.stringContaining("working.image"),
       },
     });
     expect(Buffer.from(await store.readWorkingBytes(duplicated.documents[0]!)).toString("utf8")).toBe(
-      "working email"
+      "working image"
     );
 
     await store.deleteSession(duplicated.session.id);

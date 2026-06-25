@@ -8,7 +8,7 @@ import type {
   StoredSessionRecord,
 } from "@officeai/agent/session-store";
 
-export type WebOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf" | "email" | "image";
+export type WebOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf" | "image";
 
 export interface WebSessionEntry {
   readonly sessionId: string;

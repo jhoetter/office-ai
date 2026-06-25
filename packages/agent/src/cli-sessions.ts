@@ -22,7 +22,7 @@ import {
   type ProjectionSource,
 } from "./projections.js";
 
-type EditableStoredOfficeFormat = Exclude<StoredOfficeFormat, "email" | "image">;
+type EditableStoredOfficeFormat = Exclude<StoredOfficeFormat, "image">;
 
 interface SessionCliOutputOptions {
   readonly json?: boolean;

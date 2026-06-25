@@ -20,7 +20,7 @@ import { GET } from "./route";
 import { mimeForFormat } from "@/lib/sessions/server-documents";
 import type { WebOfficeFormat } from "@/lib/sessions/web-sessions";
 
-type EditableWebOfficeFormat = Exclude<WebOfficeFormat, "email" | "image">;
+type EditableWebOfficeFormat = Exclude<WebOfficeFormat, "image">;
 
 let previousOfficeAiDataDir: string | undefined;
 let dataDir: string;
@@ -598,32 +598,11 @@ describe("POST /api/sessions/import", () => {
     expect(payload.message).toContain("notes.txt");
   });
 
-  it("imports EML messages and image files as viewer-backed session documents", async () => {
-    const eml = [
-      "From: Ada <ada@example.com>",
-      "To: Team <team@example.com>",
-      "Subject: Fixture mail",
-      "Content-Type: text/plain; charset=utf-8",
-      "",
-      "Hello from an imported email.",
-    ].join("\r\n");
+  it("imports image files as viewer-backed session documents", async () => {
     const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
-
-    const mailForm = new FormData();
-    mailForm.set("file", new File([Buffer.from(eml)], "message.eml", { type: "message/rfc822" }));
-    const mailResponse = await IMPORT_DOCUMENT(
-      new Request("http://localhost/api/sessions/import", { method: "POST", body: mailForm })
-    );
-    expect(mailResponse.status).toBe(201);
-    const mailPayload = (await mailResponse.json()) as {
-      session: { sessionId: string };
-      document: { documentId: string; format: string; name: string };
-    };
-    expect(mailPayload.document).toMatchObject({ format: "email", name: "message.eml" });
 
     const imageForm = new FormData();
     imageForm.set("file", new File([imageBytes], "pixel.png", { type: "image/png" }));
-    imageForm.set("session_id", mailPayload.session.sessionId);
     const imageResponse = await IMPORT_DOCUMENT(
       new Request("http://localhost/api/sessions/import", { method: "POST", body: imageForm })
     );
@@ -632,19 +611,21 @@ describe("POST /api/sessions/import", () => {
       session: { sessionId: string; documentCount: number };
       document: { documentId: string; format: string; name: string };
     };
-    expect(imagePayload.session).toMatchObject({
-      sessionId: mailPayload.session.sessionId,
-      documentCount: 2,
-    });
+    expect(imagePayload.session.documentCount).toBe(1);
     expect(imagePayload.document).toMatchObject({ format: "image", name: "pixel.png" });
+  });
 
-    const bytesResponse = await GET_BYTES(
-      new Request(`http://localhost/api/sessions/${mailPayload.document.documentId}/bytes`),
-      { params: Promise.resolve({ documentId: mailPayload.document.documentId }) }
+  it("rejects EML and MSG files because email is out of office-ai scope", async () => {
+    const form = new FormData();
+    form.set("file", new File([Buffer.from("Subject: no")], "message.eml", { type: "message/rfc822" }));
+
+    const response = await IMPORT_DOCUMENT(
+      new Request("http://localhost/api/sessions/import", { method: "POST", body: form })
     );
-    expect(bytesResponse.status).toBe(200);
-    expect(bytesResponse.headers.get("x-officeai-format")).toBe("email");
-    expect(await bytesResponse.text()).toContain("Fixture mail");
+    const payload = (await response.json()) as { code: string; message: string };
+    expect(response.status).toBe(400);
+    expect(payload.code).toBe("unsupported-format");
+    expect(payload.message).toContain("message.eml");
   });
 });
 
