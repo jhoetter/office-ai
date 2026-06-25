@@ -26,6 +26,10 @@ new `documentId` as their matching legacy handle.
    - reads `summary`, `markdown`, `json`, `text` or `page` projections.
    - supports format-specific windowing fields such as `sheet`,
      `range`, `slide`, `page`, `max_rows` and `max_cols`.
+   - PDF clients that need PDF-native metadata, outlines, annotations,
+     search hits or PDF diagnostics should use the normalized
+     `pdf_document_*` tools documented in
+     [`mcp-pdf-parity-diagnostics.md`](mcp-pdf-parity-diagnostics.md).
 6. `plan_command` / `preview_command` / `apply_command`
    - mutates canonical documents through a shared command envelope,
      diagnostics, diff and review lifecycle.

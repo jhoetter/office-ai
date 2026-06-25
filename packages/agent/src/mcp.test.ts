@@ -236,6 +236,23 @@ describe("OfficeAI MCP server", () => {
     }
   });
 
+  it("registers normalized PDF document and mutation planning tools", async () => {
+    const client = await makeClient();
+    const list = await client.listTools();
+    const names = new Set(list.tools.map((t) => t.name));
+    for (const expected of [
+      "pdf_document_metadata",
+      "pdf_document_page",
+      "pdf_document_outline",
+      "pdf_document_annotations",
+      "pdf_document_search",
+      "pdf_document_diagnostics",
+      "pdf_plan_annotation",
+    ]) {
+      expect(names.has(expected), `missing normalized PDF tool ${expected}`).toBe(true);
+    }
+  });
+
   it("plans an office-ai/command@1 envelope with stable command-schema fields", async () => {
     const client = await makeClient();
     const created = structured(
@@ -543,6 +560,138 @@ describe("OfficeAI MCP server", () => {
         "review-opt-out-ignored",
         "auto-apply-downgraded-to-pending",
       ])
+    );
+  });
+
+  it("runs normalized PDF MCP reads, annotation planning, pending review and export diagnostics", async () => {
+    const client = await makeClient();
+    const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-pdf-"));
+    const imported = structured(
+      await client.callTool({
+        name: "import_document",
+        arguments: {
+          path: fixturePath(requiredMatrixFixture("pdf", { id: "pdf.synthetic.highlight-annotation" })),
+        },
+      })
+    );
+    const document = imported.document as { documentId: string; format: string };
+    expect(document.format).toBe("pdf");
+
+    const metadata = structured(
+      await client.callTool({
+        name: "pdf_document_metadata",
+        arguments: { document_id: document.documentId },
+      })
+    );
+    expect(metadata.schema).toBe("office-ai/pdf-document-metadata@1");
+    expect((metadata.metadata as { pageCount: number }).pageCount).toBeGreaterThan(0);
+    expect(
+      (metadata.diagnostics as Array<{ level: string; code: string }>).every((d) => d.level && d.code)
+    ).toBe(true);
+
+    const page = structured(
+      await client.callTool({
+        name: "pdf_document_page",
+        arguments: { document_id: document.documentId, page: 1 },
+      })
+    );
+    expect(page.schema).toBe("office-ai/pdf-document-page@1");
+    expect((page.projection as { page: { pageNumber: number; hasTextLayer: boolean } }).page).toMatchObject({
+      pageNumber: 1,
+      hasTextLayer: true,
+    });
+
+    const annotations = structured(
+      await client.callTool({
+        name: "pdf_document_annotations",
+        arguments: { document_id: document.documentId },
+      })
+    );
+    expect(
+      ((annotations.projection as { annotations: Array<{ kind: string }> }).annotations ?? []).map(
+        (annotation) => annotation.kind
+      )
+    ).toEqual(expect.arrayContaining(["highlight", "note"]));
+
+    const planned = structured(
+      await client.callTool({
+        name: "pdf_plan_annotation",
+        arguments: {
+          document_id: document.documentId,
+          kind: "highlight",
+          page: 1,
+          bbox: [72, 650, 180, 665],
+          contents: "MCP planned highlight",
+          author: "mcp-test",
+          policy: { mode: "pending" },
+          actor_id: "pdf-mcp-test",
+        },
+      })
+    );
+    expect(planned.schema).toBe("office-ai/command-plan@1");
+    expect(planned.ok).toBe(true);
+    expect(planned.command).toMatchObject({
+      operation: "pdf:add-annotation",
+      arguments: { kind: "highlight", pageNumber: 1, contents: "MCP planned highlight" },
+      target: { anchor: { kind: "page_region", page: 1, bbox: [72, 650, 180, 665] } },
+      source: { surface: "mcp", actorId: "pdf-mcp-test" },
+      policy: { mode: "pending", requiresReview: true },
+    });
+    expect((planned.diagnostics as Array<{ level: string; code: string }>).map((d) => d.code)).toContain(
+      "anchor-resolved"
+    );
+    expect((planned.diagnostics as Array<{ level: string }>).some((d) => d.level === "error")).toBe(false);
+
+    const preview = structured(
+      await client.callTool({ name: "preview_command", arguments: { command_id: planned.commandId } })
+    );
+    expect(preview.ok).toBe(true);
+    expect(preview.semanticDiff).toMatchObject({ schema: "office-ai/semantic-diff@1", format: "pdf" });
+
+    const applied = structured(
+      await client.callTool({ name: "apply_command", arguments: { command_id: planned.commandId } })
+    );
+    expect(applied.stage).toBe("queued");
+    expect((applied.mutation as { status: string }).status).toBe("pending");
+
+    const pending = structured(
+      await client.callTool({ name: "list_pending_changes", arguments: { document_id: document.documentId } })
+    );
+    expect(pending.pending as unknown[]).toHaveLength(1);
+
+    const exported = structured(
+      await client.callTool({
+        name: "export_document",
+        arguments: { document_id: document.documentId, out_path: join(tmp, "annotated.pdf") },
+      })
+    );
+    expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+    expect((exported.diagnostics as Array<{ code: string }>).map((d) => d.code)).toEqual(
+      expect.arrayContaining(["unreviewed-pending-export", "pdf-export-policy"])
+    );
+  });
+
+  it("reports normalized PDF diagnostics for signed fixtures", async () => {
+    const client = await makeClient();
+    const imported = structured(
+      await client.callTool({
+        name: "import_document",
+        arguments: {
+          path: fixturePath(requiredMatrixFixture("pdf", { id: "pdf.synthetic.signed-then-modified" })),
+        },
+      })
+    );
+    const document = imported.document as { documentId: string; diagnostics: Array<{ code: string }> };
+    expect(document.diagnostics.map((diagnostic) => diagnostic.code)).toContain("pdf-signature-detected");
+
+    const diagnostics = structured(
+      await client.callTool({
+        name: "pdf_document_diagnostics",
+        arguments: { document_id: document.documentId, include_export_policy: true },
+      })
+    );
+    expect((diagnostics.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["pdf-signature-detected", "pdf-export-policy"])
     );
   });
 

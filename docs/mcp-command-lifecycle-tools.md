@@ -129,15 +129,19 @@ Anchors are advisory targeting metadata on the envelope. The command
 payload still owns the format-specific edit details, but anchors let MCP
 clients and the web review surface point at affected structures.
 
-| Format | Anchor kind   | Required fields                         |
-| ------ | ------------- | --------------------------------------- |
-| DOCX   | `paragraph`   | `index`                                 |
-| XLSX   | `range`       | `sheet`, `range`                        |
-| PPTX   | `slide_shape` | `slideIndex`, optional `shapeId`        |
-| PDF    | `page_region` | `page`, `rect: { x, y, width, height }` |
+| Format | Anchor kind   | Required fields                                                  |
+| ------ | ------------- | ---------------------------------------------------------------- |
+| DOCX   | `paragraph`   | `index`                                                          |
+| XLSX   | `range`       | `sheet`, `range`                                                 |
+| PPTX   | `slide_shape` | `slideIndex`, optional `shapeId`                                 |
+| PDF    | `page`        | `page`                                                           |
+| PDF    | `page_region` | `page`, `bbox: [x1,y1,x2,y2]` or `rect: { x, y, width, height }` |
+| PDF    | `text_span`   | `page`, `start`, `end` against a selectable text layer           |
+| PDF    | `annotation`  | `annotation_id` or `annotationId`                                |
 
 Invalid anchors are returned as `error` diagnostics and block
-preview/apply.
+preview/apply. PDF-specific tools and diagnostics are documented in
+[`mcp-pdf-parity-diagnostics.md`](mcp-pdf-parity-diagnostics.md).
 
 ## Diagnostics
 

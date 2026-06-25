@@ -37,7 +37,7 @@ import {
 import { DocxAgent, allDocxHandlers, docxActions } from "@officeai/docx";
 import { XlsxAgent, allXlsxHandlers, diffXlsxSnapshots, xlsxActions } from "@officeai/xlsx";
 import { PptxAgent, allPptxHandlers, pptxActions } from "@officeai/pptx";
-import { PdfAgent, allPdfHandlers, pdfActions } from "@officeai/pdf";
+import { PdfAgent, allPdfHandlers, pdfActions, type PdfRect, type PdfSnapshot } from "@officeai/pdf";
 import { registerActionsAsMcpTools, type McpDispatchContext } from "./actions-to-mcp.js";
 import {
   addPageNumbers,
@@ -326,6 +326,13 @@ function snapshotFor(record: DocumentRecord): DocumentSnapshot {
   }
 }
 
+function pdfSnapshotFor(record: DocumentRecord): PdfSnapshot {
+  if (record.format !== "pdf") {
+    throw new Error(`Document ${record.id} is ${record.format}; expected pdf.`);
+  }
+  return lookupPdfSession(record.id).agent.getSnapshot();
+}
+
 function agentFor(record: DocumentRecord): OfficeAgent {
   switch (record.format) {
     case "docx":
@@ -374,6 +381,161 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stringField(input: Record<string, unknown>, key: string): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function pdfRectFrom(value: unknown): PdfRect | null {
+  if (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every((entry) => typeof entry === "number" && Number.isFinite(entry))
+  ) {
+    return [value[0], value[1], value[2], value[3]];
+  }
+  if (!isRecord(value)) return null;
+  const x = value.x;
+  const y = value.y;
+  const width = value.width;
+  const height = value.height;
+  if (
+    typeof x === "number" &&
+    Number.isFinite(x) &&
+    typeof y === "number" &&
+    Number.isFinite(y) &&
+    typeof width === "number" &&
+    Number.isFinite(width) &&
+    typeof height === "number" &&
+    Number.isFinite(height)
+  ) {
+    return [x, y, x + width, y + height];
+  }
+  const x1 = value.x1;
+  const y1 = value.y1;
+  const x2 = value.x2;
+  const y2 = value.y2;
+  if (
+    typeof x1 === "number" &&
+    Number.isFinite(x1) &&
+    typeof y1 === "number" &&
+    Number.isFinite(y1) &&
+    typeof x2 === "number" &&
+    Number.isFinite(x2) &&
+    typeof y2 === "number" &&
+    Number.isFinite(y2)
+  ) {
+    return [x1, y1, x2, y2];
+  }
+  return null;
+}
+
+function pdfRectListFrom(value: unknown): ReadonlyArray<PdfRect> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const rects = value.map(pdfRectFrom);
+  return rects.every((rect): rect is PdfRect => rect !== null) ? rects : undefined;
+}
+
+function pdfAnchorPage(anchor: Record<string, unknown>): number | undefined {
+  const value = anchor.page ?? anchor.pageNumber ?? anchor.page_number;
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+interface PdfDiagnosticsOptions {
+  readonly includeOk?: boolean;
+  readonly page?: number;
+  readonly forExport?: boolean;
+}
+
+function pdfDiagnosticsForSnapshot(
+  snapshot: PdfSnapshot,
+  opts: PdfDiagnosticsOptions = {}
+): CommandDiagnostic[] {
+  const diagnostics: CommandDiagnostic[] = [];
+  const root = snapshot.root;
+  const encryption = root.metadata.encryption;
+  if (encryption?.hasUserPassword || encryption?.hasOwnerPassword) {
+    diagnostics.push({
+      level: "warning",
+      code: "pdf-encrypted",
+      message:
+        "PDF encryption flags are present; reading succeeded, but mutation/export may be limited by owner/user permissions.",
+    });
+  }
+  if (root.signatureCount > 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "pdf-signature-detected",
+      message: `Detected ${root.signatureCount} signature field(s); OfficeAI does not validate signatures and export may invalidate them.`,
+    });
+  }
+
+  const scopedPages =
+    opts.page !== undefined ? root.pages.filter((page) => page.pageNumber === opts.page) : root.pages;
+  const missingTextLayerPages = scopedPages
+    .filter((page) => !page.hasTextLayer)
+    .map((page) => page.pageNumber);
+  if (missingTextLayerPages.length > 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "pdf-text-layer-missing",
+      message: `Missing text layer on page(s) ${missingTextLayerPages.join(", ")}; text extraction and text-span anchors may be incomplete.`,
+    });
+  }
+  if (
+    root.pages.length > 0 &&
+    (opts.page !== undefined
+      ? missingTextLayerPages.length > 0 && scopedPages.length > 0
+      : root.pages.every((page) => !page.hasTextLayer))
+  ) {
+    diagnostics.push({
+      level: "warning",
+      code: "pdf-ocr-needed",
+      message:
+        opts.page !== undefined
+          ? `Page ${opts.page} likely needs OCR before text-layer workflows are reliable.`
+          : "All pages lack a text layer; run OCR before text-layer workflows.",
+    });
+  }
+
+  const unsupportedAnnotations = root.annotations.filter((annotation) => annotation.kind === "unknown");
+  if (unsupportedAnnotations.length > 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "pdf-unsupported-annotation",
+      message: `${unsupportedAnnotations.length} annotation(s) use unsupported PDF subtypes and will be preserved as opaque projections only.`,
+    });
+  }
+
+  if (opts.forExport) {
+    const sourceIndices = root.pages.map((page) => page.sourceIndex);
+    const identity =
+      sourceIndices.length > 0 &&
+      sourceIndices.every((sourceIndex, index) => sourceIndex === index) &&
+      sourceIndices.length === root.pages.length;
+    diagnostics.push({
+      level: "info",
+      code: "pdf-export-policy",
+      message: identity
+        ? "PDF export policy: incremental-compatible update path unless the serializer encounters unsupported objects."
+        : "PDF export policy: full rewrite path required because page order/source mappings changed.",
+    });
+  }
+
+  if (diagnostics.length === 0 && opts.includeOk !== false) {
+    diagnostics.push({
+      level: "info",
+      code: "pdf-diagnostics-ok",
+      message:
+        "PDF diagnostics passed: no encryption, signatures, missing text layers or unsupported annotations detected.",
+    });
+  }
+  return diagnostics;
+}
+
+function pdfDiagnosticsForRecord(
+  record: DocumentRecord,
+  opts: PdfDiagnosticsOptions = {}
+): CommandDiagnostic[] {
+  return pdfDiagnosticsForSnapshot(pdfSnapshotFor(record), opts);
 }
 
 function commandPolicyFrom(input: Record<string, unknown>): Partial<CommandEnvelope["policy"]> {
@@ -616,6 +778,7 @@ function commandDiagnostics(
     ...policyDiagnostics,
     ...validateCommandEnvelope(envelope, snapshotFor(record)).diagnostics,
     ...anchorDiagnostics(record, envelope.target.anchor),
+    ...(record.format === "pdf" ? pdfDiagnosticsForRecord(record, { includeOk: false }) : []),
   ];
   if (!handlerFor(envelope.format as OfficeFormat, envelope.operation)) {
     diagnostics.push({
@@ -756,32 +919,152 @@ function validatePdfAnchor(
   kind: string | undefined,
   anchor: Record<string, unknown>
 ): CommandDiagnostic[] {
-  if (kind !== "page_region" && kind !== "page-region") {
-    return [
-      { level: "error", code: "invalid-anchor-kind", message: "PDF anchors must use kind='page_region'." },
-    ];
+  const snapshot = pdfSnapshotFor(record);
+  const root = snapshot.root;
+  const page = pdfAnchorPage(anchor);
+
+  if (kind === "page") {
+    if (page === undefined || page < 1) {
+      return [
+        { level: "error", code: "invalid-anchor-page", message: "PDF page anchor requires page >= 1." },
+      ];
+    }
+    if (page > root.pages.length) {
+      return [{ level: "error", code: "anchor-not-found", message: `PDF page ${page} was not found.` }];
+    }
+    return [{ level: "info", code: "anchor-resolved", message: `Resolved PDF page ${page}.` }];
   }
-  const page = anchor.page;
-  const rect = anchor.rect;
-  if (typeof page !== "number" || !Number.isInteger(page) || page < 1) {
-    return [
-      { level: "error", code: "invalid-anchor-page", message: "PDF page-region anchor requires page >= 1." },
-    ];
+
+  if (kind === "page_region" || kind === "page-region") {
+    const rect = pdfRectFrom(anchor.rect) ?? pdfRectFrom(anchor.bbox);
+    if (page === undefined || page < 1) {
+      return [
+        {
+          level: "error",
+          code: "invalid-anchor-page",
+          message: "PDF page-region anchor requires page >= 1.",
+        },
+      ];
+    }
+    if (!rect) {
+      return [
+        {
+          level: "error",
+          code: "invalid-anchor-rect",
+          message: "PDF page-region anchor requires bbox [x1,y1,x2,y2] or rect { x, y, width, height }.",
+        },
+      ];
+    }
+    if (page > root.pages.length) {
+      return [{ level: "error", code: "anchor-not-found", message: `PDF page ${page} was not found.` }];
+    }
+    return [{ level: "info", code: "anchor-resolved", message: `Resolved PDF page ${page} region.` }];
   }
-  if (!isRecord(rect) || !["x", "y", "width", "height"].every((key) => typeof rect[key] === "number")) {
+
+  if (kind === "text_span" || kind === "text-span") {
+    const start = anchor.start;
+    const end = anchor.end;
+    if (page === undefined || page < 1) {
+      return [
+        { level: "error", code: "invalid-anchor-page", message: "PDF text-span anchor requires page >= 1." },
+      ];
+    }
+    const pageModel = root.pages[page - 1];
+    if (!pageModel) {
+      return [{ level: "error", code: "anchor-not-found", message: `PDF page ${page} was not found.` }];
+    }
+    if (
+      typeof start !== "number" ||
+      !Number.isInteger(start) ||
+      start < 0 ||
+      typeof end !== "number" ||
+      !Number.isInteger(end) ||
+      end <= start
+    ) {
+      return [
+        {
+          level: "error",
+          code: "invalid-anchor-text-span",
+          message: "PDF text-span anchor requires integer start/end with end > start.",
+        },
+      ];
+    }
+    if (!pageModel.hasTextLayer) {
+      return [
+        {
+          level: "error",
+          code: "pdf-text-layer-missing",
+          message: `PDF page ${page} has no text layer; text-span anchors require OCR or a selectable text layer.`,
+        },
+      ];
+    }
+    if (end > pageModel.text.length) {
+      return [
+        {
+          level: "error",
+          code: "anchor-not-found",
+          message: `PDF text span ${start}-${end} exceeds page ${page} text length ${pageModel.text.length}.`,
+        },
+      ];
+    }
     return [
       {
-        level: "error",
-        code: "invalid-anchor-rect",
-        message: "PDF page-region anchor requires rect { x, y, width, height }.",
+        level: "info",
+        code: "anchor-resolved",
+        message: `Resolved PDF page ${page} text span ${start}-${end}.`,
       },
     ];
   }
-  const pages = (snapshotFor(record).root as { pages?: ReadonlyArray<unknown> }).pages ?? [];
-  if (page > pages.length) {
-    return [{ level: "error", code: "anchor-not-found", message: `PDF page ${page} was not found.` }];
+
+  if (kind === "annotation" || kind === "annotation_id" || kind === "annotation-id") {
+    const annotationId =
+      stringField(anchor, "annotation_id") ??
+      stringField(anchor, "annotationId") ??
+      stringField(anchor, "id");
+    if (!annotationId) {
+      return [
+        {
+          level: "error",
+          code: "invalid-anchor-annotation",
+          message: "PDF annotation anchor requires annotation_id.",
+        },
+      ];
+    }
+    const annotation = root.annotations.find((entry) => entry.id === annotationId);
+    if (!annotation) {
+      return [
+        {
+          level: "error",
+          code: "anchor-not-found",
+          message: `PDF annotation "${annotationId}" was not found.`,
+        },
+      ];
+    }
+    return [
+      {
+        level: "info",
+        code: "anchor-resolved",
+        message: `Resolved PDF annotation ${annotationId} on page ${annotation.pageNumber}.`,
+      },
+    ];
   }
-  return [{ level: "info", code: "anchor-resolved", message: `Resolved PDF page ${page} region.` }];
+
+  if (kind !== "page_region" && kind !== "page-region") {
+    return [
+      {
+        level: "error",
+        code: "invalid-anchor-kind",
+        message: "PDF anchors must use kind='page', 'page_region', 'text_span' or 'annotation'.",
+      },
+    ];
+  }
+  return [
+    {
+      level: "error",
+      code: "invalid-anchor-kind",
+      message: "PDF anchors must use kind='page', 'page_region', 'text_span' or 'annotation'.",
+    },
+  ];
 }
 
 function shapeExists(shapes: unknown, shapeId: string): boolean {
@@ -1330,6 +1613,9 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
             message: `Export includes ${pendingCount} unreviewed pending change(s). Approve or reject them before final delivery.`,
           },
         ]
+      : []),
+    ...(record.format === "pdf"
+      ? pdfDiagnosticsForRecord(record, { includeOk: false, forExport: true })
       : []),
   ];
   const bytes = Buffer.from(await currentDocumentBytes(record));
@@ -1906,6 +2192,7 @@ function registerSessionDocumentTools(server: McpServer): void {
         const buf = await readFile(abs);
         const documentId = `doc_${randomUUID()}`;
         const displayName = name ?? basename(abs);
+        let formatDiagnostics: CommandDiagnostic[] = [];
 
         switch (detected) {
           case "docx": {
@@ -1931,6 +2218,7 @@ function registerSessionDocumentTools(server: McpServer): void {
             const agent = await PdfAgent.fromBuffer(bytes);
             pdfSessions.set(documentId, { agent, bytes });
             pdfSessionPaths.set(documentId, abs);
+            formatDiagnostics = pdfDiagnosticsForSnapshot(agent.getSnapshot(), { includeOk: false });
             break;
           }
         }
@@ -1943,6 +2231,7 @@ function registerSessionDocumentTools(server: McpServer): void {
           sourcePath: abs,
           diagnostics: [
             { level: "info", code: "imported", message: `Imported ${displayName} as ${detected}.` },
+            ...formatDiagnostics,
           ],
         });
         await persistDocumentRecord(record, {
@@ -1978,6 +2267,7 @@ function registerSessionDocumentTools(server: McpServer): void {
         const documentId = `doc_${randomUUID()}`;
         const detected = format as OfficeFormat;
         const displayName = name ?? `untitled.${detected}`;
+        let formatDiagnostics: CommandDiagnostic[] = [];
 
         switch (detected) {
           case "docx":
@@ -1993,6 +2283,7 @@ function registerSessionDocumentTools(server: McpServer): void {
             const agent = await PdfAgent.empty();
             const bytes = await agent.exportFile();
             pdfSessions.set(documentId, { agent, bytes });
+            formatDiagnostics = pdfDiagnosticsForSnapshot(agent.getSnapshot(), { includeOk: false });
             break;
           }
         }
@@ -2002,7 +2293,10 @@ function registerSessionDocumentTools(server: McpServer): void {
           sessionId: session_id,
           format: detected,
           name: displayName,
-          diagnostics: [{ level: "info", code: "created", message: `Created blank ${detected} document.` }],
+          diagnostics: [
+            { level: "info", code: "created", message: `Created blank ${detected} document.` },
+            ...formatDiagnostics,
+          ],
         });
         await persistCurrentDocument(record);
         return ok({
@@ -3517,16 +3811,314 @@ async function applyXlsxCommand(
 /**
  * Register the PDF surface as MCP tools. Mirrors `office-agent pdf …` —
  * the same JSON schemas (office-agent/pdf-<verb>@1) flow through the
- * read tools, and every mutation tool returns the `{ schema, in, out,
- * bytes, summary }` envelope a CLI caller would have seen.
+ * read tools, and every legacy mutation tool returns the `{ schema,
+ * in, out, bytes, summary }` envelope a CLI caller would have seen.
  *
- * Reads are handle-based (cheap re-projection from a single parsed
- * snapshot). Mutations are file-in / file-out and re-load the input
- * each call: the PdfAgent command bus only covers the page-rotation +
- * reorder subset today, so we drive `@officeai/pdf-edit` /
- * `@officeai/pdf-forms` directly here for parity with the CLI.
+ * New MCP clients should prefer the canonical PDF session tools above:
+ * `pdf_document_*` for document_id-based reads, `pdf_plan_annotation`
+ * for PDF-native command planning, and the generic plan/preview/apply
+ * lifecycle for mutations. The old handle/path tools remain available
+ * for CLI parity and backwards compatibility.
  */
 function registerPdfTools(server: McpServer): void {
+  const loadPdfDocument = async (documentId: string): Promise<DocumentRecord> => {
+    const record = await ensureDocumentLoaded(documentId);
+    if (record.format !== "pdf") {
+      throw new Error(`document_id "${documentId}" is ${record.format}; expected pdf.`);
+    }
+    return record;
+  };
+  const pdfAnnotationKind = z.enum([
+    "highlight",
+    "underline",
+    "strikethrough",
+    "squiggly",
+    "note",
+    "free-text",
+    "ink",
+    "line",
+    "rectangle",
+    "ellipse",
+    "polygon",
+    "polyline",
+    "stamp",
+    "link",
+    "redaction",
+    "unknown",
+  ]);
+  const pdfPolicySchema = z
+    .object({
+      mode: z.enum(["dry_run", "auto_apply", "pending"]).optional(),
+      requires_review: z.boolean().optional(),
+    })
+    .optional();
+
+  server.registerTool(
+    "pdf_document_metadata",
+    {
+      description:
+        "Read PDF metadata for a canonical OfficeAI document_id. Returns normalized document and diagnostics envelopes.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+      },
+    },
+    async ({ document_id }) => {
+      try {
+        const record = await loadPdfDocument(document_id);
+        return ok({
+          schema: "office-ai/pdf-document-metadata@1",
+          document: documentEnvelope(record),
+          metadata: projectMetadata(pdfSnapshotFor(record)),
+          diagnostics: pdfDiagnosticsForRecord(record),
+          nextActions: ["pdf_document_page", "pdf_document_outline", "pdf_document_annotations"],
+        });
+      } catch (err) {
+        return fail(`pdf_document_metadata failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "pdf_document_page",
+    {
+      description:
+        "Read one PDF page by canonical document_id, including text-layer flag, text, annotations, form fields and diagnostics.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+        page: z.number().int().positive().describe("1-based page number."),
+      },
+    },
+    async ({ document_id, page }) => {
+      try {
+        const record = await loadPdfDocument(document_id);
+        return ok({
+          schema: "office-ai/pdf-document-page@1",
+          document: documentEnvelope(record),
+          projection: projectPage(pdfSnapshotFor(record), page),
+          diagnostics: pdfDiagnosticsForRecord(record, { page }),
+          nextActions: ["pdf_plan_annotation", "plan_command", "preview_command", "apply_command"],
+        });
+      } catch (err) {
+        return fail(`pdf_document_page failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "pdf_document_outline",
+    {
+      description: "Read the PDF outline tree by canonical document_id with normalized diagnostics.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+      },
+    },
+    async ({ document_id }) => {
+      try {
+        const record = await loadPdfDocument(document_id);
+        return ok({
+          schema: "office-ai/pdf-document-outline@1",
+          document: documentEnvelope(record),
+          projection: projectOutline(pdfSnapshotFor(record)),
+          diagnostics: pdfDiagnosticsForRecord(record),
+        });
+      } catch (err) {
+        return fail(`pdf_document_outline failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "pdf_document_annotations",
+    {
+      description:
+        "Read PDF annotations by canonical document_id, optionally restricted to one page, with normalized diagnostics.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+        page: z.number().int().positive().optional().describe("Optional 1-based page filter."),
+      },
+    },
+    async ({ document_id, page }) => {
+      try {
+        const record = await loadPdfDocument(document_id);
+        return ok({
+          schema: "office-ai/pdf-document-annotations@1",
+          document: documentEnvelope(record),
+          projection: projectAnnotations(pdfSnapshotFor(record), page !== undefined ? { page } : undefined),
+          diagnostics: pdfDiagnosticsForRecord(record, page !== undefined ? { page } : {}),
+          nextActions: ["pdf_plan_annotation", "plan_command", "preview_command", "apply_command"],
+        });
+      } catch (err) {
+        return fail(`pdf_document_annotations failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "pdf_document_search",
+    {
+      description:
+        "Search a PDF text layer by canonical document_id. Search hits can be converted into text_span or page_region anchors.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+        query: z.string().min(1),
+        regex: z.boolean().optional().default(false),
+        case_sensitive: z.boolean().optional().default(false),
+      },
+    },
+    async ({ document_id, query, regex, case_sensitive }) => {
+      try {
+        const record = await loadPdfDocument(document_id);
+        return ok({
+          schema: "office-ai/pdf-document-search@1",
+          document: documentEnvelope(record),
+          projection: projectSearch(lookupPdfSession(record.id).agent, {
+            query,
+            regex: regex === true,
+            caseSensitive: case_sensitive === true,
+          }),
+          diagnostics: pdfDiagnosticsForRecord(record, { includeOk: false }),
+          nextActions: ["pdf_plan_annotation", "plan_command"],
+        });
+      } catch (err) {
+        return fail(`pdf_document_search failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "pdf_document_diagnostics",
+    {
+      description:
+        "Return the normalized PDF diagnostics report for a canonical document_id, including optional export policy.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+        include_export_policy: z.boolean().optional().default(false),
+      },
+    },
+    async ({ document_id, include_export_policy }) => {
+      try {
+        const record = await loadPdfDocument(document_id);
+        const snapshot = pdfSnapshotFor(record);
+        const diagnostics = pdfDiagnosticsForRecord(record, {
+          forExport: include_export_policy === true,
+        });
+        return ok({
+          schema: "office-ai/pdf-diagnostics@1",
+          document: documentEnvelope(record),
+          diagnostics,
+          summary: {
+            pageCount: snapshot.root.pages.length,
+            signatureCount: snapshot.root.signatureCount,
+            missingTextLayerPages: snapshot.root.pages
+              .filter((page) => !page.hasTextLayer)
+              .map((page) => page.pageNumber),
+            unsupportedAnnotationCount: snapshot.root.annotations.filter(
+              (annotation) => annotation.kind === "unknown"
+            ).length,
+          },
+          nextActions: ["pdf_document_page", "export_document"],
+        });
+      } catch (err) {
+        return fail(`pdf_document_diagnostics failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "pdf_plan_annotation",
+    {
+      description:
+        "Plan a PDF annotation command for a canonical document_id. Use preview_command/apply_command with the returned commandId; no in_path/out_path is required.",
+      inputSchema: {
+        document_id: z.string().describe("documentId returned by import_document/create_document."),
+        kind: pdfAnnotationKind.describe("PDF annotation kind to add."),
+        page: z.number().int().positive().describe("1-based page number."),
+        rect: z.unknown().optional().describe("PDF rect as [x1,y1,x2,y2] or {x,y,width,height}."),
+        bbox: z.unknown().optional().describe("Alias for rect as [x1,y1,x2,y2]."),
+        quad_rects: z.array(z.unknown()).optional().describe("Optional per-line highlight rects."),
+        contents: z.string().optional(),
+        author: z.string().optional(),
+        color: z
+          .object({
+            r: z.number(),
+            g: z.number(),
+            b: z.number(),
+            a: z.number().optional(),
+          })
+          .optional(),
+        id: z.string().optional().describe("Optional stable annotation id."),
+        policy: pdfPolicySchema,
+        actor_id: z.string().optional(),
+      },
+    },
+    async (input) => {
+      try {
+        const args = input as Record<string, unknown>;
+        const documentId = stringField(args, "document_id") ?? stringField(args, "documentId");
+        if (!documentId) throw new Error("document_id is required.");
+        await loadPdfDocument(documentId);
+        const page = args.page;
+        if (typeof page !== "number" || !Number.isInteger(page) || page < 1) {
+          throw new Error("page must be a positive integer.");
+        }
+        const rect = pdfRectFrom(args.rect) ?? pdfRectFrom(args.bbox);
+        if (!rect) throw new Error("rect or bbox must be [x1,y1,x2,y2] or {x,y,width,height}.");
+        const quadRects = pdfRectListFrom(args.quad_rects ?? args.quadRects);
+        if ((args.quad_rects !== undefined || args.quadRects !== undefined) && !quadRects) {
+          throw new Error("quad_rects must be an array of PDF rects.");
+        }
+        const commandArgs: Record<string, unknown> = {
+          kind: args.kind,
+          pageNumber: page,
+          rect,
+          ...(quadRects ? { quadRects } : {}),
+          ...(typeof args.contents === "string" ? { contents: args.contents } : {}),
+          ...(typeof args.author === "string" ? { author: args.author } : {}),
+          ...(isRecord(args.color) ? { color: args.color } : {}),
+          ...(typeof args.id === "string" ? { id: args.id } : {}),
+        };
+        const commandInput: Record<string, unknown> = {
+          document_id: documentId,
+          operation: "pdf:add-annotation",
+          arguments: commandArgs,
+          target: { anchor: { kind: "page_region", page, bbox: rect } },
+          policy: isRecord(args.policy) ? args.policy : { mode: "pending", requires_review: true },
+          ...(typeof args.actor_id === "string" ? { actor_id: args.actor_id } : {}),
+        };
+        const { envelope, record, policyDiagnostics } = commandEnvelopeFromInput(commandInput);
+        const diagnostics = commandDiagnostics(record, envelope, policyDiagnostics);
+        plannedCommands.set(envelope.id, envelope);
+        touchDocument(record, diagnostics);
+        await persistDocumentRecord(record, {
+          commandLogEntry: storedCommandLogEntry({
+            envelope,
+            stage: hasBlockingCommandDiagnostics(diagnostics) ? "failed" : "validated",
+            status: hasBlockingCommandDiagnostics(diagnostics) ? "failed" : "planned",
+            diagnostics,
+          }),
+        });
+        return ok({
+          schema: "office-ai/command-plan@1",
+          ok: !hasBlockingCommandDiagnostics(diagnostics),
+          commandId: envelope.id,
+          command: commandEnvelopePayload(envelope),
+          document: documentEnvelope(record),
+          action: {
+            id: "pdf.add-annotation",
+            label: "Add annotation",
+            requiresReview: true,
+            supportsDiff: true,
+            supportsDryRun: false,
+          },
+          diagnostics,
+          nextActions: ["preview_command", "apply_command", "list_pending_changes"],
+        });
+      } catch (err) {
+        return fail(`pdf_plan_annotation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
   // ── pdf_load ──────────────────────────────────────────────────────────
   server.registerTool(
     "pdf_load",
