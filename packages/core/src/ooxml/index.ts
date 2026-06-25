@@ -24,6 +24,16 @@ export { RelationshipGraph, type Relationship } from "./relationships.js";
 export { ContentTypes, type DefaultEntry, type OverrideEntry } from "./content-types.js";
 
 export {
+  OOXML_PRESERVATION_CONTRACT,
+  ooxmlPreservationDiagnostic,
+  type OoxmlPreservationContract,
+  type OoxmlPreservationDiagnostic,
+  type OoxmlPreservationDiagnosticCode,
+  type OoxmlPreservationDiagnosticLevel,
+  type OoxmlPreservationFormat,
+} from "./preservation.js";
+
+export {
   addEmbeddedPart,
   ensureDefaultContentType,
   relativeTarget,
