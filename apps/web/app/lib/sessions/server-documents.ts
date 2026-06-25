@@ -18,13 +18,19 @@ export function inferFormatFromName(name: string): WebOfficeFormat | null {
   if (lower.endsWith(".xlsx")) return "xlsx";
   if (lower.endsWith(".pptx")) return "pptx";
   if (lower.endsWith(".pdf")) return "pdf";
+  if (lower.endsWith(".eml") || lower.endsWith(".msg")) return "email";
+  if (/\.(png|jpe?g|webp|gif|svg|bmp|tiff?|heic|heif)$/i.test(lower)) return "image";
   return null;
 }
 
 export function ensureExtension(name: string | undefined, format: WebOfficeFormat): string {
   const trimmed = name?.trim();
-  const base = trimmed && trimmed.length > 0 ? trimmed : `untitled.${format}`;
-  return base.toLowerCase().endsWith(`.${format}`) ? base : `${base}.${format}`;
+  const fallback =
+    format === "email" ? "untitled.eml" : format === "image" ? "untitled.png" : `untitled.${format}`;
+  const base = trimmed && trimmed.length > 0 ? trimmed : fallback;
+  if (format === "email" && /\.(eml|msg)$/i.test(base)) return base;
+  if (format === "image" && /\.(png|jpe?g|webp|gif|svg|bmp|tiff?|heic|heif)$/i.test(base)) return base;
+  return base.toLowerCase().endsWith(`.${format}`) ? base : `${base}.${defaultExtensionForFormat(format)}`;
 }
 
 export function mimeForFormat(format: WebOfficeFormat): string {
@@ -37,6 +43,10 @@ export function mimeForFormat(format: WebOfficeFormat): string {
       return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     case "pdf":
       return "application/pdf";
+    case "email":
+      return "message/rfc822";
+    case "image":
+      return "application/octet-stream";
   }
 }
 
@@ -58,6 +68,10 @@ export async function prepareImportedBytes(
       return { bytes, revision: (await PptxAgent.fromBuffer(bytes)).getSnapshot().revision };
     case "pdf":
       return { bytes, revision: (await PdfAgent.fromBuffer(bytes)).getSnapshot().revision };
+    case "email":
+    case "image":
+      if (bytes.byteLength === 0) throw new Error(`${format} import received an empty file.`);
+      return { bytes, revision: 1 };
   }
 }
 
@@ -83,6 +97,9 @@ export async function createBlankDocumentBytes(format: WebOfficeFormat): Promise
       const bytes = asUint8Array(await agent.exportFile());
       return { bytes, revision: agent.getSnapshot().revision };
     }
+    case "email":
+    case "image":
+      throw new Error(`Blank ${format} documents are not supported.`);
   }
 }
 
@@ -99,6 +116,9 @@ export async function projectionSourceFromBytes(
       return { format, agent: await PptxAgent.fromBuffer(bytes) };
     case "pdf":
       return { format, agent: await PdfAgent.fromBuffer(bytes) };
+    case "email":
+    case "image":
+      throw new Error(`${format} documents do not expose document projections.`);
   }
 }
 
@@ -137,4 +157,18 @@ export async function sessionForNewDocument(opts: {
 
 function asUint8Array(bytes: ArrayBuffer | Uint8Array): Uint8Array {
   return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+}
+
+function defaultExtensionForFormat(format: WebOfficeFormat): string {
+  switch (format) {
+    case "docx":
+    case "xlsx":
+    case "pptx":
+    case "pdf":
+      return format;
+    case "email":
+      return "eml";
+    case "image":
+      return "png";
+  }
 }

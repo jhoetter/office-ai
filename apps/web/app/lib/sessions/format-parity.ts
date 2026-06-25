@@ -131,6 +131,74 @@ export const WEB_FORMAT_PARITY: Record<WebOfficeFormat, WebFormatParity> = {
         "PDF is web-readable and exportable; annotation/highlight editing is planned and not silently presented as available.",
     },
   },
+  email: {
+    format: "email",
+    title: "Email web viewer",
+    rows: [
+      { label: "Import", status: "full", detail: ".eml and .msg files import into sessions." },
+      {
+        label: "Read view",
+        status: "full",
+        detail: "Headers, text/html body and attachments are normalized.",
+      },
+      {
+        label: "Editable structures",
+        status: "review-only",
+        detail: "Messages are viewer-only; attachments can route into their own editors.",
+      },
+      {
+        label: "Review and diff",
+        status: "planned",
+        detail: "Message-level semantic changes are intentionally not presented as editable.",
+      },
+      { label: "Export", status: "full", detail: "The original working message artifact exports back." },
+    ],
+    knownLimits: [
+      "MSG parsing extracts normalized headers/body text when possible and preserves the source artifact for export.",
+    ],
+    diagnostic: {
+      level: "info",
+      code: "web-parity-email-viewer",
+      message:
+        "Email files are session-backed, readable and attachment-routable; the message body is viewer-only.",
+    },
+  },
+  image: {
+    format: "image",
+    title: "Image web viewer",
+    rows: [
+      {
+        label: "Import",
+        status: "full",
+        detail: "PNG, JPEG, WebP, GIF, SVG, BMP, TIFF and HEIC imports are live.",
+      },
+      {
+        label: "Read view",
+        status: "full",
+        detail: "Browser-safe formats render directly; HEIC/TIFF get a normalized preview state.",
+      },
+      {
+        label: "Editable structures",
+        status: "review-only",
+        detail: "Image files are viewer/export artifacts rather than canvas-editable documents.",
+      },
+      {
+        label: "Review and diff",
+        status: "planned",
+        detail: "Pixel-level diff and annotation review are not exposed as document commands yet.",
+      },
+      { label: "Export", status: "full", detail: "The original working image artifact exports back." },
+    ],
+    knownLimits: [
+      "HEIC/HEIF/TIFF decoding is lazy and represented with metadata when the browser cannot render the codec.",
+    ],
+    diagnostic: {
+      level: "info",
+      code: "web-parity-image-viewer",
+      message:
+        "Images are session-backed, readable and exportable; unsupported browser codecs get a normalized preview.",
+    },
+  },
 };
 
 export function formatParityFor(format: WebOfficeFormat): WebFormatParity {

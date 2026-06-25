@@ -10,6 +10,7 @@ import type { WebOfficeFormat } from "./web-sessions";
 
 export interface SessionEditorDocument {
   readonly documentId: string;
+  readonly sessionId: string;
   readonly bytes: Uint8Array;
   readonly filename: string;
   readonly revision: number;
@@ -67,8 +68,9 @@ export function useSessionEditorDocument(args: {
       const filename =
         decodeHeaderFilename(res.headers.get("x-officeai-filename")) ?? `${documentId}.${format}`;
       const etag = res.headers.get("etag") ?? revisionEtag(documentId, revision);
+      const sessionId = res.headers.get("x-officeai-session-id") ?? "";
       const bytes = new Uint8Array(await res.arrayBuffer());
-      setDocument({ documentId, bytes, filename, revision, etag, format });
+      setDocument({ documentId, sessionId, bytes, filename, revision, etag, format });
     } catch (err) {
       setDocument(null);
       setError(err instanceof Error ? err.message : String(err));
@@ -112,6 +114,7 @@ export function useSessionEditorDocument(args: {
       };
       const next: SessionEditorDocument = {
         documentId: data.document.documentId,
+        sessionId: current.sessionId,
         bytes,
         filename: data.document.name,
         revision: data.document.revision,

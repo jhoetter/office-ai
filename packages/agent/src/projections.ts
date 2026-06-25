@@ -3,7 +3,7 @@ import { XlsxAgent } from "@officeai/xlsx";
 import { PptxAgent } from "@officeai/pptx";
 import { PdfAgent } from "@officeai/pdf";
 
-export type ProjectionFormat = "docx" | "xlsx" | "pptx" | "pdf";
+export type ProjectionFormat = "docx" | "xlsx" | "pptx" | "pdf" | "email" | "image";
 export type ProjectionKind = "summary" | "markdown" | "json" | "text" | "page";
 
 export interface ProjectionDocumentMeta {

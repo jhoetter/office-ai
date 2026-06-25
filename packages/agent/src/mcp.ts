@@ -1521,6 +1521,7 @@ async function hydratePersistedSessions(): Promise<void> {
 
 async function hydratePersistedDocuments(sessionId?: string): Promise<void> {
   for (const stored of await localSessionStore().listDocuments(sessionId)) {
+    if (!isOfficeFormat(stored.format)) continue;
     await hydrateDocumentRecord(stored);
   }
 }
@@ -1533,10 +1534,18 @@ async function ensureDocumentLoaded(documentId: string): Promise<DocumentRecord>
     if (existing) return existing;
     throw new Error(`Unknown document_id "${documentId}". Call import_document or create_document first.`);
   }
+  if (!isOfficeFormat(stored.format)) {
+    throw new Error(
+      `Document ${documentId} is ${stored.format}; MCP document tools currently support DOCX, XLSX, PPTX and PDF.`
+    );
+  }
   return hydrateDocumentRecord(stored);
 }
 
 async function hydrateDocumentRecord(stored: StoredDocumentRecord): Promise<DocumentRecord> {
+  if (!isOfficeFormat(stored.format)) {
+    throw new Error(`Cannot hydrate ${stored.format} as an Office document agent.`);
+  }
   const session =
     mcpSessions.get(stored.sessionId) ??
     hydrateSessionRecord(
@@ -1592,6 +1601,10 @@ async function hydrateDocumentRecord(stored: StoredDocumentRecord): Promise<Docu
     }
   }
   return record;
+}
+
+function isOfficeFormat(format: StoredDocumentRecord["format"]): format is OfficeFormat {
+  return format === "docx" || format === "xlsx" || format === "pptx" || format === "pdf";
 }
 
 function hydrateSessionRecord(stored: StoredSessionRecord): SessionRecord {

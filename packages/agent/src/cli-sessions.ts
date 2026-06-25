@@ -22,6 +22,8 @@ import {
   type ProjectionSource,
 } from "./projections.js";
 
+type EditableStoredOfficeFormat = Exclude<StoredOfficeFormat, "email" | "image">;
+
 interface SessionCliOutputOptions {
   readonly json?: boolean;
   readonly pretty?: boolean;
@@ -147,7 +149,7 @@ export function registerSessionSubcommands(sessions: Command, io: IO): void {
           sessionId?: string;
           title: string;
           name?: string;
-          format?: StoredOfficeFormat;
+          format?: EditableStoredOfficeFormat;
         }
       ) => {
         const store = createLocalSessionStore({ dataDir: opts.dataDir });
@@ -260,6 +262,12 @@ export function registerSessionSubcommands(sessions: Command, io: IO): void {
       ) => {
         const store = createLocalSessionStore({ dataDir: opts.dataDir });
         const document = await requireStoredDocument(store, opts.documentId);
+        if (!isEditableStoredOfficeFormat(document.format)) {
+          throw new CliError(
+            64,
+            `sessions projection: ${document.format} documents use viewer routes and do not expose CLI projections.`
+          );
+        }
         const prepared = await prepareSessionBytes(document.format, await store.readWorkingBytes(document));
         const payload = projectOfficeDocument(documentProjectionMeta(document), prepared.source, {
           projection: opts.projection,
@@ -512,7 +520,10 @@ async function sessionForCliDocument(opts: {
   };
 }
 
-function inferSessionFormatFromPath(path: string, explicit?: StoredOfficeFormat): StoredOfficeFormat {
+function inferSessionFormatFromPath(
+  path: string,
+  explicit?: EditableStoredOfficeFormat
+): EditableStoredOfficeFormat {
   if (explicit) return explicit;
   const ext = extname(path).toLowerCase();
   switch (ext) {
@@ -532,12 +543,16 @@ function inferSessionFormatFromPath(path: string, explicit?: StoredOfficeFormat)
   }
 }
 
-function ensureSessionExtension(name: string, format: StoredOfficeFormat): string {
+function ensureSessionExtension(name: string, format: EditableStoredOfficeFormat): string {
   return name.toLowerCase().endsWith(`.${format}`) ? name : `${name}.${format}`;
 }
 
+function isEditableStoredOfficeFormat(format: StoredOfficeFormat): format is EditableStoredOfficeFormat {
+  return format === "docx" || format === "xlsx" || format === "pptx" || format === "pdf";
+}
+
 async function prepareSessionBytes(
-  format: StoredOfficeFormat,
+  format: EditableStoredOfficeFormat,
   bytes: Uint8Array
 ): Promise<{ readonly source: ProjectionSource; readonly revision: number }> {
   switch (format) {

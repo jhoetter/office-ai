@@ -6,12 +6,16 @@ import {
   AlertTriangle,
   ArrowRight,
   Clock3,
+  Copy,
   Database,
   FileArchive,
   Info,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
+  Search,
+  Trash2,
   Upload,
 } from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
@@ -36,6 +40,8 @@ export function SessionBrowser() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [creatingFormat, setCreatingFormat] = useState<WebOfficeFormat | null>(null);
+  const [query, setQuery] = useState("");
+  const [sessionAction, setSessionAction] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -63,6 +69,10 @@ export function SessionBrowser() {
   }, [refresh]);
 
   const counts = useMemo(() => (payload ? sessionBrowserCounts(payload) : null), [payload]);
+  const visiblePayload = useMemo(
+    () => (payload ? filterSessionsPayload(payload, query) : null),
+    [payload, query]
+  );
   const importFile = useCallback(
     async (file: File) => {
       setImporting(true);
@@ -120,6 +130,46 @@ export function SessionBrowser() {
     },
     [refresh]
   );
+  const runLifecycleAction = useCallback(
+    async (action: "rename" | "delete" | "duplicate", session: WebSessionEntry) => {
+      let title: string | undefined;
+      if (action === "rename") {
+        const nextTitle = window.prompt(t("home.renameSessionPrompt"), session.title);
+        if (nextTitle === null) return;
+        title = nextTitle.trim();
+        if (!title) return;
+      }
+      if (action === "duplicate") {
+        const nextTitle = window.prompt(t("home.duplicateSessionPrompt"), `${session.title} copy`);
+        if (nextTitle === null) return;
+        title = nextTitle.trim() || undefined;
+      }
+      if (action === "delete" && !window.confirm(t("home.deleteSessionConfirm", { title: session.title }))) {
+        return;
+      }
+      setSessionAction(`${action}:${session.sessionId}`);
+      setError(null);
+      try {
+        const res = await fetch("/api/sessions/lifecycle", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action, sessionId: session.sessionId, title }),
+        });
+        const data = (await res.json()) as { readonly message?: string };
+        if (!res.ok) {
+          throw new Error(
+            "message" in data && data.message ? data.message : `Session ${action} failed (${res.status})`
+          );
+        }
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSessionAction(null);
+      }
+    },
+    [refresh, t]
+  );
 
   return (
     <section className="mt-10">
@@ -151,7 +201,7 @@ export function SessionBrowser() {
             ref={fileInputRef}
             className="hidden"
             type="file"
-            accept=".docx,.xlsx,.pptx,.pdf,application/pdf"
+            accept=".docx,.xlsx,.pptx,.pdf,.eml,.msg,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.tif,.tiff,.heic,.heif,application/pdf,message/rfc822,image/*"
             onChange={onImportInput}
           />
           <Button
@@ -198,7 +248,7 @@ export function SessionBrowser() {
           <div className="sl-empty sl-empty--no-results p-6 text-sm text-secondary">
             {t("home.workspaceEmpty")}
           </div>
-        ) : payload && counts ? (
+        ) : payload && counts && visiblePayload ? (
           <div>
             <div className="grid grid-cols-2 border-b border-divider text-xs text-secondary sm:grid-cols-4">
               <Metric label={t("home.sessions")} value={counts.sessions} />
@@ -206,15 +256,32 @@ export function SessionBrowser() {
               <Metric label={t("home.pending")} value={counts.pending} />
               <Metric label={t("home.diagnostics")} value={counts.diagnostics} />
             </div>
-            <div className="divide-y divide-divider">
-              {payload.sessions.map((session) => (
-                <SessionRow
-                  key={session.sessionId}
-                  session={session}
-                  documents={documentsForSession(payload, session.sessionId)}
-                  locale={locale}
+            <div className="border-b border-divider p-3">
+              <label className="flex items-center gap-2 rounded-md border border-divider bg-background px-3 py-2 text-sm text-secondary">
+                <Search size={14} />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.currentTarget.value)}
+                  placeholder={t("home.searchSessions")}
+                  className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-tertiary"
                 />
-              ))}
+              </label>
+            </div>
+            <div className="divide-y divide-divider">
+              {visiblePayload.sessions.length === 0 ? (
+                <div className="p-6 text-sm text-secondary">{t("home.workspaceNoMatches")}</div>
+              ) : (
+                visiblePayload.sessions.map((session) => (
+                  <SessionRow
+                    key={session.sessionId}
+                    session={session}
+                    documents={documentsForSession(visiblePayload, session.sessionId)}
+                    locale={locale}
+                    busyAction={sessionAction}
+                    onLifecycleAction={runLifecycleAction}
+                  />
+                ))
+              )}
             </div>
           </div>
         ) : null}
@@ -236,12 +303,17 @@ function SessionRow({
   session,
   documents,
   locale,
+  busyAction,
+  onLifecycleAction,
 }: {
   readonly session: WebSessionEntry;
   readonly documents: ReadonlyArray<WebDocumentEntry>;
   readonly locale?: string;
+  readonly busyAction: string | null;
+  readonly onLifecycleAction: (action: "rename" | "delete" | "duplicate", session: WebSessionEntry) => void;
 }) {
   const { t } = useTranslator();
+  const isBusy = busyAction?.endsWith(`:${session.sessionId}`) ?? false;
   return (
     <div className="px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -252,9 +324,40 @@ function SessionRow({
             {formatDateTime(session.updatedAt, locale)}
           </div>
         </div>
-        <div className="text-xs text-secondary">
-          {session.documentCount}{" "}
-          {session.documentCount === 1 ? t("home.workspaceDocument") : t("home.workspaceDocuments")}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="text-xs text-secondary">
+            {session.documentCount}{" "}
+            {session.documentCount === 1 ? t("home.workspaceDocument") : t("home.workspaceDocuments")}
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              title={t("common.rename")}
+              disabled={isBusy}
+              onClick={() => onLifecycleAction("rename", session)}
+            >
+              <Pencil size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              title={t("common.duplicate")}
+              disabled={isBusy}
+              onClick={() => onLifecycleAction("duplicate", session)}
+            >
+              <Copy size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              title={t("common.delete")}
+              disabled={isBusy}
+              onClick={() => onLifecycleAction("delete", session)}
+            >
+              {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            </Button>
+          </div>
         </div>
       </div>
       <div className="mt-3 overflow-hidden rounded-md border border-divider">
@@ -360,4 +463,30 @@ function formatDateTime(iso: string, locale?: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function filterSessionsPayload(payload: WebSessionsPayload, query: string): WebSessionsPayload {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return payload;
+  const documents = payload.documents.filter((document) =>
+    [document.name, document.format, document.status, document.documentId]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle)
+  );
+  const matchingDocumentSessionIds = new Set(documents.map((document) => document.sessionId));
+  const sessions = payload.sessions.filter(
+    (session) =>
+      session.title.toLowerCase().includes(needle) ||
+      session.sessionId.toLowerCase().includes(needle) ||
+      matchingDocumentSessionIds.has(session.sessionId)
+  );
+  const sessionIds = new Set(sessions.map((session) => session.sessionId));
+  return {
+    ...payload,
+    sessions,
+    documents: payload.documents.filter(
+      (document) => sessionIds.has(document.sessionId) && (documents.includes(document) || needle.length > 0)
+    ),
+  };
 }

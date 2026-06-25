@@ -56,4 +56,24 @@ describe("i18n catalogues", () => {
     }
     expect(mismatches, "placeholder mismatch between locales").toEqual([]);
   });
+
+  it("keeps German workspace and inspector terminology localized", () => {
+    const deFlat = flatten(de as MessageNode);
+    const auditedKeys = Object.entries(deFlat).filter(
+      ([key]) =>
+        key.startsWith("home.") || key.startsWith("sessionDetail.") || key.startsWith("sessionEditor.")
+    );
+    const forbidden = [
+      /\bSessions?\b/,
+      /\bWorkspace\b/,
+      /\bPending(?: Changes)?\b/,
+      /\bDiagnostics\b/,
+      /\bWorking Copy\b/,
+      /\bCommand(?:s| Log)?\b/,
+      /\bInspector\b/,
+      /\bActor\b/,
+    ];
+    const offenders = auditedKeys.filter(([, value]) => forbidden.some((pattern) => pattern.test(value)));
+    expect(offenders, "German UI should not leak audited English product terms").toEqual([]);
+  });
 });

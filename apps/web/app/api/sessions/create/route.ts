@@ -20,6 +20,8 @@ import {
   type WebOfficeFormat,
 } from "@/lib/sessions/web-sessions";
 
+type CreatableWebOfficeFormat = Extract<WebOfficeFormat, "docx" | "xlsx" | "pptx" | "pdf">;
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -131,6 +133,6 @@ function badRequest(code: string, message: string): NextResponse {
   );
 }
 
-function isSupportedFormat(value: unknown): value is WebOfficeFormat {
+function isSupportedFormat(value: unknown): value is CreatableWebOfficeFormat {
   return value === "docx" || value === "xlsx" || value === "pptx" || value === "pdf";
 }

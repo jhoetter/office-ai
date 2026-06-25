@@ -16,6 +16,7 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@officeai/agent/projections": ["../../packages/agent/src/projections.ts"],
+      "@officeai/agent/session-store": ["../../packages/agent/src/session-store.ts"],
       "@/*": ["./app/*"]
     }
   },

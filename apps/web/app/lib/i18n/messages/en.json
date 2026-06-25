@@ -69,6 +69,8 @@
     "kindXlsx": "Excel workbook",
     "kindPptx": "PowerPoint presentation",
     "kindPdf": "PDF document",
+    "kindEmail": "Email message",
+    "kindImage": "Image file",
     "yes": "Yes",
     "no": "No",
     "apply": "Apply",
@@ -115,12 +117,17 @@
     "workspaceDocument": "document",
     "workspaceDocuments": "documents",
     "workspaceNoDocuments": "No documents in this session.",
+    "workspaceNoMatches": "No sessions match this search.",
     "sessions": "Sessions",
     "pending": "Pending",
     "diagnostics": "Diagnostics",
     "exports": "Exports",
     "refresh": "Refresh",
     "importDocument": "Import document",
+    "searchSessions": "Search sessions and documents",
+    "renameSessionPrompt": "Rename session",
+    "duplicateSessionPrompt": "Duplicate session as",
+    "deleteSessionConfirm": "Delete \"{title}\" and all documents in it?",
     "openInEditor": "Open",
     "revision": "Rev.",
     "original": "original",
@@ -183,6 +190,21 @@
     "loading": "Loading session",
     "loadError": "Couldn't open the session document",
     "openInspector": "Open inspector"
+  },
+  "emailViewer": {
+    "title": "Email viewer",
+    "from": "From",
+    "to": "To",
+    "date": "Date",
+    "body": "Message body",
+    "noBody": "No readable message body.",
+    "attachments": "Attachments",
+    "noAttachments": "No attachments.",
+    "openAttachment": "Open attachment"
+  },
+  "imageViewer": {
+    "title": "Image viewer",
+    "normalizing": "Preparing image preview…"
   },
   "shell": {
     "openTooltip": "Open",

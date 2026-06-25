@@ -12,7 +12,7 @@ export const DATA_DIR_SCHEMA_VERSION = 1;
 export const SESSION_RECORD_SCHEMA_VERSION = 1;
 export const DOCUMENT_RECORD_SCHEMA_VERSION = 1;
 
-export type StoredOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf";
+export type StoredOfficeFormat = "docx" | "xlsx" | "pptx" | "pdf" | "email" | "image";
 export type StoredDiagnosticLevel = "info" | "warning" | "error" | "destructive";
 
 export interface StoredDiagnostic {
@@ -120,6 +120,23 @@ export interface SessionStorageAdapter extends OfficeAiStorageAdapter {}
 export interface LocalSessionStoreOptions {
   readonly dataDir?: string;
   readonly storage?: SessionStorageAdapter;
+}
+
+export interface ObjectSessionStorageBackend {
+  list(prefix: string): Promise<ReadonlyArray<string>>;
+  read(key: string): Promise<Uint8Array>;
+  write(key: string, bytes: Uint8Array): Promise<{ readonly etag?: string } | void>;
+  delete(key: string): Promise<void>;
+}
+
+export interface ObjectSessionStorageAdapterOptions {
+  readonly root?: string;
+  readonly backend: ObjectSessionStorageBackend;
+}
+
+export interface SessionDuplicateResult {
+  readonly session: StoredSessionRecord;
+  readonly documents: ReadonlyArray<StoredDocumentRecord>;
 }
 
 export interface SessionStoreInspection {
@@ -255,6 +272,116 @@ export class LocalFilesystemSessionStorageAdapter implements SessionStorageAdapt
     await this.wrap("remove", path, () =>
       rm(path, { recursive: opts.recursive ?? false, force: opts.force ?? false })
     );
+  }
+
+  private async wrap<T>(operation: SessionStorageOperation, path: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      throw new SessionStoreStorageError(operation, path, err);
+    }
+  }
+}
+
+export class ObjectSessionStorageAdapter implements SessionStorageAdapter {
+  readonly kind = "object-storage";
+  readonly root: string;
+  readonly capabilities: SessionStorageCapabilities = {
+    atomicWrite: true,
+    localPaths: false,
+    locks: "none",
+    watch: false,
+  };
+
+  private readonly backend: ObjectSessionStorageBackend;
+
+  constructor(opts: ObjectSessionStorageAdapterOptions) {
+    this.root = normalizeObjectPath(opts.root ?? "object://office-ai");
+    this.backend = opts.backend;
+  }
+
+  join(...segments: ReadonlyArray<string>): string {
+    return normalizeObjectPath(
+      segments
+        .join("/")
+        .replace(/([^:])\/{2,}/g, "$1/")
+        .replace(/\/+$/g, "")
+    );
+  }
+
+  async ensureDir(path: string): Promise<void> {
+    await this.wrap("ensure-dir", path, async () => {
+      await this.backend.write(`${normalizeObjectPath(path)}/.dir`, new Uint8Array());
+    });
+  }
+
+  async list(path: string): Promise<ReadonlyArray<string>> {
+    return this.wrap("list", path, async () => {
+      const normalized = normalizeObjectPath(path);
+      const prefix = `${normalized.replace(/\/+$/g, "")}/`;
+      const children = new Set<string>();
+      for (const key of await this.backend.list(prefix)) {
+        if (!key.startsWith(prefix)) continue;
+        const child = key.slice(prefix.length).split("/")[0];
+        if (child && child !== ".dir") children.add(child);
+      }
+      return [...children].sort();
+    });
+  }
+
+  async exists(path: string): Promise<boolean> {
+    return this.wrap("exists", path, async () => {
+      const normalized = normalizeObjectPath(path);
+      try {
+        await this.backend.read(normalized);
+        return true;
+      } catch (err) {
+        if (!isEnoent(err)) throw err;
+      }
+      const prefix = `${normalized.replace(/\/+$/g, "")}/`;
+      return (await this.backend.list(prefix)).length > 0;
+    });
+  }
+
+  async readBytes(path: string): Promise<Uint8Array> {
+    return this.wrap(
+      "read",
+      path,
+      async () => new Uint8Array(await this.backend.read(normalizeObjectPath(path)))
+    );
+  }
+
+  async writeBytesAtomic(path: string, bytes: Uint8Array | Buffer): Promise<void> {
+    await this.wrap("write", path, async () => {
+      const normalized = normalizeObjectPath(path);
+      await this.ensureObjectParents(normalized);
+      await this.backend.write(normalized, new Uint8Array(bytes));
+    });
+  }
+
+  async copyFromLocalFile(sourcePath: string, targetPath: string): Promise<void> {
+    await this.writeBytesAtomic(targetPath, new Uint8Array(await readFile(sourcePath)));
+  }
+
+  async remove(path: string, opts: SessionStorageRemoveOptions = {}): Promise<void> {
+    await this.wrap("remove", path, async () => {
+      const normalized = normalizeObjectPath(path);
+      await this.backend.delete(normalized);
+      await this.backend.delete(`${normalized}/.dir`);
+      if (!opts.recursive) return;
+      const prefix = `${normalized.replace(/\/+$/g, "")}/`;
+      for (const key of await this.backend.list(prefix)) {
+        await this.backend.delete(key);
+      }
+    });
+  }
+
+  private async ensureObjectParents(path: string): Promise<void> {
+    const parts = normalizeObjectPath(path).split("/");
+    if (parts.length <= 3) return;
+    for (let i = 3; i < parts.length; i += 1) {
+      await this.backend.write(`${parts.slice(0, i).join("/")}/.dir`, new Uint8Array());
+    }
   }
 
   private async wrap<T>(operation: SessionStorageOperation, path: string, fn: () => Promise<T>): Promise<T> {
@@ -427,6 +554,110 @@ export class LocalSessionStore {
     const path = record.artifacts.workingPath ?? record.artifacts.originalPath;
     if (!path) throw new Error(`Document ${record.id} has no persisted artifact.`);
     return this.storage.readBytes(path);
+  }
+
+  async renameSession(
+    sessionId: string,
+    title: string,
+    now = new Date().toISOString()
+  ): Promise<StoredSessionRecord> {
+    const session = await this.getSession(sessionId);
+    const nextTitle = title.trim();
+    if (!nextTitle) throw new Error("Session title cannot be empty.");
+    await this.putSession({
+      id: session.id,
+      title: nextTitle,
+      createdAt: session.createdAt,
+      updatedAt: now,
+      documentIds: session.documentIds,
+    });
+    return this.getSession(session.id);
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.getSession(sessionId);
+    await this.storage.remove(this.sessionDir(sessionId), { recursive: true, force: true });
+  }
+
+  async duplicateSession(
+    sessionId: string,
+    opts: { readonly title?: string; readonly now?: string } = {}
+  ): Promise<SessionDuplicateResult> {
+    const source = await this.getSession(sessionId);
+    const now = opts.now ?? new Date().toISOString();
+    const sessionBase: Omit<StoredSessionRecord, "schema" | "schemaVersion" | "version" | "lease"> = {
+      id: `session_${randomUUID()}`,
+      title: opts.title?.trim() || `${source.title} copy`,
+      createdAt: now,
+      updatedAt: now,
+      documentIds: [],
+    };
+    let copiedDocumentIds: ReadonlyArray<string> = [];
+    const documents: StoredDocumentRecord[] = [];
+
+    await this.putSession(sessionBase);
+    for (const documentId of source.documentIds) {
+      const sourceDocument = await this.getDocument(documentId);
+      if (!sourceDocument) continue;
+      const nextDocumentId = `doc_${randomUUID()}`;
+      copiedDocumentIds = [...copiedDocumentIds, nextDocumentId];
+      const originalBytes = sourceDocument.artifacts.originalPath
+        ? await this.storage.readBytes(sourceDocument.artifacts.originalPath)
+        : undefined;
+      const workingBytes = sourceDocument.artifacts.workingPath
+        ? await this.storage.readBytes(sourceDocument.artifacts.workingPath)
+        : undefined;
+      const diagnostics = [
+        ...sourceDocument.diagnostics,
+        {
+          level: "info" as const,
+          code: "session-duplicated",
+          message: `Duplicated from ${source.id}/${sourceDocument.id}.`,
+        },
+      ];
+      const copied = await this.putDocument(
+        {
+          id: nextDocumentId,
+          sessionId: sessionBase.id,
+          format: sourceDocument.format,
+          name: sourceDocument.name,
+          status: sourceDocument.status,
+          ...(sourceDocument.sourcePath ? { sourcePath: sourceDocument.sourcePath } : {}),
+          createdAt: now,
+          updatedAt: now,
+          revision: sourceDocument.revision,
+          diagnostics,
+          exportHistory: [],
+          pendingChanges: sourceDocument.pendingChanges,
+          commandLog: [
+            ...sourceDocument.commandLog,
+            {
+              schema: "office-ai/audit-log-entry@1",
+              schemaVersion: 1,
+              id: `log_${randomUUID()}`,
+              operation: "duplicate_session",
+              status: "applied",
+              stage: "duplicated",
+              source: "session-store",
+              recordedAt: now,
+              diagnostics,
+              provenance: {
+                surface: "session-store",
+                sessionId: sessionBase.id,
+                documentId: nextDocumentId,
+                targetRevision: sourceDocument.revision,
+                argumentsSummary: `${source.id}/${sourceDocument.id}`,
+              },
+            },
+          ],
+        },
+        { originalBytes, workingBytes }
+      );
+      documents.push(copied);
+    }
+
+    await this.putSession({ ...sessionBase, documentIds: copiedDocumentIds });
+    return { session: await this.getSession(sessionBase.id), documents };
   }
 
   async inspectDataDir(): Promise<SessionStoreInspection> {
@@ -636,6 +867,12 @@ export function createLocalFilesystemSessionStorageAdapter(
   return new LocalFilesystemSessionStorageAdapter(resolveOfficeAiDataDir(dataDir));
 }
 
+export function createObjectSessionStorageAdapter(
+  opts: ObjectSessionStorageAdapterOptions
+): ObjectSessionStorageAdapter {
+  return new ObjectSessionStorageAdapter(opts);
+}
+
 export function resolveOfficeAiDataDir(explicit?: string): string {
   if (explicit && explicit.trim().length > 0) return resolve(explicit);
   const env = process.env.OFFICEAI_DATA_DIR;
@@ -787,7 +1024,14 @@ function isDocumentLike(value: Record<string, unknown>): boolean {
 }
 
 function isStoredOfficeFormat(value: unknown): value is StoredOfficeFormat {
-  return value === "docx" || value === "xlsx" || value === "pptx" || value === "pdf";
+  return (
+    value === "docx" ||
+    value === "xlsx" ||
+    value === "pptx" ||
+    value === "pdf" ||
+    value === "email" ||
+    value === "image"
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -823,4 +1067,12 @@ function safeSegment(value: string): string {
     throw new Error(`Invalid data-dir segment "${value}".`);
   }
   return cleaned;
+}
+
+function normalizeObjectPath(path: string): string {
+  const trimmed = path.trim().replace(/\/+$/g, "");
+  const match = /^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i.exec(trimmed);
+  if (!match) return trimmed.replace(/\/{2,}/g, "/");
+  const [, scheme, rest] = match;
+  return `${scheme}${rest.split("/").filter(Boolean).join("/")}`;
 }

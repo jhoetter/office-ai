@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   LocalSessionStore,
+  ObjectSessionStorageAdapter,
   SessionStoreCorruptError,
   SessionStoreStorageError,
   resolveOfficeAiDataDir,
+  type ObjectSessionStorageBackend,
   type SessionStorageAdapter,
   type SessionStorageRemoveOptions,
 } from "./session-store.js";
@@ -113,6 +115,138 @@ describe("LocalSessionStore", () => {
     );
     await expect(store.listSessions()).resolves.toHaveLength(1);
     expect(Buffer.from(await store.readWorkingBytes(stored)).toString("utf8")).toBe("memory bytes");
+  });
+
+  it("persists sessions and save-back artifacts through an object storage adapter", async () => {
+    const backend = new MemoryObjectStorageBackend();
+    const store = new LocalSessionStore({
+      storage: new ObjectSessionStorageAdapter({ root: "object://bucket/office-ai", backend }),
+    });
+    await store.putSession({
+      id: "session_cloud",
+      title: "Cloud",
+      createdAt: "2026-06-24T09:00:00.000Z",
+      updatedAt: "2026-06-24T09:00:00.000Z",
+      documentIds: ["doc_cloud"],
+    });
+    const first = await store.putDocument(
+      {
+        id: "doc_cloud",
+        sessionId: "session_cloud",
+        format: "pdf",
+        name: "cloud.pdf",
+        status: "ready",
+        createdAt: "2026-06-24T09:00:00.000Z",
+        updatedAt: "2026-06-24T09:01:00.000Z",
+        revision: 1,
+        diagnostics: [],
+        exportHistory: [],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      {
+        originalBytes: Buffer.from("original object bytes"),
+        workingBytes: Buffer.from("working object bytes"),
+      }
+    );
+    await store.putDocument(
+      {
+        id: first.id,
+        sessionId: first.sessionId,
+        format: first.format,
+        name: first.name,
+        status: first.status,
+        createdAt: first.createdAt,
+        updatedAt: "2026-06-24T09:02:00.000Z",
+        revision: 2,
+        diagnostics: first.diagnostics,
+        exportHistory: first.exportHistory,
+        pendingChanges: first.pendingChanges,
+        commandLog: first.commandLog,
+      },
+      { workingBytes: Buffer.from("saved object bytes") }
+    );
+
+    expect(store.dataDir).toBe("object://bucket/office-ai");
+    expect(first.artifacts.workingPath).toBe(
+      "object://bucket/office-ai/sessions/session_cloud/documents/doc_cloud/artifacts/working.pdf"
+    );
+    expect(await store.listSessions()).toHaveLength(1);
+    const saved = await store.getDocument("doc_cloud");
+    if (!saved) throw new Error("Expected object-backed document to exist.");
+    expect(saved.revision).toBe(2);
+    expect(Buffer.from(await store.readWorkingBytes(saved)).toString("utf8")).toBe("saved object bytes");
+    expect(backend.keys()).toContain(
+      "object://bucket/office-ai/sessions/session_cloud/documents/doc_cloud/document.json"
+    );
+
+    await store.clear();
+    expect(backend.keys()).toEqual([]);
+  });
+
+  it("renames, duplicates and deletes a session with its metadata and artifacts", async () => {
+    const store = new LocalSessionStore({ dataDir: tempDataDir() });
+    await store.putSession({
+      id: "session_lifecycle",
+      title: "Original workspace",
+      createdAt: "2026-06-24T09:00:00.000Z",
+      updatedAt: "2026-06-24T09:00:00.000Z",
+      documentIds: ["doc_lifecycle"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_lifecycle",
+        sessionId: "session_lifecycle",
+        format: "email",
+        name: "message.eml",
+        status: "ready",
+        createdAt: "2026-06-24T09:00:00.000Z",
+        updatedAt: "2026-06-24T09:01:00.000Z",
+        revision: 1,
+        diagnostics: [],
+        exportHistory: [{ path: "/tmp/message.eml", bytes: 12, exportedAt: "2026-06-24T09:02:00.000Z" }],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      {
+        originalBytes: Buffer.from("original email"),
+        workingBytes: Buffer.from("working email"),
+      }
+    );
+
+    await expect(
+      store.renameSession("session_lifecycle", "Renamed workspace", "2026-06-24T09:03:00.000Z")
+    ).resolves.toMatchObject({
+      id: "session_lifecycle",
+      title: "Renamed workspace",
+      updatedAt: "2026-06-24T09:03:00.000Z",
+    });
+
+    const duplicated = await store.duplicateSession("session_lifecycle", {
+      title: "Copy workspace",
+      now: "2026-06-24T09:04:00.000Z",
+    });
+    expect(duplicated.session).toMatchObject({ title: "Copy workspace" });
+    expect(duplicated.session.id).not.toBe("session_lifecycle");
+    expect(duplicated.documents).toHaveLength(1);
+    expect(duplicated.documents[0]?.id).not.toBe("doc_lifecycle");
+    expect(duplicated.documents[0]).toMatchObject({
+      sessionId: duplicated.session.id,
+      format: "email",
+      name: "message.eml",
+      exportHistory: [],
+      artifacts: {
+        originalPath: expect.stringContaining("original.email"),
+        workingPath: expect.stringContaining("working.email"),
+      },
+    });
+    expect(Buffer.from(await store.readWorkingBytes(duplicated.documents[0]!)).toString("utf8")).toBe(
+      "working email"
+    );
+
+    await store.deleteSession(duplicated.session.id);
+    await expect(store.getSession(duplicated.session.id)).rejects.toBeInstanceOf(SessionStoreStorageError);
+    expect(await store.listSessions()).toHaveLength(1);
   });
 
   it("throws a clear corrupt-store error for invalid metadata", async () => {
@@ -324,5 +458,32 @@ class MemorySessionStorageAdapter implements SessionStorageAdapter {
     for (let i = 3; i < parts.length; i += 1) {
       this.dirs.add(parts.slice(0, i).join("/"));
     }
+  }
+}
+
+class MemoryObjectStorageBackend implements ObjectSessionStorageBackend {
+  private readonly files = new Map<string, Uint8Array>();
+
+  async list(prefix: string): Promise<ReadonlyArray<string>> {
+    return [...this.files.keys()].filter((key) => key.startsWith(prefix)).sort();
+  }
+
+  async read(key: string): Promise<Uint8Array> {
+    const bytes = this.files.get(key);
+    if (!bytes) throw Object.assign(new Error(`No such object: ${key}`), { code: "ENOENT" });
+    return new Uint8Array(bytes);
+  }
+
+  async write(key: string, bytes: Uint8Array): Promise<{ readonly etag: string }> {
+    this.files.set(key, new Uint8Array(bytes));
+    return { etag: `"${bytes.byteLength}-${this.files.size}"` };
+  }
+
+  async delete(key: string): Promise<void> {
+    this.files.delete(key);
+  }
+
+  keys(): ReadonlyArray<string> {
+    return [...this.files.keys()].filter((key) => !key.endsWith("/.dir")).sort();
   }
 }

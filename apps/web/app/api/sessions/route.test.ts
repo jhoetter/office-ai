@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "@officeai/agent";
-import { createLocalSessionStore } from "@officeai/agent/session-store";
+import { createLocalSessionStore, SessionStoreStorageError } from "@officeai/agent/session-store";
 import { DocxAgent } from "@officeai/docx";
 import { PdfAgent } from "@officeai/pdf";
 import { PptxAgent } from "@officeai/pptx";
@@ -15,9 +15,12 @@ import { POST as EXPORT_DOCUMENT } from "./[documentId]/export/route";
 import { GET as PROJECT_DOCUMENT } from "./[documentId]/projection/route";
 import { POST as CREATE_DOCUMENT } from "./create/route";
 import { POST as IMPORT_DOCUMENT } from "./import/route";
+import { POST as LIFECYCLE_SESSION } from "./lifecycle/route";
 import { GET } from "./route";
 import { mimeForFormat } from "@/lib/sessions/server-documents";
 import type { WebOfficeFormat } from "@/lib/sessions/web-sessions";
+
+type EditableWebOfficeFormat = Exclude<WebOfficeFormat, "email" | "image">;
 
 let previousOfficeAiDataDir: string | undefined;
 let dataDir: string;
@@ -594,6 +597,134 @@ describe("POST /api/sessions/import", () => {
     expect(payload.code).toBe("unsupported-format");
     expect(payload.message).toContain("notes.txt");
   });
+
+  it("imports EML messages and image files as viewer-backed session documents", async () => {
+    const eml = [
+      "From: Ada <ada@example.com>",
+      "To: Team <team@example.com>",
+      "Subject: Fixture mail",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      "Hello from an imported email.",
+    ].join("\r\n");
+    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
+
+    const mailForm = new FormData();
+    mailForm.set("file", new File([Buffer.from(eml)], "message.eml", { type: "message/rfc822" }));
+    const mailResponse = await IMPORT_DOCUMENT(
+      new Request("http://localhost/api/sessions/import", { method: "POST", body: mailForm })
+    );
+    expect(mailResponse.status).toBe(201);
+    const mailPayload = (await mailResponse.json()) as {
+      session: { sessionId: string };
+      document: { documentId: string; format: string; name: string };
+    };
+    expect(mailPayload.document).toMatchObject({ format: "email", name: "message.eml" });
+
+    const imageForm = new FormData();
+    imageForm.set("file", new File([imageBytes], "pixel.png", { type: "image/png" }));
+    imageForm.set("session_id", mailPayload.session.sessionId);
+    const imageResponse = await IMPORT_DOCUMENT(
+      new Request("http://localhost/api/sessions/import", { method: "POST", body: imageForm })
+    );
+    expect(imageResponse.status).toBe(201);
+    const imagePayload = (await imageResponse.json()) as {
+      session: { sessionId: string; documentCount: number };
+      document: { documentId: string; format: string; name: string };
+    };
+    expect(imagePayload.session).toMatchObject({
+      sessionId: mailPayload.session.sessionId,
+      documentCount: 2,
+    });
+    expect(imagePayload.document).toMatchObject({ format: "image", name: "pixel.png" });
+
+    const bytesResponse = await GET_BYTES(
+      new Request(`http://localhost/api/sessions/${mailPayload.document.documentId}/bytes`),
+      { params: Promise.resolve({ documentId: mailPayload.document.documentId }) }
+    );
+    expect(bytesResponse.status).toBe(200);
+    expect(bytesResponse.headers.get("x-officeai-format")).toBe("email");
+    expect(await bytesResponse.text()).toContain("Fixture mail");
+  });
+});
+
+describe("POST /api/sessions/lifecycle", () => {
+  it("renames, duplicates and deletes a session through the web lifecycle API", async () => {
+    const store = createLocalSessionStore();
+    const bytes = await blankBytes("docx");
+    await store.putSession({
+      id: "session_lifecycle",
+      title: "Lifecycle",
+      createdAt: "2026-06-24T16:00:00.000Z",
+      updatedAt: "2026-06-24T16:00:00.000Z",
+      documentIds: ["doc_lifecycle"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_lifecycle",
+        sessionId: "session_lifecycle",
+        format: "docx",
+        name: "lifecycle.docx",
+        status: "ready",
+        createdAt: "2026-06-24T16:00:00.000Z",
+        updatedAt: "2026-06-24T16:00:00.000Z",
+        revision: 1,
+        diagnostics: [],
+        exportHistory: [],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      { originalBytes: bytes, workingBytes: bytes }
+    );
+
+    const renamed = await LIFECYCLE_SESSION(
+      new Request("http://localhost/api/sessions/lifecycle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "rename", sessionId: "session_lifecycle", title: "Renamed" }),
+      })
+    );
+    expect(renamed.status).toBe(200);
+    expect((await renamed.json()) as { session: { title: string } }).toMatchObject({
+      session: { title: "Renamed" },
+    });
+
+    const duplicated = await LIFECYCLE_SESSION(
+      new Request("http://localhost/api/sessions/lifecycle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "duplicate", sessionId: "session_lifecycle", title: "Renamed copy" }),
+      })
+    );
+    expect(duplicated.status).toBe(201);
+    const duplicatedPayload = (await duplicated.json()) as {
+      session: { sessionId: string; title: string; documentCount: number };
+      documents: Array<{
+        documentId: string;
+        format: string;
+        artifacts: { hasOriginal: boolean; hasWorking: boolean };
+      }>;
+    };
+    expect(duplicatedPayload.session).toMatchObject({ title: "Renamed copy", documentCount: 1 });
+    expect(duplicatedPayload.session.sessionId).not.toBe("session_lifecycle");
+    expect(duplicatedPayload.documents[0]).toMatchObject({
+      format: "docx",
+      artifacts: { hasOriginal: true, hasWorking: true },
+    });
+
+    const deleted = await LIFECYCLE_SESSION(
+      new Request("http://localhost/api/sessions/lifecycle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "delete", sessionId: duplicatedPayload.session.sessionId }),
+      })
+    );
+    expect(deleted.status).toBe(200);
+    expect(await store.listSessions()).toHaveLength(1);
+    await expect(store.getSession(duplicatedPayload.session.sessionId)).rejects.toBeInstanceOf(
+      SessionStoreStorageError
+    );
+  });
 });
 
 describe("POST /api/sessions/create and /api/sessions/:documentId/export", () => {
@@ -950,7 +1081,7 @@ describe("GET /api/sessions/:documentId/projection", () => {
   });
 });
 
-async function reopenExportedBytes(format: WebOfficeFormat, bytes: Uint8Array): Promise<void> {
+async function reopenExportedBytes(format: EditableWebOfficeFormat, bytes: Uint8Array): Promise<void> {
   switch (format) {
     case "docx":
       await DocxAgent.fromBuffer(bytes);
@@ -967,7 +1098,7 @@ async function reopenExportedBytes(format: WebOfficeFormat, bytes: Uint8Array): 
   }
 }
 
-async function blankBytes(format: WebOfficeFormat): Promise<Uint8Array> {
+async function blankBytes(format: EditableWebOfficeFormat): Promise<Uint8Array> {
   switch (format) {
     case "docx":
       return new Uint8Array(await (await DocxAgent.empty()).exportFile());

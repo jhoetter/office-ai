@@ -114,6 +114,8 @@ describe("session browser model", () => {
       level: "warning",
       code: "web-parity-pdf-review-only",
     });
+    expect(formatParityDiagnostics("email")[0].code).toBe("web-parity-email-viewer");
+    expect(formatParityDiagnostics("image")[0].code).toBe("web-parity-image-viewer");
   });
 
   it("routes workspace documents to their format editor and keeps inspector separate", () => {
@@ -121,6 +123,8 @@ describe("session browser model", () => {
     expect(editorPathForFormat("xlsx")).toBe("/xlsx-editor");
     expect(editorPathForFormat("pptx")).toBe("/pptx-editor");
     expect(editorPathForFormat("pdf")).toBe("/pdf-viewer");
+    expect(editorPathForFormat("email")).toBe("/email-viewer");
+    expect(editorPathForFormat("image")).toBe("/image-viewer");
     expect(
       editorHrefForSessionDocument({
         documentId: "doc_1",
