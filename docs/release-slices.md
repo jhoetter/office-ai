@@ -174,3 +174,18 @@ Run this checklist before calling a slice done:
 5. Reimport or projection verifies the exported artifact.
 6. `office-agent doctor --json` explains any missing optional runtime.
 7. The scorecard is current and no new cross-surface gap is undocumented.
+
+## Sonaloop app roadmap addendum
+
+Date: 2026-06-25
+
+After R5, office-ai moves from "standalone product that can integrate
+with Sonaloop" to "Sonaloop app surface for Office/PDF artifacts". The
+accepted ADR is [`adr/sonaloop-app-surface.md`](adr/sonaloop-app-surface.md).
+
+| Layer                                 | Goal                                                                                                                  | Ticket allocation                                                                                                                                                                                                         |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1 imported documents open in editor  | Session browser opens real format editors, editors load working bytes from session state and save back new revisions. | `session-bytes-load-endpoint`, `session-to-editor-routing`, `session-detail-as-inspector`, `editor-save-back-to-session`, `open-in-editor-e2e-matrix`                                                                     |
+| M2 Sonaloop design adoption           | Icons, CMD+K and tokens converge on `sonaloop-design`.                                                                | `design-system-gap-audit`, `sonaloop-office-icon-taxonomy`, `sonaloop-icon-set-completion`, `adopt-sonaloop-icon-layer`, `adopt-sonaloop-command-palette`, `converge-design-tokens`                                       |
+| M2A Sonaloop app foundation           | App shell, semantic CSS classes and design dependency boundaries make office-ai recognisable as a Sonaloop app.       | `sonaloop-app-surface-adr`, `office-ai-design-system-dependency-boundary`, `sonaloop-design-tailwind-app-preset`, `office-ai-semantic-class-migration`, `office-ai-sonaloop-app-shell`, `sonaloop-app-visual-parity-gate` |
+| M3 native embedding + dependency diet | Cloud embedding uses native React editor islands plus MCP, with measured bundle budgets and per-format lazy loading.  | `embedding-target-decision-adr`, `sonaloop-cloud-mount-spike`, `dependency-budget-gate`, `per-format-lazy-loading`                                                                                                        |
