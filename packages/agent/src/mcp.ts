@@ -202,15 +202,89 @@ const synthesisPayloadSchema = z
   })
   .passthrough();
 
-const deliverableTargetFormatSchema = z.enum(["docx", "xlsx"]);
+const synthesisBrandSchema = z
+  .object({
+    name: z.string().optional(),
+    accentColor: z.string().optional(),
+    logoAssetId: z.string().optional(),
+  })
+  .passthrough();
+
+const deliverableTargetFormatSchema = z.enum(["docx", "xlsx", "pptx"]);
+const deliverableTemplateIdSchema = z.enum([
+  "research_report",
+  "executive_deck",
+  "analysis_workbook",
+  "pdf_review_handoff",
+]);
 
 type SynthesisPayload = z.infer<typeof synthesisPayloadSchema>;
+type SynthesisBrand = z.infer<typeof synthesisBrandSchema>;
 type DeliverableTargetFormat = z.infer<typeof deliverableTargetFormatSchema>;
+type DeliverableTemplateId = z.infer<typeof deliverableTemplateIdSchema>;
+
+interface DeliverableTemplate {
+  readonly id: DeliverableTemplateId;
+  readonly format: OfficeFormat;
+  readonly family: "report" | "deck" | "workbook" | "pdf-review";
+  readonly label: string;
+  readonly description: string;
+  readonly slots: ReadonlyArray<string>;
+  readonly requiredSlots: ReadonlyArray<string>;
+  readonly status: "active" | "handoff-only";
+}
+
+const deliverableTemplates: ReadonlyArray<DeliverableTemplate> = [
+  {
+    id: "research_report",
+    format: "docx",
+    family: "report",
+    label: "DOCX Research Report",
+    description:
+      "Readable research report with sections, findings, quotes, table summaries, assets and provenance.",
+    slots: ["brand", "title", "subtitle", "summary", "sections", "findings", "quotes", "tables", "assets"],
+    requiredSlots: ["title"],
+    status: "active",
+  },
+  {
+    id: "executive_deck",
+    format: "pptx",
+    family: "deck",
+    label: "PPTX Executive Deck",
+    description:
+      "Short executive deck with title, summary, key findings, signals and table/asset references.",
+    slots: ["brand", "title", "subtitle", "summary", "sections", "findings", "quotes", "tables", "assets"],
+    requiredSlots: ["title"],
+    status: "active",
+  },
+  {
+    id: "analysis_workbook",
+    format: "xlsx",
+    family: "workbook",
+    label: "XLSX Analysis Workbook",
+    description: "Structured workbook with one row per synthesis item and source/provenance columns.",
+    slots: ["brand", "title", "subtitle", "summary", "sections", "findings", "quotes", "tables", "assets"],
+    requiredSlots: ["title"],
+    status: "active",
+  },
+  {
+    id: "pdf_review_handoff",
+    format: "pdf",
+    family: "pdf-review",
+    label: "PDF Review/Annotation Handoff",
+    description:
+      "Template contract for applying review annotations to an existing PDF; creation from synthesis text is intentionally not active until PDF text-page authoring exists.",
+    slots: ["title", "summary", "findings", "assets", "annotations"],
+    requiredSlots: ["title"],
+    status: "handoff-only",
+  },
+];
 
 interface DeliverableBuildResult {
   readonly record: DocumentRecord;
   readonly mutations: ReadonlyArray<AnyMutation>;
   readonly provenance: ReadonlyArray<Record<string, unknown>>;
+  readonly template: DeliverableTemplate;
 }
 
 function localSessionStore() {
@@ -1744,6 +1818,8 @@ async function buildDeliverablesFromSynthesis(args: {
   readonly sessionId?: string;
   readonly payload: SynthesisPayload;
   readonly targetFormats: ReadonlyArray<DeliverableTargetFormat>;
+  readonly templateId?: DeliverableTemplateId;
+  readonly brand?: SynthesisBrand;
   readonly name?: string;
   readonly actorId?: string;
 }): Promise<ReadonlyArray<DeliverableBuildResult>> {
@@ -1751,10 +1827,37 @@ async function buildDeliverablesFromSynthesis(args: {
   const formats = args.targetFormats.length > 0 ? [...new Set(args.targetFormats)] : (["docx"] as const);
   const results: DeliverableBuildResult[] = [];
   for (const format of formats) {
+    const { template, diagnostics } = resolveDeliverableTemplate(format, args.templateId);
     const result =
       format === "docx"
-        ? await buildDocxSynthesisDeliverable(session.id, args.payload, args.name, args.actorId)
-        : await buildXlsxSynthesisDeliverable(session.id, args.payload, args.name, args.actorId);
+        ? await buildDocxSynthesisDeliverable(
+            session.id,
+            args.payload,
+            template,
+            diagnostics,
+            args.brand,
+            args.name,
+            args.actorId
+          )
+        : format === "xlsx"
+          ? await buildXlsxSynthesisDeliverable(
+              session.id,
+              args.payload,
+              template,
+              diagnostics,
+              args.brand,
+              args.name,
+              args.actorId
+            )
+          : await buildPptxSynthesisDeliverable(
+              session.id,
+              args.payload,
+              template,
+              diagnostics,
+              args.brand,
+              args.name,
+              args.actorId
+            );
     results.push(result);
   }
   touchSession(session);
@@ -1765,6 +1868,9 @@ async function buildDeliverablesFromSynthesis(args: {
 async function buildDocxSynthesisDeliverable(
   sessionId: string,
   payload: SynthesisPayload,
+  template: DeliverableTemplate,
+  templateDiagnostics: ReadonlyArray<McpDiagnostic>,
+  brand?: SynthesisBrand,
   name?: string,
   actorId?: string
 ): Promise<DeliverableBuildResult> {
@@ -1800,7 +1906,7 @@ async function buildDocxSynthesisDeliverable(
     provenance.push({ format: "docx", paragraph: targetParagraph, ...source });
   };
 
-  for (const paragraph of synthesisReportParagraphs(payload)) {
+  for (const paragraph of synthesisReportParagraphs(payload, brand)) {
     await appendParagraph(paragraph.text, paragraph.source);
   }
 
@@ -1809,15 +1915,18 @@ async function buildDocxSynthesisDeliverable(
     sessionId,
     format: "docx",
     name: deliverableName(name, payload.title, "docx"),
-    diagnostics: deliverableDiagnostics(payload, "docx"),
+    diagnostics: deliverableDiagnostics(payload, template, brand, templateDiagnostics),
   });
   await persistDeliverableDocument(record, mutations);
-  return { record, mutations, provenance };
+  return { record, mutations, provenance, template };
 }
 
 async function buildXlsxSynthesisDeliverable(
   sessionId: string,
   payload: SynthesisPayload,
+  template: DeliverableTemplate,
+  templateDiagnostics: ReadonlyArray<McpDiagnostic>,
+  brand?: SynthesisBrand,
   name?: string,
   actorId?: string
 ): Promise<DeliverableBuildResult> {
@@ -1837,7 +1946,7 @@ async function buildXlsxSynthesisDeliverable(
   approveDeliverableMutation(agent, rename);
   mutations.push(rename);
 
-  const rows = synthesisWorkbookRows(payload, provenance);
+  const rows = synthesisWorkbookRows(payload, provenance, brand);
   const width = Math.max(...rows.map((row) => row.length));
   const range = `A1:${xlsxColumnName(width)}${rows.length}`;
   const fill = (await agent.applyCommand({
@@ -1859,10 +1968,163 @@ async function buildXlsxSynthesisDeliverable(
     sessionId,
     format: "xlsx",
     name: deliverableName(name, payload.title, "xlsx"),
-    diagnostics: deliverableDiagnostics(payload, "xlsx"),
+    diagnostics: deliverableDiagnostics(payload, template, brand, templateDiagnostics),
   });
   await persistDeliverableDocument(record, mutations);
-  return { record, mutations, provenance };
+  return { record, mutations, provenance, template };
+}
+
+async function buildPptxSynthesisDeliverable(
+  sessionId: string,
+  payload: SynthesisPayload,
+  template: DeliverableTemplate,
+  templateDiagnostics: ReadonlyArray<McpDiagnostic>,
+  brand?: SynthesisBrand,
+  name?: string,
+  actorId?: string
+): Promise<DeliverableBuildResult> {
+  const documentId = `doc_${randomUUID()}`;
+  const agent = await PptxAgent.empty();
+  pptxSessions.set(documentId, agent);
+  const mutations: AnyMutation[] = [];
+  const provenance: Array<Record<string, unknown>> = [];
+  const runtimeDiagnostics: McpDiagnostic[] = [];
+
+  const applyPptxCommand = async (type: string, payload: Record<string, unknown>): Promise<AnyMutation> => {
+    const mutation = (await agent.applyCommand({
+      type,
+      payload,
+      source: "system",
+      ...(actorId ? { agentId: actorId } : {}),
+    })) as unknown as AnyMutation;
+    assertDeliverableMutation(mutation);
+    approveDeliverableMutation(agent, mutation);
+    mutations.push(mutation);
+    return mutation;
+  };
+
+  const addTemplateSlide = async (
+    title: string,
+    bodyLines: ReadonlyArray<string>,
+    source: Record<string, unknown>
+  ): Promise<void> => {
+    await applyPptxCommand("pptx:add-slide", { layoutKind: "titleAndContent" });
+    const slideIndex = agent.getSnapshot().root.slides.length - 1;
+    await setPptxPlaceholderText(agent, applyPptxCommand, runtimeDiagnostics, slideIndex, "title", title);
+    await setPptxPlaceholderText(
+      agent,
+      applyPptxCommand,
+      runtimeDiagnostics,
+      slideIndex,
+      "body",
+      bodyLines.filter((line) => line.trim().length > 0).join("\n")
+    );
+    provenance.push({ format: "pptx", slide: Math.max(0, slideIndex - 1), ...source });
+  };
+
+  await addTemplateSlide(
+    payload.title,
+    [payload.subtitle ?? "", payload.summary ?? "", brand?.name ? `Brand: ${brand.name}` : ""],
+    { sourceKind: "title" }
+  );
+
+  await addTemplateSlide(
+    "Research summary",
+    [
+      payload.summary ?? "No summary supplied.",
+      ...(payload.sections ?? []).slice(0, 4).map((section) => `${section.title}: ${section.body ?? ""}`),
+    ],
+    { sourceKind: "summary" }
+  );
+
+  await addTemplateSlide(
+    "Key findings",
+    (payload.findings ?? []).length > 0
+      ? (payload.findings ?? [])
+          .slice(0, 6)
+          .map((finding) => `${finding.title ? `${finding.title}: ` : ""}${finding.text}`)
+      : ["No findings supplied."],
+    { sourceKind: "findings" }
+  );
+
+  if ((payload.quotes?.length ?? 0) > 0) {
+    await addTemplateSlide(
+      "Signals and quotes",
+      (payload.quotes ?? [])
+        .slice(0, 5)
+        .map((quote) => `${quote.speaker ? `${quote.speaker}: ` : ""}"${quote.text}"`),
+      { sourceKind: "quotes" }
+    );
+  }
+
+  if ((payload.tables?.length ?? 0) > 0 || (payload.assets?.length ?? 0) > 0) {
+    await addTemplateSlide(
+      "Artifacts and tables",
+      [
+        ...(payload.tables ?? [])
+          .slice(0, 4)
+          .map((table) => `${table.title ?? table.id ?? "Table"}: ${table.columns.join(" | ")}`),
+        ...(payload.assets ?? [])
+          .slice(0, 4)
+          .map(
+            (asset) =>
+              `${asset.title ?? asset.id ?? "Asset"}${asset.kind ? ` (${asset.kind})` : ""}: ${asset.uri ?? asset.path ?? "no uri"}`
+          ),
+      ],
+      { sourceKind: "artifacts" }
+    );
+  }
+
+  if (agent.getSnapshot().root.slides.length > 1) {
+    await applyPptxCommand("pptx:delete-slide", { slideIndex: 0 });
+  }
+
+  const record = registerDocumentRecord({
+    id: documentId,
+    sessionId,
+    format: "pptx",
+    name: deliverableName(name, payload.title, "pptx"),
+    diagnostics: deliverableDiagnostics(payload, template, brand, [
+      ...templateDiagnostics,
+      ...runtimeDiagnostics,
+    ]),
+  });
+  await persistDeliverableDocument(record, mutations);
+  return { record, mutations, provenance, template };
+}
+
+async function setPptxPlaceholderText(
+  agent: PptxAgent,
+  applyPptxCommand: (type: string, payload: Record<string, unknown>) => Promise<AnyMutation>,
+  diagnostics: McpDiagnostic[],
+  slideIndex: number,
+  placeholderType: string,
+  text: string
+): Promise<void> {
+  const shapeId = pptxPlaceholderShapeId(agent, slideIndex, placeholderType);
+  if (!shapeId) {
+    diagnostics.push({
+      level: "warning",
+      code: "template-placeholder-missing",
+      message: `PPTX template did not expose a ${placeholderType} placeholder on slide ${slideIndex}.`,
+    });
+    return;
+  }
+  await applyPptxCommand("pptx:set-text", { slideIndex, shapeId, text });
+}
+
+function pptxPlaceholderShapeId(
+  agent: PptxAgent,
+  slideIndex: number,
+  placeholderType: string
+): string | undefined {
+  const slide = agent.getSnapshot().root.slides[slideIndex];
+  for (const shape of slide?.shapes ?? []) {
+    if (!isRecord(shape) || shape.kind !== "text" || typeof shape.id !== "string") continue;
+    const placeholder = shape.placeholder;
+    if (isRecord(placeholder) && placeholder.type === placeholderType) return shape.id;
+  }
+  return undefined;
 }
 
 function lastDocxParagraphIndex(agent: DocxAgent): number {
@@ -1915,27 +2177,146 @@ async function persistDeliverableDocument(
   }
 }
 
-function deliverableDiagnostics(payload: SynthesisPayload, format: OfficeFormat): McpDiagnostic[] {
+function deliverableDiagnostics(
+  payload: SynthesisPayload,
+  template: DeliverableTemplate,
+  brand: SynthesisBrand | undefined,
+  extraDiagnostics: ReadonlyArray<McpDiagnostic>
+): McpDiagnostic[] {
   return [
+    ...extraDiagnostics,
     {
       level: "info",
       code: "deliverable-created",
-      message: `Created ${format.toUpperCase()} deliverable from synthesis payload "${payload.title}".`,
+      message: `Created ${template.format.toUpperCase()} deliverable from synthesis payload "${payload.title}".`,
+    },
+    {
+      level: "info",
+      code: "template-selected",
+      message: `Applied template ${template.id} (${template.label}).`,
     },
     {
       level: "info",
       code: "deliverable-provenance",
       message: `Payload includes ${payload.sections?.length ?? 0} section(s), ${payload.findings?.length ?? 0} finding(s), ${payload.quotes?.length ?? 0} quote(s), ${payload.tables?.length ?? 0} table(s), ${payload.assets?.length ?? 0} asset reference(s).`,
     },
+    ...(brand && (brand.name || brand.accentColor || brand.logoAssetId)
+      ? [
+          {
+            level: "info" as const,
+            code: "template-brand-parameters",
+            message: `Brand parameters supplied${brand.name ? ` for ${brand.name}` : ""}.`,
+          },
+        ]
+      : []),
+    ...templateSlotDiagnostics(payload, template, brand),
   ];
 }
 
+function resolveDeliverableTemplate(
+  format: DeliverableTargetFormat,
+  requested?: DeliverableTemplateId
+): { readonly template: DeliverableTemplate; readonly diagnostics: ReadonlyArray<McpDiagnostic> } {
+  const defaultTemplate = defaultDeliverableTemplate(format);
+  if (!requested) return { template: defaultTemplate, diagnostics: [] };
+  const requestedTemplate = deliverableTemplates.find((template) => template.id === requested);
+  if (requestedTemplate?.format === format && requestedTemplate.status === "active") {
+    return { template: requestedTemplate, diagnostics: [] };
+  }
+  return {
+    template: defaultTemplate,
+    diagnostics: [
+      {
+        level: "warning",
+        code: "template-fallback",
+        message: `Template ${requested} cannot produce ${format}; used ${defaultTemplate.id} instead.`,
+      },
+    ],
+  };
+}
+
+function defaultDeliverableTemplate(format: DeliverableTargetFormat): DeliverableTemplate {
+  const idByFormat: Record<DeliverableTargetFormat, DeliverableTemplateId> = {
+    docx: "research_report",
+    pptx: "executive_deck",
+    xlsx: "analysis_workbook",
+  };
+  const template = deliverableTemplates.find((entry) => entry.id === idByFormat[format]);
+  if (!template) throw new Error(`No deliverable template registered for ${format}.`);
+  return template;
+}
+
+function templateSlotDiagnostics(
+  payload: SynthesisPayload,
+  template: DeliverableTemplate,
+  brand?: SynthesisBrand
+): McpDiagnostic[] {
+  const diagnostics: McpDiagnostic[] = [];
+  for (const slot of template.slots) {
+    if (template.requiredSlots.includes(slot)) continue;
+    if (!templateSlotHasValue(slot, payload, brand)) {
+      diagnostics.push({
+        level: "warning",
+        code: "template-slot-empty",
+        message: `Template ${template.id} slot "${slot}" was not filled by the synthesis payload.`,
+      });
+    }
+  }
+
+  const knownPayloadKeys = new Set([
+    "title",
+    "subtitle",
+    "summary",
+    "sections",
+    "findings",
+    "quotes",
+    "tables",
+    "assets",
+  ]);
+  for (const key of Object.keys(payload)) {
+    if (knownPayloadKeys.has(key) || template.slots.includes(key)) continue;
+    diagnostics.push({
+      level: "warning",
+      code: "template-payload-extra",
+      message: `Payload field "${key}" is preserved in the contract but not consumed by template ${template.id}.`,
+    });
+  }
+  return diagnostics;
+}
+
+function templateSlotHasValue(slot: string, payload: SynthesisPayload, brand?: SynthesisBrand): boolean {
+  switch (slot) {
+    case "brand":
+      return Boolean(brand?.name || brand?.accentColor || brand?.logoAssetId);
+    case "title":
+      return payload.title.trim().length > 0;
+    case "subtitle":
+      return Boolean(payload.subtitle?.trim());
+    case "summary":
+      return Boolean(payload.summary?.trim());
+    case "sections":
+      return (payload.sections?.length ?? 0) > 0;
+    case "findings":
+      return (payload.findings?.length ?? 0) > 0;
+    case "quotes":
+      return (payload.quotes?.length ?? 0) > 0;
+    case "tables":
+      return (payload.tables?.length ?? 0) > 0;
+    case "assets":
+      return (payload.assets?.length ?? 0) > 0;
+    default:
+      return false;
+  }
+}
+
 function synthesisReportParagraphs(
-  payload: SynthesisPayload
+  payload: SynthesisPayload,
+  brand?: SynthesisBrand
 ): ReadonlyArray<{ readonly text: string; readonly source: Record<string, unknown> }> {
   const paragraphs: Array<{ text: string; source: Record<string, unknown> }> = [
     { text: payload.title, source: { sourceKind: "title" } },
   ];
+  if (brand?.name) paragraphs.push({ text: `Brand: ${brand.name}`, source: { sourceKind: "brand" } });
   if (payload.subtitle) paragraphs.push({ text: payload.subtitle, source: { sourceKind: "subtitle" } });
   if (payload.summary) paragraphs.push({ text: payload.summary, source: { sourceKind: "summary" } });
 
@@ -2010,12 +2391,16 @@ function synthesisReportParagraphs(
 
 function synthesisWorkbookRows(
   payload: SynthesisPayload,
-  provenance: Array<Record<string, unknown>>
+  provenance: Array<Record<string, unknown>>,
+  brand?: SynthesisBrand
 ): ReadonlyArray<ReadonlyArray<string | number | boolean>> {
   const rows: Array<Array<string | number | boolean>> = [
     ["kind", "id", "title_or_speaker", "text_or_value", "source"],
     ["title", "", payload.title, payload.subtitle ?? "", ""],
   ];
+  if (brand?.name || brand?.accentColor || brand?.logoAssetId) {
+    rows.push(["brand", "", brand.name ?? "", brand.accentColor ?? "", brand.logoAssetId ?? ""]);
+  }
   if (payload.summary) rows.push(["summary", "", "", payload.summary, ""]);
   for (const section of payload.sections ?? []) {
     rows.push(["section", section.id ?? "", section.title, section.body ?? "", ""]);
@@ -2756,10 +3141,42 @@ function registerSessionDocumentTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "list_deliverable_templates",
+    {
+      description:
+        "List data-driven deliverable templates that can be used by create_deliverable_from_synthesis. Includes active Office templates and handoff-only contracts.",
+      inputSchema: {
+        format: z.enum(["docx", "xlsx", "pptx", "pdf"]).optional().describe("Optional format filter."),
+      },
+    },
+    async ({ format }) =>
+      ok({
+        schema: "office-ai/deliverable-templates@1",
+        templates: deliverableTemplates
+          .filter((template) => !format || template.format === format)
+          .map((template) => ({
+            id: template.id,
+            format: template.format,
+            family: template.family,
+            label: template.label,
+            description: template.description,
+            slots: template.slots,
+            requiredSlots: template.requiredSlots,
+            status: template.status,
+          })),
+        defaults: {
+          docx: defaultDeliverableTemplate("docx").id,
+          pptx: defaultDeliverableTemplate("pptx").id,
+          xlsx: defaultDeliverableTemplate("xlsx").id,
+        },
+      })
+  );
+
+  server.registerTool(
     "create_deliverable_from_synthesis",
     {
       description:
-        "Create canonical OfficeAI DOCX/XLSX deliverables from a structured synthesis payload. This is a neutral handoff contract; no Sonaloop runtime dependency is required.",
+        "Create canonical OfficeAI DOCX/PPTX/XLSX deliverables from a structured synthesis payload. This is a neutral handoff contract; no Sonaloop runtime dependency is required.",
       inputSchema: {
         session_id: z.string().optional().describe("Optional sessionId from create_session."),
         payload: synthesisPayloadSchema.describe(
@@ -2768,7 +3185,15 @@ function registerSessionDocumentTools(server: McpServer): void {
         target_formats: z
           .array(deliverableTargetFormatSchema)
           .optional()
-          .describe("Deliverable formats to create. Defaults to ['docx']. Supported: docx, xlsx."),
+          .describe("Deliverable formats to create. Defaults to ['docx']. Supported: docx, pptx, xlsx."),
+        template_id: deliverableTemplateIdSchema
+          .optional()
+          .describe(
+            "Optional template id. If it does not match a requested format, the format default is used."
+          ),
+        brand: synthesisBrandSchema
+          .optional()
+          .describe("Optional brand/style parameters passed as data: name, accentColor, logoAssetId."),
         name: z
           .string()
           .optional()
@@ -2776,14 +3201,17 @@ function registerSessionDocumentTools(server: McpServer): void {
         actor_id: z.string().optional().describe("Optional actor id recorded on generated commands."),
       },
     },
-    async ({ session_id, payload, target_formats, name, actor_id }) => {
+    async ({ session_id, payload, target_formats, template_id, brand, name, actor_id }) => {
       try {
         const parsedPayload = synthesisPayloadSchema.parse(payload);
+        const parsedBrand = brand ? synthesisBrandSchema.parse(brand) : undefined;
         const formats = (target_formats?.length ? target_formats : ["docx"]) as DeliverableTargetFormat[];
         const results = await buildDeliverablesFromSynthesis({
           ...(session_id ? { sessionId: session_id } : {}),
           payload: parsedPayload,
           targetFormats: formats,
+          ...(template_id ? { templateId: template_id as DeliverableTemplateId } : {}),
+          ...(parsedBrand ? { brand: parsedBrand } : {}),
           ...(name ? { name } : {}),
           ...(actor_id ? { actorId: actor_id } : {}),
         });
@@ -2799,6 +3227,12 @@ function registerSessionDocumentTools(server: McpServer): void {
           },
           sessionId: results[0]?.record.sessionId,
           documents: results.map((result) => documentEnvelope(result.record)),
+          templates: results.map((result) => ({
+            documentId: result.record.id,
+            format: result.record.format,
+            templateId: result.template.id,
+            slots: result.template.slots,
+          })),
           provenance: results.flatMap((result) => result.provenance),
           diagnostics: results.flatMap((result) => result.record.diagnostics),
           dataDir: localSessionStore().dataDir,

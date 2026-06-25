@@ -210,6 +210,7 @@ describe("OfficeAI MCP server", () => {
       "list_sessions",
       "import_document",
       "create_document",
+      "list_deliverable_templates",
       "create_deliverable_from_synthesis",
       "list_documents",
       "get_document",
@@ -700,7 +701,7 @@ describe("OfficeAI MCP server", () => {
     );
   });
 
-  it("creates DOCX and XLSX deliverables from a synthesis payload", async () => {
+  it("creates templated DOCX, PPTX and XLSX deliverables from a synthesis payload", async () => {
     const client = await makeClient();
     const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-deliverable-"));
     const payload = {
@@ -752,12 +753,21 @@ describe("OfficeAI MCP server", () => {
       ],
     };
 
+    const templates = structured(
+      await client.callTool({ name: "list_deliverable_templates", arguments: {} })
+    );
+    expect((templates.templates as Array<{ id: string }>).map((template) => template.id)).toEqual(
+      expect.arrayContaining(["research_report", "executive_deck", "analysis_workbook", "pdf_review_handoff"])
+    );
+
     const created = structured(
       await client.callTool({
         name: "create_deliverable_from_synthesis",
         arguments: {
           payload,
-          target_formats: ["docx", "xlsx"],
+          target_formats: ["docx", "pptx", "xlsx"],
+          template_id: "research_report",
+          brand: { name: "Care Ops", accentColor: "2F6F73" },
           actor_id: "sonaloop-demo",
         },
       })
@@ -768,15 +778,19 @@ describe("OfficeAI MCP server", () => {
       format: string;
       diagnostics: unknown[];
     }>;
-    expect(documents.map((doc) => doc.format).sort()).toEqual(["docx", "xlsx"]);
+    expect(documents.map((doc) => doc.format).sort()).toEqual(["docx", "pptx", "xlsx"]);
+    expect((created.templates as Array<{ templateId: string }>).map((entry) => entry.templateId)).toEqual(
+      expect.arrayContaining(["research_report", "executive_deck", "analysis_workbook"])
+    );
     expect((created.provenance as unknown[]).length).toBeGreaterThan(0);
     expect((created.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toContain(
       "deliverable-provenance"
     );
 
     const docx = documents.find((doc) => doc.format === "docx");
+    const pptx = documents.find((doc) => doc.format === "pptx");
     const xlsx = documents.find((doc) => doc.format === "xlsx");
-    if (!docx || !xlsx) throw new Error("expected DOCX and XLSX deliverables");
+    if (!docx || !pptx || !xlsx) throw new Error("expected DOCX, PPTX and XLSX deliverables");
 
     const docxProjection = structured(
       await client.callTool({
@@ -785,7 +799,17 @@ describe("OfficeAI MCP server", () => {
       })
     );
     expect(JSON.stringify(docxProjection)).toContain("Care team scheduling synthesis");
+    expect(JSON.stringify(docxProjection)).toContain("Care Ops");
     expect(JSON.stringify(docxProjection)).toContain("Managers need a reviewable artifact");
+
+    const pptxProjection = structured(
+      await client.callTool({
+        name: "get_document_projection",
+        arguments: { document_id: pptx.documentId, projection: "markdown" },
+      })
+    );
+    expect(JSON.stringify(pptxProjection)).toContain("Key findings");
+    expect(JSON.stringify(pptxProjection)).toContain("Review burden");
 
     const xlsxProjection = structured(
       await client.callTool({
@@ -803,7 +827,9 @@ describe("OfficeAI MCP server", () => {
       })
     );
     const operations = (activity.activity as Array<{ operation: string }>).map((entry) => entry.operation);
-    expect(operations).toEqual(expect.arrayContaining(["docx:insert-text", "xlsx:set-range-values"]));
+    expect(operations).toEqual(
+      expect.arrayContaining(["docx:insert-text", "pptx:add-slide", "pptx:set-text", "xlsx:set-range-values"])
+    );
 
     for (const document of documents) {
       const outPath = join(tmp, `deliverable.${document.format}`);

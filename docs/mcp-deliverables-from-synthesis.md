@@ -16,7 +16,9 @@ Input:
 ```json
 {
   "session_id": "session_...",
-  "target_formats": ["docx", "xlsx"],
+  "target_formats": ["docx", "pptx", "xlsx"],
+  "template_id": "research_report",
+  "brand": { "name": "Care Ops", "accentColor": "2F6F73" },
   "name": "care-team-synthesis",
   "actor_id": "sonaloop-demo",
   "payload": {
@@ -41,14 +43,24 @@ Input:
 }
 ```
 
-`target_formats` defaults to `["docx"]`. Supported formats are:
+`target_formats` defaults to `["docx"]`. Supported active formats are:
 
-- `docx`: readable synthesis report.
-- `xlsx`: structured companion workbook on a `Synthesis` sheet.
+- `docx`: readable synthesis report using `research_report`.
+- `pptx`: executive deck using `executive_deck`.
+- `xlsx`: structured companion workbook using `analysis_workbook`.
+
+Use `list_deliverable_templates` to inspect the template catalogue. If
+`template_id` does not match a requested format, OfficeAI falls back to
+that format's default template and emits a `template-fallback`
+diagnostic. The catalogue also includes `pdf_review_handoff` as a
+handoff-only contract for existing PDFs; PDF creation from synthesis
+text remains intentionally inactive until native PDF text-page authoring
+exists.
 
 The tool returns:
 
 - `documents`: canonical `office-ai/document@1` envelopes.
+- `templates`: selected template id and slots per output document.
 - `provenance`: row/paragraph references back to payload items.
 - `diagnostics`: standard `{ level, code, message }` entries.
 - `nextActions`: `get_document`, `get_document_projection`,
@@ -66,8 +78,8 @@ create_deliverable_from_synthesis
 
 Generated commands are recorded in the local session activity log, so
 the web session inspector can show the applied changes. Export produces
-real `.docx` / `.xlsx` files, which can be reimported through the same
-canonical session API.
+real `.docx` / `.pptx` / `.xlsx` files, which can be reimported through
+the same canonical session API.
 
 ## Provenance
 
@@ -83,16 +95,18 @@ IDs in the tool response:
 }
 ```
 
-For XLSX, provenance points at rows in the `Synthesis` sheet. Rich
-inline citations and native document footnotes are tracked separately;
-this tool establishes the handoff and reviewable artifact first.
+For PPTX, provenance points at generated slides. For XLSX, provenance
+points at rows in the `Synthesis` sheet. Rich inline citations and
+native document footnotes are tracked separately; this tool establishes
+the handoff and reviewable artifact first.
 
 ## Local smoke
 
 The MCP test `packages/agent/src/mcp.test.ts` covers the demo path:
 
-- create DOCX and XLSX from one synthesis payload.
+- inspect the template catalogue.
+- create DOCX, PPTX and XLSX from one synthesis payload.
 - read projections.
 - verify activity contains generated Office commands.
-- export both files.
-- reimport both exported files.
+- export all generated Office files.
+- reimport all exported files.
