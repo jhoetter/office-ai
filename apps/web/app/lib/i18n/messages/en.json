@@ -46,6 +46,7 @@
     "commandPalette": "Command palette",
     "commandPalettePlaceholder": "Type a command…",
     "commandPaletteEmpty": "No commands match.",
+    "recent": "Recent",
     "searchCommands": "Search commands",
     "keyboardShortcuts": "Keyboard shortcuts",
     "language": "Language",

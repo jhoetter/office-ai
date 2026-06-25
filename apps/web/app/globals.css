@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "sonaloop-design/tokens.css";
+@import "sonaloop-design/components.css";
+@import "sonaloop-design/app.css";
 
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 

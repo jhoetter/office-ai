@@ -46,6 +46,7 @@
     "commandPalette": "Befehlspalette",
     "commandPalettePlaceholder": "Befehl eingeben…",
     "commandPaletteEmpty": "Keine Befehle gefunden.",
+    "recent": "Zuletzt verwendet",
     "searchCommands": "Befehle suchen",
     "keyboardShortcuts": "Tastenkürzel",
     "language": "Sprache",
