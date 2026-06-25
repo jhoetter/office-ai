@@ -209,6 +209,13 @@ const FORBIDDEN_SOURCE_IMPORTS = {
   ],
 };
 
+const SONALOOP_DESIGN_CONSUMERS = new Set(["@officeai/web", "@officeai/ui", "@officeai/react-editors"]);
+const MIGRATION_ONLY_DESIGN_DEPS = {
+  "@officeai/design-tokens": new Set(["@officeai/ui", "@officeai/web", "@officeai/react-editors"]),
+  "lucide-react": new Set(["@officeai/ui", "@officeai/web", "@officeai/react-editors"]),
+};
+const DESIGN_DEPENDENCY_SOURCE = "sonaloop-design";
+
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const SKIPPED_SOURCE_DIRS = new Set(["node_modules", "dist", ".next", "coverage", ".turbo"]);
 const IMPORT_SPECIFIER_RE =
@@ -301,6 +308,10 @@ function matchesForbiddenSourceImport(specifier, forbidden) {
   return specifier === forbidden || specifier.startsWith(`${forbidden}/`);
 }
 
+function matchesImport(specifier, packageName) {
+  return specifier === packageName || specifier.startsWith(`${packageName}/`);
+}
+
 function main() {
   const pkgs = discoverPackages();
   const knownInternal = new Set(pkgs.map((p) => p.name));
@@ -325,6 +336,31 @@ function main() {
           package: name,
           file: relPath(join(dir, "package.json")),
           message: `Forbidden internal dependency: "${name}" must not depend on "${dep}". Allowed internal deps: [${[...allowed].join(", ") || "none"}].`,
+        });
+      }
+    }
+
+    for (const dep of deps) {
+      if (dep.startsWith("@officeai/design-") && dep !== "@officeai/design-tokens") {
+        violations.push({
+          package: name,
+          file: relPath(join(dir, "package.json")),
+          message: `Forbidden local design-system package "${dep}". Shared Sonaloop app design must come from "${DESIGN_DEPENDENCY_SOURCE}"; "@officeai/design-tokens" is the only temporary migration shim.`,
+        });
+      }
+      if (dep === DESIGN_DEPENDENCY_SOURCE && !SONALOOP_DESIGN_CONSUMERS.has(name)) {
+        violations.push({
+          package: name,
+          file: relPath(join(dir, "package.json")),
+          message: `Forbidden design dependency: only app/UI shell packages may depend on "${DESIGN_DEPENDENCY_SOURCE}". Allowed consumers: [${[...SONALOOP_DESIGN_CONSUMERS].join(", ")}].`,
+        });
+      }
+      const migrationAllowed = MIGRATION_ONLY_DESIGN_DEPS[dep];
+      if (migrationAllowed && !migrationAllowed.has(name)) {
+        violations.push({
+          package: name,
+          file: relPath(join(dir, "package.json")),
+          message: `Migration-only design dependency "${dep}" is only allowed in [${[...migrationAllowed].join(", ")}]. New design-system work must use "${DESIGN_DEPENDENCY_SOURCE}".`,
         });
       }
     }
@@ -354,6 +390,18 @@ function main() {
             message: `Forbidden source import: "${name}" must not import "${specifier}". Host integrations belong behind the core adapter ports, not inside this package.`,
           });
         }
+      }
+    }
+
+    for (const file of walkSourceFiles(dir)) {
+      for (const specifier of sourceImportSpecifiers(file)) {
+        if (!matchesImport(specifier, DESIGN_DEPENDENCY_SOURCE)) continue;
+        if (SONALOOP_DESIGN_CONSUMERS.has(name)) continue;
+        violations.push({
+          package: name,
+          file: relPath(file),
+          message: `Forbidden source import: "${DESIGN_DEPENDENCY_SOURCE}" belongs only in app/UI shell packages, not in model, agent, runtime or test packages.`,
+        });
       }
     }
   }
