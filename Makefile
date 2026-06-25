@@ -10,7 +10,7 @@
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
         roundtrip-libre-all audit-roundtrip audit-roundtrip-pdf fixtures-pdf \
-        e2e-web perf perf-docx perf-xlsx perf-pptx perf-all \
+        e2e-web e2e-web-visual perf perf-docx perf-xlsx perf-pptx perf-all \
         licenses metrics heavy \
         xsd-fetch schema-validate schema-validate-docx schema-validate-xlsx \
         schema-validate-pptx schema-validate-all
@@ -114,6 +114,7 @@ help:
 	@echo "  roundtrip-libre-pptx     Headless LibreOffice roundtrip on PPTX fixtures"
 	@echo "  roundtrip-libre-all      Run the LibreOffice roundtrip across all three formats"
 	@echo "  e2e-web                  Playwright smoke tests against the web app"
+	@echo "  e2e-web-visual           Sonaloop app visual parity screenshot gate"
 	@echo "  perf                     Run every perf budget (docx + xlsx + pptx)"
 	@echo "  perf-docx                DOCX perf budgets (parse / 1k commands / serialize)"
 	@echo "  perf-xlsx                XLSX perf budgets (parse / 1k commands / serialize)"
@@ -428,6 +429,10 @@ fixtures-pdf:
 e2e-web:
 	pnpm build
 	pnpm --filter @officeai/web e2e
+
+e2e-web-visual:
+	pnpm build
+	pnpm --filter @officeai/web e2e:visual
 
 # ── Perf budgets (per-format) ────────────────────────────────────────
 # Each script builds a representative synthetic doc/sheet/deck, then

@@ -143,7 +143,7 @@ export function ExportDialog({
       role="dialog"
       aria-modal="true"
       aria-label="Export"
-      className="fixed inset-0 z-40 flex items-start justify-center bg-black/30 px-4 pt-[10vh]"
+      className="oa-export-modal sl-modal sl-modal--lg fixed inset-0 z-40 flex items-start justify-center bg-black/30 px-4 pt-[10vh]"
       onMouseDown={(e) => {
         if (busy) return;
         if (e.target === e.currentTarget) onClose();
@@ -152,11 +152,11 @@ export function ExportDialog({
     >
       <div
         ref={containerRef}
-        className="flex max-h-[80vh] w-full max-w-[720px] flex-col overflow-hidden rounded-lg border border-divider bg-background shadow-xl"
+        className="sl-modal__panel flex max-h-[80vh] w-full max-w-[720px] flex-col overflow-hidden rounded-lg border border-divider bg-background shadow-xl"
       >
         {/* Header */}
-        <div className="flex h-11 items-center justify-between border-b border-divider px-3">
-          <span className="text-sm font-medium text-foreground">Export</span>
+        <div className="sl-modal__head flex h-11 items-center justify-between border-b border-divider px-3">
+          <span className="sl-modal__title text-sm font-medium text-foreground">Export</span>
           <button
             type="button"
             onClick={() => !busy && onClose()}
@@ -170,7 +170,7 @@ export function ExportDialog({
         </div>
 
         {/* Body: format list + options */}
-        <div className="flex min-h-0 flex-1">
+        <div className="sl-modal__body flex min-h-0 flex-1">
           <FormatList grouped={grouped} selectedId={selected.id} onSelect={setSelectedId} />
           <OptionsPane
             format={selected}
@@ -186,7 +186,7 @@ export function ExportDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-2 border-t border-divider bg-surface px-3 py-2">
+        <div className="sl-modal__foot flex items-center justify-between gap-2 border-t border-divider bg-surface px-3 py-2">
           <div className="min-w-0 flex-1 truncate text-xs text-secondary">
             <span className="text-tertiary">Saving as </span>
             <span className="font-medium text-foreground" data-testid="shell-export-filename-preview">
