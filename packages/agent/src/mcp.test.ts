@@ -210,6 +210,7 @@ describe("OfficeAI MCP server", () => {
       "list_sessions",
       "import_document",
       "create_document",
+      "create_deliverable_from_synthesis",
       "list_documents",
       "get_document",
       "get_document_projection",
@@ -697,6 +698,130 @@ describe("OfficeAI MCP server", () => {
     expect((diagnostics.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toEqual(
       expect.arrayContaining(["pdf-signature-detected", "pdf-export-policy", "pdf-export-mode"])
     );
+  });
+
+  it("creates DOCX and XLSX deliverables from a synthesis payload", async () => {
+    const client = await makeClient();
+    const tmp = mkdtempSync(join(tmpdir(), "officeai-mcp-deliverable-"));
+    const payload = {
+      title: "Care team scheduling synthesis",
+      subtitle: "Generated from a Sonaloop-style research payload",
+      summary: "Care coordinators want fewer manual schedule reconciliation steps.",
+      sections: [
+        {
+          id: "sec-1",
+          title: "Workflow pressure",
+          body: "Teams lose time copying changes between planning tools and handoff notes.",
+          findings: ["Manual reconciliation is the highest-friction step."],
+        },
+      ],
+      findings: [
+        {
+          id: "finding-1",
+          title: "Review burden",
+          text: "Managers need a reviewable artifact, not only a chat answer.",
+          evidence: ["council:care-managers#turn-3"],
+        },
+      ],
+      quotes: [
+        {
+          id: "quote-1",
+          speaker: "Shift planner",
+          source: "council:care-managers",
+          text: "I need to see what changed before it goes to the team.",
+        },
+      ],
+      tables: [
+        {
+          id: "table-1",
+          title: "Priority matrix",
+          columns: ["Need", "Impact"],
+          rows: [
+            ["Reviewable report", "High"],
+            ["Spreadsheet handoff", "Medium"],
+          ],
+        },
+      ],
+      assets: [
+        {
+          id: "asset-1",
+          title: "Prototype screenshot",
+          kind: "image",
+          uri: "sonaloop://asset/prototype-screenshot",
+        },
+      ],
+    };
+
+    const created = structured(
+      await client.callTool({
+        name: "create_deliverable_from_synthesis",
+        arguments: {
+          payload,
+          target_formats: ["docx", "xlsx"],
+          actor_id: "sonaloop-demo",
+        },
+      })
+    );
+    expect(created.schema).toBe("office-ai/deliverable-from-synthesis@1");
+    const documents = created.documents as Array<{
+      documentId: string;
+      format: string;
+      diagnostics: unknown[];
+    }>;
+    expect(documents.map((doc) => doc.format).sort()).toEqual(["docx", "xlsx"]);
+    expect((created.provenance as unknown[]).length).toBeGreaterThan(0);
+    expect((created.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toContain(
+      "deliverable-provenance"
+    );
+
+    const docx = documents.find((doc) => doc.format === "docx");
+    const xlsx = documents.find((doc) => doc.format === "xlsx");
+    if (!docx || !xlsx) throw new Error("expected DOCX and XLSX deliverables");
+
+    const docxProjection = structured(
+      await client.callTool({
+        name: "get_document_projection",
+        arguments: { document_id: docx.documentId, projection: "markdown" },
+      })
+    );
+    expect(JSON.stringify(docxProjection)).toContain("Care team scheduling synthesis");
+    expect(JSON.stringify(docxProjection)).toContain("Managers need a reviewable artifact");
+
+    const xlsxProjection = structured(
+      await client.callTool({
+        name: "get_document_projection",
+        arguments: { document_id: xlsx.documentId, projection: "markdown", sheet: "Synthesis" },
+      })
+    );
+    expect(JSON.stringify(xlsxProjection)).toContain("Priority matrix");
+    expect(JSON.stringify(xlsxProjection)).toContain("Spreadsheet handoff");
+
+    const activity = structured(
+      await client.callTool({
+        name: "list_activity",
+        arguments: { session_id: created.sessionId },
+      })
+    );
+    const operations = (activity.activity as Array<{ operation: string }>).map((entry) => entry.operation);
+    expect(operations).toEqual(expect.arrayContaining(["docx:insert-text", "xlsx:set-range-values"]));
+
+    for (const document of documents) {
+      const outPath = join(tmp, `deliverable.${document.format}`);
+      const exported = structured(
+        await client.callTool({
+          name: "export_document",
+          arguments: { document_id: document.documentId, out_path: outPath },
+        })
+      );
+      expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+      const reimported = structured(
+        await client.callTool({
+          name: "import_document",
+          arguments: { path: outPath, format: document.format },
+        })
+      );
+      expect((reimported.document as { format: string }).format).toBe(document.format);
+    }
   });
 
   it("supports canonical undo for approved commands", async () => {

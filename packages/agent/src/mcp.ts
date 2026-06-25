@@ -140,6 +140,79 @@ const mcpSessions = new Map<string, SessionRecord>();
 const mcpDocuments = new Map<string, DocumentRecord>();
 const plannedCommands = new Map<string, CommandEnvelope>();
 
+const synthesisFindingSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    text: z.string(),
+    evidence: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+const synthesisQuoteSchema = z
+  .object({
+    id: z.string().optional(),
+    text: z.string(),
+    speaker: z.string().optional(),
+    source: z.string().optional(),
+    citation: z.string().optional(),
+  })
+  .passthrough();
+
+const synthesisTableSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    columns: z.array(z.string()).min(1),
+    rows: z.array(z.array(z.unknown())),
+  })
+  .passthrough();
+
+const synthesisAssetSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    kind: z.string().optional(),
+    uri: z.string().optional(),
+    path: z.string().optional(),
+  })
+  .passthrough();
+
+const synthesisSectionSchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string(),
+    body: z.string().optional(),
+    findings: z.array(z.string()).optional(),
+    quoteIds: z.array(z.string()).optional(),
+    tableIds: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+const synthesisPayloadSchema = z
+  .object({
+    title: z.string().min(1),
+    subtitle: z.string().optional(),
+    summary: z.string().optional(),
+    sections: z.array(synthesisSectionSchema).optional(),
+    findings: z.array(synthesisFindingSchema).optional(),
+    quotes: z.array(synthesisQuoteSchema).optional(),
+    tables: z.array(synthesisTableSchema).optional(),
+    assets: z.array(synthesisAssetSchema).optional(),
+  })
+  .passthrough();
+
+const deliverableTargetFormatSchema = z.enum(["docx", "xlsx"]);
+
+type SynthesisPayload = z.infer<typeof synthesisPayloadSchema>;
+type DeliverableTargetFormat = z.infer<typeof deliverableTargetFormatSchema>;
+
+interface DeliverableBuildResult {
+  readonly record: DocumentRecord;
+  readonly mutations: ReadonlyArray<AnyMutation>;
+  readonly provenance: ReadonlyArray<Record<string, unknown>>;
+}
+
 function localSessionStore() {
   return createLocalSessionStore();
 }
@@ -1667,6 +1740,365 @@ async function recordCommandBasis(record: DocumentRecord): Promise<string[]> {
     .slice(-20);
 }
 
+async function buildDeliverablesFromSynthesis(args: {
+  readonly sessionId?: string;
+  readonly payload: SynthesisPayload;
+  readonly targetFormats: ReadonlyArray<DeliverableTargetFormat>;
+  readonly name?: string;
+  readonly actorId?: string;
+}): Promise<ReadonlyArray<DeliverableBuildResult>> {
+  const session = getOrCreateSession(args.sessionId, `${args.payload.title} deliverables`);
+  const formats = args.targetFormats.length > 0 ? [...new Set(args.targetFormats)] : (["docx"] as const);
+  const results: DeliverableBuildResult[] = [];
+  for (const format of formats) {
+    const result =
+      format === "docx"
+        ? await buildDocxSynthesisDeliverable(session.id, args.payload, args.name, args.actorId)
+        : await buildXlsxSynthesisDeliverable(session.id, args.payload, args.name, args.actorId);
+    results.push(result);
+  }
+  touchSession(session);
+  await persistSessionRecord(session);
+  return results;
+}
+
+async function buildDocxSynthesisDeliverable(
+  sessionId: string,
+  payload: SynthesisPayload,
+  name?: string,
+  actorId?: string
+): Promise<DeliverableBuildResult> {
+  const documentId = `doc_${randomUUID()}`;
+  const agent = await DocxAgent.empty();
+  sessions.set(documentId, agent);
+  const mutations: AnyMutation[] = [];
+  const provenance: Array<Record<string, unknown>> = [];
+
+  const appendParagraph = async (text: string, source: Record<string, unknown>): Promise<void> => {
+    let targetParagraph = lastDocxParagraphIndex(agent);
+    if (mutations.length > 0) {
+      const insert = (await agent.applyCommand({
+        type: "docx:insert-paragraph",
+        payload: { at: { paragraph: targetParagraph, offset: Number.MAX_SAFE_INTEGER } },
+        source: "system",
+        ...(actorId ? { agentId: actorId } : {}),
+      })) as unknown as AnyMutation;
+      assertDeliverableMutation(insert);
+      approveDeliverableMutation(agent, insert);
+      mutations.push(insert);
+      targetParagraph = lastDocxParagraphIndex(agent);
+    }
+    const insertText = (await agent.applyCommand({
+      type: "docx:insert-text",
+      payload: { at: { paragraph: targetParagraph, offset: 0 }, text },
+      source: "system",
+      ...(actorId ? { agentId: actorId } : {}),
+    })) as unknown as AnyMutation;
+    assertDeliverableMutation(insertText);
+    approveDeliverableMutation(agent, insertText);
+    mutations.push(insertText);
+    provenance.push({ format: "docx", paragraph: targetParagraph, ...source });
+  };
+
+  for (const paragraph of synthesisReportParagraphs(payload)) {
+    await appendParagraph(paragraph.text, paragraph.source);
+  }
+
+  const record = registerDocumentRecord({
+    id: documentId,
+    sessionId,
+    format: "docx",
+    name: deliverableName(name, payload.title, "docx"),
+    diagnostics: deliverableDiagnostics(payload, "docx"),
+  });
+  await persistDeliverableDocument(record, mutations);
+  return { record, mutations, provenance };
+}
+
+async function buildXlsxSynthesisDeliverable(
+  sessionId: string,
+  payload: SynthesisPayload,
+  name?: string,
+  actorId?: string
+): Promise<DeliverableBuildResult> {
+  const documentId = `doc_${randomUUID()}`;
+  const agent = await XlsxAgent.empty();
+  xlsxSessions.set(documentId, agent);
+  const mutations: AnyMutation[] = [];
+  const provenance: Array<Record<string, unknown>> = [];
+
+  const rename = (await agent.applyCommand({
+    type: "xlsx:rename-sheet",
+    payload: { name: "Sheet1", newName: "Synthesis" },
+    source: "system",
+    ...(actorId ? { agentId: actorId } : {}),
+  })) as unknown as AnyMutation;
+  assertDeliverableMutation(rename);
+  approveDeliverableMutation(agent, rename);
+  mutations.push(rename);
+
+  const rows = synthesisWorkbookRows(payload, provenance);
+  const width = Math.max(...rows.map((row) => row.length));
+  const range = `A1:${xlsxColumnName(width)}${rows.length}`;
+  const fill = (await agent.applyCommand({
+    type: "xlsx:set-range-values",
+    payload: {
+      sheet: "Synthesis",
+      range,
+      values: rows.map((row) => Array.from({ length: width }, (_, index) => row[index] ?? "")),
+    },
+    source: "system",
+    ...(actorId ? { agentId: actorId } : {}),
+  })) as unknown as AnyMutation;
+  assertDeliverableMutation(fill);
+  approveDeliverableMutation(agent, fill);
+  mutations.push(fill);
+
+  const record = registerDocumentRecord({
+    id: documentId,
+    sessionId,
+    format: "xlsx",
+    name: deliverableName(name, payload.title, "xlsx"),
+    diagnostics: deliverableDiagnostics(payload, "xlsx"),
+  });
+  await persistDeliverableDocument(record, mutations);
+  return { record, mutations, provenance };
+}
+
+function lastDocxParagraphIndex(agent: DocxAgent): number {
+  const body = agent.getSnapshot().root.body;
+  for (let index = body.length - 1; index >= 0; index -= 1) {
+    if (body[index]?.kind === "paragraph") return index;
+  }
+  throw new Error("DOCX deliverable generation requires a document with at least one paragraph.");
+}
+
+function assertDeliverableMutation(mutation: AnyMutation): void {
+  if (mutation.status !== "rejected") return;
+  throw new Error(
+    `${mutation.command.type} rejected: ${mutation.rejection?.code ?? "unknown"} - ${
+      mutation.rejection?.message ?? "no rejection message"
+    }`
+  );
+}
+
+function approveDeliverableMutation(agent: OfficeAgent, mutation: AnyMutation): void {
+  if (mutation.status === "pending") {
+    agent.approveMutation(mutation.id);
+  }
+}
+
+async function persistDeliverableDocument(
+  record: DocumentRecord,
+  mutations: ReadonlyArray<AnyMutation>
+): Promise<void> {
+  await persistCurrentDocument(record);
+  for (const mutation of mutations) {
+    await persistCurrentDocument(record, {
+      commandLogEntry: storedCommandLogEntry({
+        mutation,
+        stage: "applied",
+        status: mutation.status === "rejected" ? "failed" : "approved",
+        diagnostics: [
+          {
+            level: mutation.status === "rejected" ? "error" : "info",
+            code:
+              mutation.status === "rejected" ? "deliverable-command-rejected" : "deliverable-command-applied",
+            message:
+              mutation.status === "rejected"
+                ? `${mutation.command.type} was rejected while building the deliverable.`
+                : `${mutation.command.type} contributed to the synthesis deliverable.`,
+          },
+        ],
+      }),
+    });
+  }
+}
+
+function deliverableDiagnostics(payload: SynthesisPayload, format: OfficeFormat): McpDiagnostic[] {
+  return [
+    {
+      level: "info",
+      code: "deliverable-created",
+      message: `Created ${format.toUpperCase()} deliverable from synthesis payload "${payload.title}".`,
+    },
+    {
+      level: "info",
+      code: "deliverable-provenance",
+      message: `Payload includes ${payload.sections?.length ?? 0} section(s), ${payload.findings?.length ?? 0} finding(s), ${payload.quotes?.length ?? 0} quote(s), ${payload.tables?.length ?? 0} table(s), ${payload.assets?.length ?? 0} asset reference(s).`,
+    },
+  ];
+}
+
+function synthesisReportParagraphs(
+  payload: SynthesisPayload
+): ReadonlyArray<{ readonly text: string; readonly source: Record<string, unknown> }> {
+  const paragraphs: Array<{ text: string; source: Record<string, unknown> }> = [
+    { text: payload.title, source: { sourceKind: "title" } },
+  ];
+  if (payload.subtitle) paragraphs.push({ text: payload.subtitle, source: { sourceKind: "subtitle" } });
+  if (payload.summary) paragraphs.push({ text: payload.summary, source: { sourceKind: "summary" } });
+
+  for (const section of payload.sections ?? []) {
+    paragraphs.push({
+      text: section.title,
+      source: { sourceKind: "section", sourceId: section.id ?? section.title },
+    });
+    if (section.body) {
+      paragraphs.push({
+        text: section.body,
+        source: { sourceKind: "section-body", sourceId: section.id ?? section.title },
+      });
+    }
+    for (const finding of section.findings ?? []) {
+      paragraphs.push({
+        text: `Finding: ${finding}`,
+        source: { sourceKind: "section-finding", sourceId: section.id ?? section.title },
+      });
+    }
+  }
+
+  if ((payload.findings?.length ?? 0) > 0) {
+    paragraphs.push({ text: "Findings", source: { sourceKind: "heading", sourceId: "findings" } });
+    for (const finding of payload.findings ?? []) {
+      paragraphs.push({
+        text: `${finding.title ? `${finding.title}: ` : ""}${finding.text}`,
+        source: { sourceKind: "finding", sourceId: finding.id ?? finding.title ?? finding.text.slice(0, 40) },
+      });
+      if (finding.evidence?.length) {
+        paragraphs.push({
+          text: `Evidence: ${finding.evidence.join("; ")}`,
+          source: { sourceKind: "finding-evidence", sourceId: finding.id ?? finding.title ?? "finding" },
+        });
+      }
+    }
+  }
+
+  if ((payload.quotes?.length ?? 0) > 0) {
+    paragraphs.push({ text: "Quotes", source: { sourceKind: "heading", sourceId: "quotes" } });
+    for (const quote of payload.quotes ?? []) {
+      const byline = [quote.speaker, quote.source ?? quote.citation].filter(Boolean).join(", ");
+      paragraphs.push({
+        text: byline ? `"${quote.text}" (${byline})` : `"${quote.text}"`,
+        source: { sourceKind: "quote", sourceId: quote.id ?? quote.text.slice(0, 40) },
+      });
+    }
+  }
+
+  if ((payload.tables?.length ?? 0) > 0) {
+    paragraphs.push({ text: "Tables", source: { sourceKind: "heading", sourceId: "tables" } });
+    for (const table of payload.tables ?? []) {
+      paragraphs.push({
+        text: `${table.title ?? table.id ?? "Table"}: ${table.columns.join(" | ")} (${table.rows.length} row(s))`,
+        source: { sourceKind: "table", sourceId: table.id ?? table.title ?? "table" },
+      });
+    }
+  }
+
+  if ((payload.assets?.length ?? 0) > 0) {
+    paragraphs.push({ text: "Asset references", source: { sourceKind: "heading", sourceId: "assets" } });
+    for (const asset of payload.assets ?? []) {
+      paragraphs.push({
+        text: `${asset.title ?? asset.id ?? "Asset"}${asset.kind ? ` (${asset.kind})` : ""}: ${asset.uri ?? asset.path ?? "no uri"}`,
+        source: { sourceKind: "asset", sourceId: asset.id ?? asset.title ?? asset.uri ?? "asset" },
+      });
+    }
+  }
+
+  return paragraphs;
+}
+
+function synthesisWorkbookRows(
+  payload: SynthesisPayload,
+  provenance: Array<Record<string, unknown>>
+): ReadonlyArray<ReadonlyArray<string | number | boolean>> {
+  const rows: Array<Array<string | number | boolean>> = [
+    ["kind", "id", "title_or_speaker", "text_or_value", "source"],
+    ["title", "", payload.title, payload.subtitle ?? "", ""],
+  ];
+  if (payload.summary) rows.push(["summary", "", "", payload.summary, ""]);
+  for (const section of payload.sections ?? []) {
+    rows.push(["section", section.id ?? "", section.title, section.body ?? "", ""]);
+  }
+  for (const finding of payload.findings ?? []) {
+    rows.push([
+      "finding",
+      finding.id ?? "",
+      finding.title ?? "",
+      finding.text,
+      finding.evidence?.join("; ") ?? "",
+    ]);
+  }
+  for (const quote of payload.quotes ?? []) {
+    rows.push([
+      "quote",
+      quote.id ?? "",
+      quote.speaker ?? "",
+      quote.text,
+      quote.source ?? quote.citation ?? "",
+    ]);
+  }
+  for (const table of payload.tables ?? []) {
+    rows.push([
+      "table",
+      table.id ?? "",
+      table.title ?? "",
+      table.columns.join(" | "),
+      `${table.rows.length} row(s)`,
+    ]);
+    table.rows.forEach((row, rowIndex) => {
+      rows.push([
+        "table-row",
+        table.id ?? "",
+        String(rowIndex + 1),
+        row.map(deliverableCellText).join(" | "),
+        "",
+      ]);
+    });
+  }
+  for (const asset of payload.assets ?? []) {
+    rows.push(["asset", asset.id ?? "", asset.title ?? "", asset.uri ?? asset.path ?? "", asset.kind ?? ""]);
+  }
+  rows.forEach((row, index) => {
+    if (index === 0) return;
+    provenance.push({
+      format: "xlsx",
+      row: index + 1,
+      sourceKind: row[0],
+      sourceId: row[1],
+    });
+  });
+  return rows;
+}
+
+function deliverableCellText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+function xlsxColumnName(index1: number): string {
+  let n = Math.max(1, Math.floor(index1));
+  let out = "";
+  while (n > 0) {
+    n -= 1;
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26);
+  }
+  return out;
+}
+
+function deliverableName(name: string | undefined, title: string, format: OfficeFormat): string {
+  const base = (name ?? title)
+    .trim()
+    .replace(/[^A-Za-z0-9._ -]+/g, "_")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return `${base || "synthesis-deliverable"}.${format}`;
+}
+
 function registerCommandLifecycleTools(server: McpServer): void {
   const commandInputSchema = {
     document_id: z.string().describe("documentId returned by import_document or create_document."),
@@ -2319,6 +2751,63 @@ function registerSessionDocumentTools(server: McpServer): void {
         });
       } catch (err) {
         return fail(`create_document failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_deliverable_from_synthesis",
+    {
+      description:
+        "Create canonical OfficeAI DOCX/XLSX deliverables from a structured synthesis payload. This is a neutral handoff contract; no Sonaloop runtime dependency is required.",
+      inputSchema: {
+        session_id: z.string().optional().describe("Optional sessionId from create_session."),
+        payload: synthesisPayloadSchema.describe(
+          "Structured synthesis payload: title, sections, findings, quotes, tables and asset references."
+        ),
+        target_formats: z
+          .array(deliverableTargetFormatSchema)
+          .optional()
+          .describe("Deliverable formats to create. Defaults to ['docx']. Supported: docx, xlsx."),
+        name: z
+          .string()
+          .optional()
+          .describe("Optional base filename. Extension is chosen per target format."),
+        actor_id: z.string().optional().describe("Optional actor id recorded on generated commands."),
+      },
+    },
+    async ({ session_id, payload, target_formats, name, actor_id }) => {
+      try {
+        const parsedPayload = synthesisPayloadSchema.parse(payload);
+        const formats = (target_formats?.length ? target_formats : ["docx"]) as DeliverableTargetFormat[];
+        const results = await buildDeliverablesFromSynthesis({
+          ...(session_id ? { sessionId: session_id } : {}),
+          payload: parsedPayload,
+          targetFormats: formats,
+          ...(name ? { name } : {}),
+          ...(actor_id ? { actorId: actor_id } : {}),
+        });
+        return ok({
+          schema: "office-ai/deliverable-from-synthesis@1",
+          payloadContract: {
+            title: "string",
+            sections: "Array<{ id?, title, body?, findings?, quoteIds?, tableIds? }>",
+            findings: "Array<{ id?, title?, text, evidence? }>",
+            quotes: "Array<{ id?, text, speaker?, source?, citation? }>",
+            tables: "Array<{ id?, title?, columns, rows }>",
+            assets: "Array<{ id?, title?, kind?, uri?, path? }>",
+          },
+          sessionId: results[0]?.record.sessionId,
+          documents: results.map((result) => documentEnvelope(result.record)),
+          provenance: results.flatMap((result) => result.provenance),
+          diagnostics: results.flatMap((result) => result.record.diagnostics),
+          dataDir: localSessionStore().dataDir,
+          nextActions: ["get_document", "get_document_projection", "list_activity", "export_document"],
+        });
+      } catch (err) {
+        return fail(
+          `create_deliverable_from_synthesis failed: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
   );
