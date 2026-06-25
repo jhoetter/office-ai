@@ -7,11 +7,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 const DESIGN_ROOT = resolve(ROOT, "..", "sonaloop-design");
 const OUT_PATH = join(ROOT, "docs", "sonaloop-design-adoption.md");
+const ICON_ADAPTER_PATH = join(ROOT, "packages", "ui", "src", "sonaloop-icons.ts");
 
 const SOURCE_ROOTS = ["apps/web/app", "packages/ui/src", "packages/react-editors/src"];
+const ACTION_CATALOGUE_ROOTS = ["packages/docx", "packages/xlsx", "packages/pptx", "packages/pdf"];
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const SKIP_DIRS = new Set(["node_modules", "dist", ".next", "coverage", ".turbo"]);
 const ICON_IMPORT_SOURCES = new Set(["lucide-react", "@officeai/ui/sonaloop-icons", "../sonaloop-icons"]);
+const LEGACY_OFFICE_PLACEHOLDER_KEYS = new Set([
+  "text",
+  "file",
+  "review",
+  "slide",
+  "movement",
+  "utility",
+]);
 
 const ICON_ALIASES = {
   AlertTriangle: "alert",
@@ -105,9 +115,40 @@ function extractLucideImports(file) {
 
 async function loadDesignIcons() {
   const dataPath = join(DESIGN_ROOT, "icons.data.mjs");
-  if (!existsSync(dataPath)) return { regular: {}, hifi: {} };
+  if (!existsSync(dataPath)) return { regular: {}, hifi: {}, officeIconKeys: [] };
+  const source = readFileSync(dataPath, "utf8");
   const mod = await import(pathToFileURL(dataPath).href);
-  return { regular: mod.regular ?? {}, hifi: mod.hifi ?? {} };
+  return { regular: mod.regular ?? {}, hifi: mod.hifi ?? {}, officeIconKeys: extractOfficeIconKeys(source) };
+}
+
+function extractOfficeIconKeys(source) {
+  const block = /const officeIconBodies = \{([\s\S]*?)\n\};\n\nconst officeRegularNames/.exec(source)?.[1];
+  if (!block) return [];
+  return [...block.matchAll(/^\s{2}([a-zA-Z0-9]+):/gm)].map((match) => match[1]).sort();
+}
+
+function extractAdapterExports() {
+  if (!existsSync(ICON_ADAPTER_PATH)) return new Set();
+  const text = readFileSync(ICON_ADAPTER_PATH, "utf8");
+  return new Set([...text.matchAll(/export\s+const\s+(\w+)\s*=/g)].map((match) => match[1]));
+}
+
+function extractActionIconUsage() {
+  const usage = new Map();
+  const files = ACTION_CATALOGUE_ROOTS.flatMap((root) => walk(join(ROOT, root))).filter((file) =>
+    /\/src\/actions\/catalogue\.ts$/.test(file)
+  );
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(/icon:\s*["']([^"']+)["']/g)) {
+      const name = match[1];
+      const current = usage.get(name) ?? { count: 0, files: new Set() };
+      current.count += 1;
+      current.files.add(`${rel(file)}:${text.slice(0, match.index).split(/\r?\n/).length}`);
+      usage.set(name, current);
+    }
+  }
+  return usage;
 }
 
 function normalize(value) {
@@ -183,7 +224,9 @@ async function main() {
     }
   }
 
-  const { regular, hifi } = await loadDesignIcons();
+  const { regular, hifi, officeIconKeys } = await loadDesignIcons();
+  const adapterExports = extractAdapterExports();
+  const actionUsage = extractActionIconUsage();
   const regularKeys = Object.keys(regular).sort();
   const hifiKeys = Object.keys(hifi).sort();
   const rows = [...usage.entries()]
@@ -201,6 +244,35 @@ async function main() {
     });
   const gaps = rows.filter((row) => row.status === "gap");
   const mapped = rows.length - gaps.length;
+  const actionRows = [...actionUsage.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, data]) => {
+      const mapping = findIconKey(name, regularKeys, hifiKeys);
+      const exported = adapterExports.has(name);
+      return {
+        icon: name,
+        count: data.count,
+        files: [...data.files].sort(),
+        category: categoryFor(name),
+        key: mapping.key,
+        status: mapping.status,
+        adapter: exported ? "exported" : "missing-export",
+      };
+    });
+  const actionGaps = actionRows.filter((row) => row.status === "gap");
+  const actionMissingExports = actionRows.filter((row) => row.adapter === "missing-export");
+  const bodyGroups = new Map();
+  for (const key of officeIconKeys) {
+    const body = regular[key]?.body;
+    if (!body) continue;
+    const list = bodyGroups.get(body) ?? [];
+    list.push(key);
+    bodyGroups.set(body, list);
+  }
+  const officeDuplicateBodyGroups = [...bodyGroups.values()]
+    .filter((keys) => keys.length > 1)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  const legacyPlaceholderKeys = officeIconKeys.filter((key) => LEGACY_OFFICE_PLACEHOLDER_KEYS.has(key));
 
   const lines = [];
   lines.push("# Sonaloop design adoption audit");
@@ -209,9 +281,15 @@ async function main() {
   lines.push("");
   lines.push("## Summary");
   lines.push("");
-  lines.push(`- Office-AI icon imports scanned: ${rows.length} unique icon names.`);
+  lines.push(`- Office-AI UI icon imports scanned: ${rows.length} unique icon names.`);
   lines.push(`- Already mapped to ` + "`sonaloop-design`" + `: ${mapped}.`);
   lines.push(`- Missing from ` + "`sonaloop-design`" + `: ${gaps.length}.`);
+  lines.push(`- Action catalogue icon strings scanned: ${actionRows.length} unique icon names.`);
+  lines.push(`- Action catalogue names without adapter export: ${actionMissingExports.length}.`);
+  lines.push(`- Action catalogue names missing from ` + "`sonaloop-design`" + `: ${actionGaps.length}.`);
+  lines.push(`- Office-domain glyph bodies audited: ${officeIconKeys.length}.`);
+  lines.push(`- Office-domain duplicate body groups: ${officeDuplicateBodyGroups.length}.`);
+  lines.push(`- Legacy generic placeholder keys present: ${legacyPlaceholderKeys.length}.`);
   lines.push(`- Source roots: ${SOURCE_ROOTS.map((root) => `\`${root}\``).join(", ")}.`);
   lines.push("");
   lines.push("## Command palette API diff");
@@ -251,9 +329,9 @@ async function main() {
     "| `packages/ui` Tailwind utility strings | `styles/components.css` component classes | Migrate common controls first: buttons, inputs, badges, empty states, command palette. |"
   );
   lines.push("");
-  lines.push("## Icon mapping table");
+  lines.push("## UI icon mapping table");
   lines.push("");
-  lines.push("| Lucide import | Uses | Category | sonaloop IconKey | Status | Files |");
+  lines.push("| UI import | Uses | Category | sonaloop IconKey | Status | Files |");
   lines.push("| --- | ---: | --- | --- | --- | --- |");
   for (const row of rows) {
     lines.push(
@@ -263,13 +341,49 @@ async function main() {
     );
   }
   lines.push("");
+  lines.push("## Action catalogue icon contract");
+  lines.push("");
+  lines.push("| Action icon | Uses | Category | sonaloop IconKey | Design status | Adapter status | Files |");
+  lines.push("| --- | ---: | --- | --- | --- | --- | --- |");
+  for (const row of actionRows) {
+    lines.push(
+      `| \`${row.icon}\` | ${row.count} | ${row.category} | \`${row.key}\` | ${row.status} | ${row.adapter} | ${mdEscape(
+        row.files.join("<br>")
+      )} |`
+    );
+  }
+  lines.push("");
+  lines.push("## Office icon body gate");
+  lines.push("");
+  lines.push(`- Office-domain icon body keys: ${officeIconKeys.length}.`);
+  lines.push(`- Duplicate SVG body groups: ${officeDuplicateBodyGroups.length}.`);
+  lines.push(`- Legacy generic placeholder keys: ${legacyPlaceholderKeys.length}.`);
+  if (officeDuplicateBodyGroups.length > 0) {
+    for (const group of officeDuplicateBodyGroups) {
+      lines.push(`- Duplicate body: ${group.map((key) => `\`${key}\``).join(", ")}.`);
+    }
+  }
+  if (legacyPlaceholderKeys.length > 0) {
+    lines.push(`- Legacy placeholders still present: ${legacyPlaceholderKeys.map((key) => `\`${key}\``).join(", ")}.`);
+  }
+  lines.push("");
   lines.push("## Gap list");
   lines.push("");
   if (gaps.length === 0) {
-    lines.push("No icon gaps remain.");
+    lines.push("No UI import icon gaps remain.");
   } else {
     for (const row of gaps) {
       lines.push(`- \`${row.lucide}\` -> proposed \`${row.key}\` (${row.category}).`);
+    }
+  }
+  if (actionGaps.length === 0 && actionMissingExports.length === 0) {
+    lines.push("No action catalogue icon gaps remain.");
+  } else {
+    for (const row of actionGaps) {
+      lines.push(`- Action \`${row.icon}\` -> proposed \`${row.key}\` (${row.category}).`);
+    }
+    for (const row of actionMissingExports) {
+      lines.push(`- Action \`${row.icon}\` maps to \`${row.key}\` but is missing an adapter export.`);
     }
   }
   lines.push("");
@@ -290,7 +404,21 @@ async function main() {
   mkdirSync(dirname(OUT_PATH), { recursive: true });
   writeFileSync(OUT_PATH, `${lines.join("\n")}\n`);
   formatGeneratedMarkdown();
-  console.log(`wrote ${rel(OUT_PATH)} (${rows.length} icons, ${gaps.length} gaps)`);
+  const failures = [];
+  if (gaps.length > 0) failures.push(`${gaps.length} UI icon design gaps`);
+  if (actionGaps.length > 0) failures.push(`${actionGaps.length} action icon design gaps`);
+  if (actionMissingExports.length > 0) failures.push(`${actionMissingExports.length} action icon adapter export gaps`);
+  if (officeDuplicateBodyGroups.length > 0) {
+    failures.push(`${officeDuplicateBodyGroups.length} duplicate Office icon body groups`);
+  }
+  if (legacyPlaceholderKeys.length > 0) failures.push(`${legacyPlaceholderKeys.length} legacy placeholder keys`);
+  console.log(
+    `wrote ${rel(OUT_PATH)} (${rows.length} UI icons, ${actionRows.length} action icons, ${failures.length} gate failures)`
+  );
+  if (failures.length > 0) {
+    console.error(`design audit failed: ${failures.join("; ")}`);
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {

@@ -21,7 +21,7 @@
     "@officeai/text-formatting": "workspace:*",
     "class-variance-authority": "^0.7",
     "clsx": "^2",
-    "sonaloop-design": "github:jhoetter/sonaloop-design#8062813",
+    "sonaloop-design": "github:jhoetter/sonaloop-design#097682c",
     "tailwind-merge": "^3"
   },
   "devDependencies": {
