@@ -8,9 +8,19 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { runCli } from "./cli.js";
 import { DocxAgent } from "@officeai/docx";
 import { XlsxAgent } from "@officeai/xlsx";
+import { fixturePath, requiredMatrixFixture, type FixtureFormat } from "../../../tests/fixture-matrix.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const xlsxFixtures = resolvePath(here, "../../../fixtures/xlsx/synthetic");
+
+function matrixPath(format: FixtureFormat): string {
+  return fixturePath(
+    requiredMatrixFixture(format, {
+      complexity: "simple",
+      expectedBehavior: "import",
+    })
+  );
+}
 
 function copyFixture(name: string, dest: string): string {
   const src = resolvePath(xlsxFixtures, name);
@@ -295,6 +305,159 @@ describe("office-agent CLI", () => {
         exportHistory: [expect.objectContaining({ bytes: exported.exported.bytes })],
       }),
     ]);
+  });
+
+  it("session CLI smokes import, projection and export for every core format", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "office-agent-session-matrix-"));
+    const extByFormat: Record<FixtureFormat, string> = {
+      docx: "docx",
+      xlsx: "xlsx",
+      pptx: "pptx",
+      pdf: "pdf",
+    };
+
+    for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+      const importIO = makeIO();
+      const importCode = await runCli(
+        ["sessions", "import", "--json", "--data-dir", dataDir, "--file", matrixPath(format)],
+        importIO.io
+      );
+      expect(importCode).toBe(0);
+      const imported = JSON.parse(importIO.stdout.text()) as {
+        schema: string;
+        document: { documentId: string; format: string };
+      };
+      expect(imported.schema).toBe("office-ai/import-document@1");
+      expect(imported.document.format).toBe(format);
+
+      const projectionIO = makeIO();
+      const projectionCode = await runCli(
+        [
+          "sessions",
+          "projection",
+          "--json",
+          "--data-dir",
+          dataDir,
+          "--document-id",
+          imported.document.documentId,
+          "--projection",
+          "summary",
+        ],
+        projectionIO.io
+      );
+      expect(projectionCode).toBe(0);
+      const projected = JSON.parse(projectionIO.stdout.text()) as {
+        schema: string;
+        document: { documentId: string; format: string };
+        summary: unknown;
+      };
+      expect(projected.schema).toBe("office-ai/document-projection@1");
+      expect(projected.document).toMatchObject({ documentId: imported.document.documentId, format });
+      expect(projected.summary).toBeTruthy();
+
+      const output = join(
+        mkdtempSync(join(tmpdir(), "office-agent-session-matrix-out-")),
+        `out.${extByFormat[format]}`
+      );
+      const exportIO = makeIO();
+      const exportCode = await runCli(
+        [
+          "sessions",
+          "export",
+          "--json",
+          "--data-dir",
+          dataDir,
+          "--document-id",
+          imported.document.documentId,
+          "--out",
+          output,
+        ],
+        exportIO.io
+      );
+      expect(exportCode).toBe(0);
+      const exported = JSON.parse(exportIO.stdout.text()) as {
+        schema: string;
+        exported: { bytes: number };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(exported.schema).toBe("office-ai/export-document@1");
+      expect(exported.exported.bytes).toBeGreaterThan(0);
+      expect(exported.diagnostics.map((diagnostic) => diagnostic.code)).toContain("export-command-basis");
+      expect(readFileSync(output).byteLength).toBe(exported.exported.bytes);
+    }
+  });
+
+  it("session CLI help is a stable wrapper contract snapshot", async () => {
+    const { io, stdout } = makeIO();
+    const code = await runCli(["sessions", "--help"], io);
+    expect(code).toBe(0);
+    expect(stdout.text()).toMatchInlineSnapshot(`
+      "Usage: office-agent sessions [options] [command]
+
+      Manage local OfficeAI sessions, documents, projections, exports and store
+      maintenance.
+
+      Options:
+        -h, --help            display help for command
+
+      Commands:
+        create [options]      Create a path-free local OfficeAI session and print its
+                              sessionId.
+        list [options]        List local OfficeAI sessions from the canonical
+                              data-dir store.
+        documents [options]   List canonical OfficeAI documents, optionally
+                              restricted to one session.
+        import [options]      Import a DOCX/XLSX/PPTX/PDF file as a canonical session
+                              document. The path is an edge input; the output is
+                              sessionId/documentId.
+        projection [options]  Read a canonical document projection from the local
+                              session store without passing file paths.
+        export [options]      Export a canonical session document to a local file.
+                              The path is an explicit edge output and is recorded in
+                              export history.
+        inspect [options]     Inspect session-store schema state without mutating
+                              documents.
+        migrate [options]     Migrate old local session-store metadata after creating
+                              backups.
+        cleanup [options]     Remove temporary session-store files without deleting
+                              original or working artifacts.
+        help [command]        display help for command
+      "
+    `);
+  });
+
+  it("session CLI maps boundary errors to stable exit codes", async () => {
+    const badImport = makeIO();
+    const badImportCode = await runCli(
+      [
+        "sessions",
+        "import",
+        "--json",
+        "--data-dir",
+        mkdtempSync(join(tmpdir(), "office-agent-bad-")),
+        "--file",
+        "notes.txt",
+      ],
+      badImport.io
+    );
+    expect(badImportCode).toBe(64);
+    expect(badImport.stderr.text()).toContain("cannot infer document format");
+
+    const missingProjection = makeIO();
+    const missingProjectionCode = await runCli(
+      [
+        "sessions",
+        "projection",
+        "--json",
+        "--data-dir",
+        mkdtempSync(join(tmpdir(), "office-agent-missing-")),
+        "--document-id",
+        "doc_missing",
+      ],
+      missingProjection.io
+    );
+    expect(missingProjectionCode).toBe(2);
+    expect(missingProjection.stderr.text()).toContain('Unknown document-id "doc_missing"');
   });
 
   it("insert-text writes a modified file that re-reads with the new text", async () => {

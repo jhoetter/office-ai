@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { XlsxAgent } from "@officeai/xlsx";
 import { createMcpServer, __resetMcpSessionsForTests } from "./mcp.js";
+import { runCli } from "./cli.js";
 import { fixturePath, requiredMatrixFixture, type FixtureFormat } from "../../../tests/fixture-matrix.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -84,6 +85,30 @@ function structured(result: unknown): Record<string, unknown> {
     if (first.text) return JSON.parse(first.text);
   }
   throw new Error("tool result had neither structuredContent nor parseable text");
+}
+
+class CapturedStream {
+  chunks: string[] = [];
+  write(s: string | Uint8Array): boolean {
+    this.chunks.push(typeof s === "string" ? s : Buffer.from(s).toString("utf8"));
+    return true;
+  }
+  text(): string {
+    return this.chunks.join("");
+  }
+}
+
+function makeIO() {
+  const stdout = new CapturedStream();
+  const stderr = new CapturedStream();
+  return {
+    io: {
+      stdout: stdout as unknown as NodeJS.WritableStream,
+      stderr: stderr as unknown as NodeJS.WritableStream,
+    },
+    stdout,
+    stderr,
+  };
 }
 
 function matrixPath(format: FixtureFormat): string {
@@ -726,6 +751,56 @@ describe("OfficeAI MCP server", () => {
       await client.callTool({ name: "list_documents", arguments: { session_id: sessionId } })
     );
     expect((listed.documents as unknown[]).length).toBe(4);
+  });
+
+  it("CLI session import and MCP import_document agree on projections for the same file", async () => {
+    if (!activeOfficeAiDataDir) throw new Error("expected OFFICEAI_DATA_DIR for test");
+    const path = await makeFixture();
+    const client = await makeClient();
+
+    const mcpImported = structured(await client.callTool({ name: "import_document", arguments: { path } }));
+    expect(mcpImported.schema).toBe("office-ai/import-document@1");
+    const mcpDocument = mcpImported.document as { documentId: string; format: string };
+    expect(mcpDocument.format).toBe("docx");
+    const mcpProjection = structured(
+      await client.callTool({
+        name: "get_document_projection",
+        arguments: { document_id: mcpDocument.documentId, projection: "markdown" },
+      })
+    );
+
+    const importIO = makeIO();
+    const cliImportCode = await runCli(
+      ["sessions", "import", "--json", "--data-dir", activeOfficeAiDataDir, "--file", path],
+      importIO.io
+    );
+    expect(cliImportCode, importIO.stderr.text()).toBe(0);
+    const cliImported = JSON.parse(importIO.stdout.text()) as {
+      schema: string;
+      document: { documentId: string; format: string };
+    };
+    expect(cliImported.schema).toBe("office-ai/import-document@1");
+    expect(cliImported.document.format).toBe("docx");
+
+    const projectionIO = makeIO();
+    const cliProjectionCode = await runCli(
+      [
+        "sessions",
+        "projection",
+        "--json",
+        "--data-dir",
+        activeOfficeAiDataDir,
+        "--document-id",
+        cliImported.document.documentId,
+        "--projection",
+        "markdown",
+      ],
+      projectionIO.io
+    );
+    expect(cliProjectionCode, projectionIO.stderr.text()).toBe(0);
+    const cliProjection = JSON.parse(projectionIO.stdout.text()) as { schema: string; content: string };
+    expect(cliProjection.schema).toBe("office-ai/document-projection@1");
+    expect(cliProjection.content).toBe(mcpProjection.content);
   });
 
   it("canonical create_document exports blank documents for every core format", async () => {

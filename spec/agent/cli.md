@@ -5,6 +5,8 @@ diagnostics and projection services used by MCP and the web editor.
 It remains **pipeable, scriptable, and composable** with standard UNIX
 tools, but file paths are edge inputs/outputs; the product core works
 with `sessionId`, `documentId`, command/audit IDs and export records.
+See [`../../docs/cli-wrapper-contract.md`](../../docs/cli-wrapper-contract.md)
+for categories, output modes, exit codes and parity checks.
 
 ## Action catalogue (single source of truth)
 
