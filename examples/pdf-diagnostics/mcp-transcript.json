@@ -1,0 +1,47 @@
+{
+  "schema": "office-ai/example-mcp-transcript@1",
+  "title": "PDF import diagnostics for a signed fixture",
+  "requires": {
+    "server": "office-agent mcp",
+    "dataDir": "examples/_generated/pdf-diagnostics/data"
+  },
+  "steps": [
+    {
+      "name": "Import the signed PDF fixture",
+      "tool": "import_document",
+      "arguments": {
+        "path": "fixtures/pdf/signed-then-modified.pdf"
+      },
+      "save": {
+        "documentId": "$.document.documentId"
+      },
+      "expect": {
+        "diagnosticsInclude": ["pdf-signature-detected"]
+      }
+    },
+    {
+      "name": "Ask for normalized PDF diagnostics with export policy",
+      "tool": "pdf_document_diagnostics",
+      "arguments": {
+        "document_id": "${documentId}",
+        "include_export_policy": true
+      },
+      "expect": {
+        "diagnosticsInclude": ["pdf-signature-detected"]
+      }
+    },
+    {
+      "name": "Try an unsupported DOCX operation against a PDF document",
+      "tool": "plan_command",
+      "arguments": {
+        "document_id": "${documentId}",
+        "operation": "docx:nope",
+        "arguments": {}
+      },
+      "expect": {
+        "ok": false,
+        "diagnosticsInclude": ["unsupported-operation"]
+      }
+    }
+  ]
+}

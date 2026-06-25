@@ -1,0 +1,81 @@
+{
+  "schema": "office-ai/example-mcp-transcript@1",
+  "title": "Create Office deliverables from a Sonaloop-style synthesis",
+  "requires": {
+    "server": "office-agent mcp",
+    "dataDir": "examples/_generated/sonaloop-deliverable-demo/data"
+  },
+  "steps": [
+    {
+      "name": "Inspect available deliverable templates",
+      "tool": "list_deliverable_templates",
+      "arguments": {}
+    },
+    {
+      "name": "Create DOCX, PPTX and XLSX deliverables",
+      "tool": "create_deliverable_from_synthesis",
+      "arguments": {
+        "payload": {
+          "$ref": "input/synthesis.json"
+        },
+        "target_formats": ["docx", "pptx", "xlsx"],
+        "template_id": "research_report",
+        "citation_mode": "appendix",
+        "brand": {
+          "name": "Care Ops",
+          "accentColor": "2F6F73"
+        },
+        "actor_id": "examples-demo"
+      },
+      "save": {
+        "sessionId": "$.sessionId",
+        "docxId": "$.documents[?(@.format=='docx')].documentId",
+        "pptxId": "$.documents[?(@.format=='pptx')].documentId",
+        "xlsxId": "$.documents[?(@.format=='xlsx')].documentId"
+      },
+      "expect": {
+        "schema": "office-ai/deliverable-from-synthesis@1",
+        "diagnosticsInclude": ["deliverable-provenance"]
+      }
+    },
+    {
+      "name": "Read the DOCX report projection",
+      "tool": "get_document_projection",
+      "arguments": {
+        "document_id": "${docxId}",
+        "projection": "markdown"
+      }
+    },
+    {
+      "name": "Read generated activity for the session",
+      "tool": "list_activity",
+      "arguments": {
+        "session_id": "${sessionId}"
+      }
+    },
+    {
+      "name": "Export the report",
+      "tool": "export_document",
+      "arguments": {
+        "document_id": "${docxId}",
+        "out_path": "examples/_generated/sonaloop-deliverable-demo/care-synthesis.docx"
+      }
+    },
+    {
+      "name": "Export the deck",
+      "tool": "export_document",
+      "arguments": {
+        "document_id": "${pptxId}",
+        "out_path": "examples/_generated/sonaloop-deliverable-demo/care-synthesis.pptx"
+      }
+    },
+    {
+      "name": "Export the workbook",
+      "tool": "export_document",
+      "arguments": {
+        "document_id": "${xlsxId}",
+        "out_path": "examples/_generated/sonaloop-deliverable-demo/care-synthesis.xlsx"
+      }
+    }
+  ]
+}

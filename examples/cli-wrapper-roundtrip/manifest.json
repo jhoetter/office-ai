@@ -1,0 +1,65 @@
+{
+  "schema": "office-ai/example-manifest@1",
+  "id": "cli-wrapper-roundtrip",
+  "title": "CLI wrapper reads and session export",
+  "tags": ["cli", "docx", "xlsx", "pptx", "pdf", "roundtrip"],
+  "whatThisProves": [
+    "The CLI can read every core format from checked-in fixtures.",
+    "Session import/projection/export works without MCP host setup.",
+    "Generated outputs stay outside the repository under examples/_generated."
+  ],
+  "inputs": [
+    {
+      "role": "source-document",
+      "format": "docx",
+      "path": "fixtures/docx/synthetic/03-headings-and-body.docx"
+    },
+    {
+      "role": "source-document",
+      "format": "xlsx",
+      "path": "fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx"
+    },
+    {
+      "role": "source-document",
+      "format": "pptx",
+      "path": "fixtures/pptx/synthetic/03-title-and-content.pptx"
+    },
+    {
+      "role": "source-document",
+      "format": "pdf",
+      "path": "fixtures/pdf/simple-text-1page.pdf"
+    }
+  ],
+  "cliTranscript": "cli-transcript.sh",
+  "expectedOutputs": [
+    {
+      "role": "projection",
+      "format": "markdown",
+      "path": "examples/_generated/cli-wrapper-roundtrip/docx.md"
+    },
+    {
+      "role": "projection",
+      "format": "json",
+      "path": "examples/_generated/cli-wrapper-roundtrip/xlsx.json"
+    },
+    {
+      "role": "projection",
+      "format": "text",
+      "path": "examples/_generated/cli-wrapper-roundtrip/pptx.txt"
+    },
+    {
+      "role": "projection",
+      "format": "json",
+      "path": "examples/_generated/cli-wrapper-roundtrip/pdf-page.json"
+    },
+    {
+      "role": "document-export",
+      "format": "docx",
+      "path": "examples/_generated/cli-wrapper-roundtrip/session-export.docx"
+    }
+  ],
+  "smoke": {
+    "checkedBy": "scripts/check-examples.mjs",
+    "requiresBuild": false
+  }
+}

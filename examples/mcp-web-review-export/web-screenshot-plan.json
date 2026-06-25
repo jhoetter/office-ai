@@ -1,0 +1,18 @@
+{
+  "schema": "office-ai/example-screenshot-plan@1",
+  "baseUrl": "http://localhost:3100",
+  "outputDir": "examples/_generated/mcp-web-review-export/screenshots",
+  "targets": [
+    {
+      "name": "session-review",
+      "path": "/sessions/${documentId}",
+      "output": "session-review.png",
+      "waitFor": "networkidle",
+      "whatToInspect": [
+        "document title and format are visible",
+        "pending change/review affordance is reachable",
+        "export affordance remains available after review"
+      ]
+    }
+  ]
+}

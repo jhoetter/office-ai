@@ -1,0 +1,45 @@
+{
+  "schema": "office-ai/example-manifest@1",
+  "id": "mcp-web-review-export",
+  "title": "MCP import, web review and DOCX export",
+  "tags": ["mcp", "web", "review", "docx", "export"],
+  "whatThisProves": [
+    "MCP is the primary agent surface for import, projection, planning, preview and export.",
+    "Pending mutations can be handed to the web editor for human review.",
+    "Exports produce document and diagnostics asset envelopes."
+  ],
+  "inputs": [
+    {
+      "role": "source-document",
+      "format": "docx",
+      "path": "fixtures/docx/synthetic/03-headings-and-body.docx"
+    }
+  ],
+  "mcpTranscript": "mcp-transcript.json",
+  "web": {
+    "requiresDevServer": true,
+    "screenshotPlan": "web-screenshot-plan.json",
+    "routes": ["/sessions/${documentId}"]
+  },
+  "expectedOutputs": [
+    {
+      "role": "document-export",
+      "format": "docx",
+      "path": "examples/_generated/mcp-web-review-export/reviewed.docx"
+    },
+    {
+      "role": "export-diagnostics",
+      "format": "json",
+      "path": "examples/_generated/mcp-web-review-export/reviewed.diagnostics.json"
+    },
+    {
+      "role": "web-screenshot",
+      "format": "png",
+      "path": "examples/_generated/mcp-web-review-export/screenshots/session-review.png"
+    }
+  ],
+  "smoke": {
+    "checkedBy": "scripts/check-examples.mjs",
+    "requiresBuild": false
+  }
+}

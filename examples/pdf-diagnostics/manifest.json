@@ -1,0 +1,30 @@
+{
+  "schema": "office-ai/example-manifest@1",
+  "id": "pdf-diagnostics",
+  "title": "PDF diagnostics instead of silent success",
+  "tags": ["mcp", "pdf", "diagnostics"],
+  "whatThisProves": [
+    "PDFs enter the same document/session API as OOXML files.",
+    "Signed or otherwise risky PDFs return structured diagnostics.",
+    "Demos can show unsupported or careful paths honestly."
+  ],
+  "inputs": [
+    {
+      "role": "source-document",
+      "format": "pdf",
+      "path": "fixtures/pdf/signed-then-modified.pdf"
+    }
+  ],
+  "mcpTranscript": "mcp-transcript.json",
+  "expectedOutputs": [
+    {
+      "role": "diagnostics",
+      "format": "json",
+      "path": "examples/_generated/pdf-diagnostics/diagnostics.json"
+    }
+  ],
+  "smoke": {
+    "checkedBy": "scripts/check-examples.mjs",
+    "requiresBuild": false
+  }
+}

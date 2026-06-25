@@ -96,6 +96,9 @@ coverage/
 .tmp/
 scratch/
 
+# Generated demo outputs from examples/.
+examples/_generated/
+
 # Playwright artifacts
 playwright-report/
 test-results/

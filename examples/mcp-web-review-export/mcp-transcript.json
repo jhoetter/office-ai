@@ -1,0 +1,120 @@
+{
+  "schema": "office-ai/example-mcp-transcript@1",
+  "title": "MCP import, pending review and export",
+  "requires": {
+    "server": "office-agent mcp",
+    "dataDir": "examples/_generated/mcp-web-review-export/data"
+  },
+  "steps": [
+    {
+      "name": "Create an isolated demo session",
+      "tool": "create_session",
+      "arguments": {
+        "title": "MCP web review demo"
+      },
+      "save": {
+        "sessionId": "$.sessionId"
+      }
+    },
+    {
+      "name": "Import the DOCX fixture",
+      "tool": "import_document",
+      "arguments": {
+        "session_id": "${sessionId}",
+        "path": "fixtures/docx/synthetic/03-headings-and-body.docx"
+      },
+      "save": {
+        "documentId": "$.document.documentId"
+      },
+      "expect": {
+        "format": "docx"
+      }
+    },
+    {
+      "name": "Read a markdown projection before mutation",
+      "tool": "get_document_projection",
+      "arguments": {
+        "document_id": "${documentId}",
+        "projection": "markdown"
+      }
+    },
+    {
+      "name": "Plan a reviewable heading prefix",
+      "tool": "plan_command",
+      "arguments": {
+        "document_id": "${documentId}",
+        "operation": "docx:insert-text",
+        "arguments": {
+          "at": {
+            "paragraph": 0
+          },
+          "text": "Reviewed draft - "
+        },
+        "target": {
+          "anchor": {
+            "kind": "paragraph",
+            "index": 0
+          }
+        },
+        "policy": {
+          "mode": "pending",
+          "requires_review": true
+        }
+      },
+      "save": {
+        "commandId": "$.commandId"
+      }
+    },
+    {
+      "name": "Preview the command diff",
+      "tool": "preview_command",
+      "arguments": {
+        "command_id": "${commandId}"
+      },
+      "expect": {
+        "schema": "office-ai/command-preview@1"
+      }
+    },
+    {
+      "name": "Queue the pending change",
+      "tool": "apply_command",
+      "arguments": {
+        "command_id": "${commandId}"
+      },
+      "save": {
+        "mutationId": "$.mutation.id"
+      },
+      "expect": {
+        "stage": "queued"
+      }
+    },
+    {
+      "name": "List pending changes for the web review panel",
+      "tool": "list_pending_changes",
+      "arguments": {
+        "document_id": "${documentId}"
+      }
+    },
+    {
+      "name": "Optional non-web approval path",
+      "tool": "approve_change",
+      "arguments": {
+        "document_id": "${documentId}",
+        "mutation_id": "${mutationId}"
+      },
+      "note": "Skip this when demonstrating human approval in the web editor."
+    },
+    {
+      "name": "Export the reviewed DOCX and diagnostics",
+      "tool": "export_document",
+      "arguments": {
+        "document_id": "${documentId}",
+        "out_path": "examples/_generated/mcp-web-review-export/reviewed.docx",
+        "diagnostics_out_path": "examples/_generated/mcp-web-review-export/reviewed.diagnostics.json"
+      },
+      "expect": {
+        "assetSchema": "office-ai/asset-handoff@1"
+      }
+    }
+  ]
+}

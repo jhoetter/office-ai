@@ -104,6 +104,8 @@ workspace/test run; see
 For a full local installation walkthrough, including MCP host
 registration examples and the fresh-checkout smoke, see
 [`docs/local-app-quickstart.md`](docs/local-app-quickstart.md).
+Product demos live in [`examples/`](examples/); run `pnpm examples:check`
+to verify the example manifests, transcripts and screenshot plans.
 The same store is available from the CLI:
 
 ```bash
@@ -124,6 +126,7 @@ The gate is fail-fast and ordered cheapest → most expensive:
 | `actions`      | Action parity scanner            | Missing or stale action catalogue entries across handlers/UI/CLI        |
 | `scorecard`    | Surface scorecard check          | Stale generated MCP/Web/CLI parity matrix                               |
 | `fixtures`     | Fixture matrix scanner           | Missing or unindexed real/synthetic fixture files                       |
+| `examples`     | Example package smoke            | Broken demo manifests, transcripts, screenshot plans or sensitive paths |
 | `architecture` | `scripts/check-architecture.mjs` | Forbidden cross-package deps in `package.json` (separation of concerns) |
 | `typecheck`    | `tsc --noEmit` (per package)     | TypeScript errors                                                       |
 | `test`         | Vitest                           | Behavioural regressions across every package                            |

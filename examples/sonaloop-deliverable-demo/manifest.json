@@ -1,0 +1,40 @@
+{
+  "schema": "office-ai/example-manifest@1",
+  "id": "sonaloop-deliverable-demo",
+  "title": "Sonaloop synthesis to Office deliverables",
+  "tags": ["mcp", "sonaloop", "deliverable", "docx", "pptx", "xlsx", "provenance"],
+  "whatThisProves": [
+    "A structured synthesis payload can become report, deck and workbook documents.",
+    "Provenance and citations are carried into generated artifacts.",
+    "Exports can be reimported for roundtrip verification."
+  ],
+  "inputs": [
+    {
+      "role": "synthesis-payload",
+      "format": "json",
+      "path": "examples/sonaloop-deliverable-demo/input/synthesis.json"
+    }
+  ],
+  "mcpTranscript": "mcp-transcript.json",
+  "expectedOutputs": [
+    {
+      "role": "document-export",
+      "format": "docx",
+      "path": "examples/_generated/sonaloop-deliverable-demo/care-synthesis.docx"
+    },
+    {
+      "role": "document-export",
+      "format": "pptx",
+      "path": "examples/_generated/sonaloop-deliverable-demo/care-synthesis.pptx"
+    },
+    {
+      "role": "document-export",
+      "format": "xlsx",
+      "path": "examples/_generated/sonaloop-deliverable-demo/care-synthesis.xlsx"
+    }
+  ],
+  "smoke": {
+    "checkedBy": "scripts/check-examples.mjs",
+    "requiresBuild": false
+  }
+}
