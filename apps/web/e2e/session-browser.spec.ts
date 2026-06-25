@@ -1,4 +1,22 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
+
+type OfficeFormat = "docx" | "xlsx" | "pptx" | "pdf";
+
+const FIXTURE_PATHS: Record<OfficeFormat, string> = {
+  docx: resolve(process.cwd(), "../../fixtures/docx/synthetic/01-plain-paragraphs.docx"),
+  xlsx: resolve(process.cwd(), "../../fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx"),
+  pptx: resolve(process.cwd(), "../../fixtures/pptx/synthetic/02-title-only.pptx"),
+  pdf: resolve(process.cwd(), "../../fixtures/pdf/simple-text-1page.pdf"),
+};
+
+const EDITOR_PATHS: Record<OfficeFormat, string> = {
+  docx: "/editor",
+  xlsx: "/xlsx-editor",
+  pptx: "/pptx-editor",
+  pdf: "/pdf-viewer",
+};
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/sample-files", async (route) => {
@@ -25,6 +43,13 @@ test("home page shows an empty local workspace state", async ({ page }) => {
 
 test("home page lists local sessions, documents, pending changes and diagnostics", async ({ page }) => {
   let changeApproved = false;
+  const sessionBytes = await mockSessionBytes(page, {
+    documentId: "doc_1",
+    format: "docx",
+    filename: "proposal.docx",
+    bytes: fixtureBytes("docx"),
+    revision: 4,
+  });
   await page.route("**/api/sessions/doc_1/export", async (route) => {
     expect(route.request().method()).toBe("POST");
     await route.fulfill({
@@ -185,6 +210,13 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.getByText("web-parity-pdf-review-only")).toBeVisible();
 
   await page.getByRole("link", { name: "proposal.docx" }).click();
+
+  await expect(page).toHaveURL(/\/editor\?session=doc_1/);
+  await expect(page.locator(".ProseMirror").first()).toBeVisible({ timeout: 20_000 });
+  expect(sessionBytes.getCount()).toBeGreaterThan(0);
+
+  await page.goto("/");
+  await page.locator("tr", { hasText: "proposal.docx" }).getByRole("link", { name: "Inspector" }).click();
 
   await expect(page.getByRole("heading", { name: "proposal.docx" })).toBeVisible();
   await expect(page.getByText("MCP review")).toBeVisible();
@@ -415,6 +447,92 @@ test("document detail exposes web format parity for every format", async ({ page
   }
 });
 
+for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+  test(`fixture session opens, edits, saves and reopens ${format}`, async ({ page }) => {
+    const documentId = `doc_matrix_${format}`;
+    const filename = `matrix.${format}`;
+    const sessionBytes = await mockSessionBytes(page, {
+      documentId,
+      format,
+      filename,
+      bytes: fixtureBytes(format),
+      revision: 0,
+    });
+    await page.route("**/api/sessions", async (route) => {
+      await route.fulfill({
+        json: {
+          schema: "office-ai/web-sessions@1",
+          sessions: [
+            {
+              sessionId: `session_matrix_${format}`,
+              title: `${format.toUpperCase()} matrix`,
+              createdAt: "2026-06-25T06:00:00.000Z",
+              updatedAt: "2026-06-25T06:00:00.000Z",
+              documentCount: 1,
+            },
+          ],
+          documents: [
+            {
+              documentId,
+              sessionId: `session_matrix_${format}`,
+              format,
+              name: filename,
+              status: "ready",
+              createdAt: "2026-06-25T06:00:00.000Z",
+              updatedAt: "2026-06-25T06:00:00.000Z",
+              revision: sessionBytes.revision(),
+              diagnostics: [],
+              exportCount: 0,
+              pendingChangeCount: 0,
+              commandLogCount: sessionBytes.saveCount(),
+              artifacts: { hasOriginal: true, hasWorking: true },
+            },
+          ],
+        },
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: filename }).click();
+    await expect(page).toHaveURL(new RegExp(`${escapeRegExp(EDITOR_PATHS[format])}\\?session=${documentId}`));
+
+    await waitForSessionEditor(page, format);
+    await applyFormatEdit(page, format);
+    await expect(page.getByTestId("shell-save-state-modified")).toBeVisible({ timeout: 10_000 });
+
+    await page.getByTestId("shell-save").click();
+    await expect.poll(() => sessionBytes.saveCount(), { timeout: 15_000 }).toBe(1);
+    await expect(page.getByTestId("shell-save-state-saved")).toBeVisible({ timeout: 15_000 });
+
+    await page.reload();
+    await waitForSessionEditor(page, format);
+    await assertFormatEditSurvived(page, format);
+  });
+}
+
+test("session editor shows a clear error when the bytes endpoint reports another format", async ({
+  page,
+}) => {
+  await page.route("**/api/sessions/doc_wrong/bytes", async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: sessionByteHeaders({
+        documentId: "doc_wrong",
+        sessionId: "session_wrong",
+        format: "xlsx",
+        filename: "wrong.xlsx",
+        revision: 0,
+      }),
+      body: fixtureBytes("xlsx"),
+    });
+  });
+
+  await page.goto("/editor?session=doc_wrong");
+
+  await expect(page.getByRole("heading", { name: "Couldn't open the session document" })).toBeVisible();
+  await expect(page.getByText("not docx")).toBeVisible();
+});
+
 test("home page imports an uploaded document into the local workspace", async ({ page }) => {
   let imported = false;
   const uploadedPayload = {
@@ -630,3 +748,215 @@ test("home page keeps the local workspace readable on mobile width", async ({ pa
   await expect(page.getByText("mobile.pdf")).toBeVisible();
   await expect(page.getByText("Pending: 1")).toBeVisible();
 });
+
+function fixtureBytes(format: OfficeFormat): Buffer {
+  return readFileSync(FIXTURE_PATHS[format]);
+}
+
+async function mockSessionBytes(
+  page: import("@playwright/test").Page,
+  args: {
+    readonly documentId: string;
+    readonly format: OfficeFormat;
+    readonly filename: string;
+    readonly bytes: Buffer;
+    readonly revision: number;
+  }
+): Promise<{
+  readonly getCount: () => number;
+  readonly saveCount: () => number;
+  readonly revision: () => number;
+}> {
+  let bytes = Buffer.from(args.bytes);
+  let revision = args.revision;
+  let gets = 0;
+  let saves = 0;
+  await page.route(`**/api/sessions/${args.documentId}/bytes`, async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      gets += 1;
+      await route.fulfill({
+        status: 200,
+        headers: sessionByteHeaders({
+          documentId: args.documentId,
+          sessionId: `session_${args.documentId}`,
+          format: args.format,
+          filename: args.filename,
+          revision,
+        }),
+        body: bytes,
+      });
+      return;
+    }
+    if (request.method() === "PUT") {
+      expect(request.headers()["if-match"]).toBe(revisionEtag(args.documentId, revision));
+      const next = request.postDataBuffer();
+      expect(next).not.toBeNull();
+      bytes = Buffer.from(next ?? []);
+      revision += 1;
+      saves += 1;
+      await route.fulfill({
+        status: 200,
+        headers: { etag: revisionEtag(args.documentId, revision) },
+        json: {
+          schema: "office-ai/session-bytes-save@1",
+          etag: revisionEtag(args.documentId, revision),
+          document: {
+            documentId: args.documentId,
+            sessionId: `session_${args.documentId}`,
+            format: args.format,
+            name: args.filename,
+            status: "ready",
+            createdAt: "2026-06-25T06:00:00.000Z",
+            updatedAt: "2026-06-25T06:01:00.000Z",
+            revision,
+            diagnostics: [{ level: "info", code: "web-editor-save", message: "Saved from E2E." }],
+            exportCount: 0,
+            pendingChangeCount: 0,
+            commandLogCount: saves,
+            artifacts: { hasOriginal: true, hasWorking: true },
+            exports: [],
+            pendingChanges: [],
+            commandLog: [
+              {
+                id: `log_save_${saves}`,
+                operation: "save_document",
+                status: "applied",
+                stage: "saved",
+                source: "web",
+                recordedAt: "2026-06-25T06:01:00.000Z",
+                hasDiff: false,
+                diagnostics: [{ level: "info", code: "web-editor-save", message: "Saved from E2E." }],
+              },
+            ],
+          },
+        },
+      });
+      return;
+    }
+    await route.fulfill({ status: 405, json: { message: "Method not allowed" } });
+  });
+  return {
+    getCount: () => gets,
+    saveCount: () => saves,
+    revision: () => revision,
+  };
+}
+
+function sessionByteHeaders(args: {
+  readonly documentId: string;
+  readonly sessionId: string;
+  readonly format: OfficeFormat;
+  readonly filename: string;
+  readonly revision: number;
+}): Record<string, string> {
+  return {
+    "content-type": mimeForFormat(args.format),
+    "content-disposition": `attachment; filename="${args.filename}"`,
+    "cache-control": "no-store",
+    etag: revisionEtag(args.documentId, args.revision),
+    "x-officeai-document-id": args.documentId,
+    "x-officeai-session-id": args.sessionId,
+    "x-officeai-format": args.format,
+    "x-officeai-filename": encodeURIComponent(args.filename),
+    "x-officeai-revision": String(args.revision),
+  };
+}
+
+function mimeForFormat(format: OfficeFormat): string {
+  switch (format) {
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    case "pdf":
+      return "application/pdf";
+  }
+}
+
+function revisionEtag(documentId: string, revision: number): string {
+  return `"officeai:${documentId}:${revision}"`;
+}
+
+async function waitForSessionEditor(
+  page: import("@playwright/test").Page,
+  format: OfficeFormat
+): Promise<void> {
+  switch (format) {
+    case "docx":
+      await expect(page.locator(".ProseMirror").first()).toBeVisible({ timeout: 20_000 });
+      return;
+    case "xlsx":
+      await expect(page.getByTestId("cell-B2")).toBeVisible({ timeout: 20_000 });
+      return;
+    case "pptx":
+      await expect(page.getByTestId("pptx-sidebar")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("pptx-sidebar").getByRole("button").first()).toBeVisible({
+        timeout: 20_000,
+      });
+      return;
+    case "pdf":
+      await expect(page.getByTestId("pdf-canvas")).toBeVisible({ timeout: 20_000 });
+      return;
+  }
+}
+
+async function applyFormatEdit(page: import("@playwright/test").Page, format: OfficeFormat): Promise<void> {
+  switch (format) {
+    case "docx": {
+      const editor = page.locator(".ProseMirror").first();
+      await editor.click();
+      await page.keyboard.type("M1 DOCX ");
+      await expect(editor).toContainText("M1 DOCX");
+      return;
+    }
+    case "xlsx":
+      await page.getByTestId("cell-B2").click();
+      await page.keyboard.type("89");
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId("cell-B2")).toContainText("89");
+      return;
+    case "pptx":
+      await page.getByRole("button", { name: "Add slide" }).click();
+      await expect(page.getByTestId("pptx-sidebar").getByRole("button")).toHaveCount(2);
+      return;
+    case "pdf": {
+      await page.getByTestId("pdf-open-metadata").click();
+      const dialog = page.getByTestId("pdf-metadata-dialog");
+      await expect(dialog).toBeVisible();
+      await dialog.getByTestId("pdf-meta-title").locator("input").fill("M1 PDF");
+      await page.getByTestId("pdf-metadata-save").click();
+      await expect(dialog).toHaveCount(0);
+      return;
+    }
+  }
+}
+
+async function assertFormatEditSurvived(
+  page: import("@playwright/test").Page,
+  format: OfficeFormat
+): Promise<void> {
+  switch (format) {
+    case "docx":
+      await expect(page.locator(".ProseMirror").first()).toContainText("M1 DOCX");
+      return;
+    case "xlsx":
+      await expect(page.getByTestId("cell-B2")).toContainText("89");
+      return;
+    case "pptx":
+      await expect(page.getByTestId("pptx-sidebar").getByRole("button")).toHaveCount(2);
+      return;
+    case "pdf": {
+      await page.getByTestId("pdf-open-metadata").click();
+      await expect(page.getByTestId("pdf-meta-title").locator("input")).toHaveValue("M1 PDF");
+      await page.getByTestId("pdf-metadata-cancel").click();
+      return;
+    }
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

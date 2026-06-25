@@ -587,15 +587,9 @@ function XlsxEditorInner({
       setSelection(singleSelection({ row: 0, col: 0 }));
       setExtraAreas([]);
       setPendingCount(a.getPendingMutations().length);
-      let first = true;
       offRef.current = a.subscribe((s, mutation) => {
         setSnapshot(s);
         setPendingCount(a.getPendingMutations().length);
-        // Skip the synchronous initial snapshot most agents emit.
-        if (first) {
-          first = false;
-          return;
-        }
         // Surface bus rebase rejections (see
         // packages/core/src/commands/bus.ts.recomputeWorking).
         // Without this toast a pending agent mutation that
