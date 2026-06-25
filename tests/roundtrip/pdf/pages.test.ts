@@ -49,7 +49,17 @@ describe("PDF roundtrip — pages", () => {
       type: "pdf:reorder-pages",
       payload: { order: [3, 1, 2] },
     });
-    const exported = await agent.exportFile();
+    await expect(agent.exportFileWithPlan({ mode: "incremental" })).rejects.toThrow(
+      /requires a full rewrite/
+    );
+    const plannedExport = await agent.exportFileWithPlan();
+    expect(plannedExport.plan.effectiveMode).toBe("rewrite");
+    expect(plannedExport.plan.structuralRewrite).toBe(true);
+    expect(plannedExport.plan.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["pdf-export-mode", "pdf-export-rewrite-required"])
+    );
+    const exported = plannedExport.bytes;
+    if (!exported) throw new Error("expected rewritten PDF bytes");
     const reparsed = await PdfAgent.fromBuffer(exported);
     const after = reparsed.getSnapshot().root.pages.map((p) => p.text.replace(/\s+/g, " ").trim());
     expect(after[0]).toMatch(/PAGE_3/);

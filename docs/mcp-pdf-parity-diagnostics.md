@@ -57,6 +57,37 @@ session. Pending mutations are visible through `list_pending_changes`
 and the web review surface because they are the same command-bus
 mutations used by DOCX, XLSX and PPTX.
 
+## Export policy
+
+`export_document` accepts a PDF-only `pdf_export_mode`:
+
+| Mode          | Behavior                                                                     |
+| ------------- | ---------------------------------------------------------------------------- |
+| `auto`        | Default. Uses the incremental-compatible path when safe, otherwise rewrites. |
+| `incremental` | Requires the incremental-compatible path; fails if a rewrite is required.    |
+| `rewrite`     | Forces full rewrite semantics.                                               |
+
+The serializer also supports `diagnosticOnly` at the `@officeai/pdf`
+agent/serializer layer. MCP exposes that as
+`pdf_document_diagnostics({ include_export_policy: true })` so callers
+can inspect the policy without writing bytes.
+
+PDF export diagnostics include:
+
+- `pdf-export-policy`: requested and effective mode.
+- `pdf-export-mode`: whether export will use incremental-compatible,
+  rewrite or diagnostic-only mode.
+- `pdf-export-rewrite-required`: page order/count/source mappings
+  require a rewrite.
+- `pdf-export-incremental-unavailable`: explicit `incremental` was
+  requested but cannot be honored.
+- `pdf-export-signature-risk`: signature fields are present.
+- `pdf-export-encryption-risk`: encryption flags are present.
+- `pdf-export-text-layer-missing`: text-layer based placement may need
+  OCR.
+- `pdf-export-annotation-skipped`: session annotations exist that the
+  current writer cannot serialize.
+
 ## PDF anchors
 
 PDF command targets accept:
@@ -85,12 +116,13 @@ command diagnostics. Current PDF-specific codes are:
 | `pdf-text-layer-missing`     | One or more pages have no selectable text layer.                          |
 | `pdf-ocr-needed`             | The selected page or whole document likely needs OCR.                     |
 | `pdf-unsupported-annotation` | Unknown annotation subtypes are projected but not semantically editable.  |
-| `pdf-export-policy`          | Export path is incremental-compatible or requires full rewrite semantics. |
+| `pdf-export-policy`          | Requested and effective export mode.                                      |
+| `pdf-export-mode`            | Incremental-compatible, rewrite or diagnostic-only mode.                  |
 
 `export_document` appends PDF diagnostics and always includes
-`pdf-export-policy` for PDFs. If pending changes are still unreviewed,
-the normal cross-format `unreviewed-pending-export` warning is included
-as well.
+`pdf-export-policy` and `pdf-export-mode` for PDFs. If pending changes
+are still unreviewed, the normal cross-format
+`unreviewed-pending-export` warning is included as well.
 
 ## Legacy boundary
 

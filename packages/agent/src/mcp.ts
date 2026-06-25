@@ -37,7 +37,15 @@ import {
 import { DocxAgent, allDocxHandlers, docxActions } from "@officeai/docx";
 import { XlsxAgent, allXlsxHandlers, diffXlsxSnapshots, xlsxActions } from "@officeai/xlsx";
 import { PptxAgent, allPptxHandlers, pptxActions } from "@officeai/pptx";
-import { PdfAgent, allPdfHandlers, pdfActions, type PdfRect, type PdfSnapshot } from "@officeai/pdf";
+import {
+  PdfAgent,
+  allPdfHandlers,
+  pdfActions,
+  type PdfExportPlan,
+  type PdfExportMode,
+  type PdfRect,
+  type PdfSnapshot,
+} from "@officeai/pdf";
 import { registerActionsAsMcpTools, type McpDispatchContext } from "./actions-to-mcp.js";
 import {
   addPageNumbers,
@@ -442,7 +450,6 @@ function pdfAnchorPage(anchor: Record<string, unknown>): number | undefined {
 interface PdfDiagnosticsOptions {
   readonly includeOk?: boolean;
   readonly page?: number;
-  readonly forExport?: boolean;
 }
 
 function pdfDiagnosticsForSnapshot(
@@ -505,21 +512,6 @@ function pdfDiagnosticsForSnapshot(
     });
   }
 
-  if (opts.forExport) {
-    const sourceIndices = root.pages.map((page) => page.sourceIndex);
-    const identity =
-      sourceIndices.length > 0 &&
-      sourceIndices.every((sourceIndex, index) => sourceIndex === index) &&
-      sourceIndices.length === root.pages.length;
-    diagnostics.push({
-      level: "info",
-      code: "pdf-export-policy",
-      message: identity
-        ? "PDF export policy: incremental-compatible update path unless the serializer encounters unsupported objects."
-        : "PDF export policy: full rewrite path required because page order/source mappings changed.",
-    });
-  }
-
   if (diagnostics.length === 0 && opts.includeOk !== false) {
     diagnostics.push({
       level: "info",
@@ -536,6 +528,14 @@ function pdfDiagnosticsForRecord(
   opts: PdfDiagnosticsOptions = {}
 ): CommandDiagnostic[] {
   return pdfDiagnosticsForSnapshot(pdfSnapshotFor(record), opts);
+}
+
+function pdfExportPlanDiagnostics(plan: PdfExportPlan): CommandDiagnostic[] {
+  return plan.diagnostics.map((diagnostic) => ({
+    level: diagnostic.level,
+    code: diagnostic.code,
+    message: diagnostic.message,
+  }));
 }
 
 function commandPolicyFrom(input: Record<string, unknown>): Partial<CommandEnvelope["policy"]> {
@@ -1583,7 +1583,13 @@ function projectionFor(
   }
 }
 
-async function exportDocument(record: DocumentRecord, outPath?: string): Promise<DocumentExportResult> {
+type WritablePdfExportMode = Exclude<PdfExportMode, "diagnosticOnly">;
+
+async function exportDocument(
+  record: DocumentRecord,
+  outPath?: string,
+  opts: { readonly pdfExportMode?: WritablePdfExportMode } = {}
+): Promise<DocumentExportResult> {
   const target = outPath ? resolve(outPath) : record.sourcePath;
   if (!target) {
     throw new Error("export_document requires out_path for documents created without a source path.");
@@ -1591,6 +1597,12 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
 
   const pendingCount = pendingMutationsFor(record).length;
   const commandBasis = await recordCommandBasis(record);
+  const pdfExport =
+    record.format === "pdf"
+      ? await lookupPdfSession(record.id).agent.exportFileWithPlan({
+          mode: opts.pdfExportMode ?? "auto",
+        })
+      : null;
   const diagnostics: CommandDiagnostic[] = [
     {
       level: "info",
@@ -1614,11 +1626,10 @@ async function exportDocument(record: DocumentRecord, outPath?: string): Promise
           },
         ]
       : []),
-    ...(record.format === "pdf"
-      ? pdfDiagnosticsForRecord(record, { includeOk: false, forExport: true })
-      : []),
+    ...(record.format === "pdf" ? pdfDiagnosticsForRecord(record, { includeOk: false }) : []),
+    ...(pdfExport ? pdfExportPlanDiagnostics(pdfExport.plan) : []),
   ];
-  const bytes = Buffer.from(await currentDocumentBytes(record));
+  const bytes = Buffer.from(pdfExport?.bytes ?? (await currentDocumentBytes(record)));
 
   await writeFile(target, bytes);
   const exported: ExportRecord = { path: target, bytes: bytes.byteLength, exportedAt: nowIso() };
@@ -2410,12 +2421,20 @@ function registerSessionDocumentTools(server: McpServer): void {
           .string()
           .optional()
           .describe("Optional output path. Required for documents created without a source path."),
+        pdf_export_mode: z
+          .enum(["auto", "incremental", "rewrite"])
+          .optional()
+          .describe(
+            "PDF only. auto chooses the safe path; incremental fails if a rewrite is required; rewrite forces full rewrite semantics."
+          ),
       },
     },
-    async ({ document_id, out_path }) => {
+    async ({ document_id, out_path, pdf_export_mode }) => {
       try {
         const record = await ensureDocumentLoaded(document_id);
-        const { exported, diagnostics } = await exportDocument(record, out_path);
+        const { exported, diagnostics } = await exportDocument(record, out_path, {
+          ...(pdf_export_mode ? { pdfExportMode: pdf_export_mode as WritablePdfExportMode } : {}),
+        });
         return ok({
           schema: "office-ai/export-document@1",
           document: documentEnvelope(record),
@@ -3999,9 +4018,12 @@ function registerPdfTools(server: McpServer): void {
       try {
         const record = await loadPdfDocument(document_id);
         const snapshot = pdfSnapshotFor(record);
-        const diagnostics = pdfDiagnosticsForRecord(record, {
-          forExport: include_export_policy === true,
-        });
+        const exportPlan =
+          include_export_policy === true ? await lookupPdfSession(record.id).agent.planExport() : null;
+        const diagnostics = [
+          ...pdfDiagnosticsForRecord(record),
+          ...(exportPlan ? pdfExportPlanDiagnostics(exportPlan) : []),
+        ];
         return ok({
           schema: "office-ai/pdf-diagnostics@1",
           document: documentEnvelope(record),
@@ -4009,6 +4031,19 @@ function registerPdfTools(server: McpServer): void {
           summary: {
             pageCount: snapshot.root.pages.length,
             signatureCount: snapshot.root.signatureCount,
+            ...(exportPlan
+              ? {
+                  exportPolicy: {
+                    requestedMode: exportPlan.requestedMode,
+                    effectiveMode: exportPlan.effectiveMode,
+                    incremental: exportPlan.incremental,
+                    structuralRewrite: exportPlan.structuralRewrite,
+                    reason: exportPlan.reason,
+                    sessionAnnotationCount: exportPlan.sessionAnnotationCount,
+                    skippedAnnotationCount: exportPlan.skippedAnnotationCount,
+                  },
+                }
+              : {}),
             missingTextLayerPages: snapshot.root.pages
               .filter((page) => !page.hasTextLayer)
               .map((page) => page.pageNumber),

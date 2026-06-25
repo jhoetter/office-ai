@@ -1,7 +1,17 @@
 export * from "./model/types.js";
 export { parsePdf, type PdfParseOptions } from "./parser/parse.js";
 export { PdfParseError } from "./parser/errors.js";
-export { serializePdf, type PdfSerializeOptions } from "./serializer/serialize.js";
+export {
+  planPdfExport,
+  serializePdf,
+  serializePdfWithPlan,
+  type PdfEffectiveExportMode,
+  type PdfExportDiagnostic,
+  type PdfExportMode,
+  type PdfExportPlan,
+  type PdfSerializeOptions,
+  type PdfSerializeResult,
+} from "./serializer/serialize.js";
 export { PdfSerializeError } from "./serializer/errors.js";
 export { allPdfHandlers } from "./commands/index.js";
 export { pdfActions, pdfActionsById, pdfActionsByCommandType } from "./actions/index.js";

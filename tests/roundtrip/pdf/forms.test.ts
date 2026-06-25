@@ -95,5 +95,8 @@ describe("PDF roundtrip — forms", () => {
     // The signature widget also surfaces as a form field of type "signature".
     const sig = root.formFields.find((f) => f.type === "signature");
     expect(sig).toBeDefined();
+    const plan = await agent.planExport();
+    expect(plan.hasSignatures).toBe(true);
+    expect(plan.diagnostics.map((diagnostic) => diagnostic.code)).toContain("pdf-export-signature-risk");
   });
 });

@@ -2,7 +2,14 @@ import { CommandBus, type Command, type CommandLite, type DocumentDiff, type Mut
 import { allPdfHandlers } from "../commands/index.js";
 import type { PdfRect, PdfSnapshot } from "../model/types.js";
 import { parsePdf, type PdfParseOptions } from "../parser/parse.js";
-import { serializePdf } from "../serializer/serialize.js";
+import {
+  planPdfExport,
+  serializePdf,
+  serializePdfWithPlan,
+  type PdfExportPlan,
+  type PdfSerializeOptions,
+  type PdfSerializeResult,
+} from "../serializer/serialize.js";
 import { snapshotToMarkdown } from "./markdown.js";
 import { findInStructuredPage } from "../text/search.js";
 
@@ -254,8 +261,16 @@ export class PdfAgent {
   }
 
   // ── I/O ───────────────────────────────────────────────────────────────
-  async exportFile(): Promise<Uint8Array> {
-    return serializePdf(this.getSnapshot(), this.originalBuffer);
+  async exportFile(opts: PdfSerializeOptions = {}): Promise<Uint8Array> {
+    return serializePdf(this.getSnapshot(), this.originalBuffer, opts);
+  }
+
+  async exportFileWithPlan(opts: PdfSerializeOptions = {}): Promise<PdfSerializeResult> {
+    return serializePdfWithPlan(this.getSnapshot(), this.originalBuffer, opts);
+  }
+
+  async planExport(opts: PdfSerializeOptions = {}): Promise<PdfExportPlan> {
+    return planPdfExport(this.getSnapshot(), this.originalBuffer, opts);
   }
 
   /** Access the original PDF bytes (for diffing and audit purposes). */

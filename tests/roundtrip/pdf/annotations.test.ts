@@ -83,12 +83,31 @@ describe("PDF roundtrip — annotations", () => {
       },
     });
 
-    const exported = await agent.exportFile();
+    const plannedExport = await agent.exportFileWithPlan();
+    expect(plannedExport.plan.effectiveMode).toBe("incremental");
+    expect(plannedExport.plan.incremental).toBe(true);
+    expect(plannedExport.plan.sessionAnnotationCount).toBe(2);
+    expect(plannedExport.plan.skippedAnnotationCount).toBe(0);
+    expect(plannedExport.plan.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["pdf-export-policy", "pdf-export-mode"])
+    );
+    const exported = plannedExport.bytes;
+    if (!exported) throw new Error("expected PDF bytes from annotation export");
     const reopened = await PdfAgent.fromBuffer(exported);
     const after = reopened.getSnapshot().root.annotations;
     expect(after.length).toBe(before + 2);
     const kinds = after.map((a) => a.kind);
     expect(kinds).toContain("highlight");
     expect(kinds).toContain("note");
+  });
+
+  it("diagnosticOnly export mode reports policy without writing bytes", async () => {
+    const agent = await PdfAgent.fromBuffer(await loadFixture("simple-text-1page.pdf"));
+    const planned = await agent.exportFileWithPlan({ mode: "diagnosticOnly" });
+    expect(planned.bytes).toBeUndefined();
+    expect(planned.plan.effectiveMode).toBe("diagnosticOnly");
+    expect(planned.plan.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      expect.arrayContaining(["pdf-export-policy", "pdf-export-mode"])
+    );
   });
 });

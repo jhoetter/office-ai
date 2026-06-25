@@ -662,12 +662,16 @@ describe("OfficeAI MCP server", () => {
     const exported = structured(
       await client.callTool({
         name: "export_document",
-        arguments: { document_id: document.documentId, out_path: join(tmp, "annotated.pdf") },
+        arguments: {
+          document_id: document.documentId,
+          out_path: join(tmp, "annotated.pdf"),
+          pdf_export_mode: "incremental",
+        },
       })
     );
     expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
     expect((exported.diagnostics as Array<{ code: string }>).map((d) => d.code)).toEqual(
-      expect.arrayContaining(["unreviewed-pending-export", "pdf-export-policy"])
+      expect.arrayContaining(["unreviewed-pending-export", "pdf-export-policy", "pdf-export-mode"])
     );
   });
 
@@ -691,7 +695,7 @@ describe("OfficeAI MCP server", () => {
       })
     );
     expect((diagnostics.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toEqual(
-      expect.arrayContaining(["pdf-signature-detected", "pdf-export-policy"])
+      expect.arrayContaining(["pdf-signature-detected", "pdf-export-policy", "pdf-export-mode"])
     );
   });
 
