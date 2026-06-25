@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`h-full ${inter.variable} ${ibmPlexMono.variable}`} suppressHydrationWarning>
-      <body className={`${inter.className} h-full bg-background text-foreground antialiased`}>
+      <body className={`${inter.className} sl-app h-full bg-background text-foreground antialiased`}>
         <ThemeProvider>
           <I18nProvider>{children}</I18nProvider>
         </ThemeProvider>

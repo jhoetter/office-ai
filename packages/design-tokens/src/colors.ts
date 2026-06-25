@@ -1,58 +1,46 @@
-/**
- * office-ai Brand Colors
- *
- * Notion-like aesthetic — clean, minimal, with office-ai brand accents.
- * Primary palette is neutral; brand colors used as accents.
- */
-
 export const colors = {
-  /* ── Light mode base ── */
-  background: "#FFFFFF",
-  foreground: "#37352F",
-  secondary: "#787774",
-  tertiary: "#C3C2C1",
-  divider: "#E9E9E7",
-  hover: "#F7F7F5",
-  surface: "#FBFBFA",
-  accent: "#3B82F6",
-  accentLight: "#EAF2FE",
+  background: "var(--sl-bg)",
+  foreground: "var(--sl-ink)",
+  secondary: "var(--sl-muted)",
+  tertiary: "var(--sl-faint)",
+  divider: "var(--sl-line)",
+  hover: "var(--sl-hover)",
+  surface: "var(--sl-surface)",
+  accent: "var(--sl-accent)",
+  accentLight: "var(--sl-accent-weak)",
 
-  /* ── Dark mode base ── */
-  backgroundDark: "#191919",
-  foregroundDark: "#E3E2E0",
-  secondaryDark: "#9B9A97",
-  tertiaryDark: "#5A5A58",
-  dividerDark: "#2F2F2F",
-  hoverDark: "#252525",
-  surfaceDark: "#202020",
-  accentDark: "#60A5FA",
-  accentLightDark: "#1E2D45",
+  backgroundDark: "var(--sl-bg)",
+  foregroundDark: "var(--sl-ink)",
+  secondaryDark: "var(--sl-muted)",
+  tertiaryDark: "var(--sl-faint)",
+  dividerDark: "var(--sl-line)",
+  hoverDark: "var(--sl-hover)",
+  surfaceDark: "var(--sl-surface)",
+  accentDark: "var(--sl-accent)",
+  accentLightDark: "var(--sl-accent-weak)",
 
-  /* ── Brand accents (office-ai) ── */
-  officeBlue: "#3B82F6",
-  officeBlueLight: "#EAF2FE",
-  officeBlueMuted: "#3B82F633",
-  aiViolet: "#7C3AED",
-  aiVioletLight: "#F1ECFE",
-  aiVioletMuted: "#7C3AED33",
+  officeBlue: "var(--sl-blue)",
+  officeBlueLight: "color-mix(in srgb, var(--sl-blue) 12%, transparent)",
+  officeBlueMuted: "color-mix(in srgb, var(--sl-blue) 20%, transparent)",
+  aiViolet: "var(--sl-violet)",
+  aiVioletLight: "color-mix(in srgb, var(--sl-violet) 12%, transparent)",
+  aiVioletMuted: "color-mix(in srgb, var(--sl-violet) 20%, transparent)",
 
-  /* ── Semantic status ── */
-  warning: "#E57A2E",
-  error: "#D84B3E",
-  info: "#787774",
-  success: "#2F7D59",
+  warning: "var(--sl-amber)",
+  error: "var(--sl-red)",
+  info: "var(--sl-muted)",
+  success: "var(--sl-green)",
 
-  /* ── Neutral grays ── */
-  gray50: "#FAFAFA",
-  gray100: "#F5F5F5",
-  gray200: "#E9E9E7",
-  gray300: "#C3C2C1",
-  gray400: "#9B9A97",
-  gray500: "#787774",
-  gray600: "#4B5563",
-  gray700: "#374151",
-  gray800: "#1F2937",
-  gray900: "#111827",
+  gray50: "var(--sl-bg)",
+  gray100: "var(--sl-surface-2)",
+  gray200: "var(--sl-line)",
+  gray300: "var(--sl-line)",
+  gray400: "var(--sl-faint)",
+  gray500: "var(--sl-muted)",
+  gray600: "var(--sl-muted)",
+  gray700: "var(--sl-ink)",
+  gray800: "var(--sl-ink)",
+  gray900: "var(--sl-ink)",
 } as const;
 
 export type ColorToken = keyof typeof colors;

@@ -1,6 +1,6 @@
 import { colors } from "./colors";
 import { fontFamily } from "./typography";
-import { borderRadius, borderWidth } from "./spacing";
+import { borderRadius, borderWidth, maxWidth, spacing } from "./spacing";
 
 /**
  * office-ai Tailwind CSS Preset
@@ -33,6 +33,21 @@ export const officeAiPreset = {
           muted: colors.aiVioletMuted,
         },
 
+        sl: {
+          bg: "var(--sl-bg)",
+          surface: "var(--sl-surface)",
+          "surface-2": "var(--sl-surface-2)",
+          hover: "var(--sl-hover)",
+          selected: "var(--sl-sel)",
+          line: "var(--sl-line)",
+          ink: "var(--sl-ink)",
+          muted: "var(--sl-muted)",
+          faint: "var(--sl-faint)",
+          accent: "var(--sl-accent)",
+          "accent-weak": "var(--sl-accent-weak)",
+          "accent-ink": "var(--sl-accent-ink)",
+        },
+
         warning: colors.warning,
         error: colors.error,
         info: colors.info,
@@ -42,12 +57,10 @@ export const officeAiPreset = {
         sans: fontFamily.sans,
         mono: fontFamily.mono,
       },
+      spacing: { ...spacing },
       borderRadius: { ...borderRadius },
       borderWidth: { ...borderWidth },
-      maxWidth: {
-        content: "1200px",
-        prose: "65ch",
-      },
+      maxWidth: { ...maxWidth },
     },
   },
 };

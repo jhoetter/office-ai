@@ -1,13 +1,6 @@
-/**
- * office-ai Typography
- *
- * Primary: Inter (UI, all text)
- * Secondary: IBM Plex Mono (Code, technical labels only)
- */
-
 export const fontFamily = {
-  sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
-  mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
+  sans: ["var(--sl-sans)"],
+  mono: ["var(--sl-mono)"],
 } as const;
 
 export const fontSize = {
@@ -31,8 +24,8 @@ export const fontWeight = {
 } as const;
 
 export const letterSpacing = {
-  tighter: "-0.05em",
-  tight: "-0.025em",
+  tighter: "0em",
+  tight: "0em",
   normal: "0em",
   wide: "0.025em",
   wider: "0.05em",
