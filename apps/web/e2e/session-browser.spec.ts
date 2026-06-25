@@ -182,13 +182,17 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.getByText("appendix.pdf")).toBeVisible();
   await expect(page.getByText("Pending: 1")).toBeVisible();
   await expect(page.getByText("command-pending")).toBeVisible();
+  await expect(page.getByText("web-parity-pdf-review-only")).toBeVisible();
 
   await page.getByRole("link", { name: "proposal.docx" }).click();
 
   await expect(page.getByRole("heading", { name: "proposal.docx" })).toBeVisible();
   await expect(page.getByText("MCP review")).toBeVisible();
+  await expect(page.getByText("Web format parity")).toBeVisible();
+  await expect(page.getByText("DOCX web editing")).toBeVisible();
   await expect(page.getByText("docx.replace-text · previewed")).toBeVisible();
   await expect(page.getByText("needs-review")).toBeVisible();
+  await expect(page.getByText("web-parity-docx-partial-edit")).toBeVisible();
   await expect(page.getByText("docx.replace-text: 1 DOCX change; low review risk.")).toBeVisible();
   await expect(page.getByText("4.0 KB")).toBeVisible();
 
@@ -360,6 +364,55 @@ test("document detail rejects a pending change and can undo the review decision"
   await expect(page.getByText("Rejection: Rejected in web review.")).toHaveCount(0);
   expect(reviewState).toBe("pending");
   expect(reviewUndone).toBe(true);
+});
+
+test("document detail exposes web format parity for every format", async ({ page }) => {
+  for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+    await page.route(`**/api/sessions/doc_${format}`, async (route) => {
+      await route.fulfill({
+        json: {
+          schema: "office-ai/web-document@1",
+          session: {
+            sessionId: `session_${format}`,
+            title: `${format.toUpperCase()} parity`,
+            createdAt: "2026-06-24T15:00:00.000Z",
+            updatedAt: "2026-06-24T15:01:00.000Z",
+            documentCount: 1,
+          },
+          document: {
+            documentId: `doc_${format}`,
+            sessionId: `session_${format}`,
+            format,
+            name: `parity.${format}`,
+            status: "ready",
+            createdAt: "2026-06-24T15:00:00.000Z",
+            updatedAt: "2026-06-24T15:01:00.000Z",
+            revision: 1,
+            diagnostics: [],
+            exportCount: 0,
+            pendingChangeCount: 0,
+            commandLogCount: 0,
+            artifacts: { hasOriginal: true, hasWorking: true },
+            exports: [],
+            pendingChanges: [],
+            commandLog: [],
+          },
+        },
+      });
+    });
+
+    await page.goto(`/sessions/doc_${format}`);
+    await expect(page.getByRole("heading", { name: `parity.${format}` })).toBeVisible();
+    await expect(page.getByText("Web format parity")).toBeVisible();
+    await expect(
+      page.getByText(format === "pdf" ? "PDF web review" : `${format.toUpperCase()} web editing`)
+    ).toBeVisible();
+    await expect(
+      page.getByText(format === "pdf" ? "web-parity-pdf-review-only" : `web-parity-${format}-partial-edit`)
+    ).toBeVisible();
+    await page.screenshot({ path: `test-results/format-parity-${format}.png`, fullPage: true });
+    await page.unroute(`**/api/sessions/doc_${format}`);
+  }
 });
 
 test("home page imports an uploaded document into the local workspace", async ({ page }) => {

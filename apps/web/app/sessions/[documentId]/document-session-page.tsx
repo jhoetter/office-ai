@@ -20,6 +20,7 @@ import {
 import { Button, ThemeToggle } from "@officeai/ui";
 import { downloadBlob } from "@/lib/files/file-service";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
+import { formatParityDiagnostics, formatParityFor, type WebFormatParity } from "@/lib/sessions/format-parity";
 import type {
   WebCommandLogEntry,
   WebDocumentPayload,
@@ -102,6 +103,8 @@ function DocumentDetail({
 }) {
   const { t } = useTranslator();
   const { document, session } = payload;
+  const formatParity = formatParityFor(document.format);
+  const diagnostics = [...document.diagnostics, ...formatParityDiagnostics(document.format)];
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [reviewingChangeId, setReviewingChangeId] = useState<string | null>(null);
@@ -224,6 +227,10 @@ function DocumentDetail({
             </div>
           </Panel>
 
+          <Panel title={t("sessionDetail.formatParity")} icon={<FileArchive size={14} />}>
+            <FormatParityPanel parity={formatParity} />
+          </Panel>
+
           <Panel title={t("home.exports")} icon={<History size={14} />}>
             {document.exports.length === 0 ? (
               <Empty>{t("sessionDetail.noExports")}</Empty>
@@ -272,11 +279,11 @@ function DocumentDetail({
           </Panel>
 
           <Panel title={t("home.diagnostics")} icon={<AlertTriangle size={14} />}>
-            {document.diagnostics.length === 0 ? (
+            {diagnostics.length === 0 ? (
               <Empty>{t("home.noDiagnostics")}</Empty>
             ) : (
               <div className="divide-y divide-divider text-sm">
-                {document.diagnostics.map((diagnostic) => (
+                {diagnostics.map((diagnostic) => (
                   <div key={`${diagnostic.level}-${diagnostic.code}-${diagnostic.message}`} className="py-2">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium text-foreground">{diagnostic.code}</span>
@@ -333,6 +340,47 @@ function ArtifactState({ label, available }: { readonly label: string; readonly 
       </div>
     </div>
   );
+}
+
+function FormatParityPanel({ parity }: { readonly parity: WebFormatParity }) {
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="font-medium text-foreground">{parity.title}</div>
+      <div className="divide-y divide-divider rounded-md border border-divider">
+        {parity.rows.map((row) => (
+          <div key={row.label} className="grid gap-2 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+            <div>
+              <div className="text-xs uppercase text-tertiary">{row.label}</div>
+              <span
+                className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[11px] uppercase ${statusClass(row.status)}`}
+              >
+                {row.status}
+              </span>
+            </div>
+            <div className="text-secondary">{row.detail}</div>
+          </div>
+        ))}
+      </div>
+      {parity.knownLimits.length > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          {parity.knownLimits.join(" ")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function statusClass(status: WebFormatParity["rows"][number]["status"]): string {
+  switch (status) {
+    case "full":
+      return "border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300";
+    case "partial":
+      return "border-sky-300 text-sky-700 dark:border-sky-700 dark:text-sky-300";
+    case "review-only":
+      return "border-amber-300 text-amber-800 dark:border-amber-700 dark:text-amber-300";
+    case "planned":
+      return "border-divider text-secondary";
+  }
 }
 
 function PendingList({

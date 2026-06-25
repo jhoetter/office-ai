@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Clock3, Database, FileArchive, Loader2, Plus, RefreshCw, Upload } from "lucide-react";
 import { Button } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
+import { formatParityDiagnostics, formatParityFor } from "@/lib/sessions/format-parity";
 import {
   documentsForSession,
   sessionBrowserCounts,
@@ -267,7 +268,8 @@ function DocumentRow({
   readonly locale?: string;
 }) {
   const { t } = useTranslator();
-  const latestDiagnostic = document.diagnostics[0];
+  const parity = formatParityFor(document.format);
+  const latestDiagnostic = document.diagnostics[0] ?? formatParityDiagnostics(document.format)[0];
   return (
     <tr className="border-b border-divider last:border-b-0">
       <td className="px-3 py-2.5">
@@ -285,6 +287,7 @@ function DocumentRow({
             <div className="text-xs text-tertiary">
               {t("home.revision")} {document.revision} · {formatDateTime(document.updatedAt, locale)}
             </div>
+            <div className="mt-0.5 text-xs text-tertiary">{parity.title}</div>
           </div>
         </div>
       </td>

@@ -4,6 +4,7 @@ import {
   sessionBrowserCounts,
   type WebSessionsPayload,
 } from "@/lib/sessions/web-sessions";
+import { formatParityDiagnostics, formatParityFor } from "@/lib/sessions/format-parity";
 
 const payload: WebSessionsPayload = {
   schema: "office-ai/web-sessions@1",
@@ -89,6 +90,23 @@ describe("session browser model", () => {
       documents: 3,
       pending: 3,
       diagnostics: 2,
+    });
+  });
+
+  it("defines honest web parity diagnostics for each supported format", () => {
+    expect(formatParityFor("docx").rows.map((row) => row.label)).toEqual([
+      "Import",
+      "Read view",
+      "Editable structures",
+      "Review and diff",
+      "Export",
+    ]);
+    expect(formatParityDiagnostics("docx")[0].code).toBe("web-parity-docx-partial-edit");
+    expect(formatParityDiagnostics("xlsx")[0].code).toBe("web-parity-xlsx-partial-edit");
+    expect(formatParityDiagnostics("pptx")[0].code).toBe("web-parity-pptx-partial-edit");
+    expect(formatParityDiagnostics("pdf")[0]).toMatchObject({
+      level: "warning",
+      code: "web-parity-pdf-review-only",
     });
   });
 });

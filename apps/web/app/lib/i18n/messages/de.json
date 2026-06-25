@@ -155,6 +155,7 @@
     "loadError": "Dokument-Workspace konnte nicht geladen werden",
     "commands": "Commands",
     "artifacts": "Artefakte",
+    "formatParity": "Web-Formatparitaet",
     "available": "Verfügbar",
     "missing": "Fehlt",
     "noExports": "Keine Exporte erfasst.",
