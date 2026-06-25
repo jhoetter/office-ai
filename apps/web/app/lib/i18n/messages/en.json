@@ -121,6 +121,7 @@
     "exports": "Exports",
     "refresh": "Refresh",
     "importDocument": "Import document",
+    "openInEditor": "Open",
     "revision": "Rev.",
     "original": "original",
     "created": "created",
@@ -166,6 +167,9 @@
     "noCommandLog": "No command activity recorded.",
     "exportError": "Export failed",
     "reviewError": "Review failed",
+    "inspector": "Inspector",
+    "openInEditor": "Open in editor",
+    "inspectorIntro": "Diagnostics, revision history, pending changes and export metadata. Use the editor for document changes.",
     "source": "Source",
     "actor": "Actor",
     "diffAvailable": "diff available",
@@ -174,6 +178,11 @@
     "rejectChange": "Reject",
     "undoReview": "Undo review",
     "rejection": "Rejection"
+  },
+  "sessionEditor": {
+    "loading": "Loading session",
+    "loadError": "Couldn't open the session document",
+    "openInspector": "Open inspector"
   },
   "shell": {
     "openTooltip": "Open",

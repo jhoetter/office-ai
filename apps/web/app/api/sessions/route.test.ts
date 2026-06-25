@@ -8,6 +8,7 @@ import { DocxAgent } from "@officeai/docx";
 import { PdfAgent } from "@officeai/pdf";
 import { PptxAgent } from "@officeai/pptx";
 import { XlsxAgent } from "@officeai/xlsx";
+import { GET as GET_BYTES, PUT as PUT_BYTES } from "./[documentId]/bytes/route";
 import { GET as GET_DOCUMENT } from "./[documentId]/route";
 import { POST as REVIEW_CHANGE } from "./[documentId]/changes/[mutationId]/route";
 import { POST as EXPORT_DOCUMENT } from "./[documentId]/export/route";
@@ -15,6 +16,7 @@ import { GET as PROJECT_DOCUMENT } from "./[documentId]/projection/route";
 import { POST as CREATE_DOCUMENT } from "./create/route";
 import { POST as IMPORT_DOCUMENT } from "./import/route";
 import { GET } from "./route";
+import { mimeForFormat } from "@/lib/sessions/server-documents";
 import type { WebOfficeFormat } from "@/lib/sessions/web-sessions";
 
 let previousOfficeAiDataDir: string | undefined;
@@ -661,6 +663,179 @@ describe("POST /api/sessions/create and /api/sessions/:documentId/export", () =>
   }
 });
 
+describe("GET/PUT /api/sessions/:documentId/bytes", () => {
+  for (const format of ["docx", "xlsx", "pptx", "pdf"] as const) {
+    it(`returns working bytes, MIME and revision metadata for ${format}`, async () => {
+      const bytes = await blankBytes(format);
+      const store = createLocalSessionStore();
+      const documentId = `doc_bytes_${format}`;
+      await store.putSession({
+        id: `session_bytes_${format}`,
+        title: `Bytes ${format}`,
+        createdAt: "2026-06-24T14:00:00.000Z",
+        updatedAt: "2026-06-24T14:00:00.000Z",
+        documentIds: [documentId],
+      });
+      await store.putDocument(
+        {
+          id: documentId,
+          sessionId: `session_bytes_${format}`,
+          format,
+          name: `working.${format}`,
+          status: "ready",
+          createdAt: "2026-06-24T14:00:00.000Z",
+          updatedAt: "2026-06-24T14:00:00.000Z",
+          revision: 12,
+          diagnostics: [],
+          exportHistory: [],
+          pendingChanges: [],
+          commandLog: [],
+        },
+        { workingBytes: bytes }
+      );
+
+      const response = await GET_BYTES(new Request(`http://localhost/api/sessions/${documentId}/bytes`), {
+        params: Promise.resolve({ documentId }),
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain(mimeForFormat(format));
+      expect(response.headers.get("x-officeai-format")).toBe(format);
+      expect(response.headers.get("x-officeai-revision")).toBe("12");
+      expect(response.headers.get("x-officeai-filename")).toBe(encodeURIComponent(`working.${format}`));
+      expect(response.headers.get("etag")).toBe(revisionEtag(documentId, 12));
+      const returned = new Uint8Array(await response.arrayBuffer());
+      expect(Buffer.compare(Buffer.from(returned), Buffer.from(bytes))).toBe(0);
+      await reopenExportedBytes(format, returned);
+    });
+  }
+
+  it("saves editor bytes as a new session revision with web provenance", async () => {
+    const store = createLocalSessionStore();
+    const bytes = await blankBytes("docx");
+    await store.putSession({
+      id: "session_save",
+      title: "Save",
+      createdAt: "2026-06-24T15:00:00.000Z",
+      updatedAt: "2026-06-24T15:00:00.000Z",
+      documentIds: ["doc_save"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_save",
+        sessionId: "session_save",
+        format: "docx",
+        name: "before.docx",
+        status: "ready",
+        createdAt: "2026-06-24T15:00:00.000Z",
+        updatedAt: "2026-06-24T15:00:00.000Z",
+        revision: 3,
+        diagnostics: [],
+        exportHistory: [],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      { workingBytes: bytes }
+    );
+
+    const response = await PUT_BYTES(
+      new Request("http://localhost/api/sessions/doc_save/bytes", {
+        method: "PUT",
+        headers: {
+          "content-type": mimeForFormat("docx"),
+          "if-match": revisionEtag("doc_save", 3),
+          "x-officeai-filename": encodeURIComponent("after.docx"),
+        },
+        body: Buffer.from(bytes),
+      }),
+      { params: Promise.resolve({ documentId: "doc_save" }) }
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("etag")).toBe(revisionEtag("doc_save", 4));
+    const payload = (await response.json()) as {
+      schema: string;
+      etag: string;
+      document: {
+        documentId: string;
+        name: string;
+        revision: number;
+        commandLog: Array<{ operation: string; stage: string; source: string; provenance?: unknown }>;
+        diagnostics: Array<{ code: string }>;
+      };
+    };
+    expect(payload.schema).toBe("office-ai/session-bytes-save@1");
+    expect(payload.etag).toBe(revisionEtag("doc_save", 4));
+    expect(payload.document).toMatchObject({
+      documentId: "doc_save",
+      name: "after.docx",
+      revision: 4,
+      commandLog: [
+        expect.objectContaining({
+          operation: "save_document",
+          stage: "saved",
+          source: "web",
+          provenance: expect.objectContaining({ surface: "web", targetRevision: 3 }),
+        }),
+      ],
+      diagnostics: [expect.objectContaining({ code: "web-editor-save" })],
+    });
+
+    const stored = await store.getDocument("doc_save");
+    if (!stored) throw new Error("Expected saved document to exist.");
+    expect(stored.revision).toBe(4);
+    expect(stored.name).toBe("after.docx");
+    expect(Buffer.compare(Buffer.from(await store.readWorkingBytes(stored)), Buffer.from(bytes))).toBe(0);
+  });
+
+  it("rejects stale editor saves before replacing working bytes", async () => {
+    const store = createLocalSessionStore();
+    const bytes = await blankBytes("docx");
+    await store.putSession({
+      id: "session_stale",
+      title: "Stale",
+      createdAt: "2026-06-24T15:00:00.000Z",
+      updatedAt: "2026-06-24T15:00:00.000Z",
+      documentIds: ["doc_stale"],
+    });
+    await store.putDocument(
+      {
+        id: "doc_stale",
+        sessionId: "session_stale",
+        format: "docx",
+        name: "stale.docx",
+        status: "ready",
+        createdAt: "2026-06-24T15:00:00.000Z",
+        updatedAt: "2026-06-24T15:00:00.000Z",
+        revision: 9,
+        diagnostics: [],
+        exportHistory: [],
+        pendingChanges: [],
+        commandLog: [],
+      },
+      { workingBytes: bytes }
+    );
+
+    const response = await PUT_BYTES(
+      new Request("http://localhost/api/sessions/doc_stale/bytes", {
+        method: "PUT",
+        headers: {
+          "content-type": mimeForFormat("docx"),
+          "if-match": revisionEtag("doc_stale", 8),
+        },
+        body: Buffer.from(bytes),
+      }),
+      { params: Promise.resolve({ documentId: "doc_stale" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(response.headers.get("etag")).toBe(revisionEtag("doc_stale", 9));
+    const payload = (await response.json()) as { code: string; currentRevision: number };
+    expect(payload.code).toBe("stale-revision");
+    expect(payload.currentRevision).toBe(9);
+    const stored = await store.getDocument("doc_stale");
+    expect(stored?.revision).toBe(9);
+    expect(stored?.commandLog).toHaveLength(0);
+  });
+});
+
 describe("GET /api/sessions/:documentId/projection", () => {
   it("returns a path-free projection for a large persisted document", async () => {
     const bytes = readFileSync(
@@ -790,6 +965,23 @@ async function reopenExportedBytes(format: WebOfficeFormat, bytes: Uint8Array): 
       await PdfAgent.fromBuffer(bytes);
       return;
   }
+}
+
+async function blankBytes(format: WebOfficeFormat): Promise<Uint8Array> {
+  switch (format) {
+    case "docx":
+      return new Uint8Array(await (await DocxAgent.empty()).exportFile());
+    case "xlsx":
+      return new Uint8Array(await (await XlsxAgent.empty()).exportFile());
+    case "pptx":
+      return new Uint8Array(await (await PptxAgent.empty()).exportFile());
+    case "pdf":
+      return new Uint8Array(await (await PdfAgent.empty()).exportFile());
+  }
+}
+
+function revisionEtag(documentId: string, revision: number): string {
+  return `"officeai:${documentId}:${revision}"`;
 }
 
 async function seedReviewDocument(store: ReturnType<typeof createLocalSessionStore>): Promise<Buffer> {

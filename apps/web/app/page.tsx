@@ -16,6 +16,7 @@ import {
 import { Button, ThemeToggle } from "@officeai/ui";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
 import { openFile } from "@/lib/files/file-service";
+import { editorPathForFormat, sampleHrefForFormat } from "@/lib/sessions/editor-routing";
 import { SessionBrowser } from "./session-browser";
 
 type Kind = "docx" | "xlsx" | "pptx" | "pdf";
@@ -79,25 +80,25 @@ const KIND_META: Record<
   { editorPath: string; icon: typeof FileText; labelKey: string; accent: string }
 > = {
   docx: {
-    editorPath: "/editor",
+    editorPath: editorPathForFormat("docx"),
     icon: FileText,
     labelKey: "common.kindDocx",
     accent: "text-[var(--office-blue)]",
   },
   xlsx: {
-    editorPath: "/xlsx-editor",
+    editorPath: editorPathForFormat("xlsx"),
     icon: FileSpreadsheet,
     labelKey: "common.kindXlsx",
     accent: "text-emerald-600 dark:text-emerald-400",
   },
   pptx: {
-    editorPath: "/pptx-editor",
+    editorPath: editorPathForFormat("pptx"),
     icon: Presentation,
     labelKey: "common.kindPptx",
     accent: "text-orange-600 dark:text-orange-400",
   },
   pdf: {
-    editorPath: "/pdf-viewer",
+    editorPath: editorPathForFormat("pdf"),
     icon: BookOpen,
     labelKey: "common.kindPdf",
     accent: "text-rose-600 dark:text-rose-400",
@@ -117,9 +118,7 @@ function formatDate(iso: string, locale?: string): string {
 }
 
 function sampleHref(file: SampleFileEntry): string {
-  const meta = KIND_META[file.kind];
-  const params = new URLSearchParams({ src: file.url, name: file.name });
-  return `${meta.editorPath}?${params.toString()}`;
+  return sampleHrefForFormat({ format: file.kind, url: file.url, name: file.name });
 }
 
 export default function HomePage() {

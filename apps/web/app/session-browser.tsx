@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   Clock3,
   Database,
   FileArchive,
+  Info,
   Loader2,
   Plus,
   RefreshCw,
@@ -14,6 +16,7 @@ import {
 } from "@officeai/ui/sonaloop-icons";
 import { Button } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
+import { editorHrefForSessionDocument, inspectorHrefForDocumentId } from "@/lib/sessions/editor-routing";
 import { formatParityDiagnostics, formatParityFor } from "@/lib/sessions/format-parity";
 import {
   documentsForSession,
@@ -288,7 +291,7 @@ function DocumentRow({
           </span>
           <div className="min-w-0">
             <Link
-              href={`/sessions/${encodeURIComponent(document.documentId)}`}
+              href={editorHrefForSessionDocument(document)}
               className="block truncate text-sm font-medium text-foreground hover:underline"
             >
               {document.name}
@@ -296,7 +299,16 @@ function DocumentRow({
             <div className="text-xs text-tertiary">
               {t("home.revision")} {document.revision} · {formatDateTime(document.updatedAt, locale)}
             </div>
-            <div className="mt-0.5 text-xs text-tertiary">{parity.title}</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">
+              <span>{parity.title}</span>
+              <Link
+                href={inspectorHrefForDocumentId(document.documentId)}
+                className="inline-flex items-center gap-1 text-secondary hover:text-foreground"
+              >
+                <Info size={11} />
+                {t("sessionDetail.inspector")}
+              </Link>
+            </div>
           </div>
         </div>
       </td>
@@ -323,6 +335,14 @@ function DocumentRow({
         ) : (
           t("home.noDiagnostics")
         )}
+      </td>
+      <td className="px-3 py-2.5 text-right">
+        <Link href={editorHrefForSessionDocument(document)}>
+          <Button variant="secondary" size="sm">
+            {t("home.openInEditor")}
+            <ArrowRight size={14} className="ml-1.5" />
+          </Button>
+        </Link>
       </td>
     </tr>
   );

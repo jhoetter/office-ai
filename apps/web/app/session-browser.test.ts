@@ -4,6 +4,12 @@ import {
   sessionBrowserCounts,
   type WebSessionsPayload,
 } from "@/lib/sessions/web-sessions";
+import {
+  editorHrefForSessionDocument,
+  editorPathForFormat,
+  inspectorHrefForDocumentId,
+  sampleHrefForFormat,
+} from "@/lib/sessions/editor-routing";
 import { formatParityDiagnostics, formatParityFor } from "@/lib/sessions/format-parity";
 
 const payload: WebSessionsPayload = {
@@ -108,5 +114,26 @@ describe("session browser model", () => {
       level: "warning",
       code: "web-parity-pdf-review-only",
     });
+  });
+
+  it("routes workspace documents to their format editor and keeps inspector separate", () => {
+    expect(editorPathForFormat("docx")).toBe("/editor");
+    expect(editorPathForFormat("xlsx")).toBe("/xlsx-editor");
+    expect(editorPathForFormat("pptx")).toBe("/pptx-editor");
+    expect(editorPathForFormat("pdf")).toBe("/pdf-viewer");
+    expect(
+      editorHrefForSessionDocument({
+        documentId: "doc_1",
+        format: "docx",
+      })
+    ).toBe("/editor?session=doc_1");
+    expect(inspectorHrefForDocumentId("doc_1")).toBe("/sessions/doc_1");
+    expect(
+      sampleHrefForFormat({
+        format: "pdf",
+        url: "/sample-files/demo.pdf",
+        name: "demo.pdf",
+      })
+    ).toBe("/pdf-viewer?src=%2Fsample-files%2Fdemo.pdf&name=demo.pdf");
   });
 });

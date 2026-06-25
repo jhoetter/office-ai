@@ -6,12 +6,14 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Check,
   Clock3,
   Database,
   Download,
   FileArchive,
   History,
+  Info,
   Loader2,
   RefreshCw,
   Undo2,
@@ -20,6 +22,7 @@ import {
 import { Button, ThemeToggle } from "@officeai/ui";
 import { downloadBlob } from "@/lib/files/file-service";
 import { LocaleToggle, useTranslator } from "@/lib/i18n";
+import { editorHrefForSessionDocument } from "@/lib/sessions/editor-routing";
 import { formatParityDiagnostics, formatParityFor, type WebFormatParity } from "@/lib/sessions/format-parity";
 import type {
   WebCommandLogEntry,
@@ -169,10 +172,16 @@ function DocumentDetail({
       <section className="mt-10 flex flex-col gap-3 border-b border-divider pb-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex w-fit items-center gap-2 rounded-full border border-divider bg-surface px-2.5 py-1 text-xs font-medium uppercase text-secondary">
-            <FileArchive size={13} />
-            {document.format}
+            <Info size={13} />
+            {t("sessionDetail.inspector")} · {document.format}
           </div>
           <div className="flex items-center gap-2">
+            <Link href={editorHrefForSessionDocument(document)}>
+              <Button variant="primary" size="sm">
+                {t("sessionDetail.openInEditor")}
+                <ArrowRight size={14} className="ml-1.5" />
+              </Button>
+            </Link>
             <Button variant="secondary" size="sm" onClick={() => void exportDocument()} disabled={exporting}>
               {exporting ? (
                 <Loader2 size={14} className="mr-1.5 animate-spin" />
@@ -191,6 +200,7 @@ function DocumentDetail({
             </Button>
           </div>
         </div>
+        <p className="max-w-prose text-sm text-secondary">{t("sessionDetail.inspectorIntro")}</p>
         <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{document.name}</h1>
         {exportError ? (
           <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">

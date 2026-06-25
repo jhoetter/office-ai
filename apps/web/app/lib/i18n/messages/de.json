@@ -121,6 +121,7 @@
     "exports": "Exporte",
     "refresh": "Aktualisieren",
     "importDocument": "Dokument importieren",
+    "openInEditor": "Öffnen",
     "revision": "Rev.",
     "original": "Original",
     "created": "erstellt",
@@ -166,6 +167,9 @@
     "noCommandLog": "Keine Command-Aktivität erfasst.",
     "exportError": "Export fehlgeschlagen",
     "reviewError": "Review fehlgeschlagen",
+    "inspector": "Inspector",
+    "openInEditor": "Im Editor öffnen",
+    "inspectorIntro": "Diagnostics, Revisionsverlauf, Pending Changes und Export-Metadaten. Änderungen am Dokument laufen im Editor.",
     "source": "Quelle",
     "actor": "Actor",
     "diffAvailable": "Diff verfügbar",
@@ -174,6 +178,11 @@
     "rejectChange": "Ablehnen",
     "undoReview": "Review zurücknehmen",
     "rejection": "Ablehnung"
+  },
+  "sessionEditor": {
+    "loading": "Session wird geladen",
+    "loadError": "Session-Dokument konnte nicht geöffnet werden",
+    "openInspector": "Inspector öffnen"
   },
   "shell": {
     "openTooltip": "Öffnen",
