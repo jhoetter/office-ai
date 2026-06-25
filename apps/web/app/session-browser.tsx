@@ -6,24 +6,22 @@ import {
   AlertTriangle,
   ArrowRight,
   Clock3,
-  Copy,
   Database,
-  FileArchive,
-  Info,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
   Loader2,
-  Pencil,
   Plus,
+  Presentation,
   RefreshCw,
   Search,
-  Trash2,
   Upload,
 } from "@officeai/ui/sonaloop-icons";
-import { Button } from "@officeai/ui";
+import { Button, buttonVariants } from "@officeai/ui";
 import { useTranslator } from "@/lib/i18n";
-import { editorHrefForSessionDocument, inspectorHrefForDocumentId } from "@/lib/sessions/editor-routing";
-import { formatParityDiagnostics, formatParityFor } from "@/lib/sessions/format-parity";
+import { editorHrefForSessionDocument } from "@/lib/sessions/editor-routing";
 import {
-  documentsForSession,
   sessionBrowserCounts,
   type WebDocumentEntry,
   type WebOfficeFormat,
@@ -33,6 +31,22 @@ import {
 
 const CREATE_FORMATS: ReadonlyArray<WebOfficeFormat> = ["docx", "xlsx", "pptx", "pdf"];
 
+const FORMAT_ICON_BY_FORMAT = {
+  docx: FileText,
+  xlsx: FileSpreadsheet,
+  pptx: Presentation,
+  pdf: FileType2,
+  image: FileImage,
+} satisfies Record<WebOfficeFormat, typeof FileText>;
+
+const FORMAT_TONE_BY_FORMAT: Record<WebOfficeFormat, string> = {
+  docx: "bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-950/40 dark:text-blue-200 dark:border-blue-900/60",
+  xlsx: "bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900/60",
+  pptx: "bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900/60",
+  pdf: "bg-red-50 text-red-700 border-red-100 dark:bg-red-950/40 dark:text-red-200 dark:border-red-900/60",
+  image: "bg-sky-50 text-sky-700 border-sky-100 dark:bg-sky-950/40 dark:text-sky-200 dark:border-sky-900/60",
+};
+
 export function SessionBrowser() {
   const { t, locale } = useTranslator();
   const [payload, setPayload] = useState<WebSessionsPayload | null>(null);
@@ -41,7 +55,6 @@ export function SessionBrowser() {
   const [importing, setImporting] = useState(false);
   const [creatingFormat, setCreatingFormat] = useState<WebOfficeFormat | null>(null);
   const [query, setQuery] = useState("");
-  const [sessionAction, setSessionAction] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -69,9 +82,13 @@ export function SessionBrowser() {
   }, [refresh]);
 
   const counts = useMemo(() => (payload ? sessionBrowserCounts(payload) : null), [payload]);
-  const visiblePayload = useMemo(
-    () => (payload ? filterSessionsPayload(payload, query) : null),
+  const visibleDocuments = useMemo(
+    () => (payload ? filterDocuments(payload, query) : null),
     [payload, query]
+  );
+  const sessionById = useMemo(
+    () => new Map(payload?.sessions.map((session) => [session.sessionId, session]) ?? []),
+    [payload]
   );
   const importFile = useCallback(
     async (file: File) => {
@@ -130,47 +147,6 @@ export function SessionBrowser() {
     },
     [refresh]
   );
-  const runLifecycleAction = useCallback(
-    async (action: "rename" | "delete" | "duplicate", session: WebSessionEntry) => {
-      let title: string | undefined;
-      if (action === "rename") {
-        const nextTitle = window.prompt(t("home.renameSessionPrompt"), session.title);
-        if (nextTitle === null) return;
-        title = nextTitle.trim();
-        if (!title) return;
-      }
-      if (action === "duplicate") {
-        const nextTitle = window.prompt(t("home.duplicateSessionPrompt"), `${session.title} copy`);
-        if (nextTitle === null) return;
-        title = nextTitle.trim() || undefined;
-      }
-      if (action === "delete" && !window.confirm(t("home.deleteSessionConfirm", { title: session.title }))) {
-        return;
-      }
-      setSessionAction(`${action}:${session.sessionId}`);
-      setError(null);
-      try {
-        const res = await fetch("/api/sessions/lifecycle", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action, sessionId: session.sessionId, title }),
-        });
-        const data = (await res.json()) as { readonly message?: string };
-        if (!res.ok) {
-          throw new Error(
-            "message" in data && data.message ? data.message : `Session ${action} failed (${res.status})`
-          );
-        }
-        await refresh();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setSessionAction(null);
-      }
-    },
-    [refresh, t]
-  );
-
   return (
     <section className="mt-10">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -244,41 +220,39 @@ export function SessionBrowser() {
             <Loader2 size={14} className="animate-spin" />
             {t("home.workspaceLoading")}
           </div>
-        ) : payload && payload.sessions.length === 0 ? (
+        ) : payload && payload.documents.length === 0 ? (
           <div className="sl-empty sl-empty--no-results p-6 text-sm text-secondary">
             {t("home.workspaceEmpty")}
           </div>
-        ) : payload && counts && visiblePayload ? (
+        ) : payload && counts && visibleDocuments ? (
           <div>
-            <div className="grid grid-cols-2 border-b border-divider text-xs text-secondary sm:grid-cols-4">
-              <Metric label={t("home.sessions")} value={counts.sessions} />
-              <Metric label={t("home.documents")} value={counts.documents} />
-              <Metric label={t("home.pending")} value={counts.pending} />
-              <Metric label={t("home.diagnostics")} value={counts.diagnostics} />
-            </div>
             <div className="border-b border-divider p-3">
-              <label className="flex items-center gap-2 rounded-md border border-divider bg-background px-3 py-2 text-sm text-secondary">
-                <Search size={14} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.currentTarget.value)}
-                  placeholder={t("home.searchSessions")}
-                  className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-tertiary"
-                />
-              </label>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-divider bg-background px-3 py-2 text-sm text-secondary">
+                  <Search size={14} />
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.currentTarget.value)}
+                    placeholder={t("home.searchSessions")}
+                    className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-tertiary"
+                  />
+                </label>
+                <div className="text-xs text-tertiary">
+                  {counts.documents}{" "}
+                  {counts.documents === 1 ? t("home.workspaceDocument") : t("home.workspaceDocuments")}
+                </div>
+              </div>
             </div>
             <div className="divide-y divide-divider">
-              {visiblePayload.sessions.length === 0 ? (
+              {visibleDocuments.length === 0 ? (
                 <div className="p-6 text-sm text-secondary">{t("home.workspaceNoMatches")}</div>
               ) : (
-                visiblePayload.sessions.map((session) => (
-                  <SessionRow
-                    key={session.sessionId}
-                    session={session}
-                    documents={documentsForSession(visiblePayload, session.sessionId)}
+                visibleDocuments.map((document) => (
+                  <DocumentListRow
+                    key={document.documentId}
+                    document={document}
+                    session={sessionById.get(document.sessionId)}
                     locale={locale}
-                    busyAction={sessionAction}
-                    onLifecycleAction={runLifecycleAction}
                   />
                 ))
               )}
@@ -290,166 +264,65 @@ export function SessionBrowser() {
   );
 }
 
-function Metric({ label, value }: { readonly label: string; readonly value: number }) {
-  return (
-    <div className="px-4 py-3">
-      <div className="text-lg font-semibold text-foreground">{value}</div>
-      <div className="text-[11px] uppercase tracking-wide text-tertiary">{label}</div>
-    </div>
-  );
-}
-
-function SessionRow({
-  session,
-  documents,
-  locale,
-  busyAction,
-  onLifecycleAction,
-}: {
-  readonly session: WebSessionEntry;
-  readonly documents: ReadonlyArray<WebDocumentEntry>;
-  readonly locale?: string;
-  readonly busyAction: string | null;
-  readonly onLifecycleAction: (action: "rename" | "delete" | "duplicate", session: WebSessionEntry) => void;
-}) {
-  const { t } = useTranslator();
-  const isBusy = busyAction?.endsWith(`:${session.sessionId}`) ?? false;
-  return (
-    <div className="px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-sm font-medium text-foreground">{session.title}</div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-tertiary">
-            <Clock3 size={12} />
-            {formatDateTime(session.updatedAt, locale)}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="text-xs text-secondary">
-            {session.documentCount}{" "}
-            {session.documentCount === 1 ? t("home.workspaceDocument") : t("home.workspaceDocuments")}
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              title={t("common.rename")}
-              disabled={isBusy}
-              onClick={() => onLifecycleAction("rename", session)}
-            >
-              <Pencil size={14} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title={t("common.duplicate")}
-              disabled={isBusy}
-              onClick={() => onLifecycleAction("duplicate", session)}
-            >
-              <Copy size={14} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title={t("common.delete")}
-              disabled={isBusy}
-              onClick={() => onLifecycleAction("delete", session)}
-            >
-              {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-            </Button>
-          </div>
-        </div>
-      </div>
-      <div className="mt-3 overflow-hidden rounded-md border border-divider">
-        {documents.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-secondary">{t("home.workspaceNoDocuments")}</div>
-        ) : (
-          <table className="sl-table w-full text-sm">
-            <tbody>
-              {documents.map((document) => (
-                <DocumentRow key={document.documentId} document={document} locale={locale} />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DocumentRow({
+function DocumentListRow({
   document,
+  session,
   locale,
 }: {
   readonly document: WebDocumentEntry;
+  readonly session?: WebSessionEntry;
   readonly locale?: string;
 }) {
   const { t } = useTranslator();
-  const parity = formatParityFor(document.format);
-  const latestDiagnostic = document.diagnostics[0] ?? formatParityDiagnostics(document.format)[0];
+  const Icon = FORMAT_ICON_BY_FORMAT[document.format];
+  const diagnosticsLabel =
+    document.diagnostics.length > 0
+      ? `${document.diagnostics.length} ${
+          document.diagnostics.length === 1 ? t("home.diagnostic") : t("home.diagnostics")
+        }`
+      : null;
   return (
-    <tr className="border-b border-divider last:border-b-0">
-      <td className="px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="rounded border border-divider px-1.5 py-0.5 text-[11px] font-medium uppercase text-secondary">
-            {document.format}
-          </span>
-          <div className="min-w-0">
-            <Link
-              href={editorHrefForSessionDocument(document)}
-              className="block truncate text-sm font-medium text-foreground hover:underline"
-            >
-              {document.name}
-            </Link>
-            <div className="text-xs text-tertiary">
-              {t("home.revision")} {document.revision} · {formatDateTime(document.updatedAt, locale)}
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">
-              <span>{parity.title}</span>
-              <Link
-                href={inspectorHrefForDocumentId(document.documentId)}
-                className="inline-flex items-center gap-1 text-secondary hover:text-foreground"
-              >
-                <Info size={11} />
-                {t("sessionDetail.inspector")}
-              </Link>
-            </div>
-          </div>
-        </div>
-      </td>
-      <td className="hidden px-3 py-2.5 text-xs text-secondary md:table-cell">
-        <div className="flex items-center gap-1.5">
-          <FileArchive size={12} />
-          {document.artifacts.hasOriginal ? t("home.original") : t("home.created")} /{" "}
-          {document.artifacts.hasWorking ? t("home.working") : t("home.noWorking")}
-        </div>
-      </td>
-      <td className="px-3 py-2.5 text-right text-xs text-secondary">
-        <div>
-          {t("home.pending")}: {document.pendingChangeCount}
-        </div>
-        <div>
-          {t("home.exports")}: {document.exportCount}
-        </div>
-      </td>
-      <td className="hidden max-w-[220px] px-3 py-2.5 text-xs text-secondary lg:table-cell">
-        {latestDiagnostic ? (
-          <span className={latestDiagnostic.level === "error" ? "text-red-600 dark:text-red-400" : ""}>
-            {latestDiagnostic.code}
-          </span>
-        ) : (
-          t("home.noDiagnostics")
-        )}
-      </td>
-      <td className="px-3 py-2.5 text-right">
+    <div className="flex items-center gap-3 px-4 py-3">
+      <Link
+        href={editorHrefForSessionDocument(document)}
+        aria-hidden="true"
+        tabIndex={-1}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${FORMAT_TONE_BY_FORMAT[document.format]}`}
+      >
+        <Icon size={22} />
+      </Link>
+      <div className="min-w-0 flex-1">
         <Link href={editorHrefForSessionDocument(document)}>
-          <Button variant="secondary" size="sm">
-            {t("home.openInEditor")}
-            <ArrowRight size={14} className="ml-1.5" />
-          </Button>
+          <span className="block truncate text-sm font-medium text-foreground hover:underline">
+            {document.name}
+          </span>
         </Link>
-      </td>
-    </tr>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">
+          <span className="uppercase">{document.format}</span>
+          <span>
+            {t("home.revision")} {document.revision}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Clock3 size={11} />
+            {formatDateTime(document.updatedAt, locale)}
+          </span>
+          {session ? <span className="truncate">{session.title}</span> : null}
+          {document.pendingChangeCount > 0 ? (
+            <span>
+              {t("home.pending")}: {document.pendingChangeCount}
+            </span>
+          ) : null}
+          {diagnosticsLabel ? <span>{diagnosticsLabel}</span> : null}
+        </div>
+      </div>
+      <Link
+        href={editorHrefForSessionDocument(document)}
+        className={buttonVariants({ variant: "secondary", size: "sm", className: "shrink-0" })}
+      >
+        {t("home.openInEditor")}
+        <ArrowRight size={14} className="ml-1.5" />
+      </Link>
+    </div>
   );
 }
 
@@ -465,28 +338,22 @@ function formatDateTime(iso: string, locale?: string): string {
   });
 }
 
-function filterSessionsPayload(payload: WebSessionsPayload, query: string): WebSessionsPayload {
+function filterDocuments(payload: WebSessionsPayload, query: string): ReadonlyArray<WebDocumentEntry> {
   const needle = query.trim().toLowerCase();
-  if (!needle) return payload;
-  const documents = payload.documents.filter((document) =>
-    [document.name, document.format, document.status, document.documentId]
-      .join(" ")
-      .toLowerCase()
-      .includes(needle)
-  );
-  const matchingDocumentSessionIds = new Set(documents.map((document) => document.sessionId));
-  const sessions = payload.sessions.filter(
-    (session) =>
-      session.title.toLowerCase().includes(needle) ||
-      session.sessionId.toLowerCase().includes(needle) ||
-      matchingDocumentSessionIds.has(session.sessionId)
-  );
-  const sessionIds = new Set(sessions.map((session) => session.sessionId));
-  return {
-    ...payload,
-    sessions,
-    documents: payload.documents.filter(
-      (document) => sessionIds.has(document.sessionId) && (documents.includes(document) || needle.length > 0)
-    ),
-  };
+  const sessionById = new Map(payload.sessions.map((session) => [session.sessionId, session]));
+  const documents = needle
+    ? payload.documents.filter((document) =>
+        [
+          document.name,
+          document.format,
+          document.status,
+          document.documentId,
+          sessionById.get(document.sessionId)?.title ?? "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(needle)
+      )
+    : payload.documents;
+  return [...documents].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }

@@ -38,10 +38,10 @@ test("home page shows an empty local workspace state", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Local workspace" })).toBeVisible();
-  await expect(page.getByText("No local sessions yet")).toBeVisible();
+  await expect(page.getByText("No local documents yet")).toBeVisible();
 });
 
-test("home page lists local sessions, documents, pending changes and diagnostics", async ({ page }) => {
+test("home page lists local documents with workspace status", async ({ page }) => {
   let changeApproved = false;
   const sessionBytes = await mockSessionBytes(page, {
     documentId: "doc_1",
@@ -202,12 +202,11 @@ test("home page lists local sessions, documents, pending changes and diagnostics
 
   await page.goto("/");
 
-  await expect(page.getByText("MCP review")).toBeVisible();
+  await expect(page.getByText("MCP review")).toHaveCount(2);
   await expect(page.getByText("proposal.docx")).toBeVisible();
   await expect(page.getByText("appendix.pdf")).toBeVisible();
   await expect(page.getByText("Pending: 1")).toBeVisible();
-  await expect(page.getByText("command-pending")).toBeVisible();
-  await expect(page.getByText("web-parity-pdf-review-only")).toBeVisible();
+  await expect(page.getByText("1 Diagnostic")).toBeVisible();
 
   await page.getByRole("link", { name: "proposal.docx" }).click();
 
@@ -215,8 +214,7 @@ test("home page lists local sessions, documents, pending changes and diagnostics
   await expect(page.locator(".ProseMirror").first()).toBeVisible({ timeout: 20_000 });
   expect(sessionBytes.getCount()).toBeGreaterThan(0);
 
-  await page.goto("/");
-  await page.locator("tr", { hasText: "proposal.docx" }).getByRole("link", { name: "Inspector" }).click();
+  await page.goto("/sessions/doc_1");
 
   await expect(page.getByRole("heading", { name: "proposal.docx" })).toBeVisible();
   await expect(page.getByText("MCP review")).toBeVisible();
@@ -606,7 +604,7 @@ test("home page imports an uploaded document into the local workspace", async ({
   });
 
   await page.goto("/");
-  await expect(page.getByText("No local sessions yet")).toBeVisible();
+  await expect(page.getByText("No local documents yet")).toBeVisible();
 
   const chooserPromise = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Import document" }).click();
@@ -696,7 +694,7 @@ test("home page creates a persisted blank workspace document", async ({ page }) 
   });
 
   await page.goto("/");
-  await expect(page.getByText("No local sessions yet")).toBeVisible();
+  await expect(page.getByText("No local documents yet")).toBeVisible();
 
   await page.getByRole("button", { name: "DOCX" }).click();
 
