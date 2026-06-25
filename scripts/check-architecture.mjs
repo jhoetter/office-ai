@@ -14,7 +14,7 @@
  * Run via: `pnpm architecture` or `node scripts/check-architecture.mjs`.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
@@ -165,6 +165,55 @@ const FORBIDDEN_EXTERNAL_DEPS = {
   "@officeai/pdf-ocr": ["react", "react-dom", "next"],
 };
 
+const HOST_COUPLING_IMPORTS = [
+  "@officeai/web",
+  "@officeai/react-editors",
+  "@officeai/realtime-server",
+  "@modelcontextprotocol/sdk",
+  "next",
+  "react",
+  "react-dom",
+];
+
+const MODEL_PACKAGE_HOST_IMPORTS = HOST_COUPLING_IMPORTS.filter(
+  (specifier) => specifier !== "react" && specifier !== "react-dom"
+);
+
+const FORBIDDEN_SOURCE_IMPORTS = {
+  "@officeai/core": [
+    "@officeai/agent",
+    "@officeai/web",
+    "@officeai/react-editors",
+    "@officeai/realtime-server",
+    "@modelcontextprotocol/sdk",
+    "next",
+    "react",
+    "react-dom",
+  ],
+  "@officeai/docx": MODEL_PACKAGE_HOST_IMPORTS,
+  "@officeai/xlsx": HOST_COUPLING_IMPORTS,
+  "@officeai/pptx": MODEL_PACKAGE_HOST_IMPORTS,
+  "@officeai/pdf": HOST_COUPLING_IMPORTS,
+  "@officeai/pdf-engine": HOST_COUPLING_IMPORTS,
+  "@officeai/pdf-edit": HOST_COUPLING_IMPORTS,
+  "@officeai/pdf-annotations": HOST_COUPLING_IMPORTS,
+  "@officeai/pdf-forms": HOST_COUPLING_IMPORTS,
+  "@officeai/pdf-ocr": HOST_COUPLING_IMPORTS,
+  "@officeai/agent": [
+    "@officeai/web",
+    "@officeai/react-editors",
+    "@officeai/realtime-server",
+    "next",
+    "react",
+    "react-dom",
+  ],
+};
+
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const SKIPPED_SOURCE_DIRS = new Set(["node_modules", "dist", ".next", "coverage", ".turbo"]);
+const IMPORT_SPECIFIER_RE =
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|require\s*\(\s*["']([^"']+)["']\s*\)/g;
+
 function tryReadPkg(pkgDir) {
   const pkgJsonPath = join(pkgDir, "package.json");
   try {
@@ -212,6 +261,46 @@ function relPath(p) {
   return p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p;
 }
 
+function walkSourceFiles(dir, out = []) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    if (SKIPPED_SOURCE_DIRS.has(entry)) continue;
+    const path = join(dir, entry);
+    let st;
+    try {
+      st = statSync(path);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      walkSourceFiles(path, out);
+      continue;
+    }
+    if (st.isFile() && SOURCE_EXTENSIONS.has(extname(entry))) out.push(path);
+  }
+  return out;
+}
+
+function sourceImportSpecifiers(file) {
+  const text = readFileSync(file, "utf8");
+  const specs = [];
+  IMPORT_SPECIFIER_RE.lastIndex = 0;
+  let match;
+  while ((match = IMPORT_SPECIFIER_RE.exec(text))) {
+    specs.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return specs;
+}
+
+function matchesForbiddenSourceImport(specifier, forbidden) {
+  return specifier === forbidden || specifier.startsWith(`${forbidden}/`);
+}
+
 function main() {
   const pkgs = discoverPackages();
   const knownInternal = new Set(pkgs.map((p) => p.name));
@@ -248,6 +337,23 @@ function main() {
           file: relPath(join(dir, "package.json")),
           message: `Banned external dependency: "${name}" must not depend on "${dep}" (architectural boundary).`,
         });
+      }
+    }
+
+    const forbiddenSourceImports = FORBIDDEN_SOURCE_IMPORTS[name] ?? [];
+    if (forbiddenSourceImports.length > 0) {
+      for (const file of walkSourceFiles(dir)) {
+        for (const specifier of sourceImportSpecifiers(file)) {
+          const forbiddenImport = forbiddenSourceImports.find((candidate) =>
+            matchesForbiddenSourceImport(specifier, candidate)
+          );
+          if (!forbiddenImport) continue;
+          violations.push({
+            package: name,
+            file: relPath(file),
+            message: `Forbidden source import: "${name}" must not import "${specifier}". Host integrations belong behind the core adapter ports, not inside this package.`,
+          });
+        }
       }
     }
   }

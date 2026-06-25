@@ -59,11 +59,12 @@ writers without changing the file contract.
 
 ## Storage adapter boundary
 
-`LocalSessionStore` is backed by a `SessionStorageAdapter` port. The
-default implementation is `LocalFilesystemSessionStorageAdapter`, which
-maps the store to the data-dir layout above. Tests and future
-integrations can pass their own adapter through
-`new LocalSessionStore({ storage })`.
+`LocalSessionStore` is backed by a `SessionStorageAdapter` port, which
+implements the generic `OfficeAiStorageAdapter` contract from
+`@officeai/core/integration-adapters`. The default implementation is
+`LocalFilesystemSessionStorageAdapter`, which maps the store to the
+data-dir layout above. Tests and future integrations can pass their own
+adapter through `new LocalSessionStore({ storage })`.
 
 The adapter contract covers the storage primitives the session layer
 needs:

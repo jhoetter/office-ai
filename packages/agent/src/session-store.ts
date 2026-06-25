@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import type {
+  OfficeAiStorageAdapter,
+  OfficeAiStorageCapabilities,
+  OfficeAiStorageRemoveOptions,
+} from "@officeai/core";
 
 export const DATA_DIR_SCHEMA_VERSION = 1;
 export const SESSION_RECORD_SCHEMA_VERSION = 1;
@@ -108,31 +113,9 @@ export interface StoredDocumentRecord {
 
 export type SessionStorageOperation = "ensure-dir" | "list" | "exists" | "read" | "write" | "copy" | "remove";
 
-export interface SessionStorageCapabilities {
-  readonly atomicWrite: boolean;
-  readonly localPaths: boolean;
-  readonly locks: "advisory" | "none";
-  readonly watch: boolean;
-}
-
-export interface SessionStorageRemoveOptions {
-  readonly recursive?: boolean;
-  readonly force?: boolean;
-}
-
-export interface SessionStorageAdapter {
-  readonly kind: string;
-  readonly root: string;
-  readonly capabilities: SessionStorageCapabilities;
-  join(...segments: ReadonlyArray<string>): string;
-  ensureDir(path: string): Promise<void>;
-  list(path: string): Promise<ReadonlyArray<string>>;
-  exists(path: string): Promise<boolean>;
-  readBytes(path: string): Promise<Uint8Array>;
-  writeBytesAtomic(path: string, bytes: Uint8Array | Buffer): Promise<void>;
-  copyFromLocalFile(sourcePath: string, targetPath: string): Promise<void>;
-  remove(path: string, opts?: SessionStorageRemoveOptions): Promise<void>;
-}
+export type SessionStorageCapabilities = OfficeAiStorageCapabilities;
+export type SessionStorageRemoveOptions = OfficeAiStorageRemoveOptions;
+export interface SessionStorageAdapter extends OfficeAiStorageAdapter {}
 
 export interface LocalSessionStoreOptions {
   readonly dataDir?: string;

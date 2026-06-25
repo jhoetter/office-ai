@@ -1,4 +1,5 @@
 export * from "./types/document.js";
+export * from "./integration-adapters.js";
 export * from "./util/ids.js";
 export * from "./util/hash.js";
 export { encodePng, type PngEncodeArgs } from "./util/png.js";

@@ -22,6 +22,10 @@
     "./actions": {
       "types": "./dist/actions/index.d.ts",
       "import": "./dist/actions/index.js"
+    },
+    "./integration-adapters": {
+      "types": "./dist/integration-adapters.d.ts",
+      "import": "./dist/integration-adapters.js"
     }
   },
   "files": [
