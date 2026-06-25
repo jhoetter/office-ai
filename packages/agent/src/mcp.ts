@@ -13,7 +13,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -107,12 +107,39 @@ interface McpDiagnostic {
 interface ExportRecord {
   readonly path: string;
   readonly bytes: number;
+  readonly sha256?: string;
   readonly exportedAt: string;
+}
+
+interface AssetHandoffEnvelope {
+  readonly schema: "office-ai/asset-handoff@1";
+  readonly assetId: string;
+  readonly role: "document-export" | "export-diagnostics";
+  readonly status: "ready" | "failed";
+  readonly path: string;
+  readonly format: OfficeFormat | "json";
+  readonly mediaType: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly createdAt: string;
+  readonly source: {
+    readonly documentId: string;
+    readonly sessionId: string;
+    readonly documentName: string;
+    readonly revision: number;
+  };
+  readonly commandHistory: {
+    readonly commandIds: ReadonlyArray<string>;
+  };
+  readonly diagnostics: ReadonlyArray<CommandDiagnostic>;
+  readonly metadata?: Record<string, unknown>;
 }
 
 interface DocumentExportResult {
   readonly exported: ExportRecord;
   readonly diagnostics: ReadonlyArray<CommandDiagnostic>;
+  readonly asset: AssetHandoffEnvelope;
+  readonly diagnosticsAsset?: AssetHandoffEnvelope;
 }
 
 interface SessionRecord {
@@ -1735,7 +1762,7 @@ type WritablePdfExportMode = Exclude<PdfExportMode, "diagnosticOnly">;
 async function exportDocument(
   record: DocumentRecord,
   outPath?: string,
-  opts: { readonly pdfExportMode?: WritablePdfExportMode } = {}
+  opts: { readonly pdfExportMode?: WritablePdfExportMode; readonly diagnosticsOutPath?: string } = {}
 ): Promise<DocumentExportResult> {
   const target = outPath ? resolve(outPath) : record.sourcePath;
   if (!target) {
@@ -1777,9 +1804,52 @@ async function exportDocument(
     ...(pdfExport ? pdfExportPlanDiagnostics(pdfExport.plan) : []),
   ];
   const bytes = Buffer.from(pdfExport?.bytes ?? (await currentDocumentBytes(record)));
+  const sha256 = sha256Hex(bytes);
+  const exportedAt = nowIso();
 
   await writeFile(target, bytes);
-  const exported: ExportRecord = { path: target, bytes: bytes.byteLength, exportedAt: nowIso() };
+  const exported: ExportRecord = { path: target, bytes: bytes.byteLength, sha256, exportedAt };
+  const asset = exportAssetEnvelope({
+    record,
+    role: "document-export",
+    path: target,
+    format: record.format,
+    mediaType: mediaTypeForFormat(record.format),
+    bytes: bytes.byteLength,
+    sha256,
+    createdAt: exportedAt,
+    commandIds: commandBasis,
+    diagnostics,
+  });
+  let diagnosticsAsset: AssetHandoffEnvelope | undefined;
+  if (opts.diagnosticsOutPath) {
+    const diagnosticsTarget = resolve(opts.diagnosticsOutPath);
+    const diagnosticsBytes = Buffer.from(
+      JSON.stringify(
+        {
+          schema: "office-ai/export-diagnostics@1",
+          exportAsset: asset,
+          diagnostics,
+        },
+        null,
+        2
+      )
+    );
+    await writeFile(diagnosticsTarget, diagnosticsBytes);
+    diagnosticsAsset = exportAssetEnvelope({
+      record,
+      role: "export-diagnostics",
+      path: diagnosticsTarget,
+      format: "json",
+      mediaType: "application/json",
+      bytes: diagnosticsBytes.byteLength,
+      sha256: sha256Hex(diagnosticsBytes),
+      createdAt: exportedAt,
+      commandIds: commandBasis,
+      diagnostics,
+      metadata: { describesAssetId: asset.assetId },
+    });
+  }
   record.exportHistory.push(exported);
   record.updatedAt = exported.exportedAt;
   record.diagnostics = diagnostics;
@@ -1801,7 +1871,64 @@ async function exportDocument(
       },
     }),
   });
-  return { exported, diagnostics };
+  return { exported, diagnostics, asset, ...(diagnosticsAsset ? { diagnosticsAsset } : {}) };
+}
+
+function exportAssetEnvelope(args: {
+  readonly record: DocumentRecord;
+  readonly role: AssetHandoffEnvelope["role"];
+  readonly path: string;
+  readonly format: AssetHandoffEnvelope["format"];
+  readonly mediaType: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly createdAt: string;
+  readonly commandIds: ReadonlyArray<string>;
+  readonly diagnostics: ReadonlyArray<CommandDiagnostic>;
+  readonly metadata?: Record<string, unknown>;
+}): AssetHandoffEnvelope {
+  return {
+    schema: "office-ai/asset-handoff@1",
+    assetId: `asset_${randomUUID()}`,
+    role: args.role,
+    status: args.diagnostics.some(
+      (diagnostic) => diagnostic.level === "error" || diagnostic.level === "destructive"
+    )
+      ? "failed"
+      : "ready",
+    path: args.path,
+    format: args.format,
+    mediaType: args.mediaType,
+    bytes: args.bytes,
+    sha256: args.sha256,
+    createdAt: args.createdAt,
+    source: {
+      documentId: args.record.id,
+      sessionId: args.record.sessionId,
+      documentName: args.record.name,
+      revision: revisionFor(args.record),
+    },
+    commandHistory: { commandIds: args.commandIds },
+    diagnostics: args.diagnostics,
+    ...(args.metadata ? { metadata: args.metadata } : {}),
+  };
+}
+
+function sha256Hex(bytes: Uint8Array | Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function mediaTypeForFormat(format: OfficeFormat): string {
+  switch (format) {
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    case "pdf":
+      return "application/pdf";
+  }
 }
 
 async function recordCommandBasis(record: DocumentRecord): Promise<string[]> {
@@ -3344,6 +3471,10 @@ function registerSessionDocumentTools(server: McpServer): void {
           .string()
           .optional()
           .describe("Optional output path. Required for documents created without a source path."),
+        diagnostics_out_path: z
+          .string()
+          .optional()
+          .describe("Optional path for a JSON diagnostics asset envelope written next to the export."),
         pdf_export_mode: z
           .enum(["auto", "incremental", "rewrite"])
           .optional()
@@ -3352,16 +3483,19 @@ function registerSessionDocumentTools(server: McpServer): void {
           ),
       },
     },
-    async ({ document_id, out_path, pdf_export_mode }) => {
+    async ({ document_id, out_path, diagnostics_out_path, pdf_export_mode }) => {
       try {
         const record = await ensureDocumentLoaded(document_id);
-        const { exported, diagnostics } = await exportDocument(record, out_path, {
+        const { exported, diagnostics, asset, diagnosticsAsset } = await exportDocument(record, out_path, {
           ...(pdf_export_mode ? { pdfExportMode: pdf_export_mode as WritablePdfExportMode } : {}),
+          ...(diagnostics_out_path ? { diagnosticsOutPath: diagnostics_out_path } : {}),
         });
         return ok({
           schema: "office-ai/export-document@1",
           document: documentEnvelope(record),
           exported,
+          asset,
+          ...(diagnosticsAsset ? { diagnosticsAsset } : {}),
           diagnostics,
           dataDir: localSessionStore().dataDir,
           nextActions: ["get_document", "get_document_projection"],

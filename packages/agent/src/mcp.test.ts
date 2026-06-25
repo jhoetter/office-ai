@@ -381,10 +381,34 @@ describe("OfficeAI MCP server", () => {
       const exported = structured(
         await client.callTool({
           name: "export_document",
-          arguments: { document_id: document.documentId, out_path: join(tmp, entry.out) },
+          arguments: {
+            document_id: document.documentId,
+            out_path: join(tmp, entry.out),
+            diagnostics_out_path: join(tmp, `${entry.out}.diagnostics.json`),
+          },
         })
       );
       expect((exported.exported as { bytes?: number }).bytes ?? 0).toBeGreaterThan(0);
+      expect((exported.exported as { sha256?: string }).sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(exported.asset).toMatchObject({
+        schema: "office-ai/asset-handoff@1",
+        role: "document-export",
+        status: "ready",
+        format: entry.format,
+        source: { documentId: document.documentId },
+      });
+      expect((exported.asset as { sha256?: string }).sha256).toBe(
+        (exported.exported as { sha256?: string }).sha256
+      );
+      expect(exported.diagnosticsAsset).toMatchObject({
+        schema: "office-ai/asset-handoff@1",
+        role: "export-diagnostics",
+        format: "json",
+        mediaType: "application/json",
+      });
+      const diagnosticsPayload = JSON.parse(readFileSync(join(tmp, `${entry.out}.diagnostics.json`), "utf8"));
+      expect(diagnosticsPayload.schema).toBe("office-ai/export-diagnostics@1");
+      expect(diagnosticsPayload.exportAsset.sha256).toBe((exported.asset as { sha256: string }).sha256);
       expect(
         (exported.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)
       ).toContain("export-command-basis");

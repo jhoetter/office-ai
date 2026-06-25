@@ -38,6 +38,10 @@ new `documentId` as their matching legacy handle.
    - writes a real Office/PDF file.
    - defaults to the original import path when available; otherwise pass
      `out_path`.
+   - returns an `office-ai/asset-handoff@1` envelope with local path,
+     media type, SHA-256 hash, source document, command history and
+     diagnostics. Pass `diagnostics_out_path` to also write a JSON
+     diagnostics asset.
 
 ## Envelope shape
 
@@ -99,9 +103,18 @@ apply_command({ "command_id": "..." })
 
 export_document({
   "document_id": "doc_...",
-  "out_path": "/workspace/output/report.docx"
+  "out_path": "/workspace/output/report.docx",
+  "diagnostics_out_path": "/workspace/output/report.diagnostics.json"
 })
-→ { "exported": { "path": "/workspace/output/report.docx", "bytes": 12345 } }
+→ {
+  "exported": {
+    "path": "/workspace/output/report.docx",
+    "bytes": 12345,
+    "sha256": "..."
+  },
+  "asset": { "schema": "office-ai/asset-handoff@1", "role": "document-export" },
+  "diagnosticsAsset": { "schema": "office-ai/asset-handoff@1", "role": "export-diagnostics" }
+}
 ```
 
 ## Store
