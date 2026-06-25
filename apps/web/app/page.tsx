@@ -178,8 +178,8 @@ export default function HomePage() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-full max-w-content flex-col px-6 py-10">
-      <header className="flex items-center justify-between">
+    <main className="sl-app-main mx-auto flex min-h-full max-w-content flex-col px-6 py-10">
+      <header className="sl-app-topbar flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="h-6 w-6 rounded-md bg-[var(--office-blue)]" aria-hidden />
           <span className="font-semibold tracking-tight">{t("common.appName")}</span>
@@ -191,7 +191,7 @@ export default function HomePage() {
       </header>
 
       <section className="mt-12 flex flex-col gap-2">
-        <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-[var(--ai-violet-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--ai-violet)]">
+        <span className="sl-badge sl-badge--accent inline-flex w-fit items-center gap-1.5 rounded-full bg-[var(--ai-violet-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--ai-violet)]">
           <Sparkles size={12} />
           {t("home.badge")}
         </span>
@@ -212,7 +212,7 @@ export default function HomePage() {
               <Link
                 key={action.id}
                 href={action.href}
-                className="group flex items-center gap-3 rounded-lg border border-divider bg-surface p-4 transition hover:border-[var(--office-blue)] hover:shadow-sm"
+                className="sl-card group flex items-center gap-3 rounded-lg border border-divider bg-surface p-4 transition hover:border-[var(--office-blue)] hover:shadow-sm"
               >
                 <div className="flex h-10 w-10 items-center justify-center rounded-md bg-hover">
                   <Icon size={20} className={action.accent} />
@@ -229,7 +229,7 @@ export default function HomePage() {
             type="button"
             onClick={handleOpenPdf}
             disabled={openingPdf}
-            className="group flex items-center gap-3 rounded-lg border border-divider bg-surface p-4 text-left transition hover:border-[var(--office-blue)] hover:shadow-sm disabled:cursor-progress disabled:opacity-70"
+            className="sl-card group flex items-center gap-3 rounded-lg border border-divider bg-surface p-4 text-left transition hover:border-[var(--office-blue)] hover:shadow-sm disabled:cursor-progress disabled:opacity-70"
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-md bg-hover">
               {openingPdf ? (
@@ -266,16 +266,16 @@ export default function HomePage() {
         </div>
 
         {error ? (
-          <div className="rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
+          <div className="sl-empty sl-empty--error rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
             {t("home.loadError")}: {error}
           </div>
         ) : files === null ? (
-          <div className="flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
+          <div className="sl-card flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
             <Loader2 size={14} className="animate-spin" />
             {t("home.listing")}
           </div>
         ) : files.length === 0 ? (
-          <div className="rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
+          <div className="sl-empty sl-empty--no-results rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
             {t("home.noSamplesLong")}
           </div>
         ) : (
@@ -293,8 +293,8 @@ export default function HomePage() {
 function SampleFileTable({ files }: { files: ReadonlyArray<SampleFileEntry> }) {
   const { t, locale } = useTranslator();
   return (
-    <div className="overflow-hidden rounded-lg border border-divider bg-surface">
-      <table className="w-full text-sm">
+    <div className="sl-card overflow-hidden rounded-lg border border-divider bg-surface p-0">
+      <table className="sl-table w-full text-sm">
         <thead>
           <tr className="border-b border-divider text-left text-xs uppercase tracking-wide text-tertiary">
             <th className="px-4 py-2 font-medium">{t("home.tableName")}</th>

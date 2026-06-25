@@ -61,8 +61,8 @@ export function DocumentSessionPage({ documentId }: { readonly documentId: strin
   }, [refresh]);
 
   return (
-    <main className="mx-auto flex min-h-full max-w-content flex-col px-6 py-10">
-      <header className="flex items-center justify-between gap-3">
+    <main className="sl-app-main mx-auto flex min-h-full max-w-content flex-col px-6 py-10">
+      <header className="sl-app-topbar flex items-center justify-between gap-3">
         <Link
           href="/"
           className="inline-flex items-center gap-2 text-sm text-secondary hover:text-foreground"
@@ -77,12 +77,12 @@ export function DocumentSessionPage({ documentId }: { readonly documentId: strin
       </header>
 
       {error ? (
-        <div className="mt-10 flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
+        <div className="sl-empty sl-empty--error mt-10 flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
           <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400" />
           {t("sessionDetail.loadError")}: {error}
         </div>
       ) : loading && payload === null ? (
-        <div className="mt-10 flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
+        <div className="sl-card mt-10 flex items-center gap-2 rounded-lg border border-divider bg-surface p-6 text-sm text-secondary">
           <Loader2 size={14} className="animate-spin" />
           {t("sessionDetail.loading")}
         </div>
@@ -171,7 +171,7 @@ function DocumentDetail({
     <>
       <section className="mt-10 flex flex-col gap-3 border-b border-divider pb-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-divider bg-surface px-2.5 py-1 text-xs font-medium uppercase text-secondary">
+          <div className="sl-badge inline-flex w-fit items-center gap-2 rounded-full border border-divider bg-surface px-2.5 py-1 text-xs font-medium uppercase text-secondary">
             <Info size={13} />
             {t("sessionDetail.inspector")} · {document.format}
           </div>
@@ -220,7 +220,7 @@ function DocumentDetail({
         </div>
       </section>
 
-      <section className="mt-6 grid grid-cols-2 overflow-hidden rounded-lg border border-divider bg-surface text-sm sm:grid-cols-5">
+      <section className="sl-card mt-6 grid grid-cols-2 overflow-hidden rounded-lg border border-divider bg-surface p-0 text-sm sm:grid-cols-5">
         <Metric label={t("home.revision")} value={document.revision} />
         <Metric label={t("home.pending")} value={document.pendingChangeCount} />
         <Metric label={t("home.diagnostics")} value={document.diagnostics.length} />
@@ -330,12 +330,12 @@ function Panel({
   readonly children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-divider bg-surface p-4">
-      <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-tertiary">
+    <section className="sl-app-inspector rounded-lg border border-divider bg-surface">
+      <h2 className="sl-app-inspector__header mb-0 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-tertiary">
         {icon}
         {title}
       </h2>
-      {children}
+      <div className="sl-app-inspector__body">{children}</div>
     </section>
   );
 }
@@ -343,7 +343,7 @@ function Panel({
 function ArtifactState({ label, available }: { readonly label: string; readonly available: boolean }) {
   const { t } = useTranslator();
   return (
-    <div className="rounded-md border border-divider px-3 py-2">
+    <div className="sl-card rounded-md border border-divider px-3 py-2">
       <div className="text-xs uppercase tracking-wide text-tertiary">{label}</div>
       <div className={available ? "mt-1 text-sm font-medium text-foreground" : "mt-1 text-sm text-secondary"}>
         {available ? t("sessionDetail.available") : t("sessionDetail.missing")}

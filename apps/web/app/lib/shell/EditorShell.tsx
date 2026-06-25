@@ -194,7 +194,7 @@ export function EditorShell({
 
   return (
     <div
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground"
+      className="sl-app-main flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground"
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -234,7 +234,9 @@ export function EditorShell({
         // groups row (48 px) for a 76 px total. We let the slot
         // shrink to its content (legacy single-row toolbars still
         // collapse to 40 px) while shrink-0 keeps the body anchored.
-        <div className="shrink-0 border-b border-divider bg-background">{toolbar}</div>
+        <div className="oa-editor-toolbar sl-app-editor__toolbar shrink-0 border-b border-divider bg-background">
+          {toolbar}
+        </div>
       ) : null}
 
       <div className="relative flex min-h-0 min-w-0 flex-1">

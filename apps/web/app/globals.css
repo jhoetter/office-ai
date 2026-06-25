@@ -92,6 +92,17 @@
   --radius-2xl: var(--sl-radius-lg);
 }
 
+.oa-editor-toolbar.sl-app-editor__toolbar {
+  min-height: auto;
+  display: block;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  border-bottom: 1px solid var(--divider);
+  background: var(--background);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Office font aliases.
  *

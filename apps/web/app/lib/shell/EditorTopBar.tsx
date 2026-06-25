@@ -80,7 +80,10 @@ export function EditorTopBar({
   const backClassName =
     "inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-sm text-secondary hover:bg-hover hover:text-foreground";
   return (
-    <header className="flex h-11 items-center gap-2 border-b border-divider bg-background px-3" role="banner">
+    <header
+      className="sl-app-topbar flex h-11 items-center gap-2 border-b border-divider bg-background px-3"
+      role="banner"
+    >
       {onBack ? (
         <button
           type="button"

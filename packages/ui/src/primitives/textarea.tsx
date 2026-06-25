@@ -9,16 +9,16 @@ export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
 const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, label, error, id, ...props }, ref) => {
     return (
-      <div className="flex flex-col gap-1.5">
+      <div className={cn("sl-field flex flex-col gap-1.5", error && "sl-field--invalid")}>
         {label && (
-          <label htmlFor={id} className="text-sm font-medium text-foreground">
+          <label htmlFor={id} className="sl-field__label text-sm font-medium text-foreground">
             {label}
           </label>
         )}
         <textarea
           id={id}
           className={cn(
-            "flex min-h-[80px] w-full rounded-md border border-divider bg-surface px-3 py-2 text-sm text-foreground transition-colors duration-150 resize-none",
+            "sl-textarea flex min-h-[80px] w-full rounded-md border border-divider bg-surface px-3 py-2 text-sm text-foreground transition-colors duration-150 resize-none",
             "placeholder:text-tertiary",
             "hover:border-tertiary",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/40 focus-visible:border-[var(--accent)]",
@@ -29,7 +29,7 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           {...props}
         />
-        {error && <p className="text-xs text-error">{error}</p>}
+        {error && <p className="sl-field__error text-xs text-error">{error}</p>}
       </div>
     );
   }
