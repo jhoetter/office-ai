@@ -82,6 +82,7 @@ office-ai/
 ```bash
 make install         # install workspace deps
 make doctor          # check local runtime prerequisites and repair hints
+make smoke-local-install  # fresh-checkout smoke for CLI, MCP stdio and Web
 make dev             # Next.js editor host on :3100, realtime on :1234
 make dev-forwarded   # tunnel-friendly ports :23003 and :21234
 make dev-forwarded-fugu  # Fugu ports :63003 and :61234
@@ -100,6 +101,9 @@ Canonical MCP sessions persist locally under `$XDG_DATA_HOME/office-ai`
 or `~/.local/share/office-ai`. Set `OFFICEAI_DATA_DIR` to isolate one
 workspace/test run; see
 [`docs/session-store-data-dir.md`](docs/session-store-data-dir.md).
+For a full local installation walkthrough, including MCP host
+registration examples and the fresh-checkout smoke, see
+[`docs/local-app-quickstart.md`](docs/local-app-quickstart.md).
 The same store is available from the CLI:
 
 ```bash

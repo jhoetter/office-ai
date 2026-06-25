@@ -5,7 +5,7 @@
 # runs. Pass it locally before pushing.
 # ============================================
 
-.PHONY: help install doctor dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions scorecard fixtures-check roundtrip-gate \
+.PHONY: help install doctor smoke-local-install dev dev-forwarded dev-forwarded-fugu dev-realtime kill-ports build lint lint-root lint-web format format-check architecture actions scorecard fixtures-check roundtrip-gate \
         typecheck test test-docx test-xlsx test-pptx test-core test-web verify ci precommit \
         clean cli fixtures fixtures-real fixtures-xlsx fixtures-pptx fixtures-pptx-real \
         roundtrip-libre roundtrip-libre-docx roundtrip-libre-xlsx roundtrip-libre-pptx \
@@ -65,6 +65,8 @@ help:
 	@echo ""
 	@echo "  install        Install all dependencies"
 	@echo "  doctor         Check local runtime prerequisites for MCP, Web, CLI and heavy gates"
+	@echo "  smoke-local-install"
+	@echo "                 Fresh-checkout smoke: doctor, CLI session import/export, MCP stdio, Web HTTP 200 + screenshot"
 	@echo "  dev            Start the Next.js editor host (port \$$PORT, default 3100)"
 	@echo "  dev-forwarded  Start web/realtime on tunnel-friendly ports $(FORWARDED_PORT)/$(FORWARDED_RT_PORT)"
 	@echo "  dev-forwarded-fugu"
@@ -131,6 +133,10 @@ install:
 doctor:
 	pnpm --filter @officeai/agent build
 	node packages/agent/dist/cli.js doctor
+
+smoke-local-install: doctor
+	pnpm --filter @officeai/web build
+	node scripts/local-install-smoke.mjs
 
 # `make dev` must build the workspace packages first, otherwise Next.js
 # loads STALE `dist/` artifacts for @officeai/{core,docx,xlsx,pptx} —

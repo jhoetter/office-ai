@@ -13,6 +13,7 @@
     "test": "turbo test",
     "test:coverage": "turbo run test -- --coverage",
     "clean": "turbo clean && rm -rf node_modules",
+    "smoke:local-install": "pnpm --filter @officeai/agent build && pnpm --filter @officeai/web build && node scripts/local-install-smoke.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "architecture": "node scripts/check-architecture.mjs",
