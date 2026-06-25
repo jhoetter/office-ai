@@ -97,7 +97,11 @@ describe("pdfjs backend rotation", () => {
     const page = await doc.getPage(1);
     viewportCalls.length = 0; // ignore the construction-time getViewport().
 
-    const first = page.render({ canvas: makeStubCanvas() as unknown as HTMLCanvasElement, scale: 2, rotation: 90 });
+    const first = page.render({
+      canvas: makeStubCanvas() as unknown as HTMLCanvasElement,
+      scale: 2,
+      rotation: 90,
+    });
     await waitForRenderTaskCount(1);
     renderTasks[0]?.resolve();
     await first;

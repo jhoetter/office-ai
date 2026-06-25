@@ -1,0 +1,10 @@
+{
+  "schema": "office-ai/example-screenshot-plan@1",
+  "targets": [
+    {
+      "name": "xlsx-cloud-mount",
+      "path": "/",
+      "output": "examples/_generated/sonaloop-cloud-mount-spike/screenshots/xlsx-cloud-mount.png"
+    }
+  ]
+}

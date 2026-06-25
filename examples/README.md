@@ -16,12 +16,13 @@ under `examples/_generated/` and are intentionally not committed.
 
 ## Examples
 
-| Example                                                  | Proves                                                                                  |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [`mcp-web-review-export`](mcp-web-review-export)         | MCP imports a DOCX, queues a pending mutation, the web editor reviews it, export works. |
-| [`sonaloop-deliverable-demo`](sonaloop-deliverable-demo) | A Sonaloop-style synthesis becomes DOCX/PPTX/XLSX deliverables with provenance.         |
-| [`pdf-diagnostics`](pdf-diagnostics)                     | Unsupported/high-risk PDF features produce diagnostics instead of silent success.       |
-| [`cli-wrapper-roundtrip`](cli-wrapper-roundtrip)         | CLI wrappers read and export small DOCX/XLSX/PPTX/PDF fixtures through local sessions.  |
+| Example                                                    | Proves                                                                                   |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [`mcp-web-review-export`](mcp-web-review-export)           | MCP imports a DOCX, queues a pending mutation, the web editor reviews it, export works.  |
+| [`sonaloop-deliverable-demo`](sonaloop-deliverable-demo)   | A Sonaloop-style synthesis becomes DOCX/PPTX/XLSX deliverables with provenance.          |
+| [`sonaloop-cloud-mount-spike`](sonaloop-cloud-mount-spike) | A native host React island opens XLSX bytes through presigned GET and saves through PUT. |
+| [`pdf-diagnostics`](pdf-diagnostics)                       | Unsupported/high-risk PDF features produce diagnostics instead of silent success.        |
+| [`cli-wrapper-roundtrip`](cli-wrapper-roundtrip)           | CLI wrappers read and export small DOCX/XLSX/PPTX/PDF fixtures through local sessions.   |
 
 ## Web screenshots
 

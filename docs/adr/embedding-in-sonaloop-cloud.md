@@ -59,7 +59,10 @@ Use the **hybrid path**:
 
 ## Follow-up tickets
 
-- `sonaloop-cloud-mount-spike`
+- `sonaloop-cloud-mount-spike` — completed as
+  `examples/sonaloop-cloud-mount-spike` plus `pnpm spike:cloud-mount`;
+  a direct cloud-repo mount still needs a React asset pipeline in
+  `sonaloop-cloud`.
 - `dependency-budget-gate`
 - `per-format-lazy-loading`
 - `session-bytes-load-endpoint`

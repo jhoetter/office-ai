@@ -1,0 +1,37 @@
+{
+  "schema": "office-ai/example-manifest@1",
+  "id": "sonaloop-cloud-mount-spike",
+  "title": "Sonaloop Cloud native editor mount spike",
+  "whatThisProves": [
+    "A host React surface can mount @officeai/react-editors/components/xlsx without an iframe.",
+    "The host can load OOXML bytes through a presigned GET and save edited bytes through a presigned PUT.",
+    "The editor remains host-themed and cloud-owned: storage, identity and revision handling stay outside office-ai."
+  ],
+  "inputs": [
+    {
+      "role": "cloud-object-bytes",
+      "format": "xlsx",
+      "path": "fixtures/xlsx/synthetic/01-single-sheet-numbers.xlsx"
+    }
+  ],
+  "web": {
+    "requiresDevServer": true,
+    "screenshotPlan": "web-screenshot-plan.json"
+  },
+  "expectedOutputs": [
+    {
+      "role": "saved-cloud-object",
+      "format": "xlsx",
+      "path": "examples/_generated/sonaloop-cloud-mount-spike/revenue-model.saved.xlsx"
+    },
+    {
+      "role": "web-screenshot",
+      "format": "png",
+      "path": "examples/_generated/sonaloop-cloud-mount-spike/screenshots/xlsx-cloud-mount.png"
+    }
+  ],
+  "tags": ["embedding", "sonaloop-cloud", "xlsx", "react-editor", "presigned-storage"],
+  "smoke": {
+    "checkedBy": "pnpm spike:cloud-mount"
+  }
+}
