@@ -774,6 +774,12 @@ describe("OfficeAI MCP server", () => {
           kind: "image",
           uri: "sonaloop://asset/prototype-screenshot",
         },
+        {
+          id: "asset-local",
+          title: "Local-only screenshot",
+          kind: "image",
+          path: "/private/team/screenshots/local-only.png",
+        },
       ],
     };
 
@@ -791,6 +797,7 @@ describe("OfficeAI MCP server", () => {
           payload,
           target_formats: ["docx", "pptx", "xlsx"],
           template_id: "research_report",
+          citation_mode: "appendix",
           brand: { name: "Care Ops", accentColor: "2F6F73" },
           actor_id: "sonaloop-demo",
         },
@@ -810,6 +817,9 @@ describe("OfficeAI MCP server", () => {
     expect((created.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toContain(
       "deliverable-provenance"
     );
+    expect((created.diagnostics as Array<{ code: string }>).map((diagnostic) => diagnostic.code)).toContain(
+      "citation-local-path-omitted"
+    );
 
     const docx = documents.find((doc) => doc.format === "docx");
     const pptx = documents.find((doc) => doc.format === "pptx");
@@ -825,6 +835,9 @@ describe("OfficeAI MCP server", () => {
     expect(JSON.stringify(docxProjection)).toContain("Care team scheduling synthesis");
     expect(JSON.stringify(docxProjection)).toContain("Care Ops");
     expect(JSON.stringify(docxProjection)).toContain("Managers need a reviewable artifact");
+    expect(JSON.stringify(docxProjection)).toContain("Citation appendix");
+    expect(JSON.stringify(docxProjection)).toContain("[local path omitted]");
+    expect(JSON.stringify(docxProjection)).not.toContain("/private/team");
 
     const pptxProjection = structured(
       await client.callTool({
@@ -843,6 +856,7 @@ describe("OfficeAI MCP server", () => {
     );
     expect(JSON.stringify(xlsxProjection)).toContain("Priority matrix");
     expect(JSON.stringify(xlsxProjection)).toContain("Spreadsheet handoff");
+    expect(JSON.stringify(xlsxProjection)).toContain("citation");
 
     const activity = structured(
       await client.callTool({
@@ -852,7 +866,13 @@ describe("OfficeAI MCP server", () => {
     );
     const operations = (activity.activity as Array<{ operation: string }>).map((entry) => entry.operation);
     expect(operations).toEqual(
-      expect.arrayContaining(["docx:insert-text", "pptx:add-slide", "pptx:set-text", "xlsx:set-range-values"])
+      expect.arrayContaining([
+        "docx:insert-text",
+        "pptx:add-slide",
+        "pptx:set-text",
+        "pptx:set-slide-notes",
+        "xlsx:set-range-values",
+      ])
     );
 
     for (const document of documents) {

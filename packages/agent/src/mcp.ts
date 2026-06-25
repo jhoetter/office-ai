@@ -244,11 +244,20 @@ const deliverableTemplateIdSchema = z.enum([
   "analysis_workbook",
   "pdf_review_handoff",
 ]);
+const citationModeSchema = z.enum(["appendix", "metadata", "none"]);
 
 type SynthesisPayload = z.infer<typeof synthesisPayloadSchema>;
 type SynthesisBrand = z.infer<typeof synthesisBrandSchema>;
 type DeliverableTargetFormat = z.infer<typeof deliverableTargetFormatSchema>;
 type DeliverableTemplateId = z.infer<typeof deliverableTemplateIdSchema>;
+type CitationMode = z.infer<typeof citationModeSchema>;
+
+interface SynthesisCitation {
+  readonly id: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly source?: string;
+}
 
 interface DeliverableTemplate {
   readonly id: DeliverableTemplateId;
@@ -1946,6 +1955,7 @@ async function buildDeliverablesFromSynthesis(args: {
   readonly payload: SynthesisPayload;
   readonly targetFormats: ReadonlyArray<DeliverableTargetFormat>;
   readonly templateId?: DeliverableTemplateId;
+  readonly citationMode?: CitationMode;
   readonly brand?: SynthesisBrand;
   readonly name?: string;
   readonly actorId?: string;
@@ -1962,6 +1972,7 @@ async function buildDeliverablesFromSynthesis(args: {
             args.payload,
             template,
             diagnostics,
+            args.citationMode ?? "appendix",
             args.brand,
             args.name,
             args.actorId
@@ -1972,6 +1983,7 @@ async function buildDeliverablesFromSynthesis(args: {
               args.payload,
               template,
               diagnostics,
+              args.citationMode ?? "appendix",
               args.brand,
               args.name,
               args.actorId
@@ -1981,6 +1993,7 @@ async function buildDeliverablesFromSynthesis(args: {
               args.payload,
               template,
               diagnostics,
+              args.citationMode ?? "appendix",
               args.brand,
               args.name,
               args.actorId
@@ -1997,6 +2010,7 @@ async function buildDocxSynthesisDeliverable(
   payload: SynthesisPayload,
   template: DeliverableTemplate,
   templateDiagnostics: ReadonlyArray<McpDiagnostic>,
+  citationMode: CitationMode,
   brand?: SynthesisBrand,
   name?: string,
   actorId?: string
@@ -2033,7 +2047,7 @@ async function buildDocxSynthesisDeliverable(
     provenance.push({ format: "docx", paragraph: targetParagraph, ...source });
   };
 
-  for (const paragraph of synthesisReportParagraphs(payload, brand)) {
+  for (const paragraph of synthesisReportParagraphs(payload, brand, citationMode)) {
     await appendParagraph(paragraph.text, paragraph.source);
   }
 
@@ -2042,7 +2056,7 @@ async function buildDocxSynthesisDeliverable(
     sessionId,
     format: "docx",
     name: deliverableName(name, payload.title, "docx"),
-    diagnostics: deliverableDiagnostics(payload, template, brand, templateDiagnostics),
+    diagnostics: deliverableDiagnostics(payload, template, brand, citationMode, templateDiagnostics),
   });
   await persistDeliverableDocument(record, mutations);
   return { record, mutations, provenance, template };
@@ -2053,6 +2067,7 @@ async function buildXlsxSynthesisDeliverable(
   payload: SynthesisPayload,
   template: DeliverableTemplate,
   templateDiagnostics: ReadonlyArray<McpDiagnostic>,
+  citationMode: CitationMode,
   brand?: SynthesisBrand,
   name?: string,
   actorId?: string
@@ -2073,7 +2088,7 @@ async function buildXlsxSynthesisDeliverable(
   approveDeliverableMutation(agent, rename);
   mutations.push(rename);
 
-  const rows = synthesisWorkbookRows(payload, provenance, brand);
+  const rows = synthesisWorkbookRows(payload, provenance, brand, citationMode);
   const width = Math.max(...rows.map((row) => row.length));
   const range = `A1:${xlsxColumnName(width)}${rows.length}`;
   const fill = (await agent.applyCommand({
@@ -2095,7 +2110,7 @@ async function buildXlsxSynthesisDeliverable(
     sessionId,
     format: "xlsx",
     name: deliverableName(name, payload.title, "xlsx"),
-    diagnostics: deliverableDiagnostics(payload, template, brand, templateDiagnostics),
+    diagnostics: deliverableDiagnostics(payload, template, brand, citationMode, templateDiagnostics),
   });
   await persistDeliverableDocument(record, mutations);
   return { record, mutations, provenance, template };
@@ -2106,6 +2121,7 @@ async function buildPptxSynthesisDeliverable(
   payload: SynthesisPayload,
   template: DeliverableTemplate,
   templateDiagnostics: ReadonlyArray<McpDiagnostic>,
+  citationMode: CitationMode,
   brand?: SynthesisBrand,
   name?: string,
   actorId?: string
@@ -2146,6 +2162,12 @@ async function buildPptxSynthesisDeliverable(
       "body",
       bodyLines.filter((line) => line.trim().length > 0).join("\n")
     );
+    if (citationMode !== "none") {
+      const notes = citationNotesForSource(payload, String(source.sourceKind ?? ""));
+      if (notes) {
+        await applyPptxCommand("pptx:set-slide-notes", { slideIndex, text: notes });
+      }
+    }
     provenance.push({ format: "pptx", slide: Math.max(0, slideIndex - 1), ...source });
   };
 
@@ -2195,7 +2217,9 @@ async function buildPptxSynthesisDeliverable(
           .slice(0, 4)
           .map(
             (asset) =>
-              `${asset.title ?? asset.id ?? "Asset"}${asset.kind ? ` (${asset.kind})` : ""}: ${asset.uri ?? asset.path ?? "no uri"}`
+              `${asset.title ?? asset.id ?? "Asset"}${asset.kind ? ` (${asset.kind})` : ""}: ${
+                publicCitationRef(asset.uri ?? asset.path) ?? "no uri"
+              }`
           ),
       ],
       { sourceKind: "artifacts" }
@@ -2211,7 +2235,7 @@ async function buildPptxSynthesisDeliverable(
     sessionId,
     format: "pptx",
     name: deliverableName(name, payload.title, "pptx"),
-    diagnostics: deliverableDiagnostics(payload, template, brand, [
+    diagnostics: deliverableDiagnostics(payload, template, brand, citationMode, [
       ...templateDiagnostics,
       ...runtimeDiagnostics,
     ]),
@@ -2308,6 +2332,7 @@ function deliverableDiagnostics(
   payload: SynthesisPayload,
   template: DeliverableTemplate,
   brand: SynthesisBrand | undefined,
+  citationMode: CitationMode,
   extraDiagnostics: ReadonlyArray<McpDiagnostic>
 ): McpDiagnostic[] {
   return [
@@ -2337,6 +2362,7 @@ function deliverableDiagnostics(
         ]
       : []),
     ...templateSlotDiagnostics(payload, template, brand),
+    ...(citationMode === "none" ? [] : citationDiagnostics(payload)),
   ];
 }
 
@@ -2436,9 +2462,119 @@ function templateSlotHasValue(slot: string, payload: SynthesisPayload, brand?: S
   }
 }
 
+function synthesisCitations(payload: SynthesisPayload): ReadonlyArray<SynthesisCitation> {
+  const citations: SynthesisCitation[] = [];
+  for (const section of payload.sections ?? []) {
+    citations.push({
+      id: section.id ?? section.title,
+      kind: "section",
+      label: section.title,
+    });
+  }
+  for (const finding of payload.findings ?? []) {
+    citations.push({
+      id: finding.id ?? finding.title ?? finding.text.slice(0, 40),
+      kind: "finding",
+      label: finding.title ?? finding.text.slice(0, 80),
+      source: finding.evidence?.map(publicCitationRef).join("; "),
+    });
+  }
+  for (const quote of payload.quotes ?? []) {
+    citations.push({
+      id: quote.id ?? quote.text.slice(0, 40),
+      kind: "quote",
+      label: quote.speaker ?? quote.text.slice(0, 80),
+      source: publicCitationRef(quote.source ?? quote.citation),
+    });
+  }
+  for (const table of payload.tables ?? []) {
+    citations.push({
+      id: table.id ?? table.title ?? "table",
+      kind: "table",
+      label: table.title ?? table.id ?? "Table",
+    });
+  }
+  for (const asset of payload.assets ?? []) {
+    citations.push({
+      id: asset.id ?? asset.title ?? asset.uri ?? "asset",
+      kind: "asset",
+      label: asset.title ?? asset.id ?? "Asset",
+      source: publicCitationRef(asset.uri ?? asset.path),
+    });
+  }
+  return citations;
+}
+
+function citationDiagnostics(payload: SynthesisPayload): McpDiagnostic[] {
+  const diagnostics: McpDiagnostic[] = [];
+  for (const citation of synthesisCitations(payload)) {
+    if (!citation.source) {
+      diagnostics.push({
+        level: "warning",
+        code: "citation-source-missing",
+        message: `${citation.kind} "${citation.id}" has no explicit source reference.`,
+      });
+    }
+  }
+  for (const asset of payload.assets ?? []) {
+    if (asset.path && isLocalPathLike(asset.path)) {
+      diagnostics.push({
+        level: "info",
+        code: "citation-local-path-omitted",
+        message: `Local path for asset "${asset.id ?? asset.title ?? "asset"}" was omitted from document citations.`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+function publicCitationRef(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (isLocalPathLike(value)) return "[local path omitted]";
+  return value;
+}
+
+function isLocalPathLike(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("~");
+}
+
+function citationAppendixParagraphs(payload: SynthesisPayload): ReadonlyArray<{
+  readonly text: string;
+  readonly source: Record<string, unknown>;
+}> {
+  const citations = synthesisCitations(payload);
+  if (citations.length === 0) return [];
+  return [
+    { text: "Citation appendix", source: { sourceKind: "citation-heading" } },
+    ...citations.map((citation, index) => ({
+      text: `[${index + 1}] ${citation.kind} ${citation.id}: ${citation.source ?? "source missing"}`,
+      source: { sourceKind: "citation", sourceId: citation.id },
+    })),
+  ];
+}
+
+function citationNotesForSource(payload: SynthesisPayload, sourceKind: string): string {
+  const citations = synthesisCitations(payload).filter((citation) => {
+    if (sourceKind === "findings") return citation.kind === "finding";
+    if (sourceKind === "quotes") return citation.kind === "quote";
+    if (sourceKind === "artifacts") return citation.kind === "table" || citation.kind === "asset";
+    if (sourceKind === "summary") return citation.kind === "section";
+    return sourceKind === "title";
+  });
+  if (citations.length === 0) return "";
+  return [
+    "OfficeAI provenance",
+    ...citations.map(
+      (citation, index) =>
+        `[${index + 1}] ${citation.kind} ${citation.id}: ${citation.source ?? "source missing"}`
+    ),
+  ].join("\n");
+}
+
 function synthesisReportParagraphs(
   payload: SynthesisPayload,
-  brand?: SynthesisBrand
+  brand: SynthesisBrand | undefined,
+  citationMode: CitationMode
 ): ReadonlyArray<{ readonly text: string; readonly source: Record<string, unknown> }> {
   const paragraphs: Array<{ text: string; source: Record<string, unknown> }> = [
     { text: payload.title, source: { sourceKind: "title" } },
@@ -2507,10 +2643,16 @@ function synthesisReportParagraphs(
     paragraphs.push({ text: "Asset references", source: { sourceKind: "heading", sourceId: "assets" } });
     for (const asset of payload.assets ?? []) {
       paragraphs.push({
-        text: `${asset.title ?? asset.id ?? "Asset"}${asset.kind ? ` (${asset.kind})` : ""}: ${asset.uri ?? asset.path ?? "no uri"}`,
+        text: `${asset.title ?? asset.id ?? "Asset"}${asset.kind ? ` (${asset.kind})` : ""}: ${
+          publicCitationRef(asset.uri ?? asset.path) ?? "no uri"
+        }`,
         source: { sourceKind: "asset", sourceId: asset.id ?? asset.title ?? asset.uri ?? "asset" },
       });
     }
+  }
+
+  if (citationMode === "appendix") {
+    paragraphs.push(...citationAppendixParagraphs(payload));
   }
 
   return paragraphs;
@@ -2519,7 +2661,8 @@ function synthesisReportParagraphs(
 function synthesisWorkbookRows(
   payload: SynthesisPayload,
   provenance: Array<Record<string, unknown>>,
-  brand?: SynthesisBrand
+  brand: SynthesisBrand | undefined,
+  citationMode: CitationMode
 ): ReadonlyArray<ReadonlyArray<string | number | boolean>> {
   const rows: Array<Array<string | number | boolean>> = [
     ["kind", "id", "title_or_speaker", "text_or_value", "source"],
@@ -2569,7 +2712,24 @@ function synthesisWorkbookRows(
     });
   }
   for (const asset of payload.assets ?? []) {
-    rows.push(["asset", asset.id ?? "", asset.title ?? "", asset.uri ?? asset.path ?? "", asset.kind ?? ""]);
+    rows.push([
+      "asset",
+      asset.id ?? "",
+      asset.title ?? "",
+      publicCitationRef(asset.uri ?? asset.path) ?? "",
+      asset.kind ?? "",
+    ]);
+  }
+  if (citationMode !== "none") {
+    for (const citation of synthesisCitations(payload)) {
+      rows.push([
+        "citation",
+        citation.id,
+        citation.kind,
+        citation.source ?? "source missing",
+        citation.label,
+      ]);
+    }
   }
   rows.forEach((row, index) => {
     if (index === 0) return;
@@ -3318,6 +3478,9 @@ function registerSessionDocumentTools(server: McpServer): void {
           .describe(
             "Optional template id. If it does not match a requested format, the format default is used."
           ),
+        citation_mode: citationModeSchema
+          .optional()
+          .describe("How provenance is embedded: appendix (default), metadata, or none."),
         brand: synthesisBrandSchema
           .optional()
           .describe("Optional brand/style parameters passed as data: name, accentColor, logoAssetId."),
@@ -3328,16 +3491,18 @@ function registerSessionDocumentTools(server: McpServer): void {
         actor_id: z.string().optional().describe("Optional actor id recorded on generated commands."),
       },
     },
-    async ({ session_id, payload, target_formats, template_id, brand, name, actor_id }) => {
+    async ({ session_id, payload, target_formats, template_id, citation_mode, brand, name, actor_id }) => {
       try {
         const parsedPayload = synthesisPayloadSchema.parse(payload);
         const parsedBrand = brand ? synthesisBrandSchema.parse(brand) : undefined;
+        const parsedCitationMode = citation_mode ? citationModeSchema.parse(citation_mode) : "appendix";
         const formats = (target_formats?.length ? target_formats : ["docx"]) as DeliverableTargetFormat[];
         const results = await buildDeliverablesFromSynthesis({
           ...(session_id ? { sessionId: session_id } : {}),
           payload: parsedPayload,
           targetFormats: formats,
           ...(template_id ? { templateId: template_id as DeliverableTemplateId } : {}),
+          citationMode: parsedCitationMode,
           ...(parsedBrand ? { brand: parsedBrand } : {}),
           ...(name ? { name } : {}),
           ...(actor_id ? { actorId: actor_id } : {}),
@@ -3352,6 +3517,7 @@ function registerSessionDocumentTools(server: McpServer): void {
             tables: "Array<{ id?, title?, columns, rows }>",
             assets: "Array<{ id?, title?, kind?, uri?, path? }>",
           },
+          citationMode: parsedCitationMode,
           sessionId: results[0]?.record.sessionId,
           documents: results.map((result) => documentEnvelope(result.record)),
           templates: results.map((result) => ({

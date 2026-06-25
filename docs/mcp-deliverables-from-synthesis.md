@@ -18,6 +18,7 @@ Input:
   "session_id": "session_...",
   "target_formats": ["docx", "pptx", "xlsx"],
   "template_id": "research_report",
+  "citation_mode": "appendix",
   "brand": { "name": "Care Ops", "accentColor": "2F6F73" },
   "name": "care-team-synthesis",
   "actor_id": "sonaloop-demo",
@@ -56,6 +57,18 @@ diagnostic. The catalogue also includes `pdf_review_handoff` as a
 handoff-only contract for existing PDFs; PDF creation from synthesis
 text remains intentionally inactive until native PDF text-page authoring
 exists.
+
+`citation_mode` controls how provenance appears:
+
+- `appendix` (default): visible DOCX citation appendix, PPTX speaker
+  notes and XLSX citation rows.
+- `metadata`: citation diagnostics/provenance stay in the MCP response
+  without visible appendix content.
+- `none`: no citation embedding.
+
+Local filesystem paths in asset references are replaced with
+`[local path omitted]` before they reach generated customer-facing
+content.
 
 The tool returns:
 
