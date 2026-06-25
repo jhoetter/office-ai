@@ -1,5 +1,5 @@
 export { resolveRealtimeUrl, roomIdForSource, readExplicitRoomFromUrl } from "./config";
-export { createRoomClient, type RoomClient, type ProductKind } from "./RoomClient";
+export type { RoomClient, ProductKind } from "./RoomClient";
 export { useRealtimeRoom, type RealtimeRoomState, type UseRealtimeRoomOptions } from "./useRealtimeRoom";
 export {
   useCommandBroadcast,

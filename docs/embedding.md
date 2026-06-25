@@ -101,6 +101,42 @@ shameful-hoist step in `.github/workflows/auto-release.yml` puts them
 at the consumer's deploy root (required for Vite's
 `resolve.preserveSymlinks: true`).
 
+### Bundle budgets
+
+The embeddable editor package has a hard budget gate:
+
+```bash
+pnpm bundle:budget
+```
+
+The gate rebuilds `@officeai/react-editors`, traces each
+`dist/components/<format>.js` static import graph, measures raw and
+gzip size, and checks the external heavy-lib allowlist. It is part of
+`pnpm verify`.
+
+Current per-format ceilings:
+
+| Editor | Raw static graph | Gzip static graph |
+| ------ | ---------------- | ----------------- |
+| DOCX   | 1.10 MB          | 230 KB            |
+| XLSX   | 1.35 MB          | 270 KB            |
+| PPTX   | 1.10 MB          | 230 KB            |
+| PDF    | 820 KB           | 180 KB            |
+
+Allowed heavy direct dependencies:
+
+| Dependency           | Reason                                                      |
+| -------------------- | ----------------------------------------------------------- |
+| `jszip`              | OOXML zip container read/write across DOCX/XLSX/PPTX.       |
+| `pdfjs-dist`         | PDF parser/renderer; only allowed in the PDF editor graph.  |
+| `prosemirror-*`      | DOCX rich-text editor model/state/view dependencies.        |
+| `yjs`, `y-websocket` | Optional realtime collaboration transport and shared state. |
+
+Realtime is lazy: `yjs` and `y-websocket` must not appear in any
+static editor graph. The budget gate allows them only in the dynamic
+`RoomClient-*` chunk loaded by `useRealtimeRoom` when a host supplies
+an active realtime room.
+
 ## Versioning
 
 The package version is bumped in lockstep with `@officeai/agent` by

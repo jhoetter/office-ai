@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AwarenessState } from "@officeai/realtime";
-import { createRoomClient, type ProductKind, type RoomClient } from "./RoomClient";
+import type { ProductKind, RoomClient } from "./RoomClient";
 import { resolveRealtimeUrl } from "./config";
 
 export interface UseRealtimeRoomOptions {
@@ -63,40 +63,64 @@ export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState
       setPeers([]);
       return;
     }
-    const url = resolveRealtimeUrl();
-    const client = createRoomClient({
-      url,
-      roomId,
-      product,
-      ...(identityId && identityName
-        ? {
-            identity: {
-              id: identityId,
-              name: identityName,
-              ...(identityColor ? { color: identityColor } : {}),
-            },
-          }
-        : {}),
-    });
-    ref.current = client;
-    setRoom(client);
     setStatus("connecting");
+    setRoom(null);
+    setPeers([]);
 
-    const unsubStatus = client.onStatus((s) => setStatus(s));
-    const unsubAwareness = client.onAwareness(() => {
-      setPeers(client.getRemoteStates());
-    });
-    setPeers(client.getRemoteStates());
+    let cancelled = false;
+    let client: RoomClient | null = null;
+    let teardown: (() => void) | null = null;
+
+    void import("./RoomClient")
+      .then(({ createRoomClient }) => {
+        if (cancelled) return;
+        const url = resolveRealtimeUrl();
+        client = createRoomClient({
+          url,
+          roomId,
+          product,
+          ...(identityId && identityName
+            ? {
+                identity: {
+                  id: identityId,
+                  name: identityName,
+                  ...(identityColor ? { color: identityColor } : {}),
+                },
+              }
+            : {}),
+        });
+        ref.current = client;
+        setRoom(client);
+
+        const unsubStatus = client.onStatus((s) => setStatus(s));
+        const unsubAwareness = client.onAwareness(() => {
+          setPeers(client?.getRemoteStates() ?? []);
+        });
+        setPeers(client.getRemoteStates());
+
+        teardown = () => {
+          unsubStatus();
+          unsubAwareness();
+          try {
+            client?.destroy();
+          } catch {
+            /* noop */
+          }
+          if (ref.current === client) ref.current = null;
+          client = null;
+        };
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.warn("[realtime] failed to load realtime room client:", err);
+        setRoom(null);
+        setStatus("disconnected");
+        setPeers([]);
+      });
 
     return () => {
-      unsubStatus();
-      unsubAwareness();
-      try {
-        client.destroy();
-      } catch {
-        /* noop */
-      }
-      if (ref.current === client) ref.current = null;
+      cancelled = true;
+      teardown?.();
       setRoom(null);
       setStatus("disabled");
       setPeers([]);
