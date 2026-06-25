@@ -170,6 +170,48 @@ describe("mountDocxEditor — from-bus projection metadata", () => {
   });
 });
 
+describe("mountDocxEditor — pending command mirrors", () => {
+  it("flushPendingCommands waits for async ProseMirror-to-bus mirrors", async () => {
+    const agent = await loadAgent();
+    const originalApplyCommands = agent.applyCommands.bind(agent);
+    let releaseMirror!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseMirror = resolve;
+    });
+    vi.spyOn(agent, "applyCommands").mockImplementation(async (commands) => {
+      await gate;
+      return originalApplyCommands(commands);
+    });
+
+    const mount = mountDocxEditor(host, { agent });
+    try {
+      mount.view.dispatch(mount.view.state.tr.insertText("X", 1));
+
+      let flushed = false;
+      const flush = mount.flushPendingCommands().then(() => {
+        flushed = true;
+      });
+      await Promise.resolve();
+      expect(flushed).toBe(false);
+
+      releaseMirror();
+      await flush;
+
+      const paragraph = agent.getSnapshot().root.body[0] as Paragraph;
+      let text = "";
+      for (const inline of paragraph.children) {
+        if (inline.kind !== "run") continue;
+        for (const child of inline.children) {
+          if (child.kind === "text") text += child.text;
+        }
+      }
+      expect(text).toContain("X");
+    } finally {
+      mount.destroy();
+    }
+  });
+});
+
 describe("mountDocxEditor — drift guard: unsupported transactions don't mutate the PM doc", () => {
   it("a transaction whose steps map to zero commands leaves the PM doc unchanged and pings onUnsupported", async () => {
     const agent = await loadAgent();

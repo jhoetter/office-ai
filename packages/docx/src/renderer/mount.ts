@@ -60,6 +60,7 @@ export interface MountOptions {
 export interface MountResult {
   view: EditorView;
   destroy: () => void;
+  flushPendingCommands: () => Promise<void>;
   /**
    * Update the live edit mode without rebuilding the editor. The
    * mount creates this once and the React layer flips it whenever
@@ -102,6 +103,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
   // (not a boolean) because handlers run synchronously inside
   // `applyCommands`, so subscribe fires once per command.
   let pendingFunnelCount = 0;
+  const pendingCommandMirrors = new Set<Promise<unknown>>();
   let isProjecting = false;
   // When the funnel routes input through the tracked-changes commands
   // (`<w:ins>`/`<w:del>` wrappers) we deliberately skip PM's optimistic
@@ -117,6 +119,17 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
   // re-mounting the view (which would clobber selection / scroll).
   let editMode: "edit" | "suggest" | "view" = opts.editMode ?? "edit";
   let trackedAuthor: string = opts.trackedAuthor ?? "";
+
+  const trackPendingMirror = (promise: Promise<unknown>): void => {
+    pendingCommandMirrors.add(promise);
+    promise.finally(() => pendingCommandMirrors.delete(promise));
+  };
+
+  const flushPendingCommands = async (): Promise<void> => {
+    while (pendingCommandMirrors.size > 0) {
+      await Promise.allSettled([...pendingCommandMirrors]);
+    }
+  };
 
   const view = new EditorView(target, {
     state,
@@ -189,10 +202,11 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
         // the snapshot-driven re-projection so the marks land in one
         // step. Otherwise the user briefly sees plain text, then the
         // re-projection swaps it for the marked variant.
-        void agent.applyCommands(result.commands).catch((err) => {
+        const pending = agent.applyCommands(result.commands).catch((err) => {
           pendingTrackedSelection = null;
           opts.onError?.(err);
         });
+        trackPendingMirror(pending);
         return;
       }
 
@@ -203,12 +217,13 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       // preserved).
       view.updateState(before.apply(tx));
       pendingFunnelCount += result.commands.length;
-      void agent.applyCommands(result.commands).catch((err) => {
+      const pending = agent.applyCommands(result.commands).catch((err) => {
         // Make sure we don't leak the suppression count if the
         // bus rejected our commands.
         pendingFunnelCount = Math.max(0, pendingFunnelCount - result.commands.length);
         opts.onError?.(err);
       });
+      trackPendingMirror(pending);
     },
   });
 
@@ -269,6 +284,7 @@ export function mountDocxEditor(target: Element, opts: MountOptions): MountResul
       unsubscribe();
       view.destroy();
     },
+    flushPendingCommands,
     setEditMode(nextMode, nextAuthor) {
       editMode = nextMode;
       if (typeof nextAuthor === "string") trackedAuthor = nextAuthor;

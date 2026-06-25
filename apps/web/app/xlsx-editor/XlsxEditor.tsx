@@ -106,6 +106,7 @@ import {
   readExplicitRoomFromUrl,
   RemotePresenceList,
   roomIdForSource,
+  shouldReplayExistingCommandsForRoom,
   useCommandBroadcast,
   usePublishPresence,
   useRealtimeRoom,
@@ -4584,6 +4585,7 @@ function XlsxEditorInner({
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "xlsx",
+    replayExistingCommands: shouldReplayExistingCommandsForRoom(roomOverride),
     ...(presenceUser
       ? {
           identity: {

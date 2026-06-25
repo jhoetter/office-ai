@@ -39,6 +39,7 @@ export interface RoomClientOptions {
    *             via the same FNV-1a palette used for anonymous peers.
    */
   readonly identity?: { readonly id: string; readonly name: string; readonly color?: string };
+  readonly replayExistingCommands?: boolean;
 }
 
 export interface RoomClient {
@@ -119,14 +120,19 @@ class RoomClientImpl implements RoomClient {
   private readonly statusListeners = new Set<(s: "disconnected" | "connecting" | "connected") => void>();
   private readonly commandListeners = new Set<(command: CommandLite, env: CommandEnvelope) => void>();
   private readonly awarenessListeners = new Set<() => void>();
+  private readonly replayExistingCommands: boolean;
+  private initialCommandSyncComplete: boolean;
   private seq = 0;
   private destroyed = false;
   private readonly observeFn: (event: Y.YArrayEvent<unknown>) => void;
   private readonly statusFn: (e: { status: "disconnected" | "connecting" | "connected" }) => void;
+  private readonly syncFn: (synced: boolean) => void;
   private readonly awarenessFn: () => void;
 
   constructor(opts: RoomClientOptions) {
     this.product = opts.product;
+    this.replayExistingCommands = opts.replayExistingCommands ?? true;
+    this.initialCommandSyncComplete = this.replayExistingCommands;
     this.peerId = loadOrMintPeerId();
     if (opts.identity && opts.identity.id && opts.identity.name) {
       // Host-supplied identity (authenticated user). We trust
@@ -159,6 +165,9 @@ class RoomClientImpl implements RoomClient {
         }
       }
       if (!inserted) return;
+      if (!this.replayExistingCommands && !this.initialCommandSyncComplete && !event.transaction.local) {
+        return;
+      }
       for (const raw of inserted) {
         const env = decodeCommand(raw);
         if (!env) continue;
@@ -191,6 +200,15 @@ class RoomClientImpl implements RoomClient {
         on: (e: string, fn: (data: { status: "disconnected" | "connecting" | "connected" }) => void) => void;
       }
     ).on("status", this.statusFn);
+
+    this.syncFn = (synced: boolean): void => {
+      if (synced) this.initialCommandSyncComplete = true;
+    };
+    (
+      this.provider as unknown as {
+        on: (e: string, fn: (synced: boolean) => void) => void;
+      }
+    ).on("sync", this.syncFn);
 
     this.awarenessFn = (): void => {
       for (const l of this.awarenessListeners) {
@@ -340,6 +358,15 @@ class RoomClientImpl implements RoomClient {
           ) => void;
         }
       ).off?.("status", this.statusFn);
+    } catch {
+      /* noop */
+    }
+    try {
+      (
+        this.provider as unknown as {
+          off: (e: string, fn: (synced: boolean) => void) => void;
+        }
+      ).off?.("sync", this.syncFn);
     } catch {
       /* noop */
     }

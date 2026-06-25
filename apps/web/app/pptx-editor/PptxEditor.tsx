@@ -51,6 +51,7 @@ import {
   readExplicitRoomFromUrl,
   RemotePresenceList,
   roomIdForSource,
+  shouldReplayExistingCommandsForRoom,
   useCommandBroadcast,
   usePublishPresence,
   useRealtimeRoom,
@@ -3092,6 +3093,7 @@ function PptxEditorInner({
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "pptx",
+    replayExistingCommands: shouldReplayExistingCommandsForRoom(roomOverride),
     ...(presenceUser
       ? {
           identity: {

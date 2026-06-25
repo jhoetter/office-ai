@@ -114,3 +114,13 @@ export function readExplicitRoomFromUrl(): string | null {
     return null;
   }
 }
+
+/**
+ * Session-backed editors load the canonical document bytes from the
+ * session store before joining realtime. Replaying old room commands
+ * on top of those bytes can duplicate already-saved edits, so session
+ * rooms subscribe only to commands appended after the join.
+ */
+export function shouldReplayExistingCommandsForRoom(roomOverride: string | null | undefined): boolean {
+  return !(typeof roomOverride === "string" && roomOverride.startsWith("session:"));
+}

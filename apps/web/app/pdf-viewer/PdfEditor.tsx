@@ -37,6 +37,7 @@ import {
   RemotePresenceList,
   readExplicitRoomFromUrl,
   roomIdForSource,
+  shouldReplayExistingCommandsForRoom,
   useCommandBroadcast,
   usePublishPresence,
   useRealtimeRoom,
@@ -955,6 +956,7 @@ function PdfEditorInner({
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "pdf",
+    replayExistingCommands: shouldReplayExistingCommandsForRoom(roomOverride),
     ...(presenceUser
       ? {
           identity: {

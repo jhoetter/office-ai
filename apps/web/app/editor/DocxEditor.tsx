@@ -121,6 +121,7 @@ import {
   readExplicitRoomFromUrl,
   RemotePresenceList,
   roomIdForSource,
+  shouldReplayExistingCommandsForRoom,
   useCommandBroadcast,
   usePublishPresence,
   useRealtimeRoom,
@@ -635,6 +636,7 @@ function DocxEditorInner({
     if (!agent) return;
     setSaveState("saving");
     try {
+      await mountRef.current?.flushPendingCommands();
       const buf = await agent.exportFile();
       const bytes = new Uint8Array(buf);
       const mime = PRODUCT_FILE_TYPES.docx.primaryMime;
@@ -2885,6 +2887,7 @@ function DocxEditorInner({
   const realtimeRoom = useRealtimeRoom({
     roomId: realtimeRoomId,
     product: "docx",
+    replayExistingCommands: shouldReplayExistingCommandsForRoom(roomOverride),
     ...(presenceUser
       ? {
           identity: {

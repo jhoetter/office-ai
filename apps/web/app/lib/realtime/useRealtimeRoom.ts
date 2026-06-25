@@ -27,6 +27,7 @@ export interface UseRealtimeRoomOptions {
    * possible — e.g. logout/login) re-publishes the new awareness.
    */
   readonly identity?: { readonly id: string; readonly name: string; readonly color?: string };
+  readonly replayExistingCommands?: boolean;
 }
 
 export interface RealtimeRoomState {
@@ -42,7 +43,7 @@ export interface RealtimeRoomState {
  * caller can render presence chips on every change.
  */
 export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState {
-  const { roomId, product, enabled = true, identity } = opts;
+  const { roomId, product, enabled = true, identity, replayExistingCommands = true } = opts;
   const [room, setRoom] = useState<RoomClient | null>(null);
   const [status, setStatus] = useState<RealtimeRoomState["status"]>("disabled");
   const [peers, setPeers] = useState<ReadonlyArray<{ clientId: number; state: AwarenessState }>>([]);
@@ -79,6 +80,7 @@ export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState
           url,
           roomId,
           product,
+          replayExistingCommands,
           ...(identityId && identityName
             ? {
                 identity: {
@@ -125,7 +127,7 @@ export function useRealtimeRoom(opts: UseRealtimeRoomOptions): RealtimeRoomState
       setStatus("disabled");
       setPeers([]);
     };
-  }, [enabled, roomId, product, identityId, identityName, identityColor]);
+  }, [enabled, roomId, product, identityId, identityName, identityColor, replayExistingCommands]);
 
   return { room, status, remotePeers: peers };
 }
