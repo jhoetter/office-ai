@@ -112,6 +112,21 @@ office-agent sessions cleanup --json --pretty
 as a warning with a migration hint; corrupt metadata is reported as an
 error.
 
+CLI document commands use the same store:
+
+```bash
+office-agent sessions create --title "Q3 report"
+office-agent sessions import --file report.docx --json --pretty
+office-agent sessions projection --document-id doc_... --projection markdown
+office-agent sessions export --document-id doc_... --out reviewed.docx
+```
+
+`sessions import` and `sessions export` are explicit edge operations:
+paths enter or leave the system there, while the persisted core state is
+addressed by `sessionId` and `documentId`. Imports and exports append
+`office-ai/audit-log-entry@1` metadata so CLI-created documents are
+visible to the MCP tools and to the web session browser.
+
 The web route deliberately omits `sourcePath`, exported paths,
 `dataDir`, and artifact paths. Local paths remain available to the local
 MCP/CLI process where they are needed for import/export, but browser

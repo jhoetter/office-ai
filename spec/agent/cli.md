@@ -1,8 +1,10 @@
 # office-agent CLI
 
-The CLI is a thin shell over the `DocumentAgent` interface. Designed to be
-**pipeable, scriptable, and composable** with standard UNIX tools per
-[`prompt.md`](../../prompt.md) lines 453–493.
+The CLI is a thin wrapper over the same session store, command bus,
+diagnostics and projection services used by MCP and the web editor.
+It remains **pipeable, scriptable, and composable** with standard UNIX
+tools, but file paths are edge inputs/outputs; the product core works
+with `sessionId`, `documentId`, command/audit IDs and export records.
 
 ## Action catalogue (single source of truth)
 
@@ -63,6 +65,53 @@ Severity is intentionally feature-scoped:
 - `warning` means a heavier gate or dev profile may be unavailable.
 - `optional` means a feature such as OCR is absent but the core product
   remains usable.
+
+## Session-first document flow
+
+```text
+office-agent sessions create [--title <title>]
+       [--json] [--pretty] [--quiet] [--data-dir <path>]
+
+office-agent sessions import --file <path>
+       [--session-id <sessionId>] [--title <title>] [--name <name>]
+       [--format docx|xlsx|pptx|pdf]
+       [--json] [--pretty] [--quiet] [--data-dir <path>]
+
+office-agent sessions list
+       [--json] [--pretty] [--quiet] [--data-dir <path>]
+
+office-agent sessions documents
+       [--session-id <sessionId>]
+       [--json] [--pretty] [--quiet] [--data-dir <path>]
+
+office-agent sessions projection --document-id <documentId>
+       [--projection summary|markdown|json|text|page]
+       [--page <n>] [--sheet <name>] [--range <a1>]
+       [--slide <n>] [--max-rows <n>] [--max-cols <n>]
+       [--json] [--pretty] [--quiet] [--data-dir <path>]
+
+office-agent sessions export --document-id <documentId> --out <path>
+       [--json] [--pretty] [--quiet] [--data-dir <path>]
+```
+
+`sessions import` is the CLI equivalent of MCP `import_document`: it
+uses `--file` only at the boundary, persists `original.*` and
+`working.*`, appends an `office-ai/audit-log-entry@1`, and returns a
+canonical `sessionId` / `documentId`. `sessions projection` then reads
+from the store without receiving a file path, and `sessions export`
+records an explicit export history entry plus command-basis diagnostics.
+
+Example:
+
+```bash
+office-agent sessions import --file report.docx --json --pretty
+office-agent sessions projection --document-id doc_... --projection markdown
+office-agent sessions export --document-id doc_... --out reviewed.docx
+```
+
+Use `--quiet` for automation steps that only need the exit code. Use
+`--json` for stable machine-readable envelopes; human output is compact
+and intentionally not a contract.
 
 ## Session store maintenance
 

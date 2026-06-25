@@ -199,6 +199,104 @@ describe("office-agent CLI", () => {
     ]);
   });
 
+  it("imports, projects and exports documents through session ids instead of path handles", async () => {
+    const input = await makeFixture();
+    const dataDir = mkdtempSync(join(tmpdir(), "office-agent-session-flow-"));
+
+    const importIO = makeIO();
+    const importCode = await runCli(
+      ["sessions", "import", "--json", "--data-dir", dataDir, "--file", input, "--title", "Session CLI"],
+      importIO.io
+    );
+    expect(importCode).toBe(0);
+    const imported = JSON.parse(importIO.stdout.text()) as {
+      schema: string;
+      session: { sessionId: string };
+      document: { documentId: string; sessionId: string; format: string };
+    };
+    expect(imported.schema).toBe("office-ai/import-document@1");
+    expect(imported.session.sessionId).toMatch(/^session_/);
+    expect(imported.document).toMatchObject({
+      documentId: expect.stringMatching(/^doc_/),
+      sessionId: imported.session.sessionId,
+      format: "docx",
+    });
+
+    const projectionIO = makeIO();
+    const projectionCode = await runCli(
+      [
+        "sessions",
+        "projection",
+        "--json",
+        "--data-dir",
+        dataDir,
+        "--document-id",
+        imported.document.documentId,
+        "--projection",
+        "markdown",
+      ],
+      projectionIO.io
+    );
+    expect(projectionCode).toBe(0);
+    const projection = JSON.parse(projectionIO.stdout.text()) as { schema: string; content: string };
+    expect(projection.schema).toBe("office-ai/document-projection@1");
+    expect(projection.content).toContain("# Hello");
+    expect(projection.content).toContain("first paragraph body");
+
+    const legacyReadIO = makeIO();
+    const legacyCode = await runCli(
+      ["docx", "read", "--file", input, "--format", "markdown"],
+      legacyReadIO.io
+    );
+    expect(legacyCode).toBe(0);
+    expect(projection.content.trim()).toBe(legacyReadIO.stdout.text().trim());
+
+    const outDir = mkdtempSync(join(tmpdir(), "office-agent-session-export-"));
+    const output = join(outDir, "exported.docx");
+    const exportIO = makeIO();
+    const exportCode = await runCli(
+      [
+        "sessions",
+        "export",
+        "--json",
+        "--data-dir",
+        dataDir,
+        "--document-id",
+        imported.document.documentId,
+        "--out",
+        output,
+      ],
+      exportIO.io
+    );
+    expect(exportCode).toBe(0);
+    const exported = JSON.parse(exportIO.stdout.text()) as {
+      schema: string;
+      exported: { path: string; bytes: number };
+      document: { exportHistory: Array<{ bytes: number }> };
+    };
+    expect(exported.schema).toBe("office-ai/export-document@1");
+    expect(exported.exported.path).toBe(output);
+    expect(exported.exported.bytes).toBeGreaterThan(0);
+    expect(exported.document.exportHistory).toHaveLength(1);
+    expect(readFileSync(output).byteLength).toBeGreaterThan(0);
+
+    const documentsIO = makeIO();
+    const documentsCode = await runCli(
+      ["sessions", "documents", "--json", "--data-dir", dataDir, "--session-id", imported.session.sessionId],
+      documentsIO.io
+    );
+    expect(documentsCode).toBe(0);
+    const documents = JSON.parse(documentsIO.stdout.text()) as {
+      documents: Array<{ documentId: string; exportHistory: Array<{ bytes: number }> }>;
+    };
+    expect(documents.documents).toEqual([
+      expect.objectContaining({
+        documentId: imported.document.documentId,
+        exportHistory: [expect.objectContaining({ bytes: exported.exported.bytes })],
+      }),
+    ]);
+  });
+
   it("insert-text writes a modified file that re-reads with the new text", async () => {
     const input = await makeFixture();
     const dir = mkdtempSync(join(tmpdir(), "office-agent-out-"));

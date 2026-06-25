@@ -100,6 +100,13 @@ Canonical MCP sessions persist locally under `$XDG_DATA_HOME/office-ai`
 or `~/.local/share/office-ai`. Set `OFFICEAI_DATA_DIR` to isolate one
 workspace/test run; see
 [`docs/session-store-data-dir.md`](docs/session-store-data-dir.md).
+The same store is available from the CLI:
+
+```bash
+office-agent sessions import --file report.docx --json --pretty
+office-agent sessions projection --document-id doc_... --projection markdown
+office-agent sessions export --document-id doc_... --out reviewed.docx
+```
 
 ## Quality gates
 

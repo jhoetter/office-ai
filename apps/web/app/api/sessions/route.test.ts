@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runCli } from "@officeai/agent";
 import { createLocalSessionStore } from "@officeai/agent/session-store";
 import { DocxAgent } from "@officeai/docx";
 import { PdfAgent } from "@officeai/pdf";
@@ -18,6 +19,30 @@ import type { WebOfficeFormat } from "@/lib/sessions/web-sessions";
 
 let previousOfficeAiDataDir: string | undefined;
 let dataDir: string;
+
+class CapturedStream {
+  chunks: string[] = [];
+  write(s: string | Uint8Array): boolean {
+    this.chunks.push(typeof s === "string" ? s : Buffer.from(s).toString("utf8"));
+    return true;
+  }
+  text(): string {
+    return this.chunks.join("");
+  }
+}
+
+function makeIO() {
+  const stdout = new CapturedStream();
+  const stderr = new CapturedStream();
+  return {
+    io: {
+      stdout: stdout as unknown as NodeJS.WritableStream,
+      stderr: stderr as unknown as NodeJS.WritableStream,
+    },
+    stdout,
+    stderr,
+  };
+}
 
 beforeEach(() => {
   previousOfficeAiDataDir = process.env.OFFICEAI_DATA_DIR;
@@ -113,6 +138,59 @@ describe("GET /api/sessions", () => {
       artifacts: { hasOriginal: true, hasWorking: true },
     });
     expect(JSON.stringify(payload)).not.toContain("/very/local");
+    expect(JSON.stringify(payload)).not.toContain(dataDir);
+  });
+
+  it("lists sessions created by the CLI session import wrapper", async () => {
+    const agent = await DocxAgent.empty();
+    const inputPath = join(dataDir, "cli-import.docx");
+    writeFileSync(inputPath, Buffer.from(await agent.exportFile()));
+
+    const { io, stdout, stderr } = makeIO();
+    const code = await runCli(
+      ["sessions", "import", "--json", "--data-dir", dataDir, "--file", inputPath, "--title", "CLI visible"],
+      io
+    );
+    expect(code, stderr.text()).toBe(0);
+    const imported = JSON.parse(stdout.text()) as {
+      session: { sessionId: string };
+      document: { documentId: string };
+    };
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      schema: string;
+      sessions: Array<{ sessionId: string; title: string; documentCount: number }>;
+      documents: Array<{
+        documentId: string;
+        sessionId: string;
+        format: string;
+        name: string;
+        commandLogCount: number;
+        artifacts: { hasOriginal: boolean; hasWorking: boolean };
+      }>;
+    };
+
+    expect(payload.schema).toBe("office-ai/web-sessions@1");
+    expect(payload.sessions).toEqual([
+      expect.objectContaining({
+        sessionId: imported.session.sessionId,
+        title: "CLI visible",
+        documentCount: 1,
+      }),
+    ]);
+    expect(payload.documents).toEqual([
+      expect.objectContaining({
+        documentId: imported.document.documentId,
+        sessionId: imported.session.sessionId,
+        format: "docx",
+        name: "cli-import.docx",
+        commandLogCount: 1,
+        artifacts: { hasOriginal: true, hasWorking: true },
+      }),
+    ]);
+    expect(JSON.stringify(payload)).not.toContain(inputPath);
     expect(JSON.stringify(payload)).not.toContain(dataDir);
   });
 
