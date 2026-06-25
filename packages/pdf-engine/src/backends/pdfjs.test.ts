@@ -61,6 +61,10 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => {
 
 const { pdfjsBackend } = await import("./pdfjs.js");
 
+type GlobalWithPdfjsWorker = typeof globalThis & {
+  pdfjsWorker?: { WorkerMessageHandler?: unknown };
+};
+
 interface StubCanvas {
   width: number;
   height: number;
@@ -90,6 +94,11 @@ async function waitForRenderTaskCount(count: number): Promise<void> {
  * canvas pixels and the un-rotated text layer in sync.
  */
 describe("pdfjs backend rotation", () => {
+  it("registers the PDF.js fake worker module in Node", async () => {
+    await pdfjsBackend.load(new Uint8Array());
+    expect((globalThis as GlobalWithPdfjsWorker).pdfjsWorker?.WorkerMessageHandler).toBeTypeOf("function");
+  });
+
   it("threads opts.rotation into getViewport and defaults to 0", async () => {
     viewportCalls.length = 0;
     renderTasks.length = 0;

@@ -33,13 +33,43 @@ interface ActiveCanvasRender {
   readonly promise: Promise<unknown>;
   cancel(): void;
 }
+interface PdfjsWorkerGlobal {
+  readonly WorkerMessageHandler: unknown;
+}
+type PdfjsGlobal = typeof globalThis & {
+  pdfjsWorker?: PdfjsWorkerGlobal;
+};
 
 let pdfjsModule: PdfjsModule | null = null;
+let nodePdfjsWorkerSetup: Promise<void> | null = null;
 const activeCanvasRenders = new WeakMap<HTMLCanvasElement, ActiveCanvasRender>();
+
+const isNodeLikeRuntime = (): boolean =>
+  typeof process !== "undefined" && process.versions?.node !== undefined && typeof window === "undefined";
+
+const ensureNodePdfjsWorker = async (): Promise<void> => {
+  if (!isNodeLikeRuntime()) return;
+  const global = globalThis as PdfjsGlobal;
+  if (global.pdfjsWorker?.WorkerMessageHandler) return;
+  nodePdfjsWorkerSetup ??= import("pdfjs-dist/legacy/build/pdf.worker.mjs")
+    .then((worker: { WorkerMessageHandler?: unknown }) => {
+      if (!worker.WorkerMessageHandler) {
+        throw new Error("pdfjs backend: PDF.js worker module did not export WorkerMessageHandler.");
+      }
+      global.pdfjsWorker = { WorkerMessageHandler: worker.WorkerMessageHandler };
+    })
+    .catch((err: unknown) => {
+      nodePdfjsWorkerSetup = null;
+      throw err;
+    });
+  await nodePdfjsWorkerSetup;
+};
 
 const loadPdfjs = async (): Promise<PdfjsModule> => {
   if (pdfjsModule) return pdfjsModule;
-  pdfjsModule = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  await ensureNodePdfjsWorker();
+  pdfjsModule = mod;
   return pdfjsModule;
 };
 
