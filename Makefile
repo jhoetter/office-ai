@@ -139,14 +139,13 @@ smoke-local-install: doctor
 	pnpm --filter @officeai/web build
 	node scripts/local-install-smoke.mjs
 
-# `make dev` must build the workspace packages first, otherwise Next.js
-# loads STALE `dist/` artifacts for @officeai/{core,docx,xlsx,pptx} —
-# `next.config.ts` only transpiles `@officeai/ui` + `@officeai/design-tokens`,
-# the rest are consumed from their compiled `dist/`. A stale dist makes the
-# editor look loaded (filename / chrome render from initial state) but the
-# agent fails silently and the body is stuck on EmptyState. Turbo skips
-# packages that are already up-to-date so the cost on a warm checkout is
-# ~1s; on a fresh checkout it's a one-time ~30s build.
+# `make dev` must build the workspace packages first, otherwise Next.js can
+# load STALE `dist/` artifacts for the document engines. Build only the web
+# app's dependencies here: a production `next build` writes a different shape
+# of `.next/` than `next dev`, and reusing it in the long-running dev server
+# has caused repeated missing-manifest 500s on the forwarded Fugu stack.
+# Turbo skips packages that are already up-to-date so the cost on a warm
+# checkout is ~1s; on a fresh checkout it's a one-time ~30s build.
 #
 # Iterating on a package's source after `make dev` is running? Re-run
 # `pnpm build` (or `pnpm --filter @officeai/<pkg> build`) in another shell
@@ -163,8 +162,8 @@ smoke-local-install: doctor
 # Works.
 #
 # A naive `lsof | kill` loses to next dev / turbo because:
-#   - `next dev` spawns a Turbopack worker that holds the port; killing
-#     the parent leaves the child orphaned and still listening.
+#   - `next dev` can spawn child workers that hold the port; killing the
+#     parent leaves the child orphaned and still listening.
 #   - Between kill and the next bind there's a tiny window in which the
 #     supervisor can respawn.
 #
@@ -206,7 +205,8 @@ kill-ports:
 	exit 1
 
 dev: kill-ports
-	pnpm build
+	pnpm turbo run build --filter='@officeai/web^...'
+	rm -rf apps/web/.next
 	@if [ "$(OAI_RT_REUSE)" = "1" ] \
 	   && ( curl -sf -m 1 http://$(RT_HOST):$(RT_PORT)/health >/dev/null 2>&1 \
 	     || curl -sf -m 1 http://localhost:$(RT_PORT)/health  >/dev/null 2>&1 \
